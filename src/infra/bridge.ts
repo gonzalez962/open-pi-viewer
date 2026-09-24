@@ -81,6 +81,9 @@ import type {
   LogoutOAuthProviderResult,
   OAuthEventEnvelope,
 } from '@core/types/oauth';
+import { gentleMeshClient } from './mesh';
+
+let activeConnectionType: 'local' | 'mesh' = 'local';
 
 export interface BridgeStatusPayload {
   state: 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -122,6 +125,13 @@ export async function connectPi(
     | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
   invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<ConnectResult> {
+  if (config.connectionType === 'mesh') {
+    activeConnectionType = 'mesh';
+    await ensureBridgeListenersReady();
+    return await gentleMeshClient.connect(config);
+  }
+  activeConnectionType = 'local';
+
   let sessionOptions: ConnectSessionOptions | undefined;
   let invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> =
     invoke;
@@ -169,6 +179,11 @@ export async function disconnectPi(
     | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
   invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<void> {
+  if (activeConnectionType === 'mesh') {
+    activeConnectionType = 'local';
+    return await gentleMeshClient.disconnect();
+  }
+
   let workingDirectory: string | undefined;
   let invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke;
 
@@ -236,6 +251,10 @@ export async function sendPromptPi(
     | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
   invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<SendPromptResult> {
+  if (activeConnectionType === 'mesh') {
+    return await gentleMeshClient.sendPrompt(id, message);
+  }
+
   let images: PromptImageAttachment[] | undefined;
   let invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke;
 
@@ -307,6 +326,10 @@ export async function sendExtensionUiResponsePi(
 export async function abortPi(
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<void> {
+  if (activeConnectionType === 'mesh') {
+    return await gentleMeshClient.abort();
+  }
+
   if (!isTauri() && invokeFn === invoke) {
     return;
   }
@@ -396,6 +419,10 @@ export async function listWorkspaceDirPi(
   payload?: ListWorkspaceDirPayload,
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<WorkspaceEntry[]> {
+  if (activeConnectionType === 'mesh') {
+    return await gentleMeshClient.listWorkspaceDir(payload?.relativePath);
+  }
+
   if (!isTauri() && invokeFn === invoke) {
     return [];
   }
@@ -412,6 +439,10 @@ export async function readWorkspaceFilePi(
   workingDirectory?: string,
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<WorkspaceFileContent> {
+  if (activeConnectionType === 'mesh') {
+    return await gentleMeshClient.readWorkspaceFile(relativePath);
+  }
+
   if (!isTauri() && invokeFn === invoke) {
     throw new Error('Desktop runtime unavailable: cannot read workspace file outside Tauri');
   }
@@ -573,6 +604,19 @@ export async function getSessionPersistenceStatusPi(
 export function registerBridgeListeners(
   listeners: BridgeEventListeners
 ): () => void {
+  gentleMeshClient.setCallbacks({
+    onEvent: (event) => listeners.onEvent(event),
+    onStatusChange: (s) =>
+      listeners.onStatusChange({
+        state: s.state,
+        label: s.label,
+        detail: s.detail,
+        model: null,
+        cwd: null,
+      }),
+    onError: (err) => listeners.onError(err),
+  });
+
   if (!isTauri()) {
     return () => {};
   }

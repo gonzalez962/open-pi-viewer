@@ -567,85 +567,154 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             onSubmit={onSaveAndApply}
           >
             <div className="connection-fields-grid">
-              <div className="field-group">
-                <label htmlFor="settings-node-path-input" className="field-label">
-                  {t('settings.node_path_label')}
+              <div className="field-group" style={{ gridColumn: '1 / -1' }}>
+                <label htmlFor="settings-connection-type-select" className="field-label">
+                  {t('settings.connection_type_label')}
                 </label>
-                <input
-                  id="settings-node-path-input"
-                  type="text"
-                  className="field-input"
-                  value={settingsDraft.nodePath}
-                  onChange={(e) =>
+                <SettingsSelect
+                  id="settings-connection-type-select"
+                  value={settingsDraft.connectionType ?? 'local'}
+                  onChange={(val) =>
                     setSettingsDraft((prev) => ({
                       ...prev,
-                      nodePath: e.target.value,
+                      connectionType: val as 'local' | 'mesh',
+                      meshCoordinatorUrl: val === 'mesh' ? (prev.meshCoordinatorUrl || 'http://localhost:8080') : prev.meshCoordinatorUrl,
                     }))
                   }
-                  placeholder={t('settings.node_path_placeholder')}
-                  title={t('settings.node_path_title')}
-                  required
+                  options={[
+                    { value: 'local', label: t('settings.connection_type_local') },
+                    { value: 'mesh', label: t('settings.connection_type_mesh') },
+                  ]}
+                  aria-label={t('settings.connection_type_label')}
                 />
               </div>
 
-              <div className="field-group">
-                <label htmlFor="settings-pi-entry-input" className="field-label">
-                  {t('settings.pi_entry_label')}
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    id="settings-pi-entry-input"
-                    type="text"
-                    className="field-input"
-                    style={{ flex: 1 }}
-                    value={settingsDraft.piEntrypoint}
-                    onChange={(e) => {
-                      setSettingsDraft((prev) => ({
-                        ...prev,
-                        piEntrypoint: e.target.value,
-                      }));
-                      if (gentleShellNotice) {
-                        setGentleShellNotice(null);
+              {settingsDraft.connectionType === 'mesh' ? (
+                <>
+                  <div className="field-group">
+                    <label htmlFor="settings-mesh-url-input" className="field-label">
+                      {t('settings.mesh_url_label')}
+                    </label>
+                    <input
+                      id="settings-mesh-url-input"
+                      type="text"
+                      className="field-input"
+                      value={settingsDraft.meshCoordinatorUrl ?? ''}
+                      onChange={(e) =>
+                        setSettingsDraft((prev) => ({
+                          ...prev,
+                          meshCoordinatorUrl: e.target.value,
+                        }))
                       }
-                    }}
-                    placeholder={t('settings.pi_entry_placeholder')}
-                    title={t('settings.pi_entry_title')}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={handleDetectGentleShell}
-                    disabled={isDetectingShell || isBusy}
-                    title={t('settings.btn_detect_gentle_shell_title')}
-                  >
-                    {isDetectingShell
-                      ? t('settings.btn_detect_gentle_shell_detecting')
-                      : t('settings.btn_detect_gentle_shell')}
-                  </button>
-                </div>
-                {gentleShellNotice && (
-                  <span
-                    className={
-                      gentleShellNotice.type === 'success'
-                        ? 'field-subtext field-subtext-success'
-                        : 'field-subtext field-subtext-error'
-                    }
-                    role={gentleShellNotice.type === 'error' ? 'alert' : 'status'}
-                    aria-live="polite"
-                    style={{
-                      display: 'block',
-                      marginTop: '4px',
-                      color:
-                        gentleShellNotice.type === 'success'
-                          ? 'var(--color-success, #22c55e)'
-                          : 'var(--color-danger, #ef4444)',
-                    }}
-                  >
-                    {gentleShellNotice.message}
-                  </span>
-                )}
-              </div>
+                      placeholder={t('settings.mesh_url_placeholder')}
+                      title={t('settings.mesh_url_title')}
+                      required
+                    />
+                  </div>
+
+                  <div className="field-group">
+                    <label htmlFor="settings-mesh-token-input" className="field-label">
+                      {t('settings.mesh_token_label')}
+                    </label>
+                    <input
+                      id="settings-mesh-token-input"
+                      type="password"
+                      className="field-input"
+                      value={settingsDraft.meshToken ?? ''}
+                      onChange={(e) =>
+                        setSettingsDraft((prev) => ({
+                          ...prev,
+                          meshToken: e.target.value,
+                        }))
+                      }
+                      placeholder={t('settings.mesh_token_placeholder')}
+                      title={t('settings.mesh_token_title')}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="field-group">
+                    <label htmlFor="settings-node-path-input" className="field-label">
+                      {t('settings.node_path_label')}
+                    </label>
+                    <input
+                      id="settings-node-path-input"
+                      type="text"
+                      className="field-input"
+                      value={settingsDraft.nodePath}
+                      onChange={(e) =>
+                        setSettingsDraft((prev) => ({
+                          ...prev,
+                          nodePath: e.target.value,
+                        }))
+                      }
+                      placeholder={t('settings.node_path_placeholder')}
+                      title={t('settings.node_path_title')}
+                      required
+                    />
+                  </div>
+
+                  <div className="field-group">
+                    <label htmlFor="settings-pi-entry-input" className="field-label">
+                      {t('settings.pi_entry_label')}
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        id="settings-pi-entry-input"
+                        type="text"
+                        className="field-input"
+                        style={{ flex: 1 }}
+                        value={settingsDraft.piEntrypoint}
+                        onChange={(e) => {
+                          setSettingsDraft((prev) => ({
+                            ...prev,
+                            piEntrypoint: e.target.value,
+                          }));
+                          if (gentleShellNotice) {
+                            setGentleShellNotice(null);
+                          }
+                        }}
+                        placeholder={t('settings.pi_entry_placeholder')}
+                        title={t('settings.pi_entry_title')}
+                        required
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handleDetectGentleShell}
+                        disabled={isDetectingShell || isBusy}
+                        title={t('settings.btn_detect_gentle_shell_title')}
+                      >
+                        {isDetectingShell
+                          ? t('settings.btn_detect_gentle_shell_detecting')
+                          : t('settings.btn_detect_gentle_shell')}
+                      </button>
+                    </div>
+                    {gentleShellNotice && (
+                      <span
+                        className={
+                          gentleShellNotice.type === 'success'
+                            ? 'field-subtext field-subtext-success'
+                            : 'field-subtext field-subtext-error'
+                        }
+                        role={gentleShellNotice.type === 'error' ? 'alert' : 'status'}
+                        aria-live="polite"
+                        style={{
+                          display: 'block',
+                          marginTop: '4px',
+                          color:
+                            gentleShellNotice.type === 'success'
+                              ? 'var(--color-success, #22c55e)'
+                              : 'var(--color-danger, #ef4444)',
+                        }}
+                      >
+                        {gentleShellNotice.message}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className="field-group">
                 <label htmlFor="settings-cwd-input" className="field-label">
@@ -666,7 +735,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     }
                     placeholder={t('settings.cwd_placeholder')}
                     title={t('settings.cwd_title')}
-                    required
+                    required={settingsDraft.connectionType !== 'mesh'}
                   />
                   <button
                     type="button"
