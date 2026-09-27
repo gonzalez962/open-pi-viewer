@@ -5,6 +5,7 @@ import {
   categorizeToolName,
   groupChatMessages,
   groupMessageBlocks,
+  mergeConsecutiveAssistantMessages,
   type ProcessGroup,
 } from '@core/process-grouping';
 import type { ChatMessage, MessageBlock, ThinkingBlock, ToolCallBlock } from '@core/types/messages';
@@ -181,4 +182,73 @@ test('groupChatMessages: groups blocks per message, leaves messages without bloc
 
 test('groupChatMessages: empty messages array yields empty array', () => {
   assert.deepEqual(groupChatMessages([]), []);
+});
+
+// Pi opens a new assistant message (message_start) for every LLM call inside one agent
+// turn, so each tool call usually lives in its own ChatMessage. Grouping must merge them.
+function assistant(id: string, blocks?: MessageBlock[], overrides: Partial<ChatMessage> = {}): ChatMessage {
+  return { id, role: 'assistant', content: '', timestamp: `t-${id}`, blocks, ...overrides };
+}
+
+function user(id: string, content: string): ChatMessage {
+  return { id, role: 'user', content, timestamp: `t-${id}` };
+}
+
+test('mergeConsecutiveAssistantMessages: merges one-tool-per-message turns into a single message', () => {
+  const merged = mergeConsecutiveAssistantMessages([
+    user('u1', 'do it'),
+    assistant('a1', [tool('ls')]),
+    assistant('a2', [tool('write')]),
+    assistant('a3', [tool('bash')]),
+  ]);
+
+  assert.equal(merged.length, 2);
+  assert.equal(merged[1].id, 'a1');
+  assert.equal(merged[1].timestamp, 't-a1');
+  assert.deepEqual(
+    merged[1].blocks?.map((b) => (b.type === 'tool_call' ? b.name : b.type)),
+    ['ls', 'write', 'bash']
+  );
+
+  const items = groupMessageBlocks(merged[1].blocks ?? []);
+  assert.equal(items.length, 1);
+  assert.equal((items[0] as ProcessGroup).total, 3);
+});
+
+test('mergeConsecutiveAssistantMessages: user messages break assistant runs', () => {
+  const merged = mergeConsecutiveAssistantMessages([
+    assistant('a1', [tool('ls')]),
+    user('u1', 'next'),
+    assistant('a2', [tool('read')]),
+  ]);
+  assert.deepEqual(merged.map((m) => m.id), ['a1', 'u1', 'a2']);
+});
+
+test('mergeConsecutiveAssistantMessages: block-less content becomes a text block that breaks groups', () => {
+  const merged = mergeConsecutiveAssistantMessages([
+    assistant('a1', [tool('ls')]),
+    assistant('a2', undefined, { content: 'summary' }),
+    assistant('a3', [tool('read')]),
+  ]);
+  assert.equal(merged.length, 1);
+  const items = groupMessageBlocks(merged[0].blocks ?? []);
+  assert.deepEqual(items.map((i) => i.type), ['process_group', 'block', 'process_group']);
+  assert.equal(merged[0].content, 'summary');
+});
+
+test('mergeConsecutiveAssistantMessages: streaming and cancelled flags follow the run', () => {
+  const merged = mergeConsecutiveAssistantMessages([
+    assistant('a1', [tool('ls')], { isCancelled: true }),
+    assistant('a2', [tool('read')], { isStreaming: true }),
+  ]);
+  assert.equal(merged[0].isStreaming, true);
+  assert.equal(merged[0].isCancelled, true);
+});
+
+test('mergeConsecutiveAssistantMessages: single messages are returned unchanged', () => {
+  const a = assistant('a1', [tool('ls')]);
+  const u = user('u1', 'hi');
+  const merged = mergeConsecutiveAssistantMessages([u, a]);
+  assert.equal(merged[0], u);
+  assert.equal(merged[1], a);
 });

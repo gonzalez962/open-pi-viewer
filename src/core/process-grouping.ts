@@ -194,3 +194,57 @@ export function groupChatMessages(
     renderItems: message.blocks ? groupMessageBlocks(message.blocks) : [],
   }));
 }
+
+function toMergeableBlocks(message: ChatMessage): MessageBlock[] {
+  if (message.blocks && message.blocks.length > 0) return message.blocks;
+  return message.content.length > 0 ? [{ type: 'text', text: message.content }] : [];
+}
+
+/**
+ * Merges runs of consecutive assistant messages into one message so their process blocks
+ * can be grouped together. Pi emits a new assistant `message_start` for every LLM call
+ * inside one agent turn, so a turn with N sequential tool calls usually arrives as N
+ * assistant messages holding one tool call each; grouping per message alone would yield
+ * N single-item groups. The merged message keeps the first message's id and timestamp
+ * (stable React key while the run grows), concatenates blocks in order (block-less
+ * content becomes a `text` block, which still breaks process groups), and carries the
+ * run's streaming/cancelled state. Non-assistant messages break runs and single
+ * messages are returned by reference.
+ */
+export function mergeConsecutiveAssistantMessages(
+  messages: ReadonlyArray<ChatMessage>
+): ChatMessage[] {
+  const result: ChatMessage[] = [];
+  let run: ChatMessage[] = [];
+
+  const flush = () => {
+    if (run.length === 1) {
+      result.push(run[0]);
+    } else if (run.length > 1) {
+      const blocks = run.flatMap(toMergeableBlocks);
+      result.push({
+        ...run[0],
+        content: run
+          .map((m) => m.content)
+          .filter((c) => c.length > 0)
+          .join('\n\n'),
+        isStreaming: run[run.length - 1].isStreaming,
+        isCancelled: run.some((m) => m.isCancelled) || undefined,
+        blocks: blocks.length > 0 ? blocks : undefined,
+      });
+    }
+    run = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === 'assistant') {
+      run.push(message);
+    } else {
+      flush();
+      result.push(message);
+    }
+  }
+  flush();
+
+  return result;
+}

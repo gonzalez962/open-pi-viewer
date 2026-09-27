@@ -25,7 +25,7 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { groupMessageBlocks } from '@core/process-grouping';
+import { groupMessageBlocks, mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import {
   loadCompactProcessesPreference,
   saveCompactProcessesPreference,
@@ -1094,9 +1094,12 @@ export const App: React.FC = () => {
             </div>
           ) : (
             <ul className="message-list">
-              {state.messages
-                .filter((msg) => !isMessageEmpty(msg))
-                .map((msg) => (
+              {(compactProcesses
+                ? mergeConsecutiveAssistantMessages(
+                    state.messages.filter((msg) => !isMessageEmpty(msg))
+                  )
+                : state.messages.filter((msg) => !isMessageEmpty(msg))
+              ).map((msg) => (
                 <li
                   key={msg.id}
                   className={`message-item message-${msg.role}${msg.isCancelled ? ' message-cancelled' : ''}`}

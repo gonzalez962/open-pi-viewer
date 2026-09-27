@@ -1,7 +1,7 @@
 /**
  * Persistence for the "compact processes" chat toolbar toggle (Issue #8): whether
  * consecutive process (thinking/tool_call) blocks render as compact `ProcessGroup` cards
- * instead of the default one-card-per-block view. Follows the same safe-storage pattern
+ * instead of one card per block. Follows the same safe-storage pattern
  * as `src/infra/preferences.ts` (try/catch around every localStorage access, honest
  * fallback on failure), but stays a plain boolean flag in `shared/` since it carries no
  * app-preference schema of its own.
@@ -24,17 +24,18 @@ function getSafeStorage(): Storage | null {
 }
 
 /**
- * Loads the compact-processes preference. Defaults to `false` (compact view off; blocks
- * render as today) whenever storage is unavailable, empty, or holds an unrecognized value.
+ * Loads the compact-processes preference. Defaults to `true` (compact view on) whenever
+ * storage is unavailable, empty, or holds an unrecognized value; only an explicit
+ * `'false'` written by the toolbar toggle turns it off.
  */
 export function loadCompactProcessesPreference(
   storage: Storage | null = getSafeStorage()
 ): boolean {
-  if (!storage) return false;
+  if (!storage) return true;
   try {
-    return storage.getItem(COMPACT_PROCESSES_STORAGE_KEY) === 'true';
+    return storage.getItem(COMPACT_PROCESSES_STORAGE_KEY) !== 'false';
   } catch {
-    return false;
+    return true;
   }
 }
 
