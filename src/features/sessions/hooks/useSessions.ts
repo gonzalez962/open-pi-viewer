@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { deleteSessionPi, listSessionsPi, newSessionPi, switchSessionPi } from '@infra/bridge';
+import { deleteSessionPi, listSessionsPi, newSessionPi, renameSessionPi, switchSessionPi } from '@infra/bridge';
 import { hydrateChatMessages, recordSessionSwitched, saveSessionRecord } from '@core/session';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig, ConnectionState } from '@core/types/connection';
@@ -45,6 +45,7 @@ export interface UseSessionsResult {
   loadSessions: (cwd?: string) => Promise<void>;
   handleSelectSession: (session: SessionSummary) => Promise<void>;
   handleDeleteSession: (session: SessionSummary) => Promise<void>;
+  handleRenameSession: (sessionPath: string, name: string) => Promise<void>;
   handleNewConversation: () => Promise<void>;
 }
 
@@ -238,6 +239,21 @@ export function useSessions({
     }
   };
 
+  const handleRenameSession = async (sessionPath: string, name: string) => {
+    if (isBusy || isSwitchingSession) return;
+
+    try {
+      await renameSessionPi(sessionPath, name);
+      void loadSessions();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      dispatch({
+        type: 'LOAD_SESSIONS_ERROR',
+        payload: { error: `${t('sidebar.rename_failed')}: ${msg}` },
+      });
+    }
+  };
+
   // Reset conversation context atomically in Pi RPC and UI.
   const handleNewConversation = async () => {
     if (!canStartNewConversation(isBusy, isConnecting, isResetting)) return;
@@ -299,6 +315,7 @@ export function useSessions({
     loadSessions,
     handleSelectSession,
     handleDeleteSession,
+    handleRenameSession,
     handleNewConversation,
   };
 }

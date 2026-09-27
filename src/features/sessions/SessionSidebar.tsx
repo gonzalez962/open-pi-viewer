@@ -13,6 +13,7 @@ export interface SessionSidebarProps {
   onSelectSession: (session: SessionSummary) => void;
   onNewSession: () => void;
   onDeleteSession: (session: SessionSummary) => void;
+  onRenameSession: (sessionPath: string, name: string) => void;
   onClose: () => void;
   locale: SupportedLocale;
   filesPanel: React.ReactNode;
@@ -75,6 +76,39 @@ export function formatSessionTimestamp(dateStr?: string, locale: SupportedLocale
   });
 }
 
+/**
+ * Resolves the display title for a session item: a non-blank custom title (set via
+ * rename) wins over the first-message preview; falls back to `fallback` when neither
+ * is available (e.g. a brand new session with no messages and no custom title yet).
+ */
+export function getSessionDisplayTitle(session: SessionSummary, fallback: string): string {
+  const custom = session.customTitle?.trim();
+  if (custom) return custom;
+  return session.firstMessage || fallback;
+}
+
+/**
+ * Normalizes a candidate session name for a rename: trims surrounding whitespace.
+ * Whitespace-only input normalizes to an empty string, which callers must reject.
+ */
+export function normalizeSessionName(name: string): string {
+  return name.trim();
+}
+
+/**
+ * True if `session` matches a (already normalized-by-caller) search query, checked
+ * against its custom title, first message, and id. An empty/whitespace query matches
+ * everything.
+ */
+export function matchesSessionSearch(session: SessionSummary, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const title = session.customTitle?.toLowerCase() ?? '';
+  const msg = session.firstMessage?.toLowerCase() ?? '';
+  const id = session.id?.toLowerCase() ?? '';
+  return title.includes(q) || msg.includes(q) || id.includes(q);
+}
+
 export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   sessions,
   isLoading,
@@ -85,6 +119,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   onSelectSession,
   onNewSession,
   onDeleteSession,
+  onRenameSession,
   onClose,
   locale,
   filesPanel,
@@ -94,19 +129,36 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   const [activeTab, setActiveTab] = useState<'sessions' | 'files'>('sessions');
   const [searchTerm, setSearchTerm] = useState('');
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     translate(locale, key, params);
 
+  const startEditing = (session: SessionSummary) => {
+    setEditingPath(session.path);
+    setEditValue(session.customTitle ?? '');
+  };
+
+  const cancelEditing = () => {
+    setEditingPath(null);
+    setEditValue('');
+  };
+
+  const commitEditing = (session: SessionSummary) => {
+    const normalized = normalizeSessionName(editValue);
+    if (!normalized) {
+      return;
+    }
+    onRenameSession(session.path, normalized);
+    setEditingPath(null);
+    setEditValue('');
+  };
+
   // Filter sessions by search query
   const filteredSessions = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((s) => {
-      const msg = s.firstMessage?.toLowerCase() ?? '';
-      const id = s.id?.toLowerCase() ?? '';
-      return msg.includes(query) || id.includes(query);
-    });
+    if (!searchTerm.trim()) return sessions;
+    return sessions.filter((s) => matchesSessionSearch(s, searchTerm));
   }, [sessions, searchTerm]);
 
   // Group filtered sessions chronologically
@@ -276,7 +328,12 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                         session.messageCount > 0 &&
                         Boolean(session.path && session.path.trim().length > 0);
 
+                      const canRename = Boolean(session.path && session.path.trim().length > 0);
+
                       const isConfirmingDelete = canDelete && deletingPath === session.path;
+                      const isEditing = canRename && editingPath === session.path;
+
+                      const displayTitle = getSessionDisplayTitle(session, t('sidebar.no_messages'));
 
                       const formattedTime = formatSessionTimestamp(
                         session.modifiedAt || session.createdAt,
@@ -295,17 +352,17 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                       return (
                         <li
                           key={session.id || session.path}
-                          className={`sidebar-item ${isActive ? 'is-active' : ''} ${isSwitching ? 'is-disabled' : ''} ${isConfirmingDelete ? 'is-confirming-delete' : ''}`}
+                          className={`sidebar-item ${isActive ? 'is-active' : ''} ${isSwitching ? 'is-disabled' : ''} ${isConfirmingDelete ? 'is-confirming-delete' : ''} ${isEditing ? 'is-editing' : ''}`}
                           role="button"
-                          tabIndex={isSwitching || isConfirmingDelete ? -1 : 0}
+                          tabIndex={isSwitching || isConfirmingDelete || isEditing ? -1 : 0}
                           aria-current={isActive ? 'true' : undefined}
                           onClick={() => {
-                            if (canSelectSession(isSwitching, isConfirmingDelete)) {
+                            if (canSelectSession(isSwitching, isConfirmingDelete || isEditing)) {
                               onSelectSession(session);
                             }
                           }}
                           onKeyDown={(e) => {
-                            if ((e.key === 'Enter' || e.key === ' ') && canSelectSession(isSwitching, isConfirmingDelete)) {
+                            if ((e.key === 'Enter' || e.key === ' ') && canSelectSession(isSwitching, isConfirmingDelete || isEditing)) {
                               e.preventDefault();
                               onSelectSession(session);
                             }
@@ -336,17 +393,76 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                                 </button>
                               </div>
                             </div>
+                          ) : isEditing ? (
+                            <div className="item-rename-box" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="text"
+                                className="item-rename-input"
+                                value={editValue}
+                                autoFocus
+                                maxLength={200}
+                                placeholder={t('sidebar.rename_placeholder')}
+                                aria-label={t('sidebar.rename_title')}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    commitEditing(session);
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    cancelEditing();
+                                  }
+                                }}
+                              />
+                              <div className="rename-prompt-actions">
+                                <button
+                                  type="button"
+                                  className="btn-confirm-rename"
+                                  onClick={() => commitEditing(session)}
+                                  disabled={!normalizeSessionName(editValue)}
+                                  aria-label={t('action.save')}
+                                >
+                                  {t('action.save')}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-cancel-rename"
+                                  onClick={cancelEditing}
+                                  aria-label={t('action.cancel')}
+                                >
+                                  {t('action.cancel')}
+                                </button>
+                              </div>
+                            </div>
                           ) : (
                             <>
                               <div className="item-title-row">
-                                <span className="item-title" title={session.firstMessage}>
-                                  {session.firstMessage || t('sidebar.no_messages')}
+                                <span className="item-title" title={displayTitle}>
+                                  {displayTitle}
                                 </span>
                                 <div className="item-badges-and-actions">
                                   {isActive && (
                                     <span className="active-badge">
                                       {t('sidebar.active')}
                                     </span>
+                                  )}
+                                  {canRename && (
+                                    <button
+                                      type="button"
+                                      className="btn-item-rename"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        startEditing(session);
+                                      }}
+                                      title={t('sidebar.rename_title')}
+                                      aria-label={t('sidebar.rename_title')}
+                                      disabled={isSwitching}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M12 20h9" />
+                                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                                      </svg>
+                                    </button>
                                   )}
                                   {canDelete && (
                                     <button

@@ -337,7 +337,8 @@
   letter-spacing: 0.3px;
 }
 
-.btn-item-delete {
+.btn-item-delete,
+.btn-item-rename {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -356,7 +357,9 @@
 }
 
 .sidebar-item:hover .btn-item-delete,
-.sidebar-item:focus-within .btn-item-delete {
+.sidebar-item:focus-within .btn-item-delete,
+.sidebar-item:hover .btn-item-rename,
+.sidebar-item:focus-within .btn-item-rename {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
@@ -365,6 +368,11 @@
 .btn-item-delete:hover {
   background-color: var(--status-red-bg);
   color: var(--status-red);
+}
+
+.btn-item-rename:hover {
+  background-color: var(--bg-subtle-hover);
+  color: var(--fg-default);
 }
 
 /* Delete confirmation box on sidebar item */
@@ -422,6 +430,76 @@
 }
 
 .btn-cancel-delete:hover {
+  color: var(--fg-default);
+  background-color: var(--bg-subtle-hover);
+}
+
+/* Rename inline edit box on sidebar item */
+.sidebar-item.is-editing {
+  background-color: var(--bg-subtle-hover);
+  padding: 8px 14px;
+}
+
+.item-rename-box {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+}
+
+.item-rename-input {
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 12px;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-sm);
+  color: var(--fg-default);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.rename-prompt-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-confirm-rename {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background-color: var(--accent-primary);
+  color: var(--accent-primary-fg);
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.btn-confirm-rename:hover {
+  opacity: 0.9;
+}
+
+.btn-confirm-rename:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-cancel-rename {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-muted);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-cancel-rename:hover {
   color: var(--fg-default);
   background-color: var(--bg-subtle-hover);
 }

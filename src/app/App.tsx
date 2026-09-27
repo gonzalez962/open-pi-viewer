@@ -405,7 +405,7 @@ export const App: React.FC = () => {
   // early return, the busy/switching guards, and what happens when a delete or a reset
   // targets the active session) lives in the pure, tested functions in
   // features/sessions/session-actions.ts.
-  const { handleSelectSession, handleDeleteSession, handleNewConversation } = useSessions({
+  const { handleSelectSession, handleDeleteSession, handleRenameSession, handleNewConversation } = useSessions({
       activeProjectId: projectsRegistry.activeProjectId,
       connectionStatus: state.connectionStatus,
       config,
@@ -765,6 +765,7 @@ export const App: React.FC = () => {
             onSelectSession={handleSelectSession}
             onNewSession={handleNewConversation}
             onDeleteSession={handleDeleteSession}
+            onRenameSession={handleRenameSession}
             onClose={() => dispatch({ type: 'TOGGLE_SIDEBAR', payload: { isOpen: false } })}
             locale={preferences.language}
             filesChangesCount={gitChangesCount}
