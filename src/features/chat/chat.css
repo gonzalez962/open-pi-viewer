@@ -370,13 +370,20 @@
   flex-shrink: 0;
 }
 
+/* Bundled subset of Symbols Nerd Font v3 (MIT, see public/fonts/SymbolsNerdFont-LICENSE.txt)
+   holding only the language icons used by code cards. A unique family name keeps a locally
+   installed (possibly older) Nerd Font from shadowing the bundled codepoints. Served from
+   public/ so Vite never inlines it as a data: URL, which the Tauri CSP would block. */
+@font-face {
+  font-family: "Pi Code Icons";
+  src: url("/fonts/symbols-nerd-font-subset.woff2") format("woff2");
+  font-display: block;
+}
+
 /* Nerd Font glyph shown before the language badge. Purely decorative (aria-hidden); the
-   font-family stack tries common Nerd Font variants first and degrades to the app's
-   monospace stack (a tofu glyph, at worst) — the language badge text always carries the
-   actual information regardless of whether a Nerd Font is installed. */
+   language badge text always carries the actual information. */
 .markdown-code-icon {
-  font-family: "Symbols Nerd Font", "JetBrainsMono Nerd Font", "FiraCode Nerd Font",
-    "Hack Nerd Font", var(--font-mono), monospace;
+  font-family: "Pi Code Icons", monospace;
   font-size: 13px;
   line-height: 1;
   opacity: 0.85;

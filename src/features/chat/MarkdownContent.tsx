@@ -21,9 +21,9 @@ import { useLinkOpener } from '@features/chat/hooks/useLinkOpener';
 
 /**
  * Nerd Font glyph (PUA codepoint) shown before the language badge in a code card header.
- * Purely decorative (aria-hidden): when no Nerd Font is installed the glyph renders as a
- * missing-glyph box, but the adjacent text language badge always carries the information,
- * so the header degrades gracefully.
+ * Purely decorative (aria-hidden). Rendered with the bundled Symbols Nerd Font subset
+ * (public/fonts/symbols-nerd-font-subset.woff2); any codepoint added here must also be added
+ * to that subset, otherwise it renders as a missing-glyph box.
  */
 const LANGUAGE_ICON_GLYPHS: Readonly<Record<string, string>> = Object.freeze({
   typescript: '',
@@ -36,12 +36,12 @@ const LANGUAGE_ICON_GLYPHS: Readonly<Record<string, string>> = Object.freeze({
   php: '',
   c: '',
   cpp: '',
-  csharp: '',
+  csharp: '',
   css: '',
   scss: '',
   html: '',
   xml: '',
-  json: '',
+  json: '',
   yaml: '',
   bash: '',
   sql: '',
