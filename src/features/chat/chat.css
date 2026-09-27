@@ -208,6 +208,25 @@
   margin-right: 8px;
 }
 
+/* Marks a user message queued via streamingBehavior: "followUp" while the agent is busy.
+   Reuses --accent-primary (already used for .extension-prompt-queue-badge) rather than
+   introducing a new token. */
+.message-badge-queued {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-sm);
+  background-color: rgba(56, 139, 253, 0.12);
+  border: 1px solid rgba(56, 139, 253, 0.3);
+  color: var(--accent-primary);
+  margin-left: auto;
+  margin-right: 8px;
+}
+
 .message-cancelled-notice {
   display: inline-flex;
   align-items: center;

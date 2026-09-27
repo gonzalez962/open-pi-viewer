@@ -44,6 +44,49 @@ pub struct SendPromptPayload {
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<PromptImageAttachment>>,
+    /// Pi RPC `prompt` command field. `"followUp"` queues this prompt to run after the
+    /// current turn finishes instead of interrupting it; `"steer"` redirects the running
+    /// turn. Omitted entirely for an ordinary idle send.
+    #[serde(default, rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
+    pub streaming_behavior: Option<String>,
+}
+
+/// Validate `streaming_behavior` against the Pi RPC `prompt` command's accepted values.
+fn validate_streaming_behavior(streaming_behavior: &Option<String>) -> Result<(), String> {
+    match streaming_behavior.as_deref() {
+        None | Some("steer") | Some("followUp") => Ok(()),
+        Some(other) => Err(format!(
+            "Invalid streamingBehavior '{}': must be 'steer' or 'followUp'",
+            other
+        )),
+    }
+}
+
+/// Pure builder for the Pi RPC `prompt` command JSON, extracted so it can be unit tested
+/// without a live Tauri `State`/`AppHandle`. Takes individual fields (rather than
+/// `&SendPromptPayload`) so callers may partial-move `payload.message` into
+/// `effective_msg` before building the command.
+fn build_prompt_command(
+    id: &str,
+    images: &Option<Vec<PromptImageAttachment>>,
+    streaming_behavior: &Option<String>,
+    effective_msg: &str,
+) -> Value {
+    let mut prompt_cmd = serde_json::json!({
+        "id": id,
+        "type": "prompt",
+        "message": effective_msg,
+    });
+    if let Some(ref imgs) = images {
+        if !imgs.is_empty() {
+            prompt_cmd["images"] =
+                serde_json::to_value(imgs).unwrap_or(serde_json::Value::Array(vec![]));
+        }
+    }
+    if let Some(ref sb) = streaming_behavior {
+        prompt_cmd["streamingBehavior"] = serde_json::Value::String(sb.clone());
+    }
+    prompt_cmd
 }
 
 
@@ -412,6 +455,7 @@ pub async fn send_prompt(
 ) -> Result<SendPromptResult, String> {
     // 1. Validate prompt request ID: bounded, non-empty, and in accepted client namespace
     validate_prompt_id(&payload.id)?;
+    validate_streaming_behavior(&payload.streaming_behavior)?;
 
     // 2. Validate message content bounds
     let trimmed = payload.message.trim();
@@ -454,16 +498,12 @@ pub async fn send_prompt(
         payload.message
     };
 
-    let mut prompt_cmd = serde_json::json!({
-        "id": payload.id,
-        "type": "prompt",
-        "message": effective_msg,
-    });
-    if let Some(ref imgs) = payload.images {
-        if !imgs.is_empty() {
-            prompt_cmd["images"] = serde_json::to_value(imgs).unwrap_or(serde_json::Value::Array(vec![]));
-        }
-    }
+    let prompt_cmd = build_prompt_command(
+        &payload.id,
+        &payload.images,
+        &payload.streaming_behavior,
+        &effective_msg,
+    );
 
     if let Err(_) = stdin_tx.send(prompt_cmd.to_string()).await {
         let mut pend = pending_responses.lock().await;
@@ -1134,6 +1174,7 @@ mod tests {
             id: "prompt-123e4567-e89b-12d3-a456-426614174000".to_string(),
             message: "Hello Pi".to_string(),
             images: None,
+            streaming_behavior: None,
         };
         let serialized = serde_json::to_string(&payload).unwrap();
         assert!(serialized.contains("\"id\":\"prompt-123e4567-e89b-12d3-a456-426614174000\""));
@@ -1153,6 +1194,7 @@ mod tests {
                 data: "base64data".to_string(),
                 mime_type: "image/png".to_string(),
             }]),
+            streaming_behavior: None,
         };
         let serialized_img = serde_json::to_string(&payload_with_images).unwrap();
         assert!(serialized_img.contains("\"type\":\"image\""));
@@ -1169,6 +1211,81 @@ mod tests {
         let res_json = serde_json::to_string(&result).unwrap();
         assert!(res_json.contains("\"id\":\"prompt-123e4567-e89b-12d3-a456-426614174000\""));
         assert!(res_json.contains("\"accepted\":true"));
+    }
+
+    #[test]
+    fn test_send_prompt_payload_streaming_behavior_serde() {
+        // Omitted entirely on an ordinary idle send
+        let payload = SendPromptPayload {
+            id: "prompt-1".to_string(),
+            message: "Hi".to_string(),
+            images: None,
+            streaming_behavior: None,
+        };
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains("streamingBehavior"));
+
+        // Present under the `streamingBehavior` wire name when queuing a follow-up
+        let queued_payload = SendPromptPayload {
+            id: "prompt-2".to_string(),
+            message: "Follow up".to_string(),
+            images: None,
+            streaming_behavior: Some("followUp".to_string()),
+        };
+        let serialized_queued = serde_json::to_string(&queued_payload).unwrap();
+        assert!(serialized_queued.contains("\"streamingBehavior\":\"followUp\""));
+
+        let deserialized: SendPromptPayload = serde_json::from_str(
+            r#"{"id":"prompt-3","message":"Hi","streamingBehavior":"steer"}"#,
+        )
+        .unwrap();
+        assert_eq!(deserialized.streaming_behavior, Some("steer".to_string()));
+    }
+
+    #[test]
+    fn test_validate_streaming_behavior_accepts_known_values_and_none() {
+        assert!(validate_streaming_behavior(&None).is_ok());
+        assert!(validate_streaming_behavior(&Some("steer".to_string())).is_ok());
+        assert!(validate_streaming_behavior(&Some("followUp".to_string())).is_ok());
+    }
+
+    #[test]
+    fn test_validate_streaming_behavior_rejects_unknown_values() {
+        let err = validate_streaming_behavior(&Some("interrupt".to_string()))
+            .expect_err("unknown streamingBehavior must be rejected");
+        assert!(err.contains("interrupt"));
+        assert!(err.contains("steer"));
+        assert!(err.contains("followUp"));
+    }
+
+    #[test]
+    fn test_build_prompt_command_omits_streaming_behavior_when_absent() {
+        let cmd = build_prompt_command("prompt-1", &None, &None, "Hello");
+        assert_eq!(cmd.get("id").and_then(|v| v.as_str()), Some("prompt-1"));
+        assert_eq!(cmd.get("type").and_then(|v| v.as_str()), Some("prompt"));
+        assert_eq!(cmd.get("message").and_then(|v| v.as_str()), Some("Hello"));
+        assert!(cmd.get("streamingBehavior").is_none());
+        assert!(cmd.get("images").is_none());
+    }
+
+    #[test]
+    fn test_build_prompt_command_forwards_streaming_behavior_and_images() {
+        let images = Some(vec![PromptImageAttachment {
+            attachment_type: "image".to_string(),
+            data: "base64data".to_string(),
+            mime_type: "image/png".to_string(),
+        }]);
+        let streaming_behavior = Some("followUp".to_string());
+        let cmd = build_prompt_command("prompt-2", &images, &streaming_behavior, "Follow up");
+        assert_eq!(
+            cmd.get("streamingBehavior").and_then(|v| v.as_str()),
+            Some("followUp")
+        );
+        assert!(cmd.get("images").is_some());
+        assert_eq!(
+            cmd["images"][0].get("mimeType").and_then(|v| v.as_str()),
+            Some("image/png")
+        );
     }
 
     #[test]

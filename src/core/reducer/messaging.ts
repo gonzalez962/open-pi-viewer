@@ -9,6 +9,8 @@ export type MessagingAction =
   | { type: 'PROMPT_SUBMIT'; payload: { id: string; message: string } }
   | { type: 'PROMPT_ACCEPTED'; payload: { id: string } }
   | { type: 'PROMPT_REJECTED'; payload: { id: string; error: string } }
+  | { type: 'PROMPT_QUEUED'; payload: { id: string; message: string } }
+  | { type: 'QUEUED_PROMPT_REJECTED'; payload: { id: string; error: string } }
   | {
       type: 'EVENT_MESSAGE_START';
       payload: { message: AuthoritativeMessage };
@@ -29,6 +31,22 @@ export type MessagingAction =
   | { type: 'EVENT_AGENT_SETTLED' }
   | { type: 'ABORT_CLICKED' }
   | { type: 'ABORT_COMPLETED'; payload?: { promptId?: string | null } };
+
+/**
+ * Insert `newMessage` before any trailing run of queued user messages, so a newly started
+ * assistant message never renders "after" a follow-up the user queued but Pi hasn't
+ * started yet (queued messages must stay visually last until Pi begins that turn).
+ */
+function insertBeforeTrailingQueued(
+  messages: ChatMessage[],
+  newMessage: ChatMessage
+): ChatMessage[] {
+  let idx = messages.length;
+  while (idx > 0 && messages[idx - 1].role === 'user' && messages[idx - 1].isQueued) {
+    idx--;
+  }
+  return [...messages.slice(0, idx), newMessage, ...messages.slice(idx)];
+}
 
 /**
  * Messaging slice: prompt submission, streaming assistant deltas, message reconciliation, abort.
@@ -98,12 +116,79 @@ export function messagingReducer(
       };
     }
 
+    case 'PROMPT_QUEUED': {
+      // Follow-up sent while the agent is busy (streamingBehavior: "followUp"). Pi buffers
+      // it and runs it as the next turn, so unlike PROMPT_SUBMIT this must not touch
+      // pendingPromptId/agentActivity/activeAssistantMessageId — the running prompt keeps
+      // owning those until it settles.
+      const queuedMessage: ChatMessage = {
+        id: action.payload.id,
+        role: 'user',
+        content: action.payload.message,
+        timestamp: new Date().toLocaleTimeString(),
+        isQueued: true,
+      };
+
+      return {
+        ...state,
+        messages: [...state.messages, queuedMessage],
+      };
+    }
+
+    case 'QUEUED_PROMPT_REJECTED': {
+      // The backend rejected a queued follow-up (e.g. duplicate ID, bridge down). Drop the
+      // queued message and surface the error, but leave the in-flight prompt's
+      // pendingPromptId/agentActivity untouched — it is still running.
+      const stillQueued = state.messages.some(
+        (m) => m.id === action.payload.id && m.isQueued
+      );
+      if (!stillQueued) {
+        return state;
+      }
+
+      return {
+        ...state,
+        messages: state.messages.filter((m) => m.id !== action.payload.id),
+        lastError: action.payload.error,
+      };
+    }
+
     case 'EVENT_MESSAGE_START': {
       if (state.connectionStatus !== 'connected') {
         return state;
       }
 
       const msg = action.payload.message;
+
+      if (msg.role === 'user') {
+        // Pi emits a user-role message_start when it begins processing a queued
+        // follow-up turn. Clear the earliest queued message whose text the echo starts with
+        // (the sent text may carry appended file blocks) in place, so the "Queued" badge
+        // disappears once that turn actually starts without moving the message. No
+        // positional fallback: the echo of the running prompt must not clear a follow-up;
+        // unmatched leftovers are cleared on EVENT_AGENT_SETTLED.
+        const content = extractTextFromContent(msg.content);
+        const targetIndex = content
+          ? state.messages.findIndex(
+              (m) =>
+                m.role === 'user' &&
+                m.isQueued &&
+                m.content.length > 0 &&
+                content.startsWith(m.content)
+            )
+          : -1;
+
+        if (targetIndex < 0) {
+          return state;
+        }
+
+        const updatedMessages = state.messages.map((m, i) =>
+          i === targetIndex ? { ...m, isQueued: false } : m
+        );
+
+        return { ...state, messages: updatedMessages };
+      }
+
       if (msg.role !== 'assistant') {
         return state;
       }
@@ -124,7 +209,7 @@ export function messagingReducer(
 
       return {
         ...state,
-        messages: [...state.messages, assistantMessage],
+        messages: insertBeforeTrailingQueued(state.messages, assistantMessage),
         activeAssistantMessageId: assistantMsgId,
         agentActivity: 'busy',
       };
@@ -331,8 +416,13 @@ export function messagingReducer(
     case 'EVENT_AGENT_SETTLED': {
       // Settled uses agent_settled, NOT agent_end per docs/rpc.md and requirements!
       // This is the authoritative moment when the full session-level run settles.
+      // Pi drains its follow-up queue before settling, so no message is still queued.
+      const hasQueued = state.messages.some((m) => m.isQueued);
       return {
         ...state,
+        messages: hasQueued
+          ? state.messages.map((m) => (m.isQueued ? { ...m, isQueued: false } : m))
+          : state.messages,
         agentActivity: 'idle',
         pendingPromptId: null,
         statusLabel: 'Connected',
@@ -389,6 +479,13 @@ export function messagingReducer(
                 : b
             );
             return { ...m, isStreaming: false, blocks: updatedBlocks };
+          }
+
+          // Pi clears its own follow-up queue on abort, so a still-queued follow-up never
+          // ran. Mark it cancelled (reusing the existing cancelled badge/notice) rather
+          // than leaving a stale "Queued" indicator on a message that will never execute.
+          if (m.role === 'user' && m.isQueued) {
+            return { ...m, isQueued: false, isCancelled: true };
           }
 
           return m;

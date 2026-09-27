@@ -195,10 +195,18 @@ export interface PromptImageAttachment {
   mimeType: string;
 }
 
+/**
+ * Pi RPC `prompt` command field. `'followUp'` queues this prompt to run after the
+ * current turn finishes instead of interrupting it; `'steer'` redirects the running
+ * turn. Omitted entirely for an ordinary idle send.
+ */
+export type PromptStreamingBehavior = 'steer' | 'followUp';
+
 export interface SendPromptPayload {
   id: string;
   message: string;
   images?: PromptImageAttachment[];
+  streamingBehavior?: PromptStreamingBehavior;
 }
 
 export interface SendPromptArgs {
@@ -212,13 +220,15 @@ export interface SendPromptArgs {
 export function buildSendPromptArgs(
   id: string,
   message: string,
-  images?: PromptImageAttachment[]
+  images?: PromptImageAttachment[],
+  streamingBehavior?: PromptStreamingBehavior
 ): SendPromptArgs {
   return {
     payload: {
       id,
       message,
       ...(images && images.length > 0 ? { images } : {}),
+      ...(streamingBehavior ? { streamingBehavior } : {}),
     },
   };
 }
@@ -234,7 +244,8 @@ export async function sendPromptPi(
   imagesOrInvokeFn?:
     | PromptImageAttachment[]
     | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
-  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
+  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>,
+  streamingBehavior?: PromptStreamingBehavior
 ): Promise<SendPromptResult> {
   let images: PromptImageAttachment[] | undefined;
   let invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke;
@@ -253,7 +264,7 @@ export async function sendPromptPi(
     throw new Error('Desktop runtime unavailable: cannot send prompt outside Tauri');
   }
 
-  const args = buildSendPromptArgs(id, message, images);
+  const args = buildSendPromptArgs(id, message, images, streamingBehavior);
   const result = await invokeFn<SendPromptResult>(
     'send_prompt',
     args as unknown as Record<string, unknown>

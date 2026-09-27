@@ -1367,3 +1367,231 @@ test('Reducer composition contract: chatReducer dispatches an owned action to it
   });
   assert.strictEqual(state.thinkingLevel, 'medium');
 });
+
+// --- Issue #6: queue prompts during generation via streamingBehavior: "followUp" ---
+
+test('Reducer: PROMPT_QUEUED during busy streaming preserves pendingPromptId/agentActivity/activeAssistantMessageId', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Long running task' },
+  });
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: { message: { id: 'asst-msg-1', role: 'assistant', content: '' } },
+  });
+  assert.strictEqual(state.agentActivity, 'busy');
+  assert.strictEqual(state.pendingPromptId, 'prompt-1');
+  assert.strictEqual(state.activeAssistantMessageId, 'asst-msg-1');
+
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Follow up while busy' },
+  });
+
+  // Queueing must not disturb the in-flight prompt's tracked state.
+  assert.strictEqual(state.agentActivity, 'busy');
+  assert.strictEqual(state.pendingPromptId, 'prompt-1');
+  assert.strictEqual(state.activeAssistantMessageId, 'asst-msg-1');
+
+  const queuedMessage = state.messages.find((m) => m.id === 'prompt-2');
+  assert.ok(queuedMessage, 'queued message must be appended');
+  assert.strictEqual(queuedMessage?.role, 'user');
+  assert.strictEqual(queuedMessage?.isQueued, true);
+
+  // The streaming assistant message must still be reachable by subsequent updates.
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_UPDATE',
+    payload: { delta: 'still streaming' },
+  });
+  const assistantMessage = state.messages.find((m) => m.id === 'asst-msg-1');
+  assert.strictEqual(assistantMessage?.content, 'still streaming');
+  assert.strictEqual(assistantMessage?.isStreaming, true);
+});
+
+test('Reducer: EVENT_MESSAGE_START inserts a new assistant message before trailing queued messages', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+
+  // Pi starts the follow-up's assistant turn while the queued user message is still last.
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: { message: { id: 'asst-msg-2', role: 'assistant', content: '' } },
+  });
+
+  const ids = state.messages.map((m) => m.id);
+  assert.deepStrictEqual(ids, ['prompt-1', 'asst-msg-2', 'prompt-2']);
+});
+
+test('Reducer: user-role message_start clears isQueued on the earliest matching queued message', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+
+  // Pi begins processing the queued follow-up: emits a user-role message_start.
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: { id: 'user-echo-1', role: 'user', content: 'Queued follow-up' },
+    },
+  });
+
+  const queuedMessage = state.messages.find((m) => m.id === 'prompt-2');
+  assert.strictEqual(queuedMessage?.isQueued, false);
+  // Position and content are preserved; only the flag is cleared.
+  assert.strictEqual(queuedMessage?.content, 'Queued follow-up');
+  assert.strictEqual(state.messages[state.messages.length - 1].id, 'prompt-2');
+});
+
+test('Reducer: user-role message_start of the running prompt does not clear a queued follow-up', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+
+  // Pi echoes the running prompt after the follow-up was already queued.
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: { id: 'user-echo-1', role: 'user', content: 'First turn' },
+    },
+  });
+
+  assert.strictEqual(state.messages.find((m) => m.id === 'prompt-2')?.isQueued, true);
+});
+
+test('Reducer: user-role message_start matches a queued message whose sent text has appended file blocks', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-1', message: 'First queued' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Second queued' },
+  });
+
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: {
+        id: 'user-echo-2',
+        role: 'user',
+        content: 'Second queued\n\n<file name="a.txt">\nhello\n</file>',
+      },
+    },
+  });
+
+  assert.strictEqual(state.messages.find((m) => m.id === 'prompt-1')?.isQueued, true);
+  assert.strictEqual(state.messages.find((m) => m.id === 'prompt-2')?.isQueued, false);
+});
+
+test('Reducer: EVENT_AGENT_SETTLED clears any leftover queued flags', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+  state = chatReducer(state, { type: 'EVENT_AGENT_SETTLED' });
+
+  const queuedMessage = state.messages.find((m) => m.id === 'prompt-2');
+  assert.strictEqual(queuedMessage?.isQueued, false);
+  assert.strictEqual(state.agentActivity, 'idle');
+});
+
+test('Reducer: QUEUED_PROMPT_REJECTED removes the queued message and sets lastError without idling the agent', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+
+  state = chatReducer(state, {
+    type: 'QUEUED_PROMPT_REJECTED',
+    payload: { id: 'prompt-2', error: 'Duplicate prompt request ID' },
+  });
+
+  assert.strictEqual(state.messages.find((m) => m.id === 'prompt-2'), undefined);
+  assert.strictEqual(state.lastError, 'Duplicate prompt request ID');
+  // The in-flight prompt must be unaffected.
+  assert.strictEqual(state.agentActivity, 'busy');
+  assert.strictEqual(state.pendingPromptId, 'prompt-1');
+});
+
+test('Reducer: ABORT_COMPLETED clears isQueued on messages that never started and marks them cancelled', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'First turn' },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-2', message: 'Queued follow-up' },
+  });
+
+  state = chatReducer(state, { type: 'ABORT_CLICKED' });
+  state = chatReducer(state, { type: 'ABORT_COMPLETED' });
+
+  const queuedMessage = state.messages.find((m) => m.id === 'prompt-2');
+  assert.strictEqual(queuedMessage?.isQueued, false);
+  assert.strictEqual(queuedMessage?.isCancelled, true);
+  assert.strictEqual(state.agentActivity, 'idle');
+});

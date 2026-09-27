@@ -11,6 +11,12 @@ import type { AttachedFile } from '../types';
 export interface UsePromptStateOptions {
   isReadyToSend: boolean;
   isBusy: boolean;
+  /**
+   * True when a follow-up prompt can be queued while the agent is busy (connected,
+   * hydrated, not resetting). Distinct from `isReadyToSend`, which gates an ordinary
+   * idle send; the two are mutually exclusive since `isReadyToSend` requires `!isBusy`.
+   */
+  canQueue: boolean;
   pendingPromptId: string | null;
   dispatch: React.Dispatch<ChatAction>;
   /**
@@ -27,6 +33,7 @@ export interface UsePromptStateOptions {
 export function usePromptState({
   isReadyToSend,
   isBusy,
+  canQueue,
   pendingPromptId,
   dispatch,
   pinAndJumpToBottom,
@@ -52,14 +59,17 @@ export function usePromptState({
     e.preventDefault();
     const trimmed = prompt.trim();
     const hasAttachments = attachedFiles.length > 0;
-    if ((!trimmed && !hasAttachments) || !isReadyToSend) return;
+    // isReadyToSend and canQueue are mutually exclusive (canQueue requires isBusy, which
+    // isReadyToSend excludes); `queuing` picks which lifecycle this submit follows.
+    const queuing = !isReadyToSend && canQueue;
+    if ((!trimmed && !hasAttachments) || (!isReadyToSend && !canQueue)) return;
 
     const defaultAttachmentText = attachedFiles.some((f) => f.type === 'image')
       ? '(see attached image)'
       : '(see attached file)';
     const reqId = generatePromptRequestId();
     dispatch({
-      type: 'PROMPT_SUBMIT',
+      type: queuing ? 'PROMPT_QUEUED' : 'PROMPT_SUBMIT',
       payload: { id: reqId, message: trimmed || defaultAttachmentText },
     });
 
@@ -100,19 +110,26 @@ export function usePromptState({
       const res = await sendPromptPi(
         reqId,
         messageToSend,
-        imageAttachments.length > 0 ? imageAttachments : undefined
+        imageAttachments.length > 0 ? imageAttachments : undefined,
+        undefined,
+        queuing ? 'followUp' : undefined
       );
       if (!res?.id) {
         throw new Error('Backend response missing required request ID');
       }
-      dispatch({
-        type: 'PROMPT_ACCEPTED',
-        payload: { id: res.id },
-      });
+      // A queued follow-up's acceptance must not disturb the in-flight prompt's state
+      // (pendingPromptId keeps tracking the running turn), so only an idle send dispatches
+      // PROMPT_ACCEPTED here.
+      if (!queuing) {
+        dispatch({
+          type: 'PROMPT_ACCEPTED',
+          payload: { id: res.id },
+        });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       dispatch({
-        type: 'PROMPT_REJECTED',
+        type: queuing ? 'QUEUED_PROMPT_REJECTED' : 'PROMPT_REJECTED',
         payload: { id: reqId, error: msg },
       });
     }

@@ -675,6 +675,28 @@ test('buildSendPromptArgs: pure payload builder matches backend SendPromptPayloa
   });
 });
 
+test('buildSendPromptArgs: omits streamingBehavior for an ordinary idle send', () => {
+  const args = buildSendPromptArgs('prompt-1', 'Hello');
+  assert.deepStrictEqual(args, {
+    payload: {
+      id: 'prompt-1',
+      message: 'Hello',
+    },
+  });
+  assert.ok(!('streamingBehavior' in args.payload));
+});
+
+test('buildSendPromptArgs: includes streamingBehavior: "followUp" when queuing while busy', () => {
+  const args = buildSendPromptArgs('prompt-2', 'Follow up', undefined, 'followUp');
+  assert.deepStrictEqual(args, {
+    payload: {
+      id: 'prompt-2',
+      message: 'Follow up',
+      streamingBehavior: 'followUp',
+    },
+  });
+});
+
 test('sendPromptPi: bridge passes payload and echoes authoritative ID via mock invoke', async () => {
   const testId = generatePromptRequestId();
   const testMsg = 'What is the speed of light?';
@@ -703,6 +725,26 @@ test('sendPromptPi: bridge passes payload and echoes authoritative ID via mock i
   });
   assert.strictEqual(result.id, testId);
   assert.strictEqual(result.accepted, true);
+});
+
+test('sendPromptPi: forwards streamingBehavior: "followUp" to the backend when queuing', async () => {
+  const testId = generatePromptRequestId();
+
+  let capturedArgs: unknown = null;
+  const mockInvoke = async <T>(_cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    capturedArgs = args;
+    return { id: testId, accepted: true } as unknown as T;
+  };
+
+  await sendPromptPi(testId, 'Queued message', undefined, mockInvoke, 'followUp');
+
+  assert.deepStrictEqual(capturedArgs, {
+    payload: {
+      id: testId,
+      message: 'Queued message',
+      streamingBehavior: 'followUp',
+    },
+  });
 });
 
 test('sendPromptPi: rejects missing or empty ID from backend without synthetic fallback', async () => {

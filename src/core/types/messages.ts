@@ -32,5 +32,11 @@ export interface ChatMessage {
   timestamp: string;
   isStreaming?: boolean;
   isCancelled?: boolean;
+  /**
+   * Set on a user message sent via `PROMPT_QUEUED` while the agent is busy. Cleared once
+   * Pi starts processing the follow-up turn (a user-role `message_start` event), or on
+   * abort, since Pi discards its queue at that point.
+   */
+  isQueued?: boolean;
   blocks?: MessageBlock[];
 }

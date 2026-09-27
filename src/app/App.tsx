@@ -99,6 +99,9 @@ export const App: React.FC = () => {
   const isConnecting = state.connectionStatus === 'connecting';
   const isBusy = state.agentActivity === 'busy';
   const isReadyToSend = isConnected && state.isHydrated && !isBusy && !state.isResetting;
+  // Separate readiness for queuing a follow-up while the agent is busy: same connection/
+  // hydration/reset guards as isReadyToSend, but requires isBusy instead of excluding it.
+  const canQueue = isConnected && state.isHydrated && isBusy && !state.isResetting;
   const { isHighContext } = calculateContextMetrics(state.sessionStats, state.modelInfo, state.availableModels);
 
   // Separate Settings draft state for connection configuration. settingsDraft's initial
@@ -137,6 +140,7 @@ export const App: React.FC = () => {
   } = usePromptState({
     isReadyToSend,
     isBusy,
+    canQueue,
     pendingPromptId: state.pendingPromptId,
     dispatch,
     pinAndJumpToBottom,
@@ -1060,6 +1064,11 @@ export const App: React.FC = () => {
                         {t('message.status_cancelled')}
                       </span>
                     )}
+                    {msg.isQueued && (
+                      <span className="message-badge-queued">
+                        {t('message.status_queued')}
+                      </span>
+                    )}
                     <span className="message-time">{msg.timestamp}</span>
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
@@ -1240,8 +1249,8 @@ export const App: React.FC = () => {
                             ? t('prompt.placeholder_busy')
                             : t('prompt.placeholder_ready')
               }
-              disabled={!isReadyToSend}
-              aria-disabled={!isReadyToSend}
+              disabled={!isReadyToSend && !canQueue}
+              aria-disabled={!isReadyToSend && !canQueue}
               aria-describedby="prompt-status-hint"
               rows={3}
             />
@@ -1257,7 +1266,7 @@ export const App: React.FC = () => {
               isHighContext={isHighContext}
               isConnected={isConnected}
               isBusy={isBusy}
-              canSend={isReadyToSend && (prompt.trim().length > 0 || attachedFiles.length > 0)}
+              canSend={(isReadyToSend || canQueue) && (prompt.trim().length > 0 || attachedFiles.length > 0)}
               attachedFiles={attachedFiles}
               onAttachFiles={addAttachedFiles}
               onAbort={handleAbort}

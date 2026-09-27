@@ -82,6 +82,7 @@
   "action.cancel": "Cancelar",
   "action.stop": "Detener",
   "action.send": "Enviar",
+  "action.queue": "Encolar",
   "action.new_conversation": "Nueva conversación",
   "action.dismiss_warning": "Descartar advertencia",
   "action.dismiss_error": "Descartar error",
@@ -172,6 +173,7 @@
   "message.generating": "Generando respuesta...",
   "message.status_cancelled": "Cancelado",
   "message.cancelled_note": "Generación cancelada",
+  "message.status_queued": "En cola",
 
   "markdown.copy_code": "Copiar",
   "markdown.copy_url": "Copiar URL",
@@ -227,6 +229,7 @@
   "prompt.status_tag": "Estado: {status}",
   "prompt.stop_title": "Detener generación de respuesta",
   "prompt.send_title": "Enviar mensaje a Pi",
+  "prompt.queue_title": "Encolar este mensaje para ejecutarse cuando termine la respuesta actual",
   "prompt.confirm_cancel": "¿Confirmar?",
   "prompt.confirm_cancel_title": "Haz clic de nuevo para confirmar la cancelación",
   "prompt.status_dot_aria": "Estado de la conexión: {status}",

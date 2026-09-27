@@ -82,6 +82,7 @@
   "action.cancel": "Cancel",
   "action.stop": "Stop",
   "action.send": "Send",
+  "action.queue": "Queue",
   "action.new_conversation": "New Conversation",
   "action.dismiss_warning": "Dismiss warning",
   "action.dismiss_error": "Dismiss error",
@@ -172,6 +173,7 @@
   "message.generating": "Generating response...",
   "message.status_cancelled": "Cancelled",
   "message.cancelled_note": "Generation cancelled",
+  "message.status_queued": "Queued",
 
   "markdown.copy_code": "Copy",
   "markdown.copy_url": "Copy URL",
@@ -227,6 +229,7 @@
   "prompt.status_tag": "Status: {status}",
   "prompt.stop_title": "Stop response generation",
   "prompt.send_title": "Send prompt to Pi",
+  "prompt.queue_title": "Queue this prompt to run after the current response finishes",
   "prompt.confirm_cancel": "Confirm?",
   "prompt.confirm_cancel_title": "Click again to confirm cancelling response generation",
   "prompt.status_dot_aria": "Connection status: {status}",
