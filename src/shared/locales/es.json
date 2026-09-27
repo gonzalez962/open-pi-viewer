@@ -193,6 +193,9 @@
   "markdown.opening_url_aria": "Abriendo enlace: {url}",
   "markdown.open_failed_url_aria": "Error al abrir enlace: {url}",
   "markdown.link_hint": "{modifier}+clic para abrir",
+  "markdown.line_count": "{count} líneas",
+  "markdown.insert_code": "Insertar",
+  "markdown.insert_code_aria": "Insertar código {lang} en el prompt",
 
   "activity.thinking": "Pensando...",
   "activity.thought_complete": "Pensó por un momento",

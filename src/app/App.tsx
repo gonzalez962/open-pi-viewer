@@ -25,7 +25,11 @@ import {
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
 import { PromptControls } from '@features/chat/PromptControls';
-import { isMessageEmpty, calculateContextMetrics } from '@core/prompt-controls-utils';
+import {
+  isMessageEmpty,
+  calculateContextMetrics,
+  buildInsertCodeDraft,
+} from '@core/prompt-controls-utils';
 import {
   multiProjectChatReducer,
   createInitialMultiProjectState,
@@ -144,7 +148,18 @@ export const App: React.FC = () => {
     pendingPromptId: state.pendingPromptId,
     dispatch,
     pinAndJumpToBottom,
+    messages: state.messages,
   });
+
+  // Pure wrapper handing MarkdownContent's per-code-card "Insert into prompt" button a way
+  // to append a fenced snippet to the prompt draft (Issue #7); the actual wrap/append logic
+  // is core-pure (`buildInsertCodeDraft`).
+  const insertCodeIntoPrompt = useCallback(
+    (code: string, language?: string) => {
+      setPrompt((prev) => buildInsertCodeDraft(prev, code, language));
+    },
+    [setPrompt]
+  );
 
   // Connection cluster: persisted ConnectConfig, the connection-load storage warning, and
   // the StartupManager instance (attempt lifecycle, coalescing, retry). The onConnect*
@@ -1099,6 +1114,7 @@ export const App: React.FC = () => {
                                 key={`text-${bIndex}`}
                                 content={block.text}
                                 t={t}
+                                onInsertCode={insertCodeIntoPrompt}
                               />
                             );
                           }
@@ -1106,7 +1122,7 @@ export const App: React.FC = () => {
                         })}
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
-                      <MarkdownContent content={msg.content} t={t} />
+                      <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
                     ) : (
                       <div className="message-literal">{msg.content}</div>
                     )}

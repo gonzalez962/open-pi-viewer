@@ -1,11 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   abortPi,
   sendPromptPi,
   type PromptImageAttachment,
 } from '@infra/bridge';
 import { generatePromptRequestId } from '@core/protocol';
+import { buildCopyAllCodeText, getLastAssistantCodeBlocks } from '@core/markdown';
+import { buildInsertCodeDraft } from '@core/prompt-controls-utils';
 import type { ChatAction } from '@core/reducer';
+import type { ChatMessage } from '@core/types/messages';
+import { copyText } from '@shared/clipboard';
 import type { AttachedFile } from '../types';
 
 export interface UsePromptStateOptions {
@@ -25,6 +29,11 @@ export interface UsePromptStateOptions {
    * another cluster's internals.
    */
   pinAndJumpToBottom: () => void;
+  /**
+   * Active project's chat messages, used only by the Alt+C / Alt+I global code shortcuts
+   * (Issue #7) to locate the last assistant message's code blocks.
+   */
+  messages: ChatMessage[];
 }
 
 /**
@@ -37,9 +46,41 @@ export function usePromptState({
   pendingPromptId,
   dispatch,
   pinAndJumpToBottom,
+  messages,
 }: UsePromptStateOptions) {
   const [prompt, setPrompt] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+
+  // Global Alt+C (copy all executable code from the last assistant message with code) /
+  // Alt+I (insert its last snippet into the prompt draft) shortcuts (Issue #7). Uses
+  // event.code (KeyC/KeyI) rather than event.key so both bindings work across keyboard
+  // layouts. All matching/selection logic is pure core (`@core/markdown`); this effect is
+  // thin glue wiring it to the DOM and the prompt draft setter.
+  useEffect(() => {
+    function handleGlobalCodeShortcut(e: KeyboardEvent) {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+
+      if (e.code === 'KeyC') {
+        const blocks = getLastAssistantCodeBlocks(messages);
+        const text = buildCopyAllCodeText(blocks);
+        if (text === null) return;
+        e.preventDefault();
+        void copyText(text);
+        return;
+      }
+
+      if (e.code === 'KeyI') {
+        const blocks = getLastAssistantCodeBlocks(messages);
+        const last = blocks[blocks.length - 1];
+        if (!last || last.isDiff) return;
+        e.preventDefault();
+        setPrompt((prev) => buildInsertCodeDraft(prev, last.code, last.language));
+      }
+    }
+
+    window.addEventListener('keydown', handleGlobalCodeShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalCodeShortcut);
+  }, [messages]);
 
   const addAttachedFiles = (files: AttachedFile[]) => {
     setAttachedFiles((prev) => [...prev, ...files]);

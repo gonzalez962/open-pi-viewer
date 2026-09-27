@@ -85,6 +85,22 @@
   --tool-output-bg: #0d1117;
   --tool-output-border: #30363d;
 
+  /* PiColor syntax highlighting palette (Issue #7). Only dark/light are themed. */
+  --syntax-keyword: #ff7b72;
+  --syntax-string: #a5d6ff;
+  --syntax-number: #79c0ff;
+  --syntax-comment: #8b949e;
+  --syntax-function: #d2a8ff;
+  --syntax-type: #ffa657;
+  --syntax-operator: #ff7b72;
+  --syntax-variable: #e6edf3;
+  --syntax-diff-add: #7ee787;
+  --syntax-diff-add-bg: rgba(63, 185, 80, 0.12);
+  --syntax-diff-remove: #ffa198;
+  --syntax-diff-remove-bg: rgba(248, 81, 73, 0.12);
+  --syntax-diff-hunk: #79c0ff;
+  --syntax-diff-hunk-bg: rgba(56, 139, 253, 0.12);
+
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -177,5 +193,21 @@
   --thinking-text-fg: #424a53;
   --tool-output-bg: #f6f8fa;
   --tool-output-border: #d0d7de;
+
+  /* PiColor syntax highlighting palette (Issue #7). Only dark/light are themed. */
+  --syntax-keyword: #cf222e;
+  --syntax-string: #0a3069;
+  --syntax-number: #0550ae;
+  --syntax-comment: #6e7781;
+  --syntax-function: #8250df;
+  --syntax-type: #953800;
+  --syntax-operator: #cf222e;
+  --syntax-variable: #1f2328;
+  --syntax-diff-add: #1a7f37;
+  --syntax-diff-add-bg: rgba(46, 160, 67, 0.12);
+  --syntax-diff-remove: #cf222e;
+  --syntax-diff-remove-bg: rgba(207, 34, 46, 0.12);
+  --syntax-diff-hunk: #0969da;
+  --syntax-diff-hunk-bg: rgba(9, 105, 218, 0.1);
 }
 

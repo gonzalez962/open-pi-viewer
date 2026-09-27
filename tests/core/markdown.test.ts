@@ -25,12 +25,20 @@ import {
 } from '@infra/opener';
 import {
   MAX_LIST_NESTING_DEPTH,
+  buildCopyAllCodeText,
+  extractCodeBlocks,
+  getLastAssistantCodeBlocks,
+  inferLanguageFromFilename,
+  isDiff,
   isSafeUrl,
+  parseCodeFenceHeader,
   parseInline,
   parseMarkdown,
+  sanitizeFilename,
   sanitizeLanguage,
   shouldRenderAsMarkdown,
 } from '@core/markdown';
+import type { ChatMessage } from '@core/types/messages';
 
 // ============================================================================
 // Group 1: Message Rendering Decision (Assistant vs User/System)
@@ -1513,4 +1521,216 @@ test('a11y: getLinkAriaLabel and getLinkOpenLiveStatusText provide accurate acce
   );
 });
 
+// ============================================================================
+// Group: Extended Code Fence Headers (Issue #7)
+// ============================================================================
+
+test('fence header: plain language token', () => {
+  assert.deepEqual(parseCodeFenceHeader('typescript'), { language: 'typescript', filename: undefined });
+});
+
+test('fence header: language:path form infers filename', () => {
+  assert.deepEqual(parseCodeFenceHeader('typescript:src/path/file.ts'), {
+    language: 'typescript',
+    filename: 'src/path/file.ts',
+  });
+});
+
+test('fence header: language + filename attribute (double quotes)', () => {
+  assert.deepEqual(parseCodeFenceHeader('rust filename="engine.rs"'), {
+    language: 'rust',
+    filename: 'engine.rs',
+  });
+});
+
+test('fence header: language + filename attribute (single quotes)', () => {
+  const singleQuoted = ['rust filename=', String.fromCharCode(39), 'engine.rs', String.fromCharCode(39)].join('');
+  assert.deepEqual(parseCodeFenceHeader(singleQuoted), {
+    language: 'rust',
+    filename: 'engine.rs',
+  });
+});
+
+test('fence header: title attribute alone infers language from extension', () => {
+  assert.deepEqual(parseCodeFenceHeader('title="notes.md"'), {
+    language: 'markdown',
+    filename: 'notes.md',
+  });
+});
+
+test('fence header: title attribute with no recognizable extension has no inferred language', () => {
+  assert.deepEqual(parseCodeFenceHeader('title="README"'), {
+    language: undefined,
+    filename: 'README',
+  });
+});
+
+test('fence header: bare filename with known extension infers language', () => {
+  assert.deepEqual(parseCodeFenceHeader('main.go'), { language: 'go', filename: 'main.go' });
+});
+
+test('fence header: bare filename with unknown extension keeps it as sanitized language token', () => {
+  const result = parseCodeFenceHeader('weird.xyzzy');
+  assert.equal(result.filename, undefined);
+  assert.ok(typeof result.language === 'string');
+});
+
+test('fence header: empty/undefined input returns empty info', () => {
+  assert.deepEqual(parseCodeFenceHeader(''), {});
+  assert.deepEqual(parseCodeFenceHeader(undefined), {});
+  assert.deepEqual(parseCodeFenceHeader('   '), {});
+});
+
+test('fence header: filename is sanitized (control chars and backticks stripped, bounded, trimmed)', () => {
+  assert.equal(sanitizeFilename('  path/to/file.ts  '), 'path/to/file.ts');
+  assert.equal(sanitizeFilename('a`b'), 'ab');
+  assert.equal(sanitizeFilename(''), undefined);
+  assert.equal(sanitizeFilename(undefined), undefined);
+  assert.equal(sanitizeFilename('a'.repeat(300))!.length, 200);
+});
+
+test('fence header: inferLanguageFromFilename maps common extensions', () => {
+  assert.equal(inferLanguageFromFilename('a.ts'), 'typescript');
+  assert.equal(inferLanguageFromFilename('a.tsx'), 'typescript');
+  assert.equal(inferLanguageFromFilename('a.rs'), 'rust');
+  assert.equal(inferLanguageFromFilename('a.go'), 'go');
+  assert.equal(inferLanguageFromFilename('a.py'), 'python');
+  assert.equal(inferLanguageFromFilename('a.unknownext'), undefined);
+  assert.equal(inferLanguageFromFilename('noextension'), undefined);
+  assert.equal(inferLanguageFromFilename(undefined), undefined);
+});
+
+test('parser: code_block AST node carries filename from extended fence header', () => {
+  const ast = parseMarkdown('```typescript:src/app/App.tsx\nconst x = 1;\n```');
+  assert.equal(ast.children.length, 1);
+  const block = ast.children[0];
+  assert.equal(block.type, 'code_block');
+  if (block.type === 'code_block') {
+    assert.equal(block.language, 'typescript');
+    assert.equal(block.filename, 'src/app/App.tsx');
+    assert.equal(block.code, 'const x = 1;');
+  }
+});
+
+// ============================================================================
+// Group: Diff Classification (Issue #7)
+// ============================================================================
+
+test('isDiff: classifies diff/patch/gitcommit/gitrebase languages, case-insensitively', () => {
+  assert.equal(isDiff('diff'), true);
+  assert.equal(isDiff('DIFF'), true);
+  assert.equal(isDiff('patch'), true);
+  assert.equal(isDiff('gitcommit'), true);
+  assert.equal(isDiff('gitrebase'), true);
+  assert.equal(isDiff('typescript'), false);
+  assert.equal(isDiff(undefined), false);
+  assert.equal(isDiff(''), false);
+});
+
+// ============================================================================
+// Group: extractCodeBlocks / getLastAssistantCodeBlocks (Issue #7)
+// ============================================================================
+
+test('extractCodeBlocks: returns every fenced code block in document order with isDiff flags', () => {
+  const md = [
+    'Some text',
+    '```typescript',
+    'const a = 1;',
+    '```',
+    'More text',
+    '```diff',
+    '+added',
+    '-removed',
+    '```',
+  ].join('\n');
+
+  const blocks = extractCodeBlocks(md);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].language, 'typescript');
+  assert.equal(blocks[0].isDiff, false);
+  assert.equal(blocks[0].code, 'const a = 1;');
+  assert.equal(blocks[1].language, 'diff');
+  assert.equal(blocks[1].isDiff, true);
+  assert.equal(blocks[1].code, '+added\n-removed');
+});
+
+test('extractCodeBlocks: returns empty array for markdown with no code blocks', () => {
+  assert.deepEqual(extractCodeBlocks('just some paragraph text'), []);
+});
+
+function makeMessage(overrides: Partial<ChatMessage>): ChatMessage {
+  return {
+    id: overrides.id ?? 'm1',
+    role: overrides.role ?? 'assistant',
+    content: overrides.content ?? '',
+    timestamp: overrides.timestamp ?? '00:00',
+    ...overrides,
+  };
+}
+
+test('getLastAssistantCodeBlocks: finds code blocks in the last assistant message content', () => {
+  const messages: ChatMessage[] = [
+    makeMessage({ id: '1', role: 'user', content: 'hi' }),
+    makeMessage({ id: '2', role: 'assistant', content: '```js\nconsole.log(1);\n```' }),
+    makeMessage({ id: '3', role: 'user', content: 'thanks' }),
+  ];
+  const blocks = getLastAssistantCodeBlocks(messages);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].code, 'console.log(1);');
+});
+
+test('getLastAssistantCodeBlocks: skips assistant messages with no code, using the most recent that has some', () => {
+  const messages: ChatMessage[] = [
+    makeMessage({ id: '1', role: 'assistant', content: '```py\nprint(1)\n```' }),
+    makeMessage({ id: '2', role: 'user', content: 'ok' }),
+    makeMessage({ id: '3', role: 'assistant', content: 'no code here, just prose' }),
+  ];
+  const blocks = getLastAssistantCodeBlocks(messages);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].code, 'print(1)');
+});
+
+test('getLastAssistantCodeBlocks: scans streamed text blocks in order', () => {
+  const messages: ChatMessage[] = [
+    makeMessage({
+      id: '1',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        { type: 'text', text: '```js\nfirst();\n```' },
+        { type: 'tool_call', id: 't1', name: 'run', status: 'completed' },
+        { type: 'text', text: '```js\nsecond();\n```' },
+      ],
+    }),
+  ];
+  const blocks = getLastAssistantCodeBlocks(messages);
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].code, 'first();');
+  assert.equal(blocks[1].code, 'second();');
+});
+
+test('getLastAssistantCodeBlocks: returns empty array when no assistant message has code', () => {
+  const messages: ChatMessage[] = [
+    makeMessage({ id: '1', role: 'assistant', content: 'no code' }),
+    makeMessage({ id: '2', role: 'user', content: '```js\nuser code ignored\n```' }),
+  ];
+  assert.deepEqual(getLastAssistantCodeBlocks(messages), []);
+});
+
+test('getLastAssistantCodeBlocks: returns empty array for empty/non-array input', () => {
+  assert.deepEqual(getLastAssistantCodeBlocks([]), []);
+});
+
+test('buildCopyAllCodeText: joins executable (non-diff) code blocks, excluding diffs', () => {
+  const blocks = extractCodeBlocks(
+    ['```js', 'a();', '```', '```diff', '+x', '```', '```py', 'b()', '```'].join('\n')
+  );
+  assert.equal(buildCopyAllCodeText(blocks), 'a();\n\nb()');
+});
+
+test('buildCopyAllCodeText: returns null when there is nothing executable to copy', () => {
+  const blocks = extractCodeBlocks(['```diff', '+x', '```'].join('\n'));
+  assert.equal(buildCopyAllCodeText(blocks), null);
+  assert.equal(buildCopyAllCodeText([]), null);
+});
 

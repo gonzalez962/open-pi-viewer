@@ -347,10 +347,51 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 4px 10px;
   background-color: var(--md-code-header-bg);
   border-bottom: 1px solid var(--md-code-border);
   user-select: none;
+  flex-wrap: wrap;
+}
+
+.markdown-code-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.markdown-code-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Nerd Font glyph shown before the language badge. Purely decorative (aria-hidden); the
+   font-family stack tries common Nerd Font variants first and degrades to the app's
+   monospace stack (a tofu glyph, at worst) — the language badge text always carries the
+   actual information regardless of whether a Nerd Font is installed. */
+.markdown-code-icon {
+  font-family: "Symbols Nerd Font", "JetBrainsMono Nerd Font", "FiraCode Nerd Font",
+    "Hack Nerd Font", var(--font-mono), monospace;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.markdown-code-filename {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
 }
 
 .markdown-code-language {
@@ -358,8 +399,20 @@
   font-size: 11px;
   color: var(--fg-muted);
   text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-muted);
 }
 
+.markdown-code-line-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+
+.markdown-code-insert-btn,
 .markdown-code-copy-btn,
 .markdown-link-copy-btn {
   font-family: var(--font-sans);
@@ -375,6 +428,7 @@
   user-select: none;
 }
 
+.markdown-code-insert-btn:hover,
 .markdown-code-copy-btn:hover,
 .markdown-link-copy-btn:hover {
   background-color: var(--bg-subtle-hover);
@@ -382,6 +436,7 @@
   border-color: var(--border-active);
 }
 
+.markdown-code-insert-btn:focus-visible,
 .markdown-code-copy-btn:focus-visible,
 .markdown-link-copy-btn:focus-visible,
 .markdown-link:focus-visible {
@@ -399,6 +454,39 @@
   color: var(--md-code-fg);
   white-space: pre;
 }
+
+/* Per-line wrapper produced by PiColor's highlighted line list. */
+.markdown-code-line {
+  display: block;
+  min-height: 1.5em;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
+
+.markdown-code-line.pi-diff-line-add {
+  background-color: var(--syntax-diff-add-bg);
+}
+
+.markdown-code-line.pi-diff-line-remove {
+  background-color: var(--syntax-diff-remove-bg);
+}
+
+.markdown-code-line.pi-diff-line-hunk {
+  background-color: var(--syntax-diff-hunk-bg);
+}
+
+/* PiColor semantic token classes (see src/core/picolor.ts). */
+.pi-token-keyword { color: var(--syntax-keyword); }
+.pi-token-string { color: var(--syntax-string); }
+.pi-token-number { color: var(--syntax-number); }
+.pi-token-comment { color: var(--syntax-comment); font-style: italic; }
+.pi-token-function { color: var(--syntax-function); }
+.pi-token-type { color: var(--syntax-type); }
+.pi-token-operator { color: var(--syntax-operator); }
+.pi-token-variable { color: var(--syntax-variable); }
+.pi-token-diff-add { color: var(--syntax-diff-add); }
+.pi-token-diff-remove { color: var(--syntax-diff-remove); }
+.pi-token-diff-hunk { color: var(--syntax-diff-hunk); }
 
 .markdown-code-pre::-webkit-scrollbar {
   height: 6px;

@@ -2,6 +2,7 @@ import React from 'react';
 import type { CopyStatus } from '@shared/clipboard';
 import type { TranslationKey } from '@shared/i18n';
 import {
+  isDiff,
   parseMarkdown,
   sanitizeLanguage,
   shouldRenderAsMarkdown,
@@ -9,6 +10,7 @@ import {
   type InlineNode,
   type ListItemNode,
 } from '@core/markdown';
+import { highlightCode } from '@core/picolor';
 import {
   getLinkAriaLabel,
   getLinkModifierLabel,
@@ -16,6 +18,46 @@ import {
 } from '@infra/opener';
 import { useCopyFeedback } from '@features/chat/hooks/useCopyFeedback';
 import { useLinkOpener } from '@features/chat/hooks/useLinkOpener';
+
+/**
+ * Nerd Font glyph (PUA codepoint) shown before the language badge in a code card header.
+ * Purely decorative (aria-hidden): when no Nerd Font is installed the glyph renders as a
+ * missing-glyph box, but the adjacent text language badge always carries the information,
+ * so the header degrades gracefully.
+ */
+const LANGUAGE_ICON_GLYPHS: Readonly<Record<string, string>> = Object.freeze({
+  typescript: '',
+  javascript: '',
+  python: '',
+  rust: '',
+  go: '',
+  java: '',
+  ruby: '',
+  php: '',
+  c: '',
+  cpp: '',
+  csharp: '',
+  css: '',
+  scss: '',
+  html: '',
+  xml: '',
+  json: '',
+  yaml: '',
+  bash: '',
+  sql: '',
+  markdown: '',
+  kotlin: '',
+  swift: '',
+  diff: '',
+  patch: '',
+});
+
+const DEFAULT_LANGUAGE_ICON_GLYPH = '';
+
+function getLanguageIconGlyph(language?: string): string {
+  if (!language) return DEFAULT_LANGUAGE_ICON_GLYPH;
+  return LANGUAGE_ICON_GLYPHS[language.toLowerCase()] ?? DEFAULT_LANGUAGE_ICON_GLYPH;
+}
 
 export {
   getLinkAriaLabel,
@@ -80,6 +122,12 @@ export function getCopyLiveStatusText(
 export interface MarkdownContentProps {
   content: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+  /**
+   * Optional callback wired from the app shell: invoked with a code block's raw code and
+   * sanitized language when the user clicks "Insert into prompt" on a (non-diff) code card.
+   * Absent this prop, the Insert button is not rendered.
+   */
+  onInsertCode?: (code: string, language?: string) => void;
 }
 
 /**
@@ -90,12 +138,20 @@ export interface MarkdownContentProps {
 export const CodeBlock: React.FC<{
   code: string;
   language?: string;
+  filename?: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-}> = ({ code, language, t }) => {
+  onInsertCode?: (code: string, language?: string) => void;
+}> = ({ code, language, filename, t, onInsertCode }) => {
   const { status, triggerCopy } = useCopyFeedback();
 
   const sanitizedLang = sanitizeLanguage(language);
   const displayLang = sanitizedLang || t('markdown.code_plain');
+  const isDiffBlock = isDiff(sanitizedLang);
+  const lineCount = code.length === 0 ? 0 : code.split('\n').length;
+  const highlightedLines = React.useMemo(
+    () => highlightCode(code, sanitizedLang),
+    [code, sanitizedLang]
+  );
 
   const copyLabel =
     status === 'copied'
@@ -110,16 +166,38 @@ export const CodeBlock: React.FC<{
   return (
     <div className="markdown-code-block">
       <div className="markdown-code-header">
-        <span className="markdown-code-language">{displayLang}</span>
-        <button
-          type="button"
-          className="markdown-code-copy-btn"
-          onClick={() => void triggerCopy(code)}
-          aria-label={ariaLabel}
-          title={copyLabel}
-        >
-          {copyLabel}
-        </button>
+        <div className="markdown-code-header-left">
+          <span className="markdown-code-icon" aria-hidden="true">
+            {getLanguageIconGlyph(sanitizedLang)}
+          </span>
+          {filename && <span className="markdown-code-filename">{filename}</span>}
+          <span className="markdown-code-language">{displayLang}</span>
+          <span className="markdown-code-line-count">
+            {t('markdown.line_count', { count: lineCount })}
+          </span>
+        </div>
+        <div className="markdown-code-header-actions">
+          {!isDiffBlock && onInsertCode && (
+            <button
+              type="button"
+              className="markdown-code-insert-btn"
+              onClick={() => onInsertCode(code, sanitizedLang)}
+              aria-label={t('markdown.insert_code_aria', { lang: displayLang })}
+              title={t('markdown.insert_code')}
+            >
+              {t('markdown.insert_code')}
+            </button>
+          )}
+          <button
+            type="button"
+            className="markdown-code-copy-btn"
+            onClick={() => void triggerCopy(code)}
+            aria-label={ariaLabel}
+            title={copyLabel}
+          >
+            {copyLabel}
+          </button>
+        </div>
         {liveStatus && (
           <span
             role="status"
@@ -141,7 +219,24 @@ export const CodeBlock: React.FC<{
         )}
       </div>
       <pre className="markdown-code-pre">
-        <code className="markdown-code-text">{code}</code>
+        <code className="markdown-code-text">
+          {highlightedLines.map((line, lineIdx) => (
+            <div
+              key={lineIdx}
+              className={`markdown-code-line${line.lineClassName ? ` ${line.lineClassName}` : ''}`}
+            >
+              {line.tokens.map((token, tokenIdx) => (
+                <span
+                  key={tokenIdx}
+                  className={token.className || undefined}
+                >
+                  {token.text}
+                </span>
+              ))}
+              {line.tokens.length === 0 && ' '}
+            </div>
+          ))}
+        </code>
       </pre>
     </div>
   );
@@ -307,13 +402,14 @@ function renderListItem(
   item: ListItemNode,
   index: number,
   keyPrefix: string,
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  onInsertCode?: (code: string, language?: string) => void
 ): React.ReactNode {
   const key = `${keyPrefix}-li-${index}`;
   return (
     <li key={key} className="markdown-li">
       {renderInline(item.children, key, t)}
-      {item.subList && renderBlock(item.subList, 0, `${key}-sub`, t)}
+      {item.subList && renderBlock(item.subList, 0, `${key}-sub`, t, onInsertCode)}
     </li>
   );
 }
@@ -322,7 +418,8 @@ function renderBlock(
   block: BlockNode,
   index: number,
   keyPrefix: string,
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  onInsertCode?: (code: string, language?: string) => void
 ): React.ReactNode {
   const key = `${keyPrefix}-blk-${index}`;
   switch (block.type) {
@@ -356,12 +453,14 @@ function renderBlock(
           key={key}
           code={block.code}
           language={block.language}
+          filename={block.filename}
           t={t}
+          onInsertCode={onInsertCode}
         />
       );
     case 'list': {
       const items = block.items.map((item, itemIdx) =>
-        renderListItem(item, itemIdx, key, t)
+        renderListItem(item, itemIdx, key, t, onInsertCode)
       );
       if (block.ordered) {
         return (
@@ -383,12 +482,12 @@ function renderBlock(
  * Pure React component rendering a safe Markdown subset.
  * Raw HTML is escaped automatically by React JSX; no dangerouslySetInnerHTML is ever used.
  */
-export const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, t }) => {
+export const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, t, onInsertCode }) => {
   const ast = parseMarkdown(content);
 
   return (
     <div className="markdown-body">
-      {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t))}
+      {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
     </div>
   );
 };

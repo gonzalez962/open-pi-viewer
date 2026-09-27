@@ -215,6 +215,17 @@ export function isMessageEmpty(msg: ChatMessage | null | undefined): boolean {
   return true;
 }
 
+/**
+ * Builds the next prompt draft after inserting a code snippet: wraps `code` in a fenced
+ * block tagged with `language` (empty when not provided), appending it to `currentDraft`
+ * with a separating blank line when the draft is non-empty (Issue #7's "Insert into
+ * prompt" code-card button and the Alt+I global shortcut).
+ */
+export function buildInsertCodeDraft(currentDraft: string, code: string, language?: string): string {
+  const fence = '```' + (language ?? '') + '\n' + code + '\n```';
+  return currentDraft.trim().length > 0 ? `${currentDraft}\n\n${fence}` : fence;
+}
+
 export type FileAttachmentCategory = 'image' | 'video' | 'audio' | 'code' | 'all';
 
 /**

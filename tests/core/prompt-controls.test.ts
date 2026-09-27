@@ -16,6 +16,7 @@ import {
   isContextHighUsage,
   calculateContextMetrics,
   HIGH_CONTEXT_PERCENT_THRESHOLD,
+  buildInsertCodeDraft,
 } from '@core/prompt-controls-utils';
 import { PopoverSearchBar } from '@features/chat/components/PopoverSearchBar';
 import {
@@ -1950,6 +1951,28 @@ test('PromptControls: stats-btn includes context-pulse-red when context is >= 70
     false,
     'Expected context-pulse-red to NOT be present when isHighContext prop is explicitly false'
   );
+});
+
+test('buildInsertCodeDraft: wraps code in a fenced block tagged with the language', () => {
+  assert.strictEqual(
+    buildInsertCodeDraft('', 'const x = 1;', 'typescript'),
+    '```typescript\nconst x = 1;\n```'
+  );
+});
+
+test('buildInsertCodeDraft: omits the language tag when none is provided', () => {
+  assert.strictEqual(buildInsertCodeDraft('', 'plain snippet'), '```\nplain snippet\n```');
+});
+
+test('buildInsertCodeDraft: appends to a non-empty draft with a separating blank line', () => {
+  assert.strictEqual(
+    buildInsertCodeDraft('please review this:', 'a();', 'js'),
+    'please review this:\n\n```js\na();\n```'
+  );
+});
+
+test('buildInsertCodeDraft: treats a whitespace-only draft as empty (no leading blank line)', () => {
+  assert.strictEqual(buildInsertCodeDraft('   \n  ', 'a();', 'js'), '```js\na();\n```');
 });
 
 
