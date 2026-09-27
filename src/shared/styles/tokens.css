@@ -6,9 +6,11 @@
   --bg-canvas: #0d1117;
   --bg-surface: #161b22;
   --bg-elevated: #1c2128;
+  --bg-surface-elevated: var(--bg-elevated);
   --text-primary: #e6edf3;
   --bg-subtle: #21262d;
   --bg-subtle-hover: #30363d;
+  --bg-hover: var(--bg-subtle-hover);
   --bg-input: #0d1117;
   --bg-input-disabled: #12161c;
   --bg-chat-viewport: rgba(22, 27, 34, 0.4);
@@ -94,9 +96,11 @@
   --bg-canvas: #f6f8fa;
   --bg-surface: #ffffff;
   --bg-elevated: #ffffff;
+  --bg-surface-elevated: var(--bg-elevated);
   --text-primary: #1f2328;
   --bg-subtle: #eaeef2;
   --bg-subtle-hover: #d0d7de;
+  --bg-hover: var(--bg-subtle-hover);
   --bg-input: #ffffff;
   --bg-input-disabled: #f3f4f6;
   --bg-chat-viewport: rgba(234, 238, 242, 0.5);
