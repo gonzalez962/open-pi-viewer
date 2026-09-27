@@ -1,6 +1,7 @@
 //! Session persistence, parsing, switching, and history management commands.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,18 @@ pub struct SessionSummary {
     pub first_message: String,
     pub message_count: usize,
     pub is_active: bool,
+    /// User-assigned display name, taken from the `name` field of the latest
+    /// `session_info` entry in the file (if any). `None` when the session was
+    /// never renamed, in which case the UI falls back to `first_message`.
+    pub custom_title: Option<String>,
+}
+
+/// Payload for renaming a session (appends a `session_info` entry).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSessionPayload {
+    pub session_path: String,
+    pub name: String,
 }
 
 
@@ -288,6 +301,7 @@ pub fn parse_session_file(
 
     let mut message_count: usize = 0;
     let mut first_user_message: Option<String> = None;
+    let mut custom_title: Option<String> = None;
 
     for line_res in lines {
         let line = match line_res {
@@ -302,6 +316,16 @@ pub fn parse_session_file(
             Ok(v) => v,
             Err(_) => continue,
         };
+
+        if val.get("type").and_then(|v| v.as_str()) == Some("session_info") {
+            if let Some(name) = val.get("name").and_then(|v| v.as_str()) {
+                let trimmed_name = name.trim();
+                if !trimmed_name.is_empty() {
+                    // Latest session_info entry with a non-empty name wins.
+                    custom_title = Some(trimmed_name.to_string());
+                }
+            }
+        }
 
         if val.get("type").and_then(|v| v.as_str()) == Some("message") {
             message_count += 1;
@@ -346,7 +370,38 @@ pub fn parse_session_file(
         .and_then(|m| m.modified().ok())
         .and_then(system_time_to_rfc3339);
 
-    let matches_id = active_id.map_or(false, |aid| aid == id);
+    let is_active = session_matches_active(file_path, active_id, active_file, Some(&id));
+
+    let path_str = dunce::canonicalize(file_path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
+
+    Some(SessionSummary {
+        id,
+        path: path_str,
+        created_at,
+        modified_at,
+        first_message,
+        message_count,
+        is_active,
+        custom_title,
+    })
+}
+
+/// Determines whether `file_path` (whose own session id is `file_id`, if known) is the
+/// currently active session, matching by id or by canonicalized/normalized path — same
+/// contract used by `parse_session_file` and reused by `rename_session` to decide whether
+/// Pi RPC currently owns writes to this file.
+pub fn session_matches_active(
+    file_path: &Path,
+    active_id: Option<&str>,
+    active_file: Option<&str>,
+    file_id: Option<&str>,
+) -> bool {
+    let matches_id = match (active_id, file_id) {
+        (Some(aid), Some(fid)) => aid == fid,
+        _ => false,
+    };
     let matches_path = if let Some(af) = active_file {
         let af_path = Path::new(af);
         if af_path == file_path {
@@ -361,21 +416,7 @@ pub fn parse_session_file(
     } else {
         false
     };
-    let is_active = matches_id || matches_path;
-
-    let path_str = dunce::canonicalize(file_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| file_path.to_string_lossy().to_string());
-
-    Some(SessionSummary {
-        id,
-        path: path_str,
-        created_at,
-        modified_at,
-        first_message,
-        message_count,
-        is_active,
-    })
+    matches_id || matches_path
 }
 
 /// Reads directory, collects `.jsonl` files, parses with `parse_session_file`, sorts by `modified_at` descending.
@@ -558,6 +599,7 @@ pub async fn list_sessions(
                     first_message: "(no messages)".to_string(),
                     message_count: 0,
                     is_active: true,
+                    custom_title: None,
                 },
             );
         }
@@ -934,6 +976,202 @@ pub async fn delete_session(
     })
 }
 
+/// Monotonic counter mixed into `generate_short_id` to avoid collisions between calls
+/// made within the same nanosecond-resolution tick.
+static SHORT_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Generates a short 8-hex-character identifier for a `session_info` entry, without
+/// relying on `randomUUID` (kept consistent with the HTTP prompt-id fix in df2dd59: this
+/// project avoids `randomUUID` where a lighter-weight unique id suffices). Mixes the
+/// current time with a monotonic counter so back-to-back calls never collide.
+pub fn generate_short_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let counter = SHORT_ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let mixed = nanos.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(counter);
+    format!("{:08x}", mixed as u32)
+}
+
+/// Builds a `session_info` JSONL entry as a `Value`, ready to be serialized and appended.
+pub fn build_session_info_entry(id: &str, parent_id: &str, timestamp: &str, name: &str) -> Value {
+    serde_json::json!({
+        "type": "session_info",
+        "id": id,
+        "parentId": parent_id,
+        "timestamp": timestamp,
+        "name": name,
+    })
+}
+
+/// Scans every JSON line in the file and returns the `id` of the last entry that has one
+/// (falling back to the session header's own id when no later entry has an id, since the
+/// header is itself the first line scanned).
+pub fn last_entry_id(file_path: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(file_path).ok()?;
+    let mut last_id: Option<String> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let val: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
+            if !id.is_empty() {
+                last_id = Some(id.to_string());
+            }
+        }
+    }
+    last_id
+}
+
+/// Appends a `session_info` entry to `file_path` on behalf of an inactive session
+/// (no live Pi RPC process to notify). Ensures a trailing newline exists before the
+/// existing content so the appended line does not merge with the previous one, and
+/// leaves the appended line itself newline-terminated.
+pub fn append_session_info_entry(file_path: &Path, name: &str) -> Result<(), String> {
+    let parent_id = last_entry_id(file_path).unwrap_or_default();
+    let id = generate_short_id();
+    let timestamp = system_time_to_rfc3339(std::time::SystemTime::now()).unwrap_or_default();
+    let entry = build_session_info_entry(&id, &parent_id, &timestamp, name);
+    let entry_line = serde_json::to_string(&entry)
+        .map_err(|e| format!("Failed to serialize session_info entry: {e}"))?;
+
+    let existing = std::fs::read_to_string(file_path)
+        .map_err(|e| format!("Failed to read session file: {e}"))?;
+    let needs_newline = !existing.is_empty() && !existing.ends_with('\n');
+
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(file_path)
+        .map_err(|e| format!("Failed to open session file for append: {e}"))?;
+
+    use std::io::Write;
+    if needs_newline {
+        file.write_all(b"\n")
+            .map_err(|e| format!("Failed to write newline before appended entry: {e}"))?;
+    }
+    file.write_all(entry_line.as_bytes())
+        .map_err(|e| format!("Failed to append session_info entry: {e}"))?;
+    file.write_all(b"\n")
+        .map_err(|e| format!("Failed to append trailing newline: {e}"))?;
+    Ok(())
+}
+
+/// Sends `set_session_name` over Pi RPC and awaits its response, following the same
+/// request/response bookkeeping pattern as `get_session_persistence_status`.
+async fn send_set_session_name_rpc(
+    session: &crate::process::ActiveSession,
+    name: &str,
+) -> Result<(), String> {
+    let stdin_tx = session.stdin_tx.clone();
+    let pending_responses = Arc::clone(&session.pending_responses);
+
+    let req_id = next_request_id("rename-session");
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut pend = pending_responses.lock().await;
+        pend.insert(req_id.clone(), tx);
+    }
+
+    let cmd = serde_json::json!({
+        "id": req_id,
+        "type": "set_session_name",
+        "name": name,
+    });
+
+    if let Err(e) = stdin_tx.send(cmd.to_string()).await {
+        let mut pend = pending_responses.lock().await;
+        pend.remove(&req_id);
+        return Err(format!("Failed to send set_session_name to Pi RPC: {e}"));
+    }
+
+    let response_result = tokio::time::timeout(Duration::from_secs(10), rx).await;
+    let response_value = match response_result {
+        Ok(Ok(val)) => val,
+        Ok(Err(_)) => {
+            let mut pend = pending_responses.lock().await;
+            pend.remove(&req_id);
+            return Err("set_session_name response channel closed unexpectedly".to_string());
+        }
+        Err(_) => {
+            let mut pend = pending_responses.lock().await;
+            pend.remove(&req_id);
+            return Err("Timeout waiting for set_session_name response from Pi (10s)".to_string());
+        }
+    };
+
+    let is_success = response_value
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !is_success {
+        let err_msg = response_value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Failed to set session name");
+        return Err(format!("set_session_name rejected: {err_msg}"));
+    }
+
+    Ok(())
+}
+
+/// Renames a session by appending a `session_info` entry with the new `name`.
+///
+/// IMPORTANT double-write decision: when the target file is the currently active AND
+/// live Pi RPC session, Pi itself owns writes to that file while it is running (it will
+/// append its own `session_info` entry in response to `set_session_name`). Appending
+/// here too would race Pi's own write and leave two competing entries in the file, so in
+/// that case this command only sends the RPC and never touches the file. Only when the
+/// session is inactive (or no Pi process is connected) does this command append the
+/// entry itself, since nothing else will.
+#[tauri::command]
+pub async fn rename_session(
+    payload: RenameSessionPayload,
+    state: State<'_, AppState>,
+) -> Result<SessionSummary, String> {
+    let name = payload.name.trim().to_string();
+    if name.is_empty() {
+        return Err("Session name cannot be empty".to_string());
+    }
+
+    let valid_path = validate_switch_session_path(&payload.session_path)?;
+    let canonical_target = dunce::canonicalize(&valid_path)
+        .map_err(|e| format!("Failed to canonicalize session file path: {e}"))?;
+
+    let mut summary = parse_session_file(&canonical_target, None, None)
+        .ok_or_else(|| "Failed to parse session file".to_string())?;
+
+    // Determine whether this file is the active, live Pi RPC session.
+    let active_session = state.get_session().await.ok();
+    let mut is_active_and_alive = false;
+    if let Some(ref session) = active_session {
+        let cur_id = session.current_session_id.lock().await.clone();
+        let cur_file = session.current_session_file.lock().await.clone();
+        is_active_and_alive = session_matches_active(
+            &canonical_target,
+            cur_id.as_deref(),
+            cur_file.as_deref(),
+            Some(&summary.id),
+        );
+    }
+
+    if is_active_and_alive {
+        let session = active_session.expect("checked above");
+        send_set_session_name_rpc(&session, &name).await?;
+    } else {
+        append_session_info_entry(&canonical_target, &name)?;
+    }
+
+    summary.custom_title = Some(name);
+    Ok(summary)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1087,6 +1325,7 @@ mod tests {
         assert_eq!(s1.message_count, 3);
         assert!(s1.is_active);
         assert!(s1.modified_at.is_some());
+        assert_eq!(s1.custom_title, None, "Session without session_info has no custom title");
 
         // Test inactive matching
         let s1_inactive = parse_session_file(&sess1_path, Some("other-id"), None).unwrap();
@@ -1135,6 +1374,325 @@ mod tests {
         assert!(!listing[0].is_active);
         assert!(!listing[1].is_active);
         assert!(!listing[3].is_active);
+    }
+
+    #[test]
+    fn test_custom_title_latest_session_info_wins_and_ignores_blank_names() {
+        struct TempDirGuard {
+            path: PathBuf,
+        }
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_custom_title_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).expect("Failed to create temp test dir");
+        let _guard = TempDirGuard {
+            path: temp_path.clone(),
+        };
+
+        // Two session_info entries: the later, non-blank name must win over the earlier one.
+        let sess_path = temp_path.join("renamed.jsonl");
+        let content = "\
+{\"type\":\"session\",\"id\":\"sess-r1\",\"timestamp\":\"2026-09-01T10:00:00.000Z\"}\n\
+{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n\
+{\"type\":\"session_info\",\"id\":\"a1\",\"parentId\":\"sess-r1\",\"timestamp\":\"2026-09-01T10:00:01.000Z\",\"name\":\"First name\"}\n\
+{\"type\":\"session_info\",\"id\":\"a2\",\"parentId\":\"a1\",\"timestamp\":\"2026-09-01T10:00:02.000Z\",\"name\":\"Second name\"}\n\
+{\"type\":\"session_info\",\"id\":\"a3\",\"parentId\":\"a2\",\"timestamp\":\"2026-09-01T10:00:03.000Z\",\"name\":\"   \"}\n";
+        std::fs::write(&sess_path, content).unwrap();
+
+        let summary = parse_session_file(&sess_path, None, None).unwrap();
+        // The last entry has a blank name, so it must NOT overwrite "Second name".
+        assert_eq!(summary.custom_title, Some("Second name".to_string()));
+    }
+
+    #[test]
+    fn test_session_matches_active_by_id_or_path() {
+        let file_path = Path::new("/sessions/target.jsonl");
+
+        // Matches by id
+        assert!(session_matches_active(file_path, Some("sess-x"), None, Some("sess-x")));
+        // Does not match: different id, no active_file given
+        assert!(!session_matches_active(file_path, Some("sess-y"), None, Some("sess-x")));
+        // Matches by exact path when ids differ/are absent
+        assert!(session_matches_active(
+            file_path,
+            None,
+            Some("/sessions/target.jsonl"),
+            None
+        ));
+        // No match at all
+        assert!(!session_matches_active(file_path, None, None, None));
+    }
+
+    #[test]
+    fn test_build_session_info_entry_contract() {
+        let entry = build_session_info_entry("abc12345", "parent-1", "2026-09-26T00:00:00.000Z", "My Session");
+        assert_eq!(entry.get("type").and_then(|v| v.as_str()), Some("session_info"));
+        assert_eq!(entry.get("id").and_then(|v| v.as_str()), Some("abc12345"));
+        assert_eq!(entry.get("parentId").and_then(|v| v.as_str()), Some("parent-1"));
+        assert_eq!(
+            entry.get("timestamp").and_then(|v| v.as_str()),
+            Some("2026-09-26T00:00:00.000Z")
+        );
+        assert_eq!(entry.get("name").and_then(|v| v.as_str()), Some("My Session"));
+    }
+
+    #[test]
+    fn test_generate_short_id_is_unique_8_hex_chars() {
+        let id1 = generate_short_id();
+        let id2 = generate_short_id();
+        assert_eq!(id1.len(), 8);
+        assert_eq!(id2.len(), 8);
+        assert!(id1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_last_entry_id_returns_last_id_or_header_fallback() {
+        struct TempDirGuard {
+            path: PathBuf,
+        }
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_last_entry_id_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).expect("Failed to create temp test dir");
+        let _guard = TempDirGuard {
+            path: temp_path.clone(),
+        };
+
+        // Only the header line has an id: fallback returns it.
+        let header_only = temp_path.join("header_only.jsonl");
+        std::fs::write(&header_only, "{\"type\":\"session\",\"id\":\"sess-h\"}\n{\"type\":\"model_change\"}\n").unwrap();
+        assert_eq!(last_entry_id(&header_only), Some("sess-h".to_string()));
+
+        // Later entries with ids: the last one wins.
+        let with_entries = temp_path.join("with_entries.jsonl");
+        std::fs::write(
+            &with_entries,
+            "{\"type\":\"session\",\"id\":\"sess-e\"}\n{\"type\":\"session_info\",\"id\":\"info-1\",\"name\":\"x\"}\n",
+        )
+        .unwrap();
+        assert_eq!(last_entry_id(&with_entries), Some("info-1".to_string()));
+
+        // Missing file: None.
+        assert_eq!(last_entry_id(&temp_path.join("missing.jsonl")), None);
+    }
+
+    #[test]
+    fn test_append_session_info_entry_adds_newline_and_content() {
+        struct TempDirGuard {
+            path: PathBuf,
+        }
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_append_entry_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).expect("Failed to create temp test dir");
+        let _guard = TempDirGuard {
+            path: temp_path.clone(),
+        };
+
+        // File WITHOUT a trailing newline: append must insert one before the new entry.
+        let sess_path = temp_path.join("no_trailing_newline.jsonl");
+        std::fs::write(&sess_path, "{\"type\":\"session\",\"id\":\"sess-nt\"}").unwrap();
+
+        append_session_info_entry(&sess_path, "New Title").unwrap();
+
+        let content = std::fs::read_to_string(&sess_path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2, "Original line plus appended entry, no blank line merge");
+        let appended: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(appended.get("type").and_then(|v| v.as_str()), Some("session_info"));
+        assert_eq!(appended.get("name").and_then(|v| v.as_str()), Some("New Title"));
+        assert_eq!(appended.get("parentId").and_then(|v| v.as_str()), Some("sess-nt"));
+        assert!(content.ends_with('\n'));
+
+        // Parsing the file afterward must surface the new custom_title.
+        let summary = parse_session_file(&sess_path, None, None).unwrap();
+        assert_eq!(summary.custom_title, Some("New Title".to_string()));
+    }
+
+    #[test]
+    fn test_rename_session_payload_contract() {
+        let payload = RenameSessionPayload {
+            session_path: "/path/to/session.jsonl".to_string(),
+            name: "  My renamed chat  ".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert!(json.contains("\"sessionPath\":\"/path/to/session.jsonl\""));
+        assert!(json.contains("\"name\":\"  My renamed chat  \""));
+        let deserialized: RenameSessionPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, payload);
+    }
+
+    #[tokio::test]
+    async fn test_rename_session_rejects_empty_or_whitespace_name() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_rename_empty_name_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).unwrap();
+        let sess_path = temp_path.join("s.jsonl");
+        std::fs::write(&sess_path, "{\"type\":\"session\",\"id\":\"sess-empty\"}\n").unwrap();
+
+        let app_state = AppState::new();
+        let state: State<'_, AppState> = unsafe { std::mem::transmute(&app_state) };
+
+        let payload = RenameSessionPayload {
+            session_path: sess_path.to_string_lossy().to_string(),
+            name: "   ".to_string(),
+        };
+        let result = rename_session(payload, state).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_lowercase().contains("empty"));
+
+        let _ = std::fs::remove_dir_all(&temp_path);
+    }
+
+    #[tokio::test]
+    async fn test_rename_session_inactive_appends_entry_directly() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_rename_inactive_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).unwrap();
+        let sess_path = temp_path.join("inactive.jsonl");
+        std::fs::write(
+            &sess_path,
+            "{\"type\":\"session\",\"id\":\"sess-inactive\",\"timestamp\":\"2026-09-01T00:00:00.000Z\"}\n",
+        )
+        .unwrap();
+
+        // No active Pi RPC session in state at all.
+        let app_state = AppState::new();
+        let state: State<'_, AppState> = unsafe { std::mem::transmute(&app_state) };
+
+        let payload = RenameSessionPayload {
+            session_path: sess_path.to_string_lossy().to_string(),
+            name: "  Renamed Inactive  ".to_string(),
+        };
+        let result = rename_session(payload, state).await;
+        assert!(result.is_ok(), "rename_session failed: {:?}", result.err());
+        let summary = result.unwrap();
+        assert_eq!(summary.custom_title, Some("Renamed Inactive".to_string()));
+
+        // The file itself must now contain the appended session_info entry.
+        let content = std::fs::read_to_string(&sess_path).unwrap();
+        assert_eq!(content.lines().count(), 2);
+        let reparsed = parse_session_file(&sess_path, None, None).unwrap();
+        assert_eq!(reparsed.custom_title, Some("Renamed Inactive".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_path);
+    }
+
+    #[tokio::test]
+    async fn test_rename_session_active_and_alive_sends_rpc_and_does_not_append() {
+        let temp_path = std::env::temp_dir().join(format!(
+            "pi_viewer_rename_active_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_path).unwrap();
+        let sess_path = temp_path.join("active.jsonl");
+        let original_content = "{\"type\":\"session\",\"id\":\"sess-active\",\"timestamp\":\"2026-09-01T00:00:00.000Z\"}\n";
+        std::fs::write(&sess_path, original_content).unwrap();
+
+        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<String>(16);
+        let pending_responses = Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()));
+        let pending_for_responder = Arc::clone(&pending_responses);
+
+        let session = crate::process::ActiveSession {
+            child_pid: Some(4242),
+            generation: 1,
+            cwd: temp_path.clone(),
+            stdin_tx,
+            pending_responses,
+            stderr_collector: Arc::new(tokio::sync::Mutex::new(crate::process::StderrCollector::new(1024))),
+            abort_kill_tx: Arc::new(tokio::sync::Mutex::new(None)),
+            child_reap_rx: Arc::new(tokio::sync::Mutex::new(None)),
+            current_session_id: Arc::new(tokio::sync::Mutex::new(Some("sess-active".to_string()))),
+            current_session_file: Arc::new(tokio::sync::Mutex::new(Some(sess_path.to_string_lossy().to_string()))),
+            is_alive: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
+
+        let app_state = AppState::new();
+        *app_state.session.lock().await = Some(session);
+        let state: State<'_, AppState> = unsafe { std::mem::transmute(&app_state) };
+
+        // Fake Pi RPC process: reply success to whatever request comes over stdin.
+        let responder = tokio::spawn(async move {
+            if let Some(msg) = stdin_rx.recv().await {
+                let val: Value = serde_json::from_str(&msg).unwrap();
+                assert_eq!(val.get("type").and_then(|v| v.as_str()), Some("set_session_name"));
+                assert_eq!(val.get("name").and_then(|v| v.as_str()), Some("Renamed Active"));
+                let req_id = val.get("id").and_then(|v| v.as_str()).unwrap().to_string();
+                let mut pend = pending_for_responder.lock().await;
+                if let Some(tx) = pend.remove(&req_id) {
+                    let _ = tx.send(serde_json::json!({ "success": true }));
+                }
+            }
+        });
+
+        let payload = RenameSessionPayload {
+            session_path: sess_path.to_string_lossy().to_string(),
+            name: "  Renamed Active  ".to_string(),
+        };
+        let result = rename_session(payload, state).await;
+        responder.await.unwrap();
+
+        assert!(result.is_ok(), "rename_session failed: {:?}", result.err());
+        let summary = result.unwrap();
+        assert_eq!(summary.custom_title, Some("Renamed Active".to_string()));
+
+        // Pi RPC owns the write while the session is active: the viewer must NOT have
+        // appended a session_info entry itself (that would double-write on top of Pi's
+        // own write once it persists the rename).
+        let content_after = std::fs::read_to_string(&sess_path).unwrap();
+        assert_eq!(content_after, original_content, "viewer must not append while session is active and alive");
+
+        let _ = std::fs::remove_dir_all(&temp_path);
     }
 
     #[test]
@@ -1194,12 +1752,14 @@ mod tests {
             first_message: "Hello world".to_string(),
             message_count: 5,
             is_active: true,
+            custom_title: Some("My renamed chat".to_string()),
         };
 
         let summary_json = serde_json::to_string(&summary).unwrap();
         assert!(summary_json.contains("\"id\":\"sess-abc-123\""));
         assert!(summary_json.contains("\"path\":\"/path/to/session.jsonl\""));
         assert!(summary_json.contains("\"createdAt\":\"2026-09-15T12:00:00.000Z\""));
+        assert!(summary_json.contains("\"customTitle\":\"My renamed chat\""));
         assert!(summary_json.contains("\"modifiedAt\":\"2026-09-15T12:30:00.000Z\""));
         assert!(summary_json.contains("\"firstMessage\":\"Hello world\""));
         assert!(summary_json.contains("\"messageCount\":5"));

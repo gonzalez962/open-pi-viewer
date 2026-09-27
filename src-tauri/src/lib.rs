@@ -32,6 +32,7 @@ pub fn run() {
             commands::list_sessions,
             commands::switch_session,
             commands::delete_session,
+            commands::rename_session,
             commands::list_workspace_dir,
             commands::read_workspace_file,
             commands::get_workspace_git_status,
