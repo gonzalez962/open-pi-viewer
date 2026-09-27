@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { webcrypto } from 'node:crypto';
 import test from 'node:test';
 
 import { formatToolPrimaryArg } from '@features/chat/ActivityBlocks';
@@ -562,6 +563,50 @@ test('extractChatTextDelta: filters only text_delta and ignores thinking/toolcal
   assert.strictEqual(extractChatTextDelta(null), null);
   assert.strictEqual(extractChatTextDelta(undefined), null);
   assert.strictEqual(extractChatTextDelta({}), null);
+});
+
+test('generatePromptRequestId: falls back to secure random values when randomUUID is unavailable', () => {
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+  const secureCrypto = (originalCrypto?.value as Crypto | undefined) ?? (webcrypto as unknown as Crypto);
+  const mockCrypto = {
+    getRandomValues<T extends ArrayBufferView>(array: T): T {
+      return secureCrypto.getRandomValues(array);
+    },
+  };
+
+  try {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: mockCrypto });
+    const id1 = generatePromptRequestId();
+    const id2 = generatePromptRequestId();
+    const uuidV4Pattern = /^prompt-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    assert.notStrictEqual(id1, id2, 'Fallback prompt IDs must be unique');
+    assert.match(id1, uuidV4Pattern);
+    assert.match(id2, uuidV4Pattern);
+    assert.ok(isValidPromptRequestId(id1));
+    assert.ok(isValidPromptRequestId(id2));
+  } finally {
+    if (originalCrypto) {
+      Object.defineProperty(globalThis, 'crypto', originalCrypto);
+    } else {
+      delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  }
+});
+
+test('generatePromptRequestId: fails clearly when secure crypto sources are unavailable', () => {
+  const originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+
+  try {
+    Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {} });
+    assert.throws(() => generatePromptRequestId(), /Secure crypto random number generation is unavailable/);
+  } finally {
+    if (originalCrypto) {
+      Object.defineProperty(globalThis, 'crypto', originalCrypto);
+    } else {
+      delete (globalThis as { crypto?: Crypto }).crypto;
+    }
+  }
 });
 
 test('generatePromptRequestId: generates authoritative client ID prefixed with prompt- and valid UUID v4', () => {
