@@ -9,6 +9,7 @@ import {
   decideDeleteOutcome,
   decideNewConversationOutcome,
   decideSelectSession,
+  fetchSwitchedSessionStats,
   shouldReloadSessionsOnIdle,
 } from '@features/sessions/session-actions';
 import { SidebarSearchBar } from '@features/sessions/components/SidebarSearchBar';
@@ -279,4 +280,34 @@ test('SidebarSearchBar: uses default clearAriaLabel when omitted', () => {
   );
   assert.ok(clearBtn);
   assert.strictEqual(clearBtn.props['aria-label'], 'Clear search');
+});
+
+test('fetchSwitchedSessionStats returns stats for the switched session', async () => {
+  const stats = { sessionId: 'other-session-456', totalMessages: 4 };
+  const result = await fetchSwitchedSessionStats(async () => stats, 'other-session-456');
+  assert.deepEqual(result, stats);
+});
+
+test('fetchSwitchedSessionStats accepts stats without a session id', async () => {
+  const stats = { totalMessages: 4 };
+  const result = await fetchSwitchedSessionStats(async () => stats, 'other-session-456');
+  assert.deepEqual(result, stats);
+});
+
+test('fetchSwitchedSessionStats ignores stats that belong to another session', async () => {
+  const result = await fetchSwitchedSessionStats(
+    async () => ({ sessionId: 'stale-session', totalMessages: 9 }),
+    'other-session-456'
+  );
+  assert.equal(result, null);
+});
+
+test('fetchSwitchedSessionStats returns null when stats are unavailable or the fetch fails', async () => {
+  assert.equal(await fetchSwitchedSessionStats(async () => null, 'other-session-456'), null);
+  assert.equal(
+    await fetchSwitchedSessionStats(async () => {
+      throw new Error('rpc timeout');
+    }, 'other-session-456'),
+    null
+  );
 });

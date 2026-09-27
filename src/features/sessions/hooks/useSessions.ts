@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { deleteSessionPi, listSessionsPi, newSessionPi, renameSessionPi, switchSessionPi } from '@infra/bridge';
+import {
+  deleteSessionPi,
+  getSessionStatsPi,
+  listSessionsPi,
+  newSessionPi,
+  renameSessionPi,
+  switchSessionPi,
+} from '@infra/bridge';
 import { hydrateChatMessages, recordSessionSwitched, saveSessionRecord } from '@core/session';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig, ConnectionState } from '@core/types/connection';
@@ -10,6 +17,7 @@ import {
   decideDeleteOutcome,
   decideNewConversationOutcome,
   decideSelectSession,
+  fetchSwitchedSessionStats,
   shouldReloadSessionsOnIdle,
 } from '@features/sessions/session-actions';
 
@@ -184,6 +192,13 @@ export function useSessions({
       requestFileTreeRefresh();
 
       scrollToBottomNextFrame();
+
+      // SWITCH_SESSION_SUCCESS clears sessionStats; re-fetch them for the switched session.
+      const targetPid = activeProjectIdRef.current ?? undefined;
+      const stats = await fetchSwitchedSessionStats(() => getSessionStatsPi(), result.sessionId);
+      if (stats) {
+        dispatch({ type: 'SET_SESSION_STATS', targetProjectId: targetPid, payload: { stats } });
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       dispatch({
