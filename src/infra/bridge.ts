@@ -390,6 +390,25 @@ export async function deleteSessionPi(
 }
 
 /**
+ * Rename a session by appending a `session_info` entry (or, when the session is
+ * active and Pi RPC is connected, asking Pi to persist the rename itself) via Tauri IPC.
+ * Returns the updated SessionSummary, including the new `customTitle`.
+ */
+export async function renameSessionPi(
+  sessionPath: string,
+  name: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<SessionSummary> {
+  if (!isTauri() && invokeFn === invoke) {
+    throw new Error('Desktop runtime unavailable: cannot rename session outside Tauri');
+  }
+
+  return await invokeFn<SessionSummary>('rename_session', {
+    payload: { sessionPath, name },
+  });
+}
+
+/**
  * List files and directories in a workspace folder via Tauri IPC.
  */
 export async function listWorkspaceDirPi(

@@ -123,6 +123,35 @@ test('Bridge: deleteSessionPi invokes delete_session command with payload', asyn
   assert.strictEqual(res.wasActive, false);
 });
 
+test('Bridge: renameSessionPi invokes rename_session command with payload and returns updated summary', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return {
+      id: 'sess-1',
+      path: '/path/to/session.jsonl',
+      firstMessage: 'Hello',
+      messageCount: 2,
+      isActive: false,
+      customTitle: 'My renamed chat',
+    } as T;
+  };
+
+  const { renameSessionPi } = await import('@infra/bridge');
+  const res = await renameSessionPi('/path/to/session.jsonl', 'My renamed chat', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'rename_session');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: { sessionPath: '/path/to/session.jsonl', name: 'My renamed chat' },
+  });
+  assert.strictEqual(res.customTitle, 'My renamed chat');
+});
+
+test('Bridge: renameSessionPi throws outside Tauri without an injected invokeFn', async () => {
+  const { renameSessionPi } = await import('@infra/bridge');
+  await assert.rejects(() => renameSessionPi('/path/to/session.jsonl', 'New name'));
+});
+
 test('SessionSidebar: empty sessions with 0 messages are not eligible for deletion', () => {
   const emptySession: SessionSummary = {
     id: 'empty-sess-1',

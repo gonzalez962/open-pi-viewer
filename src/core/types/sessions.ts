@@ -32,6 +32,7 @@ export interface SessionSummary {
   firstMessage: string;
   messageCount: number;
   isActive: boolean;
+  customTitle?: string;
 }
 
 export interface SwitchSessionResult {
