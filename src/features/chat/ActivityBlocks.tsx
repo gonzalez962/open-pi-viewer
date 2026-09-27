@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import type { ThinkingBlock, ToolCallBlock } from '@core/types/messages';
+import { inferLanguageFromFilename, sanitizeLanguage } from '@core/markdown';
+import { highlightCode } from '@core/picolor';
+import { categorizeToolName } from '@core/process-grouping';
 
 export interface ActivityBlocksProps {
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -12,6 +15,12 @@ export interface ThinkingCardProps extends ActivityBlocksProps {
 
 export interface ToolCardProps extends ActivityBlocksProps {
   block: ToolCallBlock;
+  /**
+   * Renders the card already expanded. Only ever used by tests to inspect the formatted
+   * write/edit/read/bash previews without simulating a real click (state normally starts
+   * collapsed and only opens via the header button).
+   */
+  defaultOpen?: boolean;
 }
 
 /**
@@ -82,6 +91,118 @@ export function formatToolFullArgs(args: unknown): string {
     return String(args);
   }
 }
+
+/**
+ * Infers a syntax-highlighting language identifier from a file path's extension,
+ * delegating to the shared extension map (`@core/markdown`) rather than duplicating it.
+ */
+export function detectLanguageFromPath(path?: string): string | undefined {
+  return inferLanguageFromFilename(path);
+}
+
+function stringField(obj: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === 'string') return value;
+  }
+  return undefined;
+}
+
+export function resolveLanguageHint(args: unknown, path?: string): string | undefined {
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const explicit = stringField(args as Record<string, unknown>, 'language', 'lang');
+    if (explicit) return sanitizeLanguage(explicit);
+  }
+  return detectLanguageFromPath(path);
+}
+
+export interface WriteContentInfo {
+  path?: string;
+  content: string;
+}
+
+/** Extracts a `write` tool call's target path and raw (already-decoded) content, if present. */
+export function extractWriteContent(args: unknown): WriteContentInfo | null {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+  const obj = args as Record<string, unknown>;
+  const content = stringField(obj, 'content', 'text', 'file_text');
+  if (content === undefined) return null;
+  const path = stringField(obj, 'path', 'file_path');
+  return { path, content };
+}
+
+export interface EditReplacement {
+  oldText: string;
+  newText: string;
+}
+
+/**
+ * Extracts one or more `edit` tool call replacement pairs: either a single
+ * `oldText`/`newText` (or `old_string`/`new_string`) pair, or an `edits` array of such
+ * pairs. Returns an empty array when neither shape is present.
+ */
+export function extractEditReplacements(args: unknown): EditReplacement[] {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return [];
+  const obj = args as Record<string, unknown>;
+
+  if (Array.isArray(obj.edits)) {
+    return obj.edits
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+      .map((entry) => ({
+        oldText: stringField(entry, 'oldText', 'old_string') ?? '',
+        newText: stringField(entry, 'newText', 'new_string') ?? '',
+      }));
+  }
+
+  const oldText = stringField(obj, 'oldText', 'old_string');
+  const newText = stringField(obj, 'newText', 'new_string');
+  if (oldText !== undefined || newText !== undefined) {
+    return [{ oldText: oldText ?? '', newText: newText ?? '' }];
+  }
+  return [];
+}
+
+export function extractPath(args: unknown): string | undefined {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return undefined;
+  return stringField(args as Record<string, unknown>, 'path', 'file_path');
+}
+
+/** Extracts a `bash`/`powershell` tool call's command string, if present. */
+export function extractBashCommand(args: unknown): string | undefined {
+  if (typeof args === 'string') return args;
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    return stringField(args as Record<string, unknown>, 'command');
+  }
+  return undefined;
+}
+
+/**
+ * Renders `code` as PiColor-highlighted lines (via `highlightCode`), matching the same
+ * safe-token rendering `MarkdownContent`'s `CodeBlock` uses for fenced code — every token
+ * is a literal React text child, never dangerouslySetInnerHTML.
+ */
+const CodePreview: React.FC<{ code: string; language?: string }> = ({ code, language }) => {
+  const lines = React.useMemo(() => highlightCode(code, language), [code, language]);
+  return (
+    <pre className="tool-code-pre">
+      <code className="tool-code-text">
+        {lines.map((line, lineIdx) => (
+          <div
+            key={lineIdx}
+            className={`tool-code-line${line.lineClassName ? ` ${line.lineClassName}` : ''}`}
+          >
+            {line.tokens.map((token, tokenIdx) => (
+              <span key={tokenIdx} className={token.className || undefined}>
+                {token.text}
+              </span>
+            ))}
+            {line.tokens.length === 0 && ' '}
+          </div>
+        ))}
+      </code>
+    </pre>
+  );
+};
 
 /**
  * Collapsible Thinking Accordion component.
@@ -210,14 +331,28 @@ export function ToolIcon({ name }: { name: string }) {
  * Collapsible Tool Execution Card.
  * Displays tool name, primary argument badge, status pill, and expandable output with copy button.
  */
-export const ToolCard: React.FC<ToolCardProps> = ({ block, t }) => {
-  const [isOpen, setIsOpen] = useState(false);
+export const ToolCard: React.FC<ToolCardProps> = ({ block, t, defaultOpen = false }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
   const primaryArg = formatToolPrimaryArg(block.name, block.args);
   const fullArgs = formatToolFullArgs(block.args);
   const output = block.output || '';
   const status = block.status;
+  const category = categorizeToolName(block.name);
+
+  const writeContent = category === 'write' ? extractWriteContent(block.args) : null;
+  const editReplacements = category === 'edit' ? extractEditReplacements(block.args) : [];
+  const bashCommand = category === 'bash' ? extractBashCommand(block.args) : undefined;
+  const path = extractPath(block.args);
+  const writeLanguage = writeContent ? resolveLanguageHint(block.args, writeContent.path ?? path) : undefined;
+  const editLanguage = editReplacements.length > 0 ? resolveLanguageHint(block.args, path) : undefined;
+  const readLanguage = category === 'read' ? resolveLanguageHint(block.args, path) : undefined;
+  const writeLineCount = writeContent
+    ? writeContent.content.length === 0
+      ? 0
+      : writeContent.content.split('\n').length
+    : 0;
 
   const handleToggle = () => {
     setIsOpen(!isOpen);
@@ -298,11 +433,47 @@ export const ToolCard: React.FC<ToolCardProps> = ({ block, t }) => {
 
       {isOpen && (
         <div className="tool-card-body" role="region" aria-label={`${block.name} ${t('activity.output')}`}>
-          {fullArgs && (
-            <div className="tool-section tool-section-args">
-              <span className="tool-section-label">{t('activity.arguments')}</span>
-              <pre className="tool-args-pre">{fullArgs}</pre>
+          {category === 'bash' && bashCommand ? (
+            <div className="tool-section tool-section-command">
+              <span className="tool-section-label">{t('activity.command')}</span>
+              <div className="terminal-command-bar">
+                <span className="terminal-command-glyph" aria-hidden="true">$</span>
+                <span className="terminal-command-text">{bashCommand}</span>
+              </div>
             </div>
+          ) : category === 'write' && writeContent ? (
+            <div className="tool-section tool-section-write">
+              <div className="tool-section-header-row">
+                <span className="tool-section-label">{t('activity.write_preview')}</span>
+                <span className="tool-code-meta">
+                  {t('markdown.line_count', { count: writeLineCount })}
+                  {writeLanguage ? ` · ${writeLanguage}` : ''}
+                </span>
+              </div>
+              <CodePreview code={writeContent.content} language={writeLanguage} />
+            </div>
+          ) : category === 'edit' && editReplacements.length > 0 ? (
+            <div className="tool-section tool-section-edit">
+              {editReplacements.map((replacement, idx) => (
+                <div key={idx} className="edit-replacement-block">
+                  <div className="edit-replacement-side edit-old-text">
+                    <span className="tool-section-label">{t('activity.edit_before')}</span>
+                    <CodePreview code={replacement.oldText} language={editLanguage} />
+                  </div>
+                  <div className="edit-replacement-side edit-new-text">
+                    <span className="tool-section-label">{t('activity.edit_after')}</span>
+                    <CodePreview code={replacement.newText} language={editLanguage} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            fullArgs && (
+              <div className="tool-section tool-section-args">
+                <span className="tool-section-label">{t('activity.arguments')}</span>
+                <pre className="tool-args-pre">{fullArgs}</pre>
+              </div>
+            )
           )}
 
           <div className="tool-section tool-section-output">
@@ -337,7 +508,9 @@ export const ToolCard: React.FC<ToolCardProps> = ({ block, t }) => {
             </div>
 
             <div className="tool-output-container">
-              {output.length > 0 ? (
+              {output.length > 0 && category === 'read' ? (
+                <CodePreview code={output} language={readLanguage} />
+              ) : output.length > 0 ? (
                 <pre className="tool-output-pre">{output}</pre>
               ) : status === 'running' ? (
                 <span className="tool-output-empty running">

@@ -45,6 +45,12 @@
   --status-red-bg: rgba(248, 81, 73, 0.12);
   --status-red-border: rgba(248, 81, 73, 0.3);
 
+  /* Subtle tool/process error states (Issue #8): desaturated terracotta, no glow — kept
+     distinct from --status-red (used for connection/system errors, which stay bright). */
+  --tool-error-fg: #d97066;
+  --tool-error-bg: rgba(217, 112, 102, 0.08);
+  --tool-error-border: rgba(217, 112, 102, 0.25);
+
   --bg-user-bubble: #161f2e;
   --border-user-bubble: #1f3a5f;
 
@@ -153,6 +159,12 @@
   --status-error: var(--status-red);
   --status-red-bg: rgba(207, 34, 46, 0.12);
   --status-red-border: rgba(207, 34, 46, 0.3);
+
+  /* Subtle tool/process error states (Issue #8): desaturated terracotta, no glow — kept
+     distinct from --status-red (used for connection/system errors, which stay bright). */
+  --tool-error-fg: #b3543f;
+  --tool-error-bg: rgba(217, 112, 102, 0.1);
+  --tool-error-border: rgba(217, 112, 102, 0.3);
 
   --bg-user-bubble: #ddf4ff;
   --border-user-bubble: #54aeff;
