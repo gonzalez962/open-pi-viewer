@@ -1066,6 +1066,11 @@
   border-color: var(--status-green);
 }
 
+.command-palette-origin-custom {
+  color: var(--status-orange);
+  border-color: var(--status-orange);
+}
+
 /* Popover Search Bar */
 .popover-search-box {
   position: relative;

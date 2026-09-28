@@ -58,7 +58,7 @@ import {
   updateWindowTitle,
 } from '@infra/icon-status';
 import type { ConnectConfig, ConnectResult } from '@core/types/connection';
-import type { ReloadRequest } from '@core/commands';
+import { buildCommandCatalog, filterVisibleCommands, type ReloadRequest } from '@core/commands';
 import { useWorkspaceView } from '@features/workspace/hooks/useWorkspaceView';
 import { normalizeWorkspaceKey } from '@features/workspace/workspace-cache';
 import { useChatScroll } from '@features/chat/hooks/useChatScroll';
@@ -260,8 +260,25 @@ export const App: React.FC = () => {
     handleThemeChange,
     handleLanguageChange,
     setNotifications,
+    setCustomCommands,
+    setHiddenCommandIds,
     t,
   } = usePreferences();
+
+  // Slash command catalog (Issue #9 T7): built-ins first (they keep precedence), then the
+  // user's custom commands registered in Settings. Shared by the palette and the dispatcher.
+  const customCommands = preferences.customCommands;
+  const commandCatalog = useMemo(
+    () => buildCommandCatalog(customCommands ?? []),
+    [customCommands]
+  );
+  // Commands the user hid in Settings (Issue #9 T8) are left out of the palette and "/help"
+  // only; dispatch keeps the full catalog so typing a hidden command still works.
+  const hiddenCommandIds = preferences.hiddenCommandIds;
+  const visibleCommandCatalog = useMemo(
+    () => filterVisibleCommands(commandCatalog, hiddenCommandIds ?? []),
+    [commandCatalog, hiddenCommandIds]
+  );
 
   // Projects cluster: registry state and handlers. Real decision logic (already-active/
   // isBusy no-op guard, and whether removing the active project should switch the working
@@ -445,6 +462,8 @@ export const App: React.FC = () => {
     language: preferences.language,
     onNewConversation: handleNewConversation,
     onReload: requestRetry,
+    commands: commandCatalog,
+    helpCommands: visibleCommandCatalog,
   });
 
   // Pure wrapper handing MarkdownContent's per-code-card "Insert into prompt" button a way
@@ -461,7 +480,11 @@ export const App: React.FC = () => {
   // prompt draft. Purely a typing aid at this point — selecting a command autocompletes
   // the draft to "/<name> "; whether that command then runs client-side or is forwarded to
   // Pi as-is is decided by the dispatcher wired into handleSend.
-  const commandPalette = useCommandPalette({ prompt, setPrompt });
+  const commandPalette = useCommandPalette({
+    prompt,
+    setPrompt,
+    commands: visibleCommandCatalog,
+  });
 
   // Dynamic application status and window title / favicon updater
   const appStatus: AppStatusState = useMemo(() => {
@@ -830,6 +853,8 @@ export const App: React.FC = () => {
               onThemeChange={handleThemeChange}
               onLanguageChange={handleLanguageChange}
               onNotificationsChange={setNotifications}
+              onCustomCommandsChange={setCustomCommands}
+              onHiddenCommandIdsChange={setHiddenCommandIds}
               settingsError={settingsError}
               settingsStorageNotice={settingsStorageNotice}
               isBusy={isBusy}

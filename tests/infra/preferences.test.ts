@@ -310,3 +310,100 @@ test('validateUiPreferences: validates and sanitizes notifications payload', () 
   });
 });
 
+
+test('validateUiPreferences: keeps valid custom commands and drops malformed ones', () => {
+  const result = validateUiPreferences({
+    language: 'en',
+    theme: 'dark',
+    customCommands: [
+      { id: 'custom:deploy', name: '/deploy', description: 'Deploys' },
+      { name: '/help', description: 'shadows a built-in' },
+      42,
+    ],
+  });
+  assert.deepEqual(result.preferences.customCommands, [
+    { id: 'custom:deploy', name: '/deploy', description: 'Deploys' },
+  ]);
+
+  const notArray = validateUiPreferences({ language: 'en', theme: 'dark', customCommands: 'x' });
+  assert.deepEqual(notArray.preferences.customCommands, []);
+
+  const absent = validateUiPreferences({ language: 'en', theme: 'dark' });
+  assert.equal('customCommands' in absent.preferences, false);
+});
+
+test('PreferencesController.setCustomCommands: persists the list and reloads it from storage', () => {
+  const storage = createFakeStorage();
+  let activePrefs: UiPreferences = { ...DEFAULT_UI_PREFERENCES };
+  const controller = new PreferencesController({
+    getPreferences: () => activePrefs,
+    setPreferences: (updated) => {
+      activePrefs = updated;
+    },
+    setWarning: () => {},
+    storage,
+  });
+
+  const commands = [
+    { id: 'custom:deploy', name: '/deploy', description: 'Deploys', aliases: ['/ship'] },
+  ];
+  const saveRes = controller.setCustomCommands(commands);
+  assert.strictEqual(saveRes.success, true);
+  assert.deepEqual(activePrefs.customCommands, commands);
+  assert.deepEqual(loadUiPreferences(storage).preferences.customCommands, commands);
+});
+
+test('validateUiPreferences: sanitizes hiddenCommandIds (non-array, non-strings, duplicates)', () => {
+  const result = validateUiPreferences({
+    language: 'en',
+    theme: 'dark',
+    hiddenCommandIds: ['help', 7, 'help', '', 'custom:deploy'],
+  });
+  assert.deepEqual(result.preferences.hiddenCommandIds, ['help', 'custom:deploy']);
+
+  const notArray = validateUiPreferences({ language: 'en', theme: 'dark', hiddenCommandIds: {} });
+  assert.deepEqual(notArray.preferences.hiddenCommandIds, []);
+
+  const absent = validateUiPreferences({ language: 'en', theme: 'dark' });
+  assert.equal('hiddenCommandIds' in absent.preferences, false);
+});
+
+test('PreferencesController.setHiddenCommandIds: persists hidden ids and reloads them', () => {
+  const storage = createFakeStorage();
+  let activePrefs: UiPreferences = { ...DEFAULT_UI_PREFERENCES };
+  const controller = new PreferencesController({
+    getPreferences: () => activePrefs,
+    setPreferences: (updated) => {
+      activePrefs = updated;
+    },
+    setWarning: () => {},
+    storage,
+  });
+
+  const saveRes = controller.setHiddenCommandIds(['help', 'help', 'new']);
+  assert.strictEqual(saveRes.success, true);
+  assert.deepEqual(activePrefs.hiddenCommandIds, ['help', 'new']);
+  assert.deepEqual(loadUiPreferences(storage).preferences.hiddenCommandIds, ['help', 'new']);
+});
+
+test('PreferencesController.setCustomCommands: prunes hidden ids of deleted custom commands', () => {
+  const storage = createFakeStorage();
+  let activePrefs: UiPreferences = {
+    ...DEFAULT_UI_PREFERENCES,
+    customCommands: [{ id: 'custom:deploy', name: '/deploy', description: 'Deploys' }],
+    hiddenCommandIds: ['help', 'custom:deploy'],
+  };
+  const controller = new PreferencesController({
+    getPreferences: () => activePrefs,
+    setPreferences: (updated) => {
+      activePrefs = updated;
+    },
+    setWarning: () => {},
+    storage,
+  });
+
+  controller.setCustomCommands([]);
+  assert.deepEqual(activePrefs.customCommands, []);
+  assert.deepEqual(activePrefs.hiddenCommandIds, ['help']);
+  assert.deepEqual(loadUiPreferences(storage).preferences.hiddenCommandIds, ['help']);
+});

@@ -8,6 +8,7 @@ import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   type NotificationPreferences,
 } from '@core/notifications';
+import type { CustomCommand } from '@core/commands';
 import {
   setDocumentLanguage,
   translate,
@@ -23,6 +24,10 @@ export interface UsePreferencesResult {
   handleThemeChange: (newTheme: AppTheme) => void;
   handleLanguageChange: (newLanguage: SupportedLocale) => void;
   setNotifications: (partial: Partial<NotificationPreferences>) => void;
+  /** Replaces and persists the user's custom slash commands (Issue #9 T7). */
+  setCustomCommands: (commands: CustomCommand[]) => void;
+  /** Replaces and persists the ids of commands hidden from the palette and "/help" (T8). */
+  setHiddenCommandIds: (ids: string[]) => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -102,6 +107,14 @@ export function usePreferences(): UsePreferencesResult {
     preferencesControllerRef.current?.setNotifications(partial);
   };
 
+  const setCustomCommands = (commands: CustomCommand[]) => {
+    preferencesControllerRef.current?.setCustomCommands(commands);
+  };
+
+  const setHiddenCommandIds = (ids: string[]) => {
+    preferencesControllerRef.current?.setHiddenCommandIds(ids);
+  };
+
   const dismissPreferencesWarning = () => {
     setPreferencesWarning(null);
   };
@@ -117,6 +130,8 @@ export function usePreferences(): UsePreferencesResult {
     handleThemeChange,
     handleLanguageChange,
     setNotifications,
+    setCustomCommands,
+    setHiddenCommandIds,
     t,
   };
 }

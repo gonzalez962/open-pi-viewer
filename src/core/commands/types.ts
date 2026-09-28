@@ -1,9 +1,10 @@
 /**
  * Where a slash command originates. Drives the origin badge shown in the command palette
  * (Issue #9): 'gentle-ai' groups the SDD / Gentle AI workflow commands, 'gentle-shell'
- * groups Gentle Shell's client-local helpers, and 'pi-core' groups Pi's own built-ins.
+ * groups Gentle Shell's client-local helpers, 'pi-core' groups Pi's own built-ins, and
+ * 'custom' marks commands the user registered in Settings (always forwarded to Pi).
  */
-export type CommandOrigin = 'gentle-ai' | 'gentle-shell' | 'pi-core';
+export type CommandOrigin = 'gentle-ai' | 'gentle-shell' | 'pi-core' | 'custom';
 
 /**
  * Where a command actually executes. 'client' commands run entirely inside the GUI

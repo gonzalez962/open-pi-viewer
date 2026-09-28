@@ -5,11 +5,27 @@ import {
   validateNotificationPreferences,
   type NotificationPreferences,
 } from '@core/notifications';
+import {
+  pruneHiddenCommandIds,
+  sanitizeCustomCommands,
+  sanitizeHiddenCommandIds,
+  type CustomCommand,
+} from '@core/commands';
 
 export interface UiPreferences {
   language: SupportedLocale;
   theme: AppTheme;
   notifications?: NotificationPreferences;
+  /**
+   * Slash commands the user registered in Settings (Issue #9 T7). Stored alongside the other
+   * UI preferences; invalid or conflicting stored entries are dropped on load.
+   */
+  customCommands?: CustomCommand[];
+  /**
+   * Ids of commands (built-in or custom) the user hid from the palette and "/help"
+   * (Issue #9 T8). Purely visual: hidden commands still run when typed.
+   */
+  hiddenCommandIds?: string[];
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -76,6 +92,12 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
     ? validateNotificationPreferences(record.notifications)
     : undefined;
 
+  const customCommands =
+    'customCommands' in record ? sanitizeCustomCommands(record.customCommands) : undefined;
+
+  const hiddenCommandIds =
+    'hiddenCommandIds' in record ? sanitizeHiddenCommandIds(record.hiddenCommandIds) : undefined;
+
   const valid = warnings.length === 0;
   return {
     valid,
@@ -83,6 +105,8 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
       language,
       theme,
       ...(notifications !== undefined ? { notifications } : {}),
+      ...(customCommands !== undefined ? { customCommands } : {}),
+      ...(hiddenCommandIds !== undefined ? { hiddenCommandIds } : {}),
     },
     ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
   };
@@ -249,5 +273,44 @@ export class PreferencesController {
     this.options.setPreferences(updated);
     return saveRes;
   }
-}
 
+  /**
+   * Replaces the custom commands. Hidden ids of custom commands that no longer exist are
+   * pruned in the same write, so a delete never leaves a stale hidden entry behind.
+   */
+  setCustomCommands(customCommands: CustomCommand[]): PreferencesSaveResult {
+    const current = this.options.getPreferences();
+    const updated: UiPreferences = {
+      ...current,
+      customCommands,
+      ...(current.hiddenCommandIds !== undefined
+        ? { hiddenCommandIds: pruneHiddenCommandIds(current.hiddenCommandIds, customCommands) }
+        : {}),
+    };
+    const saveRes = saveUiPreferences(updated, this.options.storage);
+    if (!saveRes.success) {
+      this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');
+    } else {
+      this.options.setWarning(null);
+    }
+    this.options.setPreferences(updated);
+    return saveRes;
+  }
+
+  /** Replaces the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
+  setHiddenCommandIds(hiddenCommandIds: string[]): PreferencesSaveResult {
+    const current = this.options.getPreferences();
+    const updated: UiPreferences = {
+      ...current,
+      hiddenCommandIds: sanitizeHiddenCommandIds(hiddenCommandIds),
+    };
+    const saveRes = saveUiPreferences(updated, this.options.storage);
+    if (!saveRes.success) {
+      this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');
+    } else {
+      this.options.setWarning(null);
+    }
+    this.options.setPreferences(updated);
+    return saveRes;
+  }
+}

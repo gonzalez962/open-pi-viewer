@@ -912,4 +912,133 @@
   margin-left: auto;
 }
 
+/* Custom slash commands section (Issue #9 T7) */
+.custom-commands-group,
+.custom-command-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
+.custom-commands-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.custom-command-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+}
+
+.custom-command-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.custom-command-name {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-default);
+}
+
+.custom-command-description {
+  font-size: 12px;
+  color: var(--fg-muted, var(--fg-default));
+  overflow-wrap: anywhere;
+}
+
+.custom-command-aliases {
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  color: var(--fg-subtle);
+}
+
+.custom-command-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.custom-command-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .custom-command-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.custom-command-error {
+  color: var(--status-red);
+}
+
+/* Commands section (Issue #9 T8): collapsible lists and hidden (dimmed) rows. */
+.custom-commands-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.custom-commands-disclosure:hover {
+  background: var(--bg-subtle);
+}
+
+.custom-commands-disclosure:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.custom-commands-chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.custom-commands-chevron-open {
+  transform: rotate(90deg);
+}
+
+.custom-commands-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.custom-command-item-hidden .custom-command-info {
+  opacity: 0.55;
+}
+
+.custom-command-hidden-badge {
+  align-self: flex-start;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted);
+  color: var(--fg-muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

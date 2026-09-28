@@ -15,6 +15,8 @@ import type { ConnectConfig } from '@core/types/connection';
 import type { CustomProviderConfig } from '@core/types/providers';
 import { detectGentleShellPi, pickDirectoryPi, type DetectGentleShellPayload, type DetectGentleShellResult } from '@infra/bridge';
 import { SettingsSelect } from './components/SettingsSelect';
+import { CustomCommandsSection } from './components/CustomCommandsSection';
+import { COMMANDS, type CustomCommand } from '@core/commands';
 
 export interface SettingsViewProps {
   config: ConnectConfig;
@@ -24,6 +26,10 @@ export interface SettingsViewProps {
   onThemeChange: (theme: AppTheme) => void;
   onLanguageChange: (lang: SupportedLocale) => void;
   onNotificationsChange?: (partial: Partial<NotificationPreferences>) => void;
+  /** Persists the user's custom slash commands (Issue #9 T7). Section hidden when absent. */
+  onCustomCommandsChange?: (commands: CustomCommand[]) => void;
+  /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
+  onHiddenCommandIdsChange?: (ids: string[]) => void;
   settingsError: string | null;
   settingsStorageNotice: string | null;
   isBusy: boolean;
@@ -49,6 +55,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onThemeChange,
   onLanguageChange,
   onNotificationsChange,
+  onCustomCommandsChange,
+  onHiddenCommandIdsChange,
   settingsError,
   settingsStorageNotice,
   isBusy,
@@ -744,6 +752,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
         </section>
+
+        {/* Section: Custom slash commands (Issue #9 T7), last section of the General tab (T8) */}
+        {onCustomCommandsChange && (
+          <CustomCommandsSection
+            customCommands={preferences.customCommands ?? []}
+            builtInCommands={COMMANDS}
+            hiddenCommandIds={preferences.hiddenCommandIds ?? []}
+            language={preferences.language}
+            onChange={onCustomCommandsChange}
+            onHiddenCommandIdsChange={onHiddenCommandIdsChange ?? (() => {})}
+            t={t}
+          />
+        )}
           </div>
         </div>
       )}

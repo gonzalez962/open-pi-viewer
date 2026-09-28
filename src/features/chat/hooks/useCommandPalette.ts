@@ -11,6 +11,11 @@ export interface UseCommandPaletteOptions {
   /** The live prompt textarea draft. */
   prompt: string;
   setPrompt: React.Dispatch<React.SetStateAction<string>>;
+  /**
+   * Catalog to match against: built-ins plus the user's custom commands (see
+   * `buildCommandCatalog`). Defaults to the built-in `COMMANDS`.
+   */
+  commands?: readonly CommandSpec[];
 }
 
 export interface UseCommandPaletteResult {
@@ -40,6 +45,7 @@ export interface UseCommandPaletteResult {
 export function useCommandPalette({
   prompt,
   setPrompt,
+  commands = COMMANDS,
 }: UseCommandPaletteOptions): UseCommandPaletteResult {
   const [selectedIndex, setSelectedIndex] = useState(0);
   // Tracks the query the user explicitly dismissed with Escape, so the palette stays
@@ -52,8 +58,8 @@ export function useCommandPalette({
   const isOpen = rawOpen && dismissedForQuery !== query;
 
   const filteredCommands = useMemo(
-    () => (isOpen ? matchCommands(query, COMMANDS) : []),
-    [isOpen, query]
+    () => (isOpen ? matchCommands(query, commands) : []),
+    [isOpen, query, commands]
   );
 
   useEffect(() => {

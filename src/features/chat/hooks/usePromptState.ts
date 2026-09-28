@@ -28,11 +28,14 @@ import type { AttachedFile } from '../types';
  * to `language`. Delivered via `ADD_SYSTEM_MESSAGE` so it renders through the existing
  * Markdown pipeline.
  */
-function buildHelpMarkdown(language: SupportedLocale): string {
+function buildHelpMarkdown(
+  language: SupportedLocale,
+  commands: readonly CommandSpec[]
+): string {
   const line = (c: CommandSpec) =>
     `- \`${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ''}\` — ${c.description[language]}`;
-  const clientCommands = COMMANDS.filter((c) => c.execution === 'client');
-  const agentCommands = COMMANDS.filter((c) => c.execution === 'agent');
+  const clientCommands = commands.filter((c) => c.execution === 'client');
+  const agentCommands = commands.filter((c) => c.execution === 'agent');
 
   return [
     translate(language, 'command_palette.help_title'),
@@ -82,6 +85,18 @@ export interface UsePromptStateOptions {
    * connection/reset is already in progress, otherwise the started attempt's real outcome.
    */
   onReload: () => ReloadRequest;
+  /**
+   * Command catalog used for dispatch and "/help": built-ins plus the user's custom
+   * commands (Issue #9 T7, see `buildCommandCatalog`). Defaults to the built-in `COMMANDS`.
+   * Custom commands always resolve as 'agent', so they are forwarded to Pi verbatim.
+   */
+  commands?: readonly CommandSpec[];
+  /**
+   * Commands listed by "/help" (Issue #9 T8): the catalog minus the ones the user hid in
+   * Settings. Defaults to `commands`. Dispatch always uses the full `commands` catalog, so
+   * hiding is purely visual.
+   */
+  helpCommands?: readonly CommandSpec[];
 }
 
 /**
@@ -98,6 +113,8 @@ export function usePromptState({
   language,
   onNewConversation,
   onReload,
+  commands = COMMANDS,
+  helpCommands = commands,
 }: UsePromptStateOptions) {
   const [prompt, setPrompt] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -192,7 +209,7 @@ export function usePromptState({
       case 'help': {
         dispatch({
           type: 'ADD_SYSTEM_MESSAGE',
-          payload: { content: buildHelpMarkdown(language) },
+          payload: { content: buildHelpMarkdown(language, helpCommands) },
         });
         return;
       }
@@ -218,7 +235,7 @@ export function usePromptState({
     // Agent commands and unrecognized "/xxx" commands are NOT special-cased here: they fall
     // straight through to the normal send below, which forwards `trimmed` unchanged.
     if (!hasAttachments) {
-      const decision = decideCommandDispatch(trimmed);
+      const decision = decideCommandDispatch(trimmed, commands);
       if (decision.kind === 'client' && decision.command) {
         setPrompt('');
         executeClientCommand(decision.command.id);

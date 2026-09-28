@@ -16,6 +16,7 @@ const ORIGIN_LABEL_KEYS: Record<CommandOrigin, TranslationKey> = {
   'gentle-ai': 'command_palette.origin_gentle_ai',
   'gentle-shell': 'command_palette.origin_gentle_shell',
   'pi-core': 'command_palette.origin_pi_core',
+  custom: 'command_palette.origin_custom',
 };
 
 /**

@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { translate } from '@shared/i18n';
-import { COMMANDS, matchCommands } from '@core/commands';
+import { COMMANDS, buildCommandCatalog, matchCommands } from '@core/commands';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
 
 const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
@@ -79,4 +79,29 @@ test('CommandPalettePopover: renders the Spanish half of a command description w
   const clearCommand = commands.find((c) => c.name === '/clear');
   assert.ok(clearCommand);
   assert.ok(markup.includes(clearCommand!.description.es));
+});
+
+test('CommandPalettePopover: renders user-registered commands with the Custom badge', () => {
+  const commands = matchCommands(
+    'deploy',
+    buildCommandCatalog([{ id: 'custom:deploy', name: '/deploy', description: 'Deploys it' }])
+  );
+  const render = (language: 'en' | 'es') =>
+    renderToStaticMarkup(
+      React.createElement(CommandPalettePopover, {
+        commands,
+        selectedIndex: 0,
+        onSelect: () => {},
+        onHoverIndex: () => {},
+        language,
+        t: (key: Parameters<typeof translate>[1]) => translate(language, key),
+      })
+    );
+
+  const en = render('en');
+  assert.ok(en.includes('/deploy'));
+  assert.ok(en.includes('Deploys it'));
+  assert.ok(en.includes('command-palette-origin-custom'));
+  assert.ok(en.includes('>Custom<'));
+  assert.ok(render('es').includes('>Personalizado<'));
 });
