@@ -664,5 +664,14 @@
   "extensions.error_save_failed": "Failed to save resource",
   "extensions.error_delete_failed": "Failed to delete resource \"{name}\": {error}",
   "extensions.save_success": "{kind} \"{name}\" saved successfully",
-  "extensions.delete_success": "{kind} \"{name}\" deleted successfully"
+  "extensions.delete_success": "{kind} \"{name}\" deleted successfully",
+  "command_palette.aria_label": "Command palette",
+  "command_palette.origin_gentle_ai": "Gentle AI / SDD",
+  "command_palette.origin_gentle_shell": "Gentle Shell",
+  "command_palette.origin_pi_core": "Pi Native",
+  "command_palette.empty": "No matching commands",
+  "command_palette.help_title": "## Available commands\n\nType `/` in the prompt to open the command palette. Use ↑/↓ to navigate, Enter or Tab to select, and Escape to dismiss it.",
+  "command_palette.help_client_heading": "### Client commands (run instantly, no round-trip to Pi)",
+  "command_palette.help_agent_heading": "### Agent commands (forwarded to Pi)",
+  "command_palette.reload_notice": "Reconnecting to Pi…"
 }

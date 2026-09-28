@@ -664,5 +664,14 @@
   "extensions.error_save_failed": "Error al guardar el recurso",
   "extensions.error_delete_failed": "Error al eliminar el recurso \"{name}\": {error}",
   "extensions.save_success": "{kind} \"{name}\" guardado exitosamente",
-  "extensions.delete_success": "{kind} \"{name}\" eliminado exitosamente"
+  "extensions.delete_success": "{kind} \"{name}\" eliminado exitosamente",
+  "command_palette.aria_label": "Paleta de comandos",
+  "command_palette.origin_gentle_ai": "Gentle AI / SDD",
+  "command_palette.origin_gentle_shell": "Gentle Shell",
+  "command_palette.origin_pi_core": "Pi Nativo",
+  "command_palette.empty": "No hay comandos que coincidan",
+  "command_palette.help_title": "## Comandos disponibles\n\nEscribe `/` en el prompt para abrir la paleta de comandos. Usa ↑/↓ para navegar, Enter o Tab para seleccionar, y Escape para descartarla.",
+  "command_palette.help_client_heading": "### Comandos de cliente (se ejecutan al instante, sin ida y vuelta a Pi)",
+  "command_palette.help_agent_heading": "### Comandos de agente (reenviados a Pi)",
+  "command_palette.reload_notice": "Reconectando con Pi…"
 }

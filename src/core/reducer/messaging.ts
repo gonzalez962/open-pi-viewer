@@ -30,7 +30,9 @@ export type MessagingAction =
   | { type: 'EVENT_AGENT_END'; payload?: { willRetry?: boolean } }
   | { type: 'EVENT_AGENT_SETTLED' }
   | { type: 'ABORT_CLICKED' }
-  | { type: 'ABORT_COMPLETED'; payload?: { promptId?: string | null } };
+  | { type: 'ABORT_COMPLETED'; payload?: { promptId?: string | null } }
+  | { type: 'CLEAR_MESSAGES' }
+  | { type: 'ADD_SYSTEM_MESSAGE'; payload: { content: string } };
 
 /**
  * Insert `newMessage` before any trailing run of queued user messages, so a newly started
@@ -503,6 +505,40 @@ export function messagingReducer(
         statusDetail: isConnected
           ? 'Agent operation aborted'
           : state.statusDetail,
+      };
+    }
+
+    case 'CLEAR_MESSAGES': {
+      // Client-side "/clear" command (Issue #9): wipes the active project's transcript
+      // only. Connection/session identity, agent activity, and streaming state are left
+      // untouched — this mirrors what the button-driven "new conversation" flow does NOT
+      // do (that one also resets the session on the backend); /clear is a pure UI reset.
+      if (state.messages.length === 0) {
+        return state;
+      }
+      return {
+        ...state,
+        messages: [],
+        activeAssistantMessageId: null,
+      };
+    }
+
+    case 'ADD_SYSTEM_MESSAGE': {
+      // Client-side notices (Issue #9's "/help" guide, "/reload" confirmation, etc.) are
+      // appended as an 'assistant' message rather than 'system': shouldRenderAsMarkdown
+      // (src/core/markdown.ts) renders Markdown exclusively for the 'assistant' role by
+      // design, and these notices are authored as structured Markdown, so reusing the
+      // 'assistant' role is what makes them render instead of appearing as literal text.
+      const systemMessage: ChatMessage = {
+        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        role: 'assistant',
+        content: action.payload.content,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+
+      return {
+        ...state,
+        messages: [...state.messages, systemMessage],
       };
     }
 

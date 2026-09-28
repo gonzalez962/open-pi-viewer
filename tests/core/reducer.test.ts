@@ -1595,3 +1595,64 @@ test('Reducer: ABORT_COMPLETED clears isQueued on messages that never started an
   assert.strictEqual(queuedMessage?.isCancelled, true);
   assert.strictEqual(state.agentActivity, 'idle');
 });
+
+test('Reducer: CLEAR_MESSAGES empties the active project messages without touching connection state', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Hello' },
+  });
+  assert.ok(state.messages.length > 0);
+
+  state = chatReducer(state, { type: 'CLEAR_MESSAGES' });
+
+  assert.deepEqual(state.messages, []);
+  assert.strictEqual(state.connectionStatus, 'connected');
+  assert.strictEqual(state.activeAssistantMessageId, null);
+});
+
+test('Reducer: CLEAR_MESSAGES on an already-empty conversation is a safe no-op', () => {
+  const state = chatReducer(INITIAL_STATE, { type: 'CLEAR_MESSAGES' });
+  assert.deepEqual(state.messages, []);
+});
+
+test('Reducer: ADD_SYSTEM_MESSAGE appends an assistant-rendered message without disturbing agent activity', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'ADD_SYSTEM_MESSAGE',
+    payload: { content: '## Command Palette Help\n\n- `/clear` — clears the chat' },
+  });
+
+  assert.strictEqual(state.messages.length, 1);
+  const [msg] = state.messages;
+  assert.strictEqual(msg.role, 'assistant');
+  assert.strictEqual(msg.content, '## Command Palette Help\n\n- `/clear` — clears the chat');
+  assert.strictEqual(msg.isStreaming, undefined);
+  assert.strictEqual(state.agentActivity, 'idle');
+  assert.ok(msg.id);
+  assert.ok(msg.timestamp);
+});
+
+test('Reducer: ADD_SYSTEM_MESSAGE appends after existing messages, preserving order', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Hi' },
+  });
+
+  state = chatReducer(state, {
+    type: 'ADD_SYSTEM_MESSAGE',
+    payload: { content: 'Reconnected.' },
+  });
+
+  assert.strictEqual(state.messages.length, 2);
+  assert.strictEqual(state.messages[0].role, 'user');
+  assert.strictEqual(state.messages[1].role, 'assistant');
+  assert.strictEqual(state.messages[1].content, 'Reconnected.');
+});

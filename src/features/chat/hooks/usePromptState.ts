@@ -7,10 +7,37 @@ import {
 import { generatePromptRequestId } from '@core/protocol';
 import { buildCopyAllCodeText, getLastAssistantCodeBlocks } from '@core/markdown';
 import { buildInsertCodeDraft } from '@core/prompt-controls-utils';
+import { COMMANDS, decideCommandDispatch, type CommandSpec } from '@core/commands';
 import type { ChatAction } from '@core/reducer';
 import type { ChatMessage } from '@core/types/messages';
 import { copyText } from '@shared/clipboard';
+import { translate, type SupportedLocale } from '@shared/i18n';
 import type { AttachedFile } from '../types';
+
+/**
+ * Builds the structured Markdown guide injected by "/help" (Issue #9): the full command
+ * catalog split into client (run locally) and agent (forwarded to Pi) sections, localized
+ * to `language`. Delivered via `ADD_SYSTEM_MESSAGE` so it renders through the existing
+ * Markdown pipeline.
+ */
+function buildHelpMarkdown(language: SupportedLocale): string {
+  const line = (c: CommandSpec) =>
+    `- \`${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ''}\` — ${c.description[language]}`;
+  const clientCommands = COMMANDS.filter((c) => c.execution === 'client');
+  const agentCommands = COMMANDS.filter((c) => c.execution === 'agent');
+
+  return [
+    translate(language, 'command_palette.help_title'),
+    '',
+    translate(language, 'command_palette.help_client_heading'),
+    '',
+    ...clientCommands.map(line),
+    '',
+    translate(language, 'command_palette.help_agent_heading'),
+    '',
+    ...agentCommands.map(line),
+  ].join('\n');
+}
 
 export interface UsePromptStateOptions {
   isReadyToSend: boolean;
@@ -34,6 +61,18 @@ export interface UsePromptStateOptions {
    * (Issue #7) to locate the last assistant message's code blocks.
    */
   messages: ChatMessage[];
+  /** Active UI language, used to localize the "/help" guide and the "/reload" notice. */
+  language: SupportedLocale;
+  /**
+   * Starts a new conversation (Issue #9's "/new" client command), reusing the same flow as
+   * the sidebar's "New session" button (`useSessions`'s `handleNewConversation`).
+   */
+  onNewConversation: () => void | Promise<void>;
+  /**
+   * Reconnects the current session (Issue #9's "/reload" client command), reusing the same
+   * flow as the header's Retry button (`App.tsx`'s `handleRetry`).
+   */
+  onReload: () => void;
 }
 
 /**
@@ -47,6 +86,9 @@ export function usePromptState({
   dispatch,
   pinAndJumpToBottom,
   messages,
+  language,
+  onNewConversation,
+  onReload,
 }: UsePromptStateOptions) {
   const [prompt, setPrompt] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -94,6 +136,41 @@ export function usePromptState({
     setAttachedFiles([]);
   };
 
+  /**
+   * Runs a recognized 'client' command locally (Issue #9 T4). Never called for 'agent' or
+   * unrecognized commands — those fall through to the ordinary send path below and reach
+   * Pi unchanged, exactly as typed.
+   */
+  const executeClientCommand = (commandId: string) => {
+    switch (commandId) {
+      case 'clear': {
+        dispatch({ type: 'CLEAR_MESSAGES' });
+        return;
+      }
+      case 'new': {
+        void onNewConversation();
+        return;
+      }
+      case 'reload': {
+        onReload();
+        dispatch({
+          type: 'ADD_SYSTEM_MESSAGE',
+          payload: { content: translate(language, 'command_palette.reload_notice') },
+        });
+        return;
+      }
+      case 'help': {
+        dispatch({
+          type: 'ADD_SYSTEM_MESSAGE',
+          payload: { content: buildHelpMarkdown(language) },
+        });
+        return;
+      }
+      default:
+        return;
+    }
+  };
+
   // handleSend/handleAbort/handleKeyDown stay plain functions, recreated every render,
   // exactly as they were in App.tsx (they were never wrapped in useCallback there).
   const handleSend = async (e: React.FormEvent) => {
@@ -104,6 +181,20 @@ export function usePromptState({
     // isReadyToSend excludes); `queuing` picks which lifecycle this submit follows.
     const queuing = !isReadyToSend && canQueue;
     if ((!trimmed && !hasAttachments) || (!isReadyToSend && !canQueue)) return;
+
+    // Slash command dispatch (Issue #9 T4): a recognized 'client' command executes locally
+    // and never reaches Pi. Skipped when files are attached — attaching a file alongside
+    // "/something" is ambiguous enough that sending it literally is the safer default.
+    // Agent commands and unrecognized "/xxx" commands are NOT special-cased here: they fall
+    // straight through to the normal send below, which forwards `trimmed` unchanged.
+    if (!hasAttachments) {
+      const decision = decideCommandDispatch(trimmed);
+      if (decision.kind === 'client' && decision.command) {
+        setPrompt('');
+        executeClientCommand(decision.command.id);
+        return;
+      }
+    }
 
     const defaultAttachmentText = attachedFiles.some((f) => f.type === 'image')
       ? '(see attached image)'
