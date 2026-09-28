@@ -229,8 +229,6 @@
   "process_group.category_agents": "Agentes",
   "process_group.category_thinking": "Pensamiento",
   "process_group.category_other": "Otro",
-  "process_group.toggle_compact_view": "Vista compacta de procesos",
-  "process_group.toggle_compact_view_aria": "Alternar vista compacta de procesos",
 
   "prompt.label": "Mensaje",
   "prompt.hint_busy": "El agente está generando una respuesta (Detener disponible)",

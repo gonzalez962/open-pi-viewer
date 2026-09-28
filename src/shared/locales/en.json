@@ -229,8 +229,6 @@
   "process_group.category_agents": "Agents",
   "process_group.category_thinking": "Thinking",
   "process_group.category_other": "Other",
-  "process_group.toggle_compact_view": "Compact process view",
-  "process_group.toggle_compact_view_aria": "Toggle compact process view",
 
   "prompt.label": "Prompt",
   "prompt.hint_busy": "Agent generating response (Stop available)",

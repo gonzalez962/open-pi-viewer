@@ -1753,40 +1753,6 @@
 }
 
 /* Activity Blocks Container */
-/* Chat toolbar (Issue #8): compact process view toggle, above the chat viewport. */
-.chat-toolbar-container {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  padding: 4px 20px;
-  flex-shrink: 0;
-}
-
-.compact-processes-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 10px;
-  background: transparent;
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  font-size: 11px;
-  cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-
-.compact-processes-toggle:hover {
-  background-color: var(--bg-hover);
-  color: var(--fg-default);
-}
-
-.compact-processes-toggle.is-active {
-  border-color: var(--border-active);
-  color: var(--border-active);
-  background-color: var(--thinking-card-bg);
-}
-
 .activity-blocks {
   display: flex;
   flex-direction: column;

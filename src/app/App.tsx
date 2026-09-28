@@ -16,20 +16,12 @@ import {
   formatLocalizedStatusDetail,
   type TranslationKey,
 } from '@shared/i18n';
-import {
-  ThinkingCard,
-  ToolCard,
-} from '@features/chat/ActivityBlocks';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
 import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
 import { groupMessageBlocks, mergeConsecutiveAssistantMessages } from '@core/process-grouping';
-import {
-  loadCompactProcessesPreference,
-  saveCompactProcessesPreference,
-} from '@shared/compact-processes';
 import { PromptControls } from '@features/chat/PromptControls';
 import {
   isMessageEmpty,
@@ -120,20 +112,6 @@ export const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsStorageNotice, setSettingsStorageNotice] = useState<string | null>(null);
-
-  // Compact process view toggle (Issue #8): when on, consecutive thinking/tool_call
-  // blocks within an assistant turn render as a single ProcessGroupCard instead of one
-  // card per block. Persisted to localStorage; read lazily so it survives reloads.
-  const [compactProcesses, setCompactProcesses] = useState<boolean>(() =>
-    loadCompactProcessesPreference()
-  );
-  const handleToggleCompactProcesses = useCallback(() => {
-    setCompactProcesses((prev) => {
-      const next = !prev;
-      saveCompactProcessesPreference(next);
-      return next;
-    });
-  }, []);
 
   const {
     chatViewportRef,
@@ -1008,21 +986,6 @@ export const App: React.FC = () => {
           </aside>
         )}
 
-        {/* Chat Toolbar: compact process view toggle (Issue #8) */}
-        {state.messages.length > 0 && (
-          <div className="chat-toolbar-container" role="toolbar" aria-label={t('process_group.toggle_compact_view_aria')}>
-            <button
-              type="button"
-              className={`compact-processes-toggle${compactProcesses ? ' is-active' : ''}`}
-              onClick={handleToggleCompactProcesses}
-              aria-pressed={compactProcesses}
-              title={t('process_group.toggle_compact_view')}
-            >
-              {t('process_group.toggle_compact_view')}
-            </button>
-          </div>
-        )}
-
         {/* Chat History Viewport */}
         <div className="chat-container">
           <section
@@ -1094,11 +1057,8 @@ export const App: React.FC = () => {
             </div>
           ) : (
             <ul className="message-list">
-              {(compactProcesses
-                ? mergeConsecutiveAssistantMessages(
-                    state.messages.filter((msg) => !isMessageEmpty(msg))
-                  )
-                : state.messages.filter((msg) => !isMessageEmpty(msg))
+              {mergeConsecutiveAssistantMessages(
+                state.messages.filter((msg) => !isMessageEmpty(msg))
               ).map((msg) => (
                 <li
                   key={msg.id}
@@ -1127,57 +1087,25 @@ export const App: React.FC = () => {
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
                       <div className="activity-blocks">
-                        {compactProcesses
-                          ? groupMessageBlocks(msg.blocks).map((item, iIndex) => {
-                              if (item.type === 'process_group') {
-                                return (
-                                  <ProcessGroupCard key={item.id} group={item} t={t} />
-                                );
-                              }
-                              const block = item.block;
-                              if (block.type === 'text') {
-                                return (
-                                  <MarkdownContent
-                                    key={`text-${iIndex}`}
-                                    content={block.text}
-                                    t={t}
-                                    onInsertCode={insertCodeIntoPrompt}
-                                  />
-                                );
-                              }
-                              return null;
-                            })
-                          : msg.blocks.map((block, bIndex) => {
-                              if (block.type === 'thinking') {
-                                return (
-                                  <ThinkingCard
-                                    key={`thinking-${bIndex}`}
-                                    block={block}
-                                    t={t}
-                                  />
-                                );
-                              }
-                              if (block.type === 'tool_call') {
-                                return (
-                                  <ToolCard
-                                    key={block.id || `tool-${bIndex}`}
-                                    block={block}
-                                    t={t}
-                                  />
-                                );
-                              }
-                              if (block.type === 'text') {
-                                return (
-                                  <MarkdownContent
-                                    key={`text-${bIndex}`}
-                                    content={block.text}
-                                    t={t}
-                                    onInsertCode={insertCodeIntoPrompt}
-                                  />
-                                );
-                              }
-                              return null;
-                            })}
+                        {groupMessageBlocks(msg.blocks).map((item, iIndex) => {
+                          if (item.type === 'process_group') {
+                            return (
+                              <ProcessGroupCard key={item.id} group={item} t={t} />
+                            );
+                          }
+                          const block = item.block;
+                          if (block.type === 'text') {
+                            return (
+                              <MarkdownContent
+                                key={`text-${iIndex}`}
+                                content={block.text}
+                                t={t}
+                                onInsertCode={insertCodeIntoPrompt}
+                              />
+                            );
+                          }
+                          return null;
+                        })}
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
