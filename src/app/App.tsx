@@ -58,6 +58,7 @@ import {
   updateWindowTitle,
 } from '@infra/icon-status';
 import type { ConnectConfig, ConnectResult } from '@core/types/connection';
+import type { ReloadRequest } from '@core/commands';
 import { useWorkspaceView } from '@features/workspace/hooks/useWorkspaceView';
 import { normalizeWorkspaceKey } from '@features/workspace/workspace-cache';
 import { useChatScroll } from '@features/chat/hooks/useChatScroll';
@@ -380,11 +381,17 @@ export const App: React.FC = () => {
     },
   });
 
-  // Explicit retry without replaying prompts
-  const handleRetry = () => {
-    if (isConnecting || state.isResetting) return;
+  // Explicit retry without replaying prompts. Reports whether a new attempt was started
+  // (or one was already running) and, when started, the attempt's real outcome - used by
+  // the "/reload" slash command (Issue #9 T6) to tell the user whether it worked.
+  const requestRetry = (): ReloadRequest => {
+    if (isConnecting || state.isResetting) return { status: 'busy' };
     dispatch({ type: 'CLEAR_ERROR' });
-    void retryConnection(config);
+    return { status: 'started', result: retryConnection(config) };
+  };
+
+  const handleRetry = () => {
+    requestRetry();
   };
 
   // Sessions-list cluster: loadSessions, the load-on-connect and busy->idle reload
@@ -437,7 +444,7 @@ export const App: React.FC = () => {
     messages: state.messages,
     language: preferences.language,
     onNewConversation: handleNewConversation,
-    onReload: handleRetry,
+    onReload: requestRetry,
   });
 
   // Pure wrapper handing MarkdownContent's per-code-card "Insert into prompt" button a way

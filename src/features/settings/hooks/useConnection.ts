@@ -3,6 +3,7 @@ import { isConfigReady, loadConnectConfig, saveConnectConfig } from '@features/s
 import {
   resolveConfigApplyOutcome,
   StartupManager,
+  type AttemptOutcome,
   type ConfigApplyOutcome,
 } from '@features/settings/connection';
 import type { ConnectConfig, ConnectResult } from '@core/types/connection';
@@ -42,8 +43,12 @@ export interface UseConnectionResult {
   ) => Promise<void>;
   /** Imperative primitive used by App.tsx's mount effect cleanup. */
   cancelConnection: () => void;
-  /** Underlies handleRetry; the isConnecting/isResetting guard stays in App.tsx (reducer state, not owned here). */
-  retryConnection: (config?: ConnectConfig) => Promise<void>;
+  /**
+   * Underlies handleRetry; the isConnecting/isResetting guard stays in App.tsx (reducer
+   * state, not owned here). Resolves with the attempt's real outcome after its
+   * onConnectSuccess/onConnectError callback fired (Issue #9 T6's "/reload" report).
+   */
+  retryConnection: (config?: ConnectConfig) => Promise<AttemptOutcome>;
   /**
    * Applies an already-validated config directly (used by the settings-panel save path,
    * handleSaveAndApplySettings, which stays in App.tsx this slice). Saves, updates config
@@ -148,7 +153,8 @@ export function useConnection({
         }
         return prev;
       });
-      return startupManagerRef.current?.start(cfg, options) ?? Promise.resolve();
+      const attempt = startupManagerRef.current?.start(cfg, options);
+      return attempt ? attempt.then(() => undefined) : Promise.resolve();
     },
     []
   );
@@ -161,13 +167,15 @@ export function useConnection({
     (cfg?: ConnectConfig) => {
       const targetConfig = cfg ?? config;
       if (!isConfigReady(targetConfig)) {
-        onConnectError(
-          'Configuration is incomplete. Please configure Pi CLI entrypoint and working directory in Settings.',
-          targetConfig
-        );
-        return Promise.resolve();
+        const error =
+          'Configuration is incomplete. Please configure Pi CLI entrypoint and working directory in Settings.';
+        onConnectError(error, targetConfig);
+        return Promise.resolve<AttemptOutcome>({ status: 'error', error });
       }
-      return startupManagerRef.current?.retry(targetConfig) ?? Promise.resolve();
+      return (
+        startupManagerRef.current?.retry(targetConfig) ??
+        Promise.resolve<AttemptOutcome>({ status: 'cancelled' })
+      );
     },
     [config, onConnectError]
   );

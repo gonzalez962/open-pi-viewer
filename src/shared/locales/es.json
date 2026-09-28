@@ -673,5 +673,9 @@
   "command_palette.help_title": "## Comandos disponibles\n\nEscribe `/` en el prompt para abrir la paleta de comandos. Usa ↑/↓ para navegar, Enter o Tab para seleccionar, y Escape para descartarla.",
   "command_palette.help_client_heading": "### Comandos de cliente (se ejecutan al instante, sin ida y vuelta a Pi)",
   "command_palette.help_agent_heading": "### Comandos de agente (reenviados a Pi)",
-  "command_palette.reload_notice": "Reconectando con Pi…"
+  "command_palette.reload_notice": "Reconectando con Pi…",
+  "command_palette.reload_success": "Sesión recargada correctamente.",
+  "command_palette.reload_failed": "La recarga falló: {error}",
+  "command_palette.reload_superseded": "La recarga fue interrumpida por otro intento de conexión.",
+  "command_palette.reload_busy": "Ya hay una reconexión en curso. Espera a que termine."
 }

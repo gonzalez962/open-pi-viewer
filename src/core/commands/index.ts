@@ -3,6 +3,7 @@ import { COMMANDS } from './registry';
 
 export * from './types';
 export { COMMANDS } from './registry';
+export * from './reload';
 
 function stripSlash(value: string): string {
   return value.startsWith('/') ? value.slice(1) : value;

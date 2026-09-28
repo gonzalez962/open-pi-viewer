@@ -7,7 +7,15 @@ import {
 import { generatePromptRequestId } from '@core/protocol';
 import { buildCopyAllCodeText, getLastAssistantCodeBlocks } from '@core/markdown';
 import { buildInsertCodeDraft } from '@core/prompt-controls-utils';
-import { COMMANDS, decideCommandDispatch, type CommandSpec } from '@core/commands';
+import {
+  COMMANDS,
+  decideCommandDispatch,
+  describeReloadOutcome,
+  type CommandSpec,
+  type ReloadNotice,
+  type ReloadOutcome,
+  type ReloadRequest,
+} from '@core/commands';
 import type { ChatAction } from '@core/reducer';
 import type { ChatMessage } from '@core/types/messages';
 import { copyText } from '@shared/clipboard';
@@ -70,9 +78,10 @@ export interface UsePromptStateOptions {
   onNewConversation: () => void | Promise<void>;
   /**
    * Reconnects the current session (Issue #9's "/reload" client command), reusing the same
-   * flow as the header's Retry button (`App.tsx`'s `handleRetry`).
+   * flow as the header's Retry button (`App.tsx`'s `requestRetry`). Returns 'busy' when a
+   * connection/reset is already in progress, otherwise the started attempt's real outcome.
    */
-  onReload: () => void;
+  onReload: () => ReloadRequest;
 }
 
 /**
@@ -152,11 +161,32 @@ export function usePromptState({
         return;
       }
       case 'reload': {
-        onReload();
+        // Issue #9 T6: report the reload's real outcome. The final notice is appended only
+        // after the attempt settled, i.e. after its CONNECT_SUCCESS/SESSION_READY/
+        // CONNECT_FAIL dispatch, so a session hydration that replaces the transcript cannot
+        // wipe it.
+        const notify = (notice: ReloadNotice) =>
+          dispatch({
+            type: 'ADD_SYSTEM_MESSAGE',
+            payload: { content: translate(language, notice.key, notice.params) },
+          });
+        const request = onReload();
+        if (request.status === 'busy') {
+          notify(describeReloadOutcome(request));
+          return;
+        }
         dispatch({
           type: 'ADD_SYSTEM_MESSAGE',
           payload: { content: translate(language, 'command_palette.reload_notice') },
         });
+        void request.result
+          .catch(
+            (err: unknown): ReloadOutcome => ({
+              status: 'error',
+              error: err instanceof Error ? err.message : String(err),
+            })
+          )
+          .then((outcome) => notify(describeReloadOutcome(outcome)));
         return;
       }
       case 'help': {

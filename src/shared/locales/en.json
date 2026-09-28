@@ -673,5 +673,9 @@
   "command_palette.help_title": "## Available commands\n\nType `/` in the prompt to open the command palette. Use ↑/↓ to navigate, Enter or Tab to select, and Escape to dismiss it.",
   "command_palette.help_client_heading": "### Client commands (run instantly, no round-trip to Pi)",
   "command_palette.help_agent_heading": "### Agent commands (forwarded to Pi)",
-  "command_palette.reload_notice": "Reconnecting to Pi…"
+  "command_palette.reload_notice": "Reconnecting to Pi…",
+  "command_palette.reload_success": "Session reloaded successfully.",
+  "command_palette.reload_failed": "Reload failed: {error}",
+  "command_palette.reload_superseded": "Reload was interrupted by another connection attempt.",
+  "command_palette.reload_busy": "A reconnection is already in progress. Please wait for it to finish."
 }

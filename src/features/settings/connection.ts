@@ -67,6 +67,18 @@ export interface StartupManagerOptions {
   resolveResumePlanFn?: (cwd: string) => SessionResumePlan;
 }
 
+/**
+ * Real outcome of one connection attempt, resolved by `start()`/`retry()` only after the
+ * attempt settled: 'success' after onSuccess fired, 'error' after onError fired, and
+ * 'cancelled' when the attempt was cancelled or superseded (its callbacks were dropped).
+ */
+export type AttemptOutcome =
+  | { status: 'success' }
+  | { status: 'error'; error: string }
+  | { status: 'cancelled' };
+
+const CANCELLED: AttemptOutcome = { status: 'cancelled' };
+
 export interface ActiveAttempt {
   readonly id: number;
   readonly config: ConnectConfig;
@@ -94,7 +106,7 @@ export class StartupManager {
   private nextAttemptId = 0;
   private activeAttempt: ActiveAttempt | null = null;
   private options: StartupManagerOptions;
-  private inFlightPromise: Promise<void> | null = null;
+  private inFlightPromise: Promise<AttemptOutcome> | null = null;
 
   constructor(options: StartupManagerOptions = {}) {
     this.options = options;
@@ -122,7 +134,7 @@ export class StartupManager {
   start(
     config: ConnectConfig,
     options: { force?: boolean; freshSession?: boolean } = {}
-  ): Promise<void> {
+  ): Promise<AttemptOutcome> {
     // If an attempt is already active with the exact same config and not forced, coalesce
     if (
       !options.force &&
@@ -149,8 +161,8 @@ export class StartupManager {
     const schedule =
       this.options.scheduleFn ?? ((cb: () => void) => queueMicrotask(cb));
 
-    let resolvePromise: () => void;
-    const promise = new Promise<void>((resolve) => {
+    let resolvePromise: (outcome: AttemptOutcome) => void;
+    const promise = new Promise<AttemptOutcome>((resolve) => {
       resolvePromise = resolve;
     });
     this.inFlightPromise = promise;
@@ -162,25 +174,30 @@ export class StartupManager {
         if (this.activeAttempt?.id === attempt.id) {
           this.inFlightPromise = null;
         }
-        resolvePromise();
+        resolvePromise(CANCELLED);
         return;
       }
 
-      void this.executeAttempt(attempt).finally(() => {
-        if (this.activeAttempt?.id === attempt.id) {
-          this.inFlightPromise = null;
-        }
-        resolvePromise();
-      });
+      let outcome: AttemptOutcome = CANCELLED;
+      void this.executeAttempt(attempt)
+        .then((result) => {
+          outcome = result;
+        })
+        .finally(() => {
+          if (this.activeAttempt?.id === attempt.id) {
+            this.inFlightPromise = null;
+          }
+          resolvePromise(outcome);
+        });
     });
 
     return promise;
   }
 
-  retry(config?: ConnectConfig): Promise<void> {
+  retry(config?: ConnectConfig): Promise<AttemptOutcome> {
     const targetConfig = config ?? this.activeAttempt?.config;
     if (!targetConfig) {
-      return Promise.resolve();
+      return Promise.resolve(CANCELLED);
     }
     return this.start(targetConfig, { force: true });
   }
@@ -193,9 +210,9 @@ export class StartupManager {
     );
   }
 
-  private async executeAttempt(attempt: ActiveAttempt): Promise<void> {
+  private async executeAttempt(attempt: ActiveAttempt): Promise<AttemptOutcome> {
     if (attempt.cancelled || this.activeAttempt?.id !== attempt.id) {
-      return;
+      return CANCELLED;
     }
 
     this.options.onStart?.(attempt.config);
@@ -206,7 +223,7 @@ export class StartupManager {
       await ensureListeners();
 
       if (attempt.cancelled || this.activeAttempt?.id !== attempt.id) {
-        return;
+        return CANCELLED;
       }
 
       // Determine session resumption options based on attempt type and recorded identity
@@ -245,7 +262,7 @@ export class StartupManager {
       const result = await connect(attempt.config, sessionOptions);
 
       if (attempt.cancelled || this.activeAttempt?.id !== attempt.id) {
-        return;
+        return CANCELLED;
       }
 
       // On successful connection, persist or reconcile durable session record
@@ -264,13 +281,15 @@ export class StartupManager {
       }
 
       this.options.onSuccess?.(result);
+      return { status: 'success' };
     } catch (err: unknown) {
       if (attempt.cancelled || this.activeAttempt?.id !== attempt.id) {
-        return;
+        return CANCELLED;
       }
 
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.options.onError?.(errorMsg, attempt.config);
+      return { status: 'error', error: errorMsg };
     }
   }
 }

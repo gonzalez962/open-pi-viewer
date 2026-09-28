@@ -344,3 +344,69 @@ test('useConnection persistence: avoids duplicate saved config write when connec
   assert.strictEqual(writeCount, 1, 'must write to storage when configuration changed');
   assert.deepStrictEqual(lastPersistedConfig, updatedConfig);
 });
+
+test('StartupManager: start() resolves with a success outcome only after onSuccess fired', async () => {
+  const events: string[] = [];
+  const manager = new StartupManager({
+    ensureListenersReadyFn: async () => {},
+    connectFn: async () => ({ connected: true, model: null }),
+    onSuccess: () => {
+      events.push('onSuccess');
+    },
+  });
+
+  const outcome = await manager.start(DEFAULT_CONFIG);
+  events.push('resolved');
+
+  assert.deepStrictEqual(outcome, { status: 'success' });
+  assert.deepStrictEqual(events, ['onSuccess', 'resolved']);
+});
+
+test('StartupManager: start() resolves with an error outcome carrying the connect error message', async () => {
+  const manager = new StartupManager({
+    ensureListenersReadyFn: async () => {},
+    connectFn: async () => {
+      throw new Error('spawn node ENOENT');
+    },
+  });
+
+  const outcome = await manager.retry(DEFAULT_CONFIG);
+  assert.deepStrictEqual(outcome, { status: 'error', error: 'spawn node ENOENT' });
+});
+
+test('StartupManager: a superseded attempt resolves as cancelled, never as success', async () => {
+  let release: () => void = () => {};
+  const manager = new StartupManager({
+    ensureListenersReadyFn: async () => {},
+    connectFn: () =>
+      new Promise((resolve) => {
+        release = () => resolve({ connected: true, model: null });
+      }),
+  });
+
+  const first = manager.start(DEFAULT_CONFIG);
+  // Let the first attempt reach connectFn before superseding it.
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  const second = manager.retry(DEFAULT_CONFIG);
+  release();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  release();
+
+  assert.deepStrictEqual(await first, { status: 'cancelled' });
+  assert.deepStrictEqual(await second, { status: 'success' });
+});
+
+test('StartupManager: an attempt cancelled before its scheduled invocation resolves as cancelled', async () => {
+  const manager = new StartupManager({
+    ensureListenersReadyFn: async () => {},
+    connectFn: async () => ({ connected: true, model: null }),
+  });
+
+  const p = manager.start(DEFAULT_CONFIG);
+  manager.cancel();
+  assert.deepStrictEqual(await p, { status: 'cancelled' });
+});
