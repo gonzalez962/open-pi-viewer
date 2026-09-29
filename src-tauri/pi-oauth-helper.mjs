@@ -188,27 +188,45 @@ function parseCliArgs() {
   return { action, entrypoint, home, provider };
 }
 
+const PI_SDK_PACKAGE_NAMES = ['@earendil-works/pi-coding-agent', 'pi-coding-agent'];
+
+async function loadPiSdkFromPackageDir(packageDir) {
+  const pkgPath = path.join(packageDir, 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    if (!PI_SDK_PACKAGE_NAMES.includes(pkg.name)) return null;
+    const mainFile = pkg.main || 'dist/index.js';
+    const candidate = path.resolve(packageDir, mainFile);
+    if (fs.existsSync(candidate)) {
+      const mod = await import(pathToFileURL(candidate).href);
+      if (mod.ModelRuntime) return mod;
+    }
+    const modDir = await import(pathToFileURL(packageDir).href);
+    if (modDir.ModelRuntime) return modDir;
+  } catch (_) {}
+  return null;
+}
+
+/**
+ * Resolves the SDK anchored at the entrypoint: either the entrypoint lives inside the
+ * SDK package (direct Pi CLI), or the SDK is a dependency of the entrypoint's package
+ * (Gentle Shell). Mirrors Node's node_modules lookup without relying on the SDK's
+ * `exports` map, which does not expose `./package.json`.
+ */
 async function resolvePiSdk(entrypointPath) {
   if (!entrypointPath) {
     throw new Error('Pi entrypoint path is required');
   }
   let currentDir = path.dirname(path.resolve(entrypointPath));
   for (let i = 0; i < 6; i++) {
-    const pkgPath = path.join(currentDir, 'package.json');
-    if (fs.existsSync(pkgPath)) {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        if (pkg.name === '@earendil-works/pi-coding-agent' || pkg.name === 'pi-coding-agent') {
-          const mainFile = pkg.main || 'dist/index.js';
-          const candidate = path.resolve(currentDir, mainFile);
-          if (fs.existsSync(candidate)) {
-            const mod = await import(pathToFileURL(candidate).href);
-            if (mod.ModelRuntime) return mod;
-          }
-          const modDir = await import(pathToFileURL(currentDir).href);
-          if (modDir.ModelRuntime) return modDir;
-        }
-      } catch (_) {}
+    const packageDirs = [
+      currentDir,
+      ...PI_SDK_PACKAGE_NAMES.map((name) => path.join(currentDir, 'node_modules', ...name.split('/'))),
+    ];
+    for (const packageDir of packageDirs) {
+      const mod = await loadPiSdkFromPackageDir(packageDir);
+      if (mod) return mod;
     }
     const parent = path.dirname(currentDir);
     if (parent === currentDir) break;
