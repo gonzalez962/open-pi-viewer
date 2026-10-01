@@ -51,6 +51,48 @@ test('SettingsView: renders connection configuration inputs with draft values', 
   assert.match(html, /Save &amp; Apply/);
 });
 
+test('SettingsView: renders Gentle Mesh network connection fields when connectionType is mesh', () => {
+  const meshConfig: ConnectConfig = {
+    nodePath: '',
+    piEntrypoint: '',
+    workingDirectory: '/remote/workspace',
+    connectionType: 'mesh',
+    meshCoordinatorUrl: 'http://100.64.0.1:8080',
+    meshToken: 'secret-token-xyz',
+    fileTreeRefreshInterval: 15,
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: meshConfig,
+      settingsDraft: meshConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePreferences,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /id="settings-connection-type-select"/);
+  assert.match(html, /id="settings-mesh-url-input"/);
+  assert.match(html, /value="http:\/\/100\.64\.0\.1:8080"/);
+  assert.match(html, /id="settings-mesh-token-input"/);
+  assert.match(html, /value="secret-token-xyz"/);
+  assert.match(html, /id="settings-cwd-input"/);
+  assert.match(html, /value="\/remote\/workspace"/);
+  // Ensure local subprocess inputs are omitted in mesh mode
+  assert.doesNotMatch(html, /id="settings-node-path-input"/);
+  assert.doesNotMatch(html, /id="settings-pi-entry-input"/);
+});
+
 test('SettingsView: renders Browse directory button for portable configuration', () => {
   const html = renderToStaticMarkup(
     React.createElement(SettingsView, {
