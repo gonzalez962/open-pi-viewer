@@ -1,22 +1,9 @@
-/**
- * Process grouping (Issue #8): categorizes tool/thinking blocks and merges consecutive
- * runs of them into a single compact `ProcessGroup` per assistant message.
- *
- * Design decision: the reducer (see `src/core/reducer/tool-execution.ts` and
- * `messaging.ts`) accumulates every block of one agent turn — thinking, tool_call, and
- * text — into a single assistant `ChatMessage.blocks` array (it targets the active
- * assistant message and only creates a new one when none exists for the turn). Text
- * blocks are appended to that same array as they stream in, interleaved with process
- * blocks. Grouping therefore operates within one message's `blocks` array: it scans that
- * array once, merging consecutive `thinking`/`tool_call` blocks into a `ProcessGroup`, and
- * lets any `text` block flush the current group and pass through unchanged. This keeps
- * message headers/keys intact (grouping never spans multiple `ChatMessage`s) while still
- * compacting the flood of process blocks within a turn.
- *
- * Pure core module: no React, no Tauri, no outer-layer imports.
- */
-
-import type { ChatMessage, MessageBlock, ThinkingBlock, ToolCallBlock } from './types/messages';
+import type {
+  ChatMessage,
+  MessageBlock,
+  ThinkingBlock,
+  ToolCallBlock,
+} from './types/messages';
 
 export type ProcessCategory =
   | 'bash'
@@ -28,87 +15,46 @@ export type ProcessCategory =
   | 'thinking'
   | 'other';
 
-/** Stable display order for category badges/sections. */
 export const PROCESS_CATEGORY_ORDER: readonly ProcessCategory[] = [
-  'thinking',
-  'bash',
-  'read',
-  'write',
-  'edit',
-  'search',
   'agents',
+  'bash',
+  'edit',
+  'write',
+  'read',
+  'search',
+  'thinking',
   'other',
-];
+] as const;
 
 export type ProcessableBlock = ThinkingBlock | ToolCallBlock;
 
-/**
- * Categorizes a tool name into one of the compact process categories. Case-insensitive;
- * falls back to substring matching for search-like and agent-like tool name variants
- * (e.g. `grep_search`, `subagent_task`) so unfamiliar but conventionally-named tools still
- * group sensibly instead of always landing in `other`.
- */
-export function categorizeToolName(name: unknown): ProcessCategory {
-  if (typeof name !== 'string' || name.length === 0) return 'other';
-  const n = name.toLowerCase();
-
-  if (n === 'bash' || n === 'shell' || n === 'powershell' || n === 'sh' || n === 'zsh') {
-    return 'bash';
-  }
-  if (n === 'edit' || n === 'multiedit' || n === 'multi_edit') {
-    return 'edit';
-  }
-  if (n === 'write') {
-    return 'write';
-  }
-  if (n === 'read') {
-    return 'read';
-  }
-  if (
-    n === 'grep' ||
-    n === 'find' ||
-    n === 'ls' ||
-    n === 'glob' ||
-    n.includes('search') ||
-    n.includes('grep') ||
-    n.includes('glob') ||
-    n.includes('find')
-  ) {
-    return 'search';
-  }
-  if (n === 'task' || n.includes('agent') || n.includes('subagent') || n.includes('task')) {
-    return 'agents';
-  }
-  return 'other';
-}
-
-/** Categorizes a thinking or tool_call block. */
-export function categorizeBlock(block: ProcessableBlock): ProcessCategory {
-  if (block.type === 'thinking') return 'thinking';
-  return categorizeToolName(block.name);
-}
-
-function isProcessableBlock(block: MessageBlock): block is ProcessableBlock {
-  return block.type === 'thinking' || block.type === 'tool_call';
-}
-
-/** A compacted run of consecutive process (thinking/tool_call) blocks. */
-export interface ProcessGroup {
-  type: 'process_group';
-  /** Stable id for React keys, unique within the owning message's render items. */
+export interface ProcessItem {
   id: string;
+  category: ProcessCategory;
+  block: ToolCallBlock | ThinkingBlock;
+  messageId: string;
+  timestamp?: string;
+}
+
+export interface ProcessGroup {
+  id: string;
+  type: 'process_group';
+  items: ProcessItem[];
+  byCategory: Record<ProcessCategory, ProcessItem[]>;
+  categoriesPresent: ProcessCategory[];
+  totalCount: number;
+  hasErrors: boolean;
+  hasRunning: boolean;
+  timestamp: string;
+
+  // Backward compatibility with Issue #8 / origin/main
   blocks: ProcessableBlock[];
-  /** Categories present, in first-seen order (no duplicates). */
   categoryOrder: ProcessCategory[];
-  /** Per-category activity count. */
   counts: Partial<Record<ProcessCategory, number>>;
-  /** Total number of blocks in the group. */
   total: number;
-  /** True when at least one contained tool_call block ended in error. */
   hasError: boolean;
 }
 
-/** A single passthrough block (currently only ever a `text` block reaches here). */
 export interface PassthroughItem {
   type: 'block';
   block: MessageBlock;
@@ -116,41 +62,351 @@ export interface PassthroughItem {
 
 export type RenderItem = PassthroughItem | ProcessGroup;
 
-function buildGroup(blocks: ProcessableBlock[], index: number): ProcessGroup {
-  const categoryOrder: ProcessCategory[] = [];
-  const counts: Partial<Record<ProcessCategory, number>> = {};
-  let hasError = false;
+export type RenderableChatItem =
+  | { type: 'message'; message: ChatMessage }
+  | ProcessGroup;
 
-  for (const block of blocks) {
-    const category = categorizeBlock(block);
-    if (!categoryOrder.includes(category)) {
-      categoryOrder.push(category);
-    }
-    counts[category] = (counts[category] ?? 0) + 1;
-    if (block.type === 'tool_call' && block.isError) {
-      hasError = true;
+/**
+ * Categorizes a tool call or thinking block into one of the designated process categories:
+ * - bash: terminal commands (bash, powershell, sh, terminal, exec)
+ * - edit: file modifications (edit, patch, replace)
+ * - read: reading files (read, cat, read_workspace_file)
+ * - write: writing files (write, create_file)
+ * - search: find & grep (grep, find, ls, codegraph)
+ * - agents: subagents (subagent_run, subagent_status, agent, etc.)
+ * - thinking: model reasoning blocks
+ * - other: any other tools
+ */
+export function categorizeProcess(block: ToolCallBlock | ThinkingBlock): ProcessCategory {
+  if (block.type === 'thinking') {
+    return 'thinking';
+  }
+
+  const name = (block.name || '').toLowerCase().trim();
+
+  // 1. Agents / Subagents
+  if (
+    name.startsWith('subagent') ||
+    name === 'agent' ||
+    name === 'subagent' ||
+    name === 'sdd_agent'
+  ) {
+    return 'agents';
+  }
+
+  // 2. Terminal / Shell
+  if (
+    name === 'bash' ||
+    name === 'powershell' ||
+    name === 'sh' ||
+    name === 'zsh' ||
+    name === 'fish' ||
+    name === 'terminal' ||
+    name === 'exec_command' ||
+    name === 'command'
+  ) {
+    return 'bash';
+  }
+
+  // 3. Edit
+  if (
+    name === 'edit' ||
+    name === 'patch' ||
+    name === 'replace' ||
+    name === 'edit_file'
+  ) {
+    return 'edit';
+  }
+
+  // 4. Read
+  if (
+    name === 'read' ||
+    name === 'read_file' ||
+    name === 'cat' ||
+    name === 'read_workspace_file'
+  ) {
+    return 'read';
+  }
+
+  // 5. Write
+  if (
+    name === 'write' ||
+    name === 'write_file' ||
+    name === 'create_file'
+  ) {
+    return 'write';
+  }
+
+  // 6. Search
+  if (
+    name === 'grep' ||
+    name === 'find' ||
+    name === 'find_files' ||
+    name === 'ls' ||
+    name === 'file_search' ||
+    name.startsWith('codegraph')
+  ) {
+    return 'search';
+  }
+
+  return 'other';
+}
+
+export function categorizeToolName(name: unknown): ProcessCategory {
+  if (typeof name !== 'string') return 'other';
+  return categorizeProcess({
+    type: 'tool_call',
+    name,
+    args: {},
+    id: '',
+    output: '',
+    status: 'completed',
+  });
+}
+
+export function categorizeBlock(block: ToolCallBlock | ThinkingBlock): ProcessCategory {
+  return categorizeProcess(block);
+}
+
+/**
+ * Checks if a tool name corresponds to an interactive question, choice, or permission tool
+ * that directly converses with the human rather than executing an automated background task.
+ */
+export function isInteractiveUserTool(name?: string): boolean {
+  if (!name || typeof name !== 'string') return false;
+  const lower = name.toLowerCase().trim();
+  return (
+    lower === 'ask_user_question' ||
+    lower === 'ask_user_choice' ||
+    lower === 'ask_user_confirmation' ||
+    lower === 'question'
+  );
+}
+
+/**
+ * Checks if an assistant message is a pure process message (only tools/thinking, no text content).
+ */
+export function isProcessOnlyAssistantMessage(msg: ChatMessage): boolean {
+  if (msg.role !== 'assistant') return false;
+
+  // Never consider a message containing interactive question/decision tools as a pure process message
+  if (
+    msg.blocks &&
+    msg.blocks.some((b) => b.type === 'tool_call' && isInteractiveUserTool(b.name))
+  ) {
+    return false;
+  }
+
+  // If message has substantial content text
+  const trimmed = (msg.content || '').trim();
+  if (trimmed.length > 0) {
+    // If blocks exist, check if there's any text block with non-empty content
+    if (msg.blocks && msg.blocks.length > 0) {
+      const hasText = msg.blocks.some(
+        (b) => b.type === 'text' && b.text.trim().length > 0
+      );
+      if (hasText) return false;
+    } else {
+      // Content has text and no blocks -> standard text message
+      return false;
     }
   }
 
-  const firstBlock = blocks[0];
-  const idSeed = firstBlock.type === 'tool_call' ? firstBlock.id : `thinking-${index}`;
+  // If blocks exist, check if there is at least one tool call or thinking block
+  if (msg.blocks && msg.blocks.length > 0) {
+    return msg.blocks.some(
+      (b) => b.type === 'tool_call' || b.type === 'thinking'
+    );
+  }
+
+  return false;
+}
+
+/**
+ * Extracts process items from an assistant message's blocks.
+ */
+export function extractProcessItemsFromMessage(msg: ChatMessage): ProcessItem[] {
+  if (!msg.blocks || msg.blocks.length === 0) return [];
+
+  const items: ProcessItem[] = [];
+  msg.blocks.forEach((block, index) => {
+    if (block.type === 'thinking') {
+      items.push({
+        id: `${msg.id}-thinking-${index}`,
+        category: 'thinking',
+        block,
+        messageId: msg.id,
+        timestamp: msg.timestamp,
+      });
+    } else if (block.type === 'tool_call') {
+      // Interactive question/decision tools are directed to the user and must not be grouped into background processes
+      if (isInteractiveUserTool(block.name)) {
+        return;
+      }
+      items.push({
+        id: block.id || `${msg.id}-tool-${index}`,
+        category: categorizeProcess(block),
+        block,
+        messageId: msg.id,
+        timestamp: msg.timestamp,
+      });
+    }
+  });
+
+  return items;
+}
+
+/**
+ * Creates a structured ProcessGroup from an array of ProcessItem elements.
+ */
+export function createProcessGroup(id: string, items: ProcessItem[], timestamp: string): ProcessGroup {
+  const byCategory: Record<ProcessCategory, ProcessItem[]> = {
+    bash: [],
+    edit: [],
+    read: [],
+    write: [],
+    search: [],
+    agents: [],
+    thinking: [],
+    other: [],
+  };
+
+  let hasErrors = false;
+  let hasRunning = false;
+
+  for (const item of items) {
+    byCategory[item.category].push(item);
+    if (item.block.type === 'tool_call') {
+      if (item.block.status === 'error' || item.block.isError) {
+        hasErrors = true;
+      }
+      if (item.block.status === 'running') {
+        hasRunning = true;
+      }
+    } else if (item.block.type === 'thinking' && item.block.isStreaming) {
+      hasRunning = true;
+    }
+  }
+
+  // Order of categories present in declared logical sequence
+  const categoryOrder: ProcessCategory[] = [
+    'agents',
+    'bash',
+    'edit',
+    'write',
+    'read',
+    'search',
+    'thinking',
+    'other',
+  ];
+
+  const categoriesPresent = categoryOrder.filter(
+    (cat) => byCategory[cat].length > 0
+  );
+
+  const counts: Partial<Record<ProcessCategory, number>> = {};
+  for (const cat of categoriesPresent) {
+    counts[cat] = byCategory[cat].length;
+  }
 
   return {
+    id,
     type: 'process_group',
-    id: `process-group-${index}-${idSeed}`,
-    blocks,
-    categoryOrder,
+    items,
+    byCategory,
+    categoriesPresent,
+    totalCount: items.length,
+    hasErrors,
+    hasRunning,
+    timestamp,
+
+    // Legacy compatibility fields
+    blocks: items.map((i) => i.block),
+    categoryOrder: categoriesPresent,
     counts,
-    total: blocks.length,
-    hasError,
+    total: items.length,
+    hasError: hasErrors,
   };
 }
 
 /**
- * Groups one message's blocks into render items: consecutive `thinking`/`tool_call`
- * blocks are merged into a single `ProcessGroup`; a `text` block flushes the current
- * group (if any) and passes through unchanged. Preserves original order.
+ * Groups consecutive process items and assistant tool/thinking messages into compact ProcessGroup items.
+ * Non-process messages (user, system) and conversational assistant text responses are preserved in place.
+ * Ensures all process executions within a turn are unified into a single ProcessGroup rather than fragmented.
+ *
+ * @param messages The array of chat messages
+ * @param compact Whether process compacting is active (retained for signature compatibility)
  */
+export function groupChatMessages(
+  messages: ChatMessage[],
+  _compact = true
+): RenderableChatItem[] {
+  if (!messages || messages.length === 0) return [];
+
+  const result: RenderableChatItem[] = [];
+  let currentGroupItems: ProcessItem[] = [];
+  let groupStartId = '';
+  let groupTimestamp = '';
+
+  const flushGroup = () => {
+    if (currentGroupItems.length > 0) {
+      result.push(createProcessGroup(groupStartId, currentGroupItems, groupTimestamp));
+      currentGroupItems = [];
+      groupStartId = '';
+      groupTimestamp = '';
+    }
+  };
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+
+    if (msg.role !== 'assistant') {
+      flushGroup();
+      result.push({ type: 'message', message: msg });
+      continue;
+    }
+
+    const items = extractProcessItemsFromMessage(msg);
+    const hasInteractive =
+      msg.blocks &&
+      msg.blocks.some((b) => b.type === 'tool_call' && isInteractiveUserTool(b.name));
+    const hasText =
+      (msg.content || '').trim().length > 0 ||
+      (msg.blocks && msg.blocks.some((b) => b.type === 'text' && (b as any).text.trim().length > 0));
+
+    if (items.length > 0) {
+      if (currentGroupItems.length === 0) {
+        groupStartId = `proc-group-${msg.id}`;
+        groupTimestamp = msg.timestamp;
+      }
+      currentGroupItems.push(...items);
+    }
+
+    if (hasText || hasInteractive) {
+      flushGroup();
+      // Keep only non-process blocks (e.g. text or interactive tool calls) on the conversational message
+      const conversationalBlocks = msg.blocks
+        ? msg.blocks.filter(
+            (b) => b.type === 'text' || (b.type === 'tool_call' && isInteractiveUserTool(b.name))
+          )
+        : undefined;
+      result.push({
+        type: 'message',
+        message: {
+          ...msg,
+          blocks:
+            conversationalBlocks && conversationalBlocks.length > 0
+              ? conversationalBlocks
+              : undefined,
+        },
+      });
+    }
+  }
+
+  flushGroup();
+  return result;
+}
+
 export function groupMessageBlocks(blocks: ReadonlyArray<MessageBlock>): RenderItem[] {
   const items: RenderItem[] = [];
   let current: ProcessableBlock[] = [];
@@ -158,12 +414,18 @@ export function groupMessageBlocks(blocks: ReadonlyArray<MessageBlock>): RenderI
 
   const flush = () => {
     if (current.length === 0) return;
-    items.push(buildGroup(current, groupIndex++));
+    const processItems: ProcessItem[] = current.map((b, idx) => ({
+      id: b.type === 'tool_call' ? b.id : `thinking-${idx}`,
+      category: categorizeProcess(b),
+      block: b,
+      messageId: `msg-${groupIndex}`,
+    }));
+    items.push(createProcessGroup(`proc-grp-${groupIndex++}`, processItems, ''));
     current = [];
   };
 
   for (const block of blocks) {
-    if (isProcessableBlock(block)) {
+    if (block.type === 'thinking' || block.type === 'tool_call') {
       current.push(block);
     } else {
       flush();
@@ -175,42 +437,11 @@ export function groupMessageBlocks(blocks: ReadonlyArray<MessageBlock>): RenderI
   return items;
 }
 
-/** A chat message paired with its grouped render items (process blocks compacted). */
-export interface GroupedChatMessage {
-  message: ChatMessage;
-  renderItems: RenderItem[];
-}
-
-/**
- * Groups every message's blocks (see `groupMessageBlocks`). Messages without `blocks`
- * (e.g. plain-content messages) get an empty `renderItems` array; callers should keep
- * falling back to `message.content` in that case exactly as before this feature.
- */
-export function groupChatMessages(
-  messages: ReadonlyArray<ChatMessage>
-): GroupedChatMessage[] {
-  return messages.map((message) => ({
-    message,
-    renderItems: message.blocks ? groupMessageBlocks(message.blocks) : [],
-  }));
-}
-
 function toMergeableBlocks(message: ChatMessage): MessageBlock[] {
   if (message.blocks && message.blocks.length > 0) return message.blocks;
   return message.content.length > 0 ? [{ type: 'text', text: message.content }] : [];
 }
 
-/**
- * Merges runs of consecutive assistant messages into one message so their process blocks
- * can be grouped together. Pi emits a new assistant `message_start` for every LLM call
- * inside one agent turn, so a turn with N sequential tool calls usually arrives as N
- * assistant messages holding one tool call each; grouping per message alone would yield
- * N single-item groups. The merged message keeps the first message's id and timestamp
- * (stable React key while the run grows), concatenates blocks in order (block-less
- * content becomes a `text` block, which still breaks process groups), and carries the
- * run's streaming/cancelled state. Non-assistant messages break runs and single
- * messages are returned by reference.
- */
 export function mergeConsecutiveAssistantMessages(
   messages: ReadonlyArray<ChatMessage>
 ): ChatMessage[] {
