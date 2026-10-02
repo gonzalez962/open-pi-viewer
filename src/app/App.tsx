@@ -21,7 +21,14 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { groupMessageBlocks, mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import {
+  groupMessageBlocks,
+  mergeConsecutiveAssistantMessages,
+  isInteractiveUserTool,
+  type RenderItem,
+} from '@core/process-grouping';
+import { InteractiveQuestionCard } from '@features/chat/components/InteractiveQuestionCard';
+import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import { PromptControls } from '@features/chat/PromptControls';
 import {
   isMessageEmpty,
@@ -259,6 +266,9 @@ export const App: React.FC = () => {
     dismissPreferencesWarning,
     handleThemeChange,
     handleLanguageChange,
+    handleWorkAnimationChange,
+    handleCustomThemeColorsChange,
+    handleCustomBackgroundChange,
     setNotifications,
     setCustomCommands,
     setHiddenCommandIds,
@@ -464,6 +474,7 @@ export const App: React.FC = () => {
     onReload: requestRetry,
     commands: commandCatalog,
     helpCommands: visibleCommandCatalog,
+    onZenToggle: () => setIsZenMode((prev) => !prev),
   });
 
   // Pure wrapper handing MarkdownContent's per-code-card "Insert into prompt" button a way
@@ -475,6 +486,47 @@ export const App: React.FC = () => {
     },
     [setPrompt]
   );
+
+  const handleSelectInteractiveOption = useCallback(
+    (label: string) => {
+      if (activeDialog) {
+        handleDialogSelect(activeDialog.itemKey, label);
+      } else {
+        setPrompt(label);
+        const textarea = document.querySelector<HTMLTextAreaElement>('#prompt-input');
+        if (textarea) {
+          textarea.focus();
+        }
+      }
+    },
+    [activeDialog, handleDialogSelect, setPrompt]
+  );
+
+  const handleOpenImageInNewTab = useCallback((e: React.MouseEvent, src: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!src) return;
+    if (src.startsWith('data:')) {
+      try {
+        const parts = src.split(',');
+        const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/png';
+        const bstr = atob(parts[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: mime });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } catch {
+        window.open(src, '_blank');
+      }
+    } else {
+      window.open(src, '_blank');
+    }
+  }, []);
 
   // Slash command palette (Issue #9): open/filter/navigation state derived from the live
   // prompt draft. Purely a typing aid at this point — selecting a command autocompletes
@@ -716,6 +768,19 @@ export const App: React.FC = () => {
     setShowSettings(false);
   };
 
+  const [isZenMode, setIsZenMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isZenMode) return;
+    const handleZenEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !showSettings && !profilesHook.isModalOpen) {
+        setIsZenMode(false);
+      }
+    };
+    window.addEventListener('keydown', handleZenEsc);
+    return () => window.removeEventListener('keydown', handleZenEsc);
+  }, [isZenMode, showSettings, profilesHook.isModalOpen]);
+
 
   const activeProject = projectsRegistry.projects.find(
     (p) => p.id === projectsRegistry.activeProjectId
@@ -734,7 +799,37 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isZenMode ? 'zen-mode' : ''}`}>
+      {preferences.customBackground?.image?.enabled && preferences.customBackground?.image?.url && (
+        <div
+          className="app-custom-background-layer"
+          style={{
+            backgroundImage: `url("${preferences.customBackground.image.url}")`,
+            backgroundSize: preferences.customBackground.image.fit || 'cover',
+            backgroundPosition: preferences.customBackground.image.position || 'center',
+            backgroundRepeat:
+              preferences.customBackground.image.repeat ||
+              preferences.customBackground.image.fit === 'repeat'
+                ? 'repeat'
+                : 'no-repeat',
+            opacity: preferences.customBackground.image.opacity ?? 0.4,
+            filter: preferences.customBackground.image.blur
+              ? `blur(${preferences.customBackground.image.blur}px)`
+              : undefined,
+          }}
+          aria-hidden="true"
+        />
+      )}
+      {isZenMode && (
+        <button
+          type="button"
+          className="btn-exit-zen"
+          onClick={() => setIsZenMode(false)}
+          title={preferences.language === 'es' ? 'Salir de Modo Zen (Esc)' : 'Exit Zen Mode (Esc)'}
+        >
+          ✕ {preferences.language === 'es' ? 'Salir de Modo Zen' : 'Exit Zen Mode'}
+        </button>
+      )}
       <header className="app-header" role="banner">
         <div className="header-brand">
           <button
@@ -852,6 +947,9 @@ export const App: React.FC = () => {
               preferences={preferences}
               onThemeChange={handleThemeChange}
               onLanguageChange={handleLanguageChange}
+              onWorkAnimationChange={handleWorkAnimationChange}
+              onCustomThemeColorsChange={handleCustomThemeColorsChange}
+              onCustomBackgroundChange={handleCustomBackgroundChange}
               onNotificationsChange={setNotifications}
               onCustomCommandsChange={setCustomCommands}
               onHiddenCommandIdsChange={setHiddenCommandIds}
@@ -1103,8 +1201,8 @@ export const App: React.FC = () => {
           ) : (
             <ul className="message-list">
               {mergeConsecutiveAssistantMessages(
-                state.messages.filter((msg) => !isMessageEmpty(msg))
-              ).map((msg) => (
+                state.messages.filter((msg: any) => !isMessageEmpty(msg))
+              ).map((msg: any) => (
                 <li
                   key={msg.id}
                   className={`message-item message-${msg.role}${msg.isCancelled ? ' message-cancelled' : ''}`}
@@ -1132,7 +1230,7 @@ export const App: React.FC = () => {
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
                       <div className="activity-blocks">
-                        {groupMessageBlocks(msg.blocks).map((item, iIndex) => {
+                        {groupMessageBlocks(msg.blocks).map((item: RenderItem, iIndex: number) => {
                           if (item.type === 'process_group') {
                             return (
                               <ProcessGroupCard key={item.id} group={item} t={t} />
@@ -1149,13 +1247,40 @@ export const App: React.FC = () => {
                               />
                             );
                           }
+                          if (block.type === 'tool_call' && isInteractiveUserTool(block.name)) {
+                            return (
+                              <InteractiveQuestionCard
+                                key={block.id || `interactive-${iIndex}`}
+                                block={block}
+                                onSelectOption={handleSelectInteractiveOption}
+                                t={t}
+                              />
+                            );
+                          }
                           return null;
                         })}
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
                     ) : (
-                      <div className="message-literal">{msg.content}</div>
+                      <UserMessageContent content={msg.content} />
+                    )}
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="message-images-grid">
+                        {msg.images.map((imgSrc: string, imgIdx: number) => (
+                          <a
+                            key={`msg-img-${imgIdx}`}
+                            href={imgSrc}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="message-image-wrap"
+                            onClick={(e) => handleOpenImageInNewTab(e, imgSrc)}
+                            title={preferences.language === 'es' ? 'Abrir imagen en una pestaña nueva' : 'Open image in new tab'}
+                          >
+                            <img src={imgSrc} alt={`Attachment ${imgIdx + 1}`} className="message-image-thumb" />
+                          </a>
+                        ))}
+                      </div>
                     )}
                     {msg.isStreaming && (
                       <span

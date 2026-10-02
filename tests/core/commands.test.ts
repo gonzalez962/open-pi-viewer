@@ -14,7 +14,7 @@ import {
 test('commands: registry catalog lists exactly the retained commands with required fields', () => {
   assert.deepEqual(
     COMMANDS.map((c) => c.name).sort(),
-    ['/clear', '/compact', '/help', '/judgment-day', '/new', '/reload'].sort()
+    ['/clear', '/compact', '/export', '/help', '/judgment-day', '/new', '/reload', '/zen'].sort()
   );
 
   for (const cmd of COMMANDS) {
@@ -54,6 +54,9 @@ test('commands: retained commands keep their origin, execution mode and aliases'
   assert.ok(byName('/new')?.aliases?.includes('/reset'));
   assert.equal(byName('/reload')?.execution, 'client');
   assert.equal(byName('/compact')?.execution, 'agent');
+  assert.equal(byName('/export')?.execution, 'client');
+  assert.equal(byName('/zen')?.execution, 'client');
+  assert.ok(byName('/zen')?.aliases?.includes('/focus'));
 });
 
 test('commands: removed commands are no longer in the catalog', () => {
