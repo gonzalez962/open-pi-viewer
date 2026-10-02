@@ -70,7 +70,7 @@ test('OAuth helper resolves the Pi SDK when the entrypoint lives inside the SDK 
 
     const result = runHelperList(entrypoint, path.join(dir, 'home'));
 
-    assert.equal(result.status, 'ok', result.error);
+    assert.equal(result.status, 'ok', result.error ?? '');
     assert.equal(result.providers?.length, 1);
   });
 });
@@ -86,7 +86,7 @@ test('OAuth helper resolves the Pi SDK from the Gentle Shell package dependencie
 
     const result = runHelperList(entrypoint, path.join(dir, 'home'));
 
-    assert.equal(result.status, 'ok', result.error);
+    assert.equal(result.status, 'ok', result.error ?? '');
     assert.equal(result.providers?.length, 1);
   });
 });

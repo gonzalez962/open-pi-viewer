@@ -852,6 +852,59 @@ export async function pickDirectoryPi(
   }
 }
 
+export interface BrowseFolderItem {
+  name: string;
+  fullPath: string;
+  windowsPath?: string;
+}
+
+export interface BrowseShortcutItem {
+  name: string;
+  path: string;
+  windowsPath?: string;
+}
+
+export interface BrowseFilesystemResult {
+  currentPath: string;
+  windowsPath: string | null;
+  parentPath: string | null;
+  folders: BrowseFolderItem[];
+  shortcuts: BrowseShortcutItem[];
+  error?: string;
+}
+
+/**
+ * Browse filesystem directories across local and mapped network paths (e.g. Z:\).
+ * Returns folders, parent path, and convenient shortcuts.
+ */
+export async function browseFilesystemPi(
+  targetPath?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BrowseFilesystemResult> {
+  try {
+    const result = await invokeFn<BrowseFilesystemResult>('browse_filesystem', {
+      payload: { path: targetPath || '' },
+    });
+    if (result && typeof result === 'object') {
+      return result;
+    }
+  } catch (err) {
+    console.warn('[browseFilesystemPi error]:', err);
+  }
+
+  return {
+    currentPath: targetPath || '/home/hermes/Desarrollos',
+    windowsPath: null,
+    parentPath: null,
+    folders: [],
+    shortcuts: [
+      { name: 'Desarrollos (Z:\\)', path: '/home/hermes/Desarrollos', windowsPath: 'Z:\\' },
+      { name: 'Prueba (Z:\\Prueba)', path: '/home/hermes/Desarrollos/Prueba', windowsPath: 'Z:\\Prueba' },
+      { name: 'Home (/home/hermes)', path: '/home/hermes' },
+    ],
+  };
+}
+
 export const MOCK_MCP_SERVERS_STORAGE_KEY = 'pi_viewer_mcp_servers_mock';
 
 /**

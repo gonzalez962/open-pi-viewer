@@ -1,254 +1,230 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  categorizeBlock,
-  categorizeToolName,
+  categorizeProcess,
+  createProcessGroup,
+  extractProcessItemsFromMessage,
   groupChatMessages,
-  groupMessageBlocks,
-  mergeConsecutiveAssistantMessages,
-  type ProcessGroup,
+  isInteractiveUserTool,
+  isProcessOnlyAssistantMessage,
 } from '@core/process-grouping';
-import type { ChatMessage, MessageBlock, ThinkingBlock, ToolCallBlock } from '@core/types/messages';
+import type { ChatMessage } from '@core/types/messages';
 
-function tool(name: string, overrides: Partial<ToolCallBlock> = {}): ToolCallBlock {
-  return {
-    type: 'tool_call',
-    id: overrides.id ?? `id-${name}-${Math.random()}`,
-    name,
-    status: 'completed',
-    output: '',
-    isError: false,
-    ...overrides,
+test('process-grouping: categorizeProcess identifies categories accurately', () => {
+  // bash
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '1', name: 'bash', status: 'completed' }), 'bash');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '2', name: 'powershell', status: 'completed' }), 'bash');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '3', name: 'sh', status: 'completed' }), 'bash');
+
+  // edit
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '4', name: 'edit', status: 'completed' }), 'edit');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '5', name: 'patch', status: 'completed' }), 'edit');
+
+  // read
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '6', name: 'read', status: 'completed' }), 'read');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '7', name: 'read_workspace_file', status: 'completed' }), 'read');
+
+  // write
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '8', name: 'write', status: 'completed' }), 'write');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '9', name: 'create_file', status: 'completed' }), 'write');
+
+  // search
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '10', name: 'grep', status: 'completed' }), 'search');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '11', name: 'find', status: 'completed' }), 'search');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '12', name: 'codegraph', status: 'completed' }), 'search');
+
+  // agents
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '13', name: 'subagent_run', status: 'completed' }), 'agents');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '14', name: 'subagent_status', status: 'completed' }), 'agents');
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '15', name: 'agent', status: 'completed' }), 'agents');
+
+  // thinking
+  assert.equal(categorizeProcess({ type: 'thinking', thinking: 'Let me analyze...' }), 'thinking');
+
+  // other
+  assert.equal(categorizeProcess({ type: 'tool_call', id: '16', name: 'web_search', status: 'completed' }), 'other');
+});
+
+test('process-grouping: isProcessOnlyAssistantMessage discriminates process-only vs text messages', () => {
+  const userMsg: ChatMessage = {
+    id: 'u1',
+    role: 'user',
+    content: 'hello',
+    timestamp: '12:00',
   };
-}
+  assert.equal(isProcessOnlyAssistantMessage(userMsg), false);
 
-function thinking(overrides: Partial<ThinkingBlock> = {}): ThinkingBlock {
-  return { type: 'thinking', thinking: 'reasoning...', ...overrides };
-}
+  const processOnlyMsg: ChatMessage = {
+    id: 'a1',
+    role: 'assistant',
+    content: '',
+    timestamp: '12:01',
+    blocks: [
+      { type: 'tool_call', id: 't1', name: 'bash', status: 'completed' },
+    ],
+  };
+  assert.equal(isProcessOnlyAssistantMessage(processOnlyMsg), true);
 
-test('categorizeToolName: bash-family tool names', () => {
-  assert.equal(categorizeToolName('bash'), 'bash');
-  assert.equal(categorizeToolName('powershell'), 'bash');
-  assert.equal(categorizeToolName('Shell'), 'bash');
+  const textMsg: ChatMessage = {
+    id: 'a2',
+    role: 'assistant',
+    content: 'Here is your answer!',
+    timestamp: '12:02',
+  };
+  assert.equal(isProcessOnlyAssistantMessage(textMsg), false);
+
+  const mixedMsg: ChatMessage = {
+    id: 'a3',
+    role: 'assistant',
+    content: 'Executing task now...',
+    timestamp: '12:03',
+    blocks: [
+      { type: 'text', text: 'Executing task now...' },
+      { type: 'tool_call', id: 't2', name: 'read', status: 'completed' },
+    ],
+  };
+  assert.equal(isProcessOnlyAssistantMessage(mixedMsg), false);
 });
 
-test('categorizeToolName: edit', () => {
-  assert.equal(categorizeToolName('edit'), 'edit');
-  assert.equal(categorizeToolName('MultiEdit'), 'edit');
-});
-
-test('categorizeToolName: read', () => {
-  assert.equal(categorizeToolName('read'), 'read');
-});
-
-test('categorizeToolName: write', () => {
-  assert.equal(categorizeToolName('write'), 'write');
-});
-
-test('categorizeToolName: search-like tools (grep/find/ls/glob/search)', () => {
-  assert.equal(categorizeToolName('grep'), 'search');
-  assert.equal(categorizeToolName('find'), 'search');
-  assert.equal(categorizeToolName('ls'), 'search');
-  assert.equal(categorizeToolName('glob'), 'search');
-  assert.equal(categorizeToolName('web_search'), 'search');
-  assert.equal(categorizeToolName('grep_tool'), 'search');
-});
-
-test('categorizeToolName: agent/subagent/task tools', () => {
-  assert.equal(categorizeToolName('task'), 'agents');
-  assert.equal(categorizeToolName('subagent'), 'agents');
-  assert.equal(categorizeToolName('run_agent'), 'agents');
-});
-
-test('categorizeToolName: unknown tool falls back to other', () => {
-  assert.equal(categorizeToolName('mystery_tool'), 'other');
-  assert.equal(categorizeToolName(''), 'other');
-  assert.equal(categorizeToolName(undefined), 'other');
-});
-
-test('categorizeBlock: thinking block is always thinking category', () => {
-  assert.equal(categorizeBlock(thinking()), 'thinking');
-});
-
-test('categorizeBlock: tool_call block delegates to categorizeToolName', () => {
-  assert.equal(categorizeBlock(tool('bash')), 'bash');
-  assert.equal(categorizeBlock(tool('unknown_thing')), 'other');
-});
-
-test('groupMessageBlocks: empty array yields no items', () => {
-  assert.deepEqual(groupMessageBlocks([]), []);
-});
-
-test('groupMessageBlocks: a single text block passes through unchanged, no group', () => {
-  const blocks: MessageBlock[] = [{ type: 'text', text: 'hello' }];
-  const items = groupMessageBlocks(blocks);
-  assert.equal(items.length, 1);
-  assert.equal(items[0].type, 'block');
-  assert.deepEqual((items[0] as { type: 'block'; block: MessageBlock }).block, blocks[0]);
-});
-
-test('groupMessageBlocks: consecutive process blocks merge into one ProcessGroup', () => {
-  const blocks: MessageBlock[] = [thinking(), tool('bash'), tool('read'), tool('edit')];
-  const items = groupMessageBlocks(blocks);
-  assert.equal(items.length, 1);
-  assert.equal(items[0].type, 'process_group');
-  const group = items[0] as ProcessGroup;
-  assert.equal(group.total, 4);
-  assert.deepEqual(group.categoryOrder, ['thinking', 'bash', 'read', 'edit']);
-  assert.deepEqual(group.counts, { thinking: 1, bash: 1, read: 1, edit: 1 });
-  assert.equal(group.hasError, false);
-});
-
-test('groupMessageBlocks: a text block breaks the group into two separate groups', () => {
-  const blocks: MessageBlock[] = [
-    tool('bash'),
-    tool('read'),
-    { type: 'text', text: 'summary so far' },
-    tool('edit'),
-    tool('write'),
-  ];
-  const items = groupMessageBlocks(blocks);
-  assert.equal(items.length, 3);
-  assert.equal(items[0].type, 'process_group');
-  assert.equal((items[0] as ProcessGroup).total, 2);
-  assert.equal(items[1].type, 'block');
-  assert.equal(items[2].type, 'process_group');
-  assert.equal((items[2] as ProcessGroup).total, 2);
-  assert.deepEqual((items[2] as ProcessGroup).categoryOrder, ['edit', 'write']);
-});
-
-test('groupMessageBlocks: repeated categories count correctly and dedupe categoryOrder', () => {
-  const blocks: MessageBlock[] = [tool('bash'), tool('bash'), tool('read'), tool('bash')];
-  const items = groupMessageBlocks(blocks);
-  const group = items[0] as ProcessGroup;
-  assert.deepEqual(group.categoryOrder, ['bash', 'read']);
-  assert.deepEqual(group.counts, { bash: 3, read: 1 });
-  assert.equal(group.total, 4);
-});
-
-test('groupMessageBlocks: a group with an error tool_call sets hasError true', () => {
-  const blocks: MessageBlock[] = [tool('bash'), tool('read', { isError: true, status: 'error' })];
-  const group = groupMessageBlocks(blocks)[0] as ProcessGroup;
-  assert.equal(group.hasError, true);
-});
-
-test('groupMessageBlocks: multiple text blocks in a row produce no empty groups between them', () => {
-  const blocks: MessageBlock[] = [
-    { type: 'text', text: 'a' },
-    { type: 'text', text: 'b' },
-  ];
-  const items = groupMessageBlocks(blocks);
-  assert.equal(items.length, 2);
-  assert.ok(items.every((i) => i.type === 'block'));
-});
-
-test('groupMessageBlocks: group ids are unique and stable within a call', () => {
-  const blocks: MessageBlock[] = [
-    tool('bash'),
-    { type: 'text', text: 'break' },
-    tool('read'),
-  ];
-  const items = groupMessageBlocks(blocks);
-  const groups = items.filter((i) => i.type === 'process_group') as ProcessGroup[];
-  assert.equal(groups.length, 2);
-  assert.notEqual(groups[0].id, groups[1].id);
-});
-
-test('groupChatMessages: groups blocks per message, leaves messages without blocks alone', () => {
+test('process-grouping: groupChatMessages combines consecutive process messages into a single ProcessGroup', () => {
   const messages: ChatMessage[] = [
+    { id: 'u1', role: 'user', content: 'Fix the bug', timestamp: '10:00' },
     {
-      id: 'm1',
+      id: 'a1',
       role: 'assistant',
       content: '',
-      timestamp: '10:00',
-      blocks: [tool('bash'), tool('read'), { type: 'text', text: 'done' }],
+      timestamp: '10:01',
+      blocks: [{ type: 'tool_call', id: 't1', name: 'read', status: 'completed' }],
     },
     {
-      id: 'm2',
-      role: 'user',
-      content: 'hello',
-      timestamp: '10:01',
+      id: 'a2',
+      role: 'assistant',
+      content: '',
+      timestamp: '10:02',
+      blocks: [
+        { type: 'thinking', thinking: 'Analyzing the code...' },
+        { type: 'tool_call', id: 't2', name: 'edit', status: 'completed' },
+      ],
+    },
+    {
+      id: 'a3',
+      role: 'assistant',
+      content: '',
+      timestamp: '10:03',
+      blocks: [{ type: 'tool_call', id: 't3', name: 'bash', status: 'completed' }],
+    },
+    {
+      id: 'a4',
+      role: 'assistant',
+      content: 'I fixed the issue!',
+      timestamp: '10:04',
     },
   ];
 
-  const grouped = groupChatMessages(messages);
-  assert.equal(grouped.length, 2);
-  assert.equal(grouped[0].message.id, 'm1');
-  assert.equal(grouped[0].renderItems.length, 2);
-  assert.equal(grouped[0].renderItems[0].type, 'process_group');
-  assert.equal(grouped[1].message.id, 'm2');
-  assert.deepEqual(grouped[1].renderItems, []);
+  const grouped = groupChatMessages(messages, true);
+
+  // Expect: User message -> ProcessGroup (combining a1, a2, a3) -> Final text message
+  assert.equal(grouped.length, 3);
+  assert.equal(grouped[0].type, 'message');
+  assert.equal(grouped[1].type, 'process_group');
+  assert.equal(grouped[2].type, 'message');
+
+  if (grouped[1].type === 'process_group') {
+    assert.equal(grouped[1].totalCount, 4); // read, thinking, edit, bash
+    assert.deepEqual(grouped[1].categoriesPresent, ['bash', 'edit', 'read', 'thinking']);
+    assert.equal(grouped[1].byCategory.read.length, 1);
+    assert.equal(grouped[1].byCategory.thinking.length, 1);
+    assert.equal(grouped[1].byCategory.edit.length, 1);
+    assert.equal(grouped[1].byCategory.bash.length, 1);
+  }
 });
 
-test('groupChatMessages: empty messages array yields empty array', () => {
-  assert.deepEqual(groupChatMessages([]), []);
+test('process-grouping: extractProcessItemsFromMessage and createProcessGroup form structured groups', () => {
+  const msg: ChatMessage = {
+    id: 'a1',
+    role: 'assistant',
+    content: '',
+    timestamp: '10:00',
+    blocks: [
+      { type: 'tool_call', id: 't1', name: 'bash', status: 'completed' },
+      { type: 'tool_call', id: 't2', name: 'subagent_run', status: 'running' },
+    ],
+  };
+
+  const items = extractProcessItemsFromMessage(msg);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].category, 'bash');
+  assert.equal(items[1].category, 'agents');
+
+  const group = createProcessGroup('group-1', items, '10:00');
+  assert.equal(group.totalCount, 2);
+  assert.equal(group.hasRunning, true);
+  assert.equal(group.hasErrors, false);
+  assert.deepEqual(group.categoriesPresent, ['agents', 'bash']);
 });
 
-// Pi opens a new assistant message (message_start) for every LLM call inside one agent
-// turn, so each tool call usually lives in its own ChatMessage. Grouping must merge them.
-function assistant(id: string, blocks?: MessageBlock[], overrides: Partial<ChatMessage> = {}): ChatMessage {
-  return { id, role: 'assistant', content: '', timestamp: `t-${id}`, blocks, ...overrides };
-}
+test('process-grouping: isInteractiveUserTool identifies interactive decision tools and excludes them from process groups', () => {
+  assert.equal(isInteractiveUserTool('ask_user_question'), true);
+  assert.equal(isInteractiveUserTool('ask_user_choice'), true);
+  assert.equal(isInteractiveUserTool('ask_user_confirmation'), true);
+  assert.equal(isInteractiveUserTool('question'), true);
+  assert.equal(isInteractiveUserTool('bash'), false);
+  assert.equal(isInteractiveUserTool('read'), false);
+  assert.equal(isInteractiveUserTool('edit'), false);
+  assert.equal(isInteractiveUserTool('subagent_run'), false);
 
-function user(id: string, content: string): ChatMessage {
-  return { id, role: 'user', content, timestamp: `t-${id}` };
-}
+  // A message containing ask_user_question is NOT process-only
+  const interactiveMsg: ChatMessage = {
+    id: 'ai-1',
+    role: 'assistant',
+    content: '',
+    timestamp: '10:05',
+    blocks: [
+      {
+        type: 'tool_call',
+        id: 't-ask',
+        name: 'ask_user_question',
+        args: { questions: [{ question: 'Coffee or tea?' }] },
+        status: 'running',
+      },
+    ],
+  };
+  assert.equal(isProcessOnlyAssistantMessage(interactiveMsg), false);
 
-test('mergeConsecutiveAssistantMessages: merges one-tool-per-message turns into a single message', () => {
-  const merged = mergeConsecutiveAssistantMessages([
-    user('u1', 'do it'),
-    assistant('a1', [tool('ls')]),
-    assistant('a2', [tool('write')]),
-    assistant('a3', [tool('bash')]),
-  ]);
+  // extractProcessItemsFromMessage excludes interactive tools
+  const items = extractProcessItemsFromMessage(interactiveMsg);
+  assert.equal(items.length, 0);
 
-  assert.equal(merged.length, 2);
-  assert.equal(merged[1].id, 'a1');
-  assert.equal(merged[1].timestamp, 't-a1');
-  assert.deepEqual(
-    merged[1].blocks?.map((b) => (b.type === 'tool_call' ? b.name : b.type)),
-    ['ls', 'write', 'bash']
-  );
+  // groupChatMessages preserves interactive tool messages uncollapsed
+  const turnWithInteractive: ChatMessage[] = [
+    { id: 'u1', role: 'user', content: 'Install this', timestamp: '10:00' },
+    {
+      id: 'a1',
+      role: 'assistant',
+      content: '',
+      timestamp: '10:01',
+      blocks: [{ type: 'tool_call', id: 't1', name: 'bash', status: 'completed' }],
+    },
+    {
+      id: 'a2',
+      role: 'assistant',
+      content: '',
+      timestamp: '10:02',
+      blocks: [{ type: 'tool_call', id: 't2', name: 'read', status: 'completed' }],
+    },
+    interactiveMsg,
+  ];
 
-  const items = groupMessageBlocks(merged[1].blocks ?? []);
-  assert.equal(items.length, 1);
-  assert.equal((items[0] as ProcessGroup).total, 3);
-});
-
-test('mergeConsecutiveAssistantMessages: user messages break assistant runs', () => {
-  const merged = mergeConsecutiveAssistantMessages([
-    assistant('a1', [tool('ls')]),
-    user('u1', 'next'),
-    assistant('a2', [tool('read')]),
-  ]);
-  assert.deepEqual(merged.map((m) => m.id), ['a1', 'u1', 'a2']);
-});
-
-test('mergeConsecutiveAssistantMessages: block-less content becomes a text block that breaks groups', () => {
-  const merged = mergeConsecutiveAssistantMessages([
-    assistant('a1', [tool('ls')]),
-    assistant('a2', undefined, { content: 'summary' }),
-    assistant('a3', [tool('read')]),
-  ]);
-  assert.equal(merged.length, 1);
-  const items = groupMessageBlocks(merged[0].blocks ?? []);
-  assert.deepEqual(items.map((i) => i.type), ['process_group', 'block', 'process_group']);
-  assert.equal(merged[0].content, 'summary');
-});
-
-test('mergeConsecutiveAssistantMessages: streaming and cancelled flags follow the run', () => {
-  const merged = mergeConsecutiveAssistantMessages([
-    assistant('a1', [tool('ls')], { isCancelled: true }),
-    assistant('a2', [tool('read')], { isStreaming: true }),
-  ]);
-  assert.equal(merged[0].isStreaming, true);
-  assert.equal(merged[0].isCancelled, true);
-});
-
-test('mergeConsecutiveAssistantMessages: single messages are returned unchanged', () => {
-  const a = assistant('a1', [tool('ls')]);
-  const u = user('u1', 'hi');
-  const merged = mergeConsecutiveAssistantMessages([u, a]);
-  assert.equal(merged[0], u);
-  assert.equal(merged[1], a);
+  const grouped = groupChatMessages(turnWithInteractive, true);
+  assert.equal(grouped.length, 3);
+  assert.equal(grouped[0].type, 'message'); // user
+  assert.equal(grouped[1].type, 'process_group'); // bash + read
+  assert.equal(grouped[2].type, 'message'); // interactive message
+  if (grouped[1].type === 'process_group') {
+    assert.equal(grouped[1].totalCount, 2);
+  }
+  if (grouped[2].type === 'message') {
+    assert.equal(grouped[2].message.blocks?.[0].type, 'tool_call');
+    assert.equal((grouped[2].message.blocks?.[0] as any).name, 'ask_user_question');
+  }
 });

@@ -5,6 +5,7 @@ import {
   getProjectDisplayName,
   getProjectMonogram,
 } from './projects';
+import { FolderPickerModal } from './components/FolderPickerModal';
 import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
@@ -18,7 +19,7 @@ export interface ProjectDockProps {
   locale: SupportedLocale;
   projectStatusMap?: Record<string, ProjectStatusInfo>;
   onSelectProject: (project: ProjectItem) => void;
-  onAddProject: () => void;
+  onAddProject: (customPath?: string, customName?: string) => void;
   onRenameProject: (projectId: string, newName: string) => void;
   onRemoveProject: (projectId: string) => void;
   isSettingsOpen?: boolean;
@@ -101,6 +102,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>('');
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
 
   const isEditing = editingProjectId !== null;
   const isConfirmingRemove = confirmingRemoveId !== null;
@@ -418,7 +420,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
           <button
             type="button"
             className="project-footer-row"
-            onClick={onAddProject}
+            onClick={() => setIsFolderPickerOpen(true)}
             title={translate(locale, 'projects.add_project')}
             aria-label={translate(locale, 'projects.add_project')}
           >
@@ -475,6 +477,15 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
           </button>
         </div>
       </aside>
+
+      <FolderPickerModal
+        isOpen={isFolderPickerOpen}
+        onClose={() => setIsFolderPickerOpen(false)}
+        onSelectFolder={(folderPath, customName) => {
+          onAddProject(folderPath, customName);
+        }}
+        locale={locale}
+      />
     </div>
   );
 };
