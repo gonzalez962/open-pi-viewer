@@ -1,5 +1,14 @@
 # Local Pi runtime state
 .atl/
+.codegraph/
+.orca/
+.zeroagents/
+
+# Executables and binaries
+*.exe
+*.dll
+*.so
+*.dylib
 
 # Dependencies
 node_modules/
@@ -32,3 +41,4 @@ Thumbs.db
 /resources
 /.pi
 /odd
+.mcp.json

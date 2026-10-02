@@ -4932,6 +4932,22 @@ pub fn resolve_engram_bin() -> PathBuf {
     }
 
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let local_bin = PathBuf::from(&home)
+            .join(".local")
+            .join("bin")
+            .join(if cfg!(windows) { "engram.exe" } else { "engram" });
+        if local_bin.exists() {
+            return local_bin;
+        }
+
+        let cargo_bin = PathBuf::from(&home)
+            .join(".cargo")
+            .join("bin")
+            .join(if cfg!(windows) { "engram.exe" } else { "engram" });
+        if cargo_bin.exists() {
+            return cargo_bin;
+        }
+
         let go_bin = PathBuf::from(home)
             .join("go")
             .join("bin")

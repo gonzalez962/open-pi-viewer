@@ -7,6 +7,8 @@ import {
 import { generatePromptRequestId } from '@core/protocol';
 import { buildCopyAllCodeText, getLastAssistantCodeBlocks } from '@core/markdown';
 import { buildInsertCodeDraft } from '@core/prompt-controls-utils';
+import { exportToMarkdown, exportToJson, generateExportFilename } from '@core/export';
+import { triggerFileDownload } from '@infra/download';
 import {
   COMMANDS,
   decideCommandDispatch,
@@ -97,6 +99,7 @@ export interface UsePromptStateOptions {
    * hiding is purely visual.
    */
   helpCommands?: readonly CommandSpec[];
+  onZenToggle?: () => void;
 }
 
 /**
@@ -115,6 +118,7 @@ export function usePromptState({
   onReload,
   commands = COMMANDS,
   helpCommands = commands,
+  onZenToggle,
 }: UsePromptStateOptions) {
   const [prompt, setPrompt] = useState('');
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
@@ -167,7 +171,7 @@ export function usePromptState({
    * unrecognized commands — those fall through to the ordinary send path below and reach
    * Pi unchanged, exactly as typed.
    */
-  const executeClientCommand = (commandId: string) => {
+  const executeClientCommand = (commandId: string, args = '') => {
     switch (commandId) {
       case 'clear': {
         dispatch({ type: 'CLEAR_MESSAGES' });
@@ -213,6 +217,37 @@ export function usePromptState({
         });
         return;
       }
+      case 'export': {
+        const format = args.trim().toLowerCase() === 'json' ? 'json' : 'md';
+        const activeTitle = 'pi-conversation';
+        const filename = generateExportFilename(activeTitle, format);
+        const content =
+          format === 'json'
+            ? exportToJson(messages, activeTitle)
+            : exportToMarkdown(messages, activeTitle);
+        const mime =
+          format === 'json'
+            ? 'application/json;charset=utf-8'
+            : 'text/markdown;charset=utf-8';
+        const ok = triggerFileDownload(content, filename, mime);
+        dispatch({
+          type: 'ADD_SYSTEM_MESSAGE',
+          payload: {
+            content: ok
+              ? language === 'es'
+                ? `📥 **Conversación exportada**: Se descargó el archivo \`${filename}\`.`
+                : `📥 **Conversation exported**: Downloaded file \`${filename}\`.`
+              : language === 'es'
+                ? '⚠️ No se pudo iniciar la descarga en el navegador.'
+                : '⚠️ Could not trigger file download in browser.',
+          },
+        });
+        return;
+      }
+      case 'zen': {
+        onZenToggle?.();
+        return;
+      }
       default:
         return;
     }
@@ -238,7 +273,7 @@ export function usePromptState({
       const decision = decideCommandDispatch(trimmed, commands);
       if (decision.kind === 'client' && decision.command) {
         setPrompt('');
-        executeClientCommand(decision.command.id);
+        executeClientCommand(decision.command.id, decision.args);
         return;
       }
     }
