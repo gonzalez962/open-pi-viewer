@@ -75,4 +75,26 @@ export const COMMANDS: CommandSpec[] = [
     origin: 'pi-core',
     execution: 'client',
   },
+  {
+    id: 'export',
+    name: '/export',
+    description: {
+      es: 'Descarga la conversación activa en formato Markdown o JSON.',
+      en: 'Downloads the active conversation in Markdown or JSON format.',
+    },
+    origin: 'pi-core',
+    execution: 'client',
+    argumentHint: '[md|json]',
+  },
+  {
+    id: 'zen',
+    name: '/zen',
+    aliases: ['/focus'],
+    description: {
+      es: 'Activa o desactiva el modo de concentración Zen sin distracciones.',
+      en: 'Toggles distraction-free Zen Focus Mode.',
+    },
+    origin: 'pi-core',
+    execution: 'client',
+  },
 ];

@@ -1,19 +1,38 @@
-export type AppTheme = 'dark' | 'light' | 'system';
-export type ResolvedTheme = 'dark' | 'light';
+export type BuiltinTheme = 'dark' | 'light' | 'system';
+export type CustomThemeId =
+  | 'DjRomoro'
+  | 'arch-electric'
+  | 'Gentleman-Sexy-Djr'
+  | 'Minimalist-Ninja';
+
+export type AppTheme = BuiltinTheme | CustomThemeId;
+export type ResolvedTheme = 'dark' | 'light' | CustomThemeId;
 
 export const DEFAULT_THEME: AppTheme = 'dark';
 
-export const SUPPORTED_THEMES: readonly AppTheme[] = [
+export const BUILTIN_THEMES: readonly BuiltinTheme[] = [
   'dark',
   'light',
   'system',
+] as const;
+
+export const CUSTOM_THEMES: readonly CustomThemeId[] = [
+  'DjRomoro',
+  'arch-electric',
+  'Gentleman-Sexy-Djr',
+  'Minimalist-Ninja',
+] as const;
+
+export const SUPPORTED_THEMES: readonly AppTheme[] = [
+  ...BUILTIN_THEMES,
+  ...CUSTOM_THEMES,
 ] as const;
 
 /**
  * Type guard for supported application theme settings.
  */
 export function isAppTheme(value: unknown): value is AppTheme {
-  return value === 'dark' || value === 'light' || value === 'system';
+  return typeof value === 'string' && (SUPPORTED_THEMES as readonly string[]).includes(value);
 }
 
 /**
@@ -40,7 +59,7 @@ export function getSystemPreferredTheme(
 }
 
 /**
- * Resolves an AppTheme ('dark', 'light', or 'system') to a concrete 'dark' or 'light' palette.
+ * Resolves an AppTheme ('dark', 'light', 'system', or custom theme) to a concrete palette.
  * Default is 'dark' regardless of OS unless 'system' is explicitly chosen.
  */
 export function resolveTheme(
@@ -50,7 +69,13 @@ export function resolveTheme(
   if (theme === 'system') {
     return systemPreferred ?? getSystemPreferredTheme();
   }
-  return theme === 'light' ? 'light' : 'dark';
+  if (theme === 'light') {
+    return 'light';
+  }
+  if (theme === 'dark') {
+    return 'dark';
+  }
+  return theme;
 }
 
 /**
@@ -70,7 +95,7 @@ export function applyTheme(
   }
 
   root.setAttribute('data-theme', resolvedTheme);
-  root.style.colorScheme = resolvedTheme;
+  root.style.colorScheme = resolvedTheme === 'light' ? 'light' : 'dark';
 }
 
 /**

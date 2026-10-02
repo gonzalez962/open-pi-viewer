@@ -22,7 +22,7 @@ export interface UseProjectsOptions {
 export interface UseProjectsResult {
   projectsRegistry: ProjectsRegistry;
   handleSelectProject: (project: ProjectItem) => void;
-  handleAddProject: () => Promise<void>;
+  handleAddProject: (pickedPath?: string, customName?: string) => Promise<void>;
   handleRenameProject: (projectId: string, newName: string) => void;
   handleRemoveProject: (projectId: string) => void;
   /**
@@ -67,19 +67,30 @@ export function useProjects({
     [projectsRegistry, isBusy, applyWorkingDirectory]
   );
 
-  const handleAddProject = useCallback(async () => {
-    const picked = await pickDirectoryPi(workingDirectory);
-    if (picked) {
-      const { registry: nextRegistry, project: addedProj } = addProject(
-        projectsRegistry,
-        picked
-      );
-      saveProjectsRegistry(nextRegistry);
-      setProjectsRegistry(nextRegistry);
+  const handleAddProject = useCallback(
+    async (pickedPath?: string, customName?: string) => {
+      let targetPath = pickedPath;
+      if (!targetPath) {
+        const picked = await pickDirectoryPi(workingDirectory);
+        if (picked) {
+          targetPath = picked;
+        }
+      }
 
-      applyWorkingDirectory(addedProj.path);
-    }
-  }, [workingDirectory, projectsRegistry, applyWorkingDirectory]);
+      if (targetPath) {
+        const { registry: nextRegistry, project: addedProj } = addProject(
+          projectsRegistry,
+          targetPath,
+          customName
+        );
+        saveProjectsRegistry(nextRegistry);
+        setProjectsRegistry(nextRegistry);
+
+        applyWorkingDirectory(addedProj.path);
+      }
+    },
+    [workingDirectory, projectsRegistry, applyWorkingDirectory]
+  );
 
   const handleRenameProject = useCallback(
     (projectId: string, newName: string) => {
