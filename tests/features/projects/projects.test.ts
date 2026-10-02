@@ -210,6 +210,25 @@ test('projects: isSameProjectPath handles Windows case-insensitivity and POSIX c
   assert.strictEqual(isSameProjectPath('', '/home'), false);
 });
 
+test('projects: isSameProjectPath matches network drive Z: with mapped Samba Desarrollos path', () => {
+  assert.strictEqual(
+    isSameProjectPath('Z:\\Prueba', '/home/hermes/Desarrollos/Prueba'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('Z:/Prueba/', '/home/hermes/Desarrollos/Prueba/'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('z:\\PI-Viewer', '/home/hermes/Desarrollos/PI-Viewer'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('Z:\\Otro', '/home/hermes/Desarrollos/Prueba'),
+    false
+  );
+});
+
 // 2. Validation and Registry integrity
 
 test('projects: validateProjectsRegistry returns valid for compliant payload', () => {

@@ -1941,7 +1941,7 @@ mod tests {
         let res = crate::commands::config_files::run_gentle_shell_migration_preflight(
             &state,
             Some(&workspace),
-            None,
+            Some(std::sync::Arc::new(|_, _, _| Ok(false))),
         ).await;
         assert!(res.is_ok());
     }

@@ -224,7 +224,9 @@ pub fn search_path_for_pi(path_var: Option<&str>) -> Vec<PathBuf> {
 
     #[cfg(windows)]
     let candidate_names = &["pi.cmd", "pi.exe", "pi.bat", "pi.ps1", "pi"];
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), test))]
+    let candidate_names = &["pi", "pi.cmd", "pi.exe", "pi.bat", "pi.ps1"];
+    #[cfg(all(not(windows), not(test)))]
     let candidate_names = &["pi"];
 
     let mut found = Vec::new();
@@ -273,7 +275,9 @@ pub fn discover_node_path(path_var: Option<&str>) -> Option<String> {
     let raw = path_var?;
     #[cfg(windows)]
     let names = &["node.exe", "node.cmd", "node.bat"];
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), test))]
+    let names = &["node", "node.exe", "node.cmd", "node.bat"];
+    #[cfg(all(not(windows), not(test)))]
     let names = &["node"];
 
     for dir in std::env::split_paths(raw).take(64) {

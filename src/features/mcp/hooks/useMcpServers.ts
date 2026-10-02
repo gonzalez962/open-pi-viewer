@@ -6,7 +6,7 @@ import type {
   ToggleMcpServerResult,
 } from '@core/types/mcp';
 import { getMcpServersPi, toggleMcpServerPi } from '@infra/bridge';
-import { calculateToggledServerState, computeMcpServerCounts } from '../McpView';
+import { calculateToggledServerState, computeMcpServerCounts } from '../mcp-utils';
 
 export interface UseMcpServersOptions {
   cwd?: string;
