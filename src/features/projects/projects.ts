@@ -86,8 +86,17 @@ export function normalizeProjectPath(path: string): string {
   return normalizeWorkingDirectory(path);
 }
 
+function mapNetworkPathToPosix(p: string): string {
+  if (/^[zZ]:[\\\/]?/i.test(p)) {
+    const sub = p.slice(2).replace(/^[\\\/]+/, '').replace(/\\/g, '/');
+    return sub ? `/home/hermes/Desarrollos/${sub}` : '/home/hermes/Desarrollos';
+  }
+  return p;
+}
+
 /**
- * Compares normalized paths case-insensitively on Windows and case-sensitively on POSIX.
+ * Compares normalized paths case-insensitively on Windows and case-sensitively on POSIX,
+ * with cross-platform network drive awareness (e.g. Z:\ maps to /home/hermes/Desarrollos).
  */
 export function isSameProjectPath(pathA: string, pathB: string): boolean {
   const normA = normalizeProjectPath(pathA);
@@ -97,6 +106,16 @@ export function isSameProjectPath(pathA: string, pathB: string): boolean {
   if (normA === normB) return true;
   if (isWindowsPath(normA) && isWindowsPath(normB)) {
     return normA.toLowerCase() === normB.toLowerCase();
+  }
+  // Check if one is a network drive (e.g. Z:\...) mapping to Samba share on POSIX
+  const isNetA = /^[zZ]:[\\\/]?/i.test(normA);
+  const isNetB = /^[zZ]:[\\\/]?/i.test(normB);
+  if (isNetA || isNetB) {
+    const posixA = mapNetworkPathToPosix(normA);
+    const posixB = mapNetworkPathToPosix(normB);
+    if (posixA.toLowerCase() === posixB.toLowerCase()) {
+      return true;
+    }
   }
   return false;
 }

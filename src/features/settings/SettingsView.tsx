@@ -1,6 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { formatLocalizedDiagnostic, type SupportedLocale, type TranslationKey } from '@shared/i18n';
-import type { UiPreferences } from '@infra/preferences';
+import type {
+  UiPreferences,
+  WorkAnimationPreferences,
+  CustomBackgroundPreferences,
+} from '@infra/preferences';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   type NotificationPreferences,
@@ -16,6 +20,7 @@ import type { CustomProviderConfig } from '@core/types/providers';
 import { detectGentleShellPi, pickDirectoryPi, type DetectGentleShellPayload, type DetectGentleShellResult } from '@infra/bridge';
 import { SettingsSelect } from './components/SettingsSelect';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
+import { ThemeCustomizer } from './components/ThemeCustomizer';
 import { COMMANDS, type CustomCommand } from '@core/commands';
 
 export interface SettingsViewProps {
@@ -26,6 +31,9 @@ export interface SettingsViewProps {
   onThemeChange: (theme: AppTheme) => void;
   onLanguageChange: (lang: SupportedLocale) => void;
   onNotificationsChange?: (partial: Partial<NotificationPreferences>) => void;
+  onWorkAnimationChange?: (animation: WorkAnimationPreferences) => void;
+  onCustomThemeColorsChange?: (colors: { text?: string | null; label?: string | null }) => void;
+  onCustomBackgroundChange?: (bg: CustomBackgroundPreferences | null) => void;
   /** Persists the user's custom slash commands (Issue #9 T7). Section hidden when absent. */
   onCustomCommandsChange?: (commands: CustomCommand[]) => void;
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
@@ -35,7 +43,7 @@ export interface SettingsViewProps {
   isBusy: boolean;
   onSaveAndApply: (e: React.FormEvent) => Promise<void> | void;
   onClose: () => void;
-  initialTab?: 'general' | 'profiles' | 'providers' | 'mcp' | 'extensions';
+  initialTab?: 'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions';
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   loadCustomProviders: () => Promise<CustomProviderConfig[]>;
   renderProviders: (onBackToSettings: () => void) => React.ReactNode;
@@ -55,6 +63,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onThemeChange,
   onLanguageChange,
   onNotificationsChange,
+  onWorkAnimationChange,
+  onCustomThemeColorsChange,
+  onCustomBackgroundChange,
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
   settingsError,
@@ -74,7 +85,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   pickDirectoryFn,
   detectGentleShellFn,
 }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
   const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
   const [isDetectingShell, setIsDetectingShell] = useState(false);
   const [gentleShellNotice, setGentleShellNotice] = useState<{
@@ -188,6 +199,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           <button
             type="button"
             role="tab"
+            aria-selected={activeTab === 'theme'}
+            className={activeTab === 'theme' ? 'settings-tab-btn active' : 'settings-tab-btn'}
+            onClick={() => setActiveTab('theme')}
+          >
+            {t('settings.tab_theme')}
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={activeTab === 'profiles'}
             className={activeTab === 'profiles' ? 'settings-tab-btn active' : 'settings-tab-btn'}
             onClick={() => setActiveTab('profiles')}
@@ -291,9 +311,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   { value: 'dark', label: t('settings.theme_dark') },
                   { value: 'light', label: t('settings.theme_light') },
                   { value: 'system', label: t('settings.theme_system') },
+                  { value: 'DjRomoro', label: t('settings.theme_djromoro') },
+                  { value: 'arch-electric', label: t('settings.theme_arch_electric') },
+                  { value: 'Gentleman-Sexy-Djr', label: t('settings.theme_gentleman_sexy_djr') },
+                  { value: 'Minimalist-Ninja', label: t('settings.theme_minimalist_ninja') },
                 ]}
                 aria-label={t('settings.theme_label')}
               />
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ marginTop: 8 }}
+                onClick={() => setActiveTab('theme')}
+              >
+                🎨 {t('theme.customizer_title')} →
+              </button>
             </div>
 
             <div className="field-group">
@@ -766,6 +798,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           />
         )}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'theme' && (
+        <div className="settings-tab-pane" role="tabpanel" aria-label={t('settings.tab_theme')}>
+          <ThemeCustomizer
+            currentTheme={preferences.theme}
+            onThemeChange={onThemeChange}
+            workAnimation={preferences.workAnimation}
+            onWorkAnimationChange={onWorkAnimationChange}
+            customTextColor={preferences.customTextColor}
+            customLabelColor={preferences.customLabelColor}
+            onCustomThemeColorsChange={onCustomThemeColorsChange}
+            customBackground={preferences.customBackground}
+            onCustomBackgroundChange={onCustomBackgroundChange}
+            t={t}
+          />
         </div>
       )}
 

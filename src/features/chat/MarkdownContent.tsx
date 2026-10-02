@@ -141,7 +141,7 @@ export const CodeBlock: React.FC<{
   filename?: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   onInsertCode?: (code: string, language?: string) => void;
-}> = ({ code, language, filename, t, onInsertCode }) => {
+}> = React.memo(({ code, language, filename, t, onInsertCode }) => {
   const { status, triggerCopy } = useCopyFeedback();
 
   const sanitizedLang = sanitizeLanguage(language);
@@ -240,7 +240,7 @@ export const CodeBlock: React.FC<{
       </pre>
     </div>
   );
-};
+});
 
 /**
  * Safe link component:
@@ -482,12 +482,12 @@ function renderBlock(
  * Pure React component rendering a safe Markdown subset.
  * Raw HTML is escaped automatically by React JSX; no dangerouslySetInnerHTML is ever used.
  */
-export const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, t, onInsertCode }) => {
-  const ast = parseMarkdown(content);
+export const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content, t, onInsertCode }) => {
+  const ast = React.useMemo(() => parseMarkdown(content), [content]);
 
   return (
     <div className="markdown-body">
       {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
     </div>
   );
-};
+});
