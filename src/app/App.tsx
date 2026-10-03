@@ -75,6 +75,7 @@ import {
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 import { usePreferences } from '@features/settings/hooks/usePreferences';
 import { useConnection } from '@features/settings/hooks/useConnection';
+import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
 import {
   findProjectByCwd,
@@ -286,6 +287,10 @@ export const App: React.FC = () => {
   );
 
   const activeBackground = effectiveAppearance.customBackground;
+  const activeWallpaperStyles = useMemo(
+    () => computeWallpaperStyles(activeBackground?.image),
+    [activeBackground?.image]
+  );
 
   // Slash command catalog (Issue #9 T7): built-ins first (they keep precedence), then the
   // user's custom commands registered in Settings. Shared by the palette and the dispatcher.
@@ -764,23 +769,10 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      {activeBackground?.image?.enabled && activeBackground?.image?.url && (
+      {activeWallpaperStyles && (
         <div
           className="app-custom-background-layer"
-          style={{
-            backgroundImage: `url("${activeBackground.image.url}")`,
-            backgroundSize: activeBackground.image.fit || 'cover',
-            backgroundPosition: activeBackground.image.position || 'center',
-            backgroundRepeat:
-              activeBackground.image.repeat ||
-              activeBackground.image.fit === 'repeat'
-                ? 'repeat'
-                : 'no-repeat',
-            opacity: activeBackground.image.opacity ?? 0.4,
-            filter: activeBackground.image.blur
-              ? `blur(${activeBackground.image.blur}px)`
-              : undefined,
-          }}
+          style={activeWallpaperStyles as React.CSSProperties}
           aria-hidden="true"
         />
       )}

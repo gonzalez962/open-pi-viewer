@@ -560,6 +560,20 @@ test('preferences: validateAreaBackgroundConfig and validateBackgroundImageConfi
   assert.strictEqual(imgWithNonFinite?.opacity, 0.4);
 });
 
+test('preferences: validateBackgroundImageConfig supports all fits and cardinal positions with safe fallbacks', () => {
+  for (const fit of ['cover', 'contain', '100% 100%', 'repeat', 'auto'] as const) {
+    const res = validateBackgroundImageConfig({ fit });
+    assert.strictEqual(res?.fit, fit);
+  }
+  for (const pos of ['center', 'top', 'bottom', 'left', 'right'] as const) {
+    const res = validateBackgroundImageConfig({ position: pos });
+    assert.strictEqual(res?.position, pos);
+  }
+  // Unknown values fallback to defaults
+  assert.strictEqual(validateBackgroundImageConfig({ fit: 'invalid-fit' })?.fit, 'cover');
+  assert.strictEqual(validateBackgroundImageConfig({ position: 'invalid-pos' })?.position, 'center');
+});
+
 test('preferences: validateUiPreferences validates visual customizations and preserves existing preferences', () => {
   const fullPayload = {
     language: 'es',

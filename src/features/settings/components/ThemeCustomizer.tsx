@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AppTheme } from '@shared/theme';
 import type { TranslationKey } from '@shared/i18n';
 import type {
+  BackgroundImageConfig,
   CustomBackgroundPreferences,
   PreferencesSaveResult,
   WorkAnimationPreferences,
 } from '@infra/preferences';
+import { DEFAULT_BACKGROUND_IMAGE_CONFIG } from '@infra/preferences';
 import { AppearanceLifecycleController } from '@features/settings/appearance';
 import { useAppearanceDraft } from '@features/settings/hooks/useAppearanceDraft';
 import { ConfirmationCard } from './appearance/ConfirmationCard';
@@ -16,9 +18,13 @@ import {
   type BackgroundAreaKey,
 } from './appearance/AreaTransparencySection';
 import { WorkAnimationSection } from './appearance/WorkAnimationSection';
-import { WallpaperPlaceholder } from './appearance/WallpaperPlaceholder';
+import { WallpaperSection } from './appearance/WallpaperSection';
 import { PreviewSandbox } from './appearance/PreviewSandbox';
 import { findPresetDefinition, resolvePresetPalette } from './appearance/presetData';
+import {
+  WallpaperProcessCoordinator,
+  type WallpaperBrowserAdapter,
+} from '@features/settings/wallpaper';
 
 export interface ThemeCustomizerProps {
   controller?: AppearanceLifecycleController | null;
@@ -33,6 +39,8 @@ export interface ThemeCustomizerProps {
   onCustomBackgroundChange?: (bg: CustomBackgroundPreferences | null) => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   idPrefix?: string;
+  wallpaperAdapter?: WallpaperBrowserAdapter;
+  wallpaperCoordinator?: WallpaperProcessCoordinator;
 }
 
 export interface ThemeCustomizerActionAdapter {
@@ -44,6 +52,8 @@ export interface ThemeCustomizerActionAdapter {
   updateAreaColor: (area: BackgroundAreaKey, color: string) => void;
   resetArea: (area: BackgroundAreaKey) => void;
   setAnimation: (anim: WorkAnimationPreferences) => void;
+  updateWallpaper: (patch: Partial<BackgroundImageConfig>) => void;
+  clearWallpaper: () => void;
   confirm: () => PreferencesSaveResult;
   cancel: () => void;
   resetAppearance: () => PreferencesSaveResult;
@@ -55,10 +65,12 @@ export interface ThemeCustomizerActionAdapter {
  * without intermediate local state desync or premature storage writes.
  */
 export function createThemeCustomizerActions(
-  controller: AppearanceLifecycleController
+  controller: AppearanceLifecycleController,
+  coordinator?: WallpaperProcessCoordinator
 ): ThemeCustomizerActionAdapter {
   return {
     selectPreset: (theme: AppTheme) => {
+      coordinator?.cancel();
       controller.update({ theme });
     },
     setAccentColor: (hex: string | null) => {
@@ -100,9 +112,46 @@ export function createThemeCustomizerActions(
     setAnimation: (anim: WorkAnimationPreferences) => {
       controller.update({ workAnimation: anim });
     },
-    confirm: () => controller.confirm(),
-    cancel: () => controller.cancel(),
-    resetAppearance: () => controller.resetAppearance(),
+    updateWallpaper: (patch: Partial<BackgroundImageConfig>) => {
+      const currentBg = controller.getEffectiveAppearance().customBackground ?? {};
+      const currentImage = currentBg.image ?? { ...DEFAULT_BACKGROUND_IMAGE_CONFIG };
+      controller.update({
+        customBackground: {
+          ...currentBg,
+          image: {
+            ...currentImage,
+            ...patch,
+          },
+        },
+      });
+    },
+    clearWallpaper: () => {
+      coordinator?.cancel();
+      const currentBg = controller.getEffectiveAppearance().customBackground ?? {};
+      const currentImage = currentBg.image ?? { ...DEFAULT_BACKGROUND_IMAGE_CONFIG };
+      controller.update({
+        customBackground: {
+          ...currentBg,
+          image: {
+            ...currentImage,
+            url: '',
+          },
+        },
+      });
+    },
+    confirm: () => {
+      // Synchronously cancel in-flight wallpaper processing before atomic commit
+      coordinator?.cancel();
+      return controller.confirm();
+    },
+    cancel: () => {
+      coordinator?.cancel();
+      controller.cancel();
+    },
+    resetAppearance: () => {
+      coordinator?.cancel();
+      return controller.resetAppearance();
+    },
   };
 }
 
@@ -110,14 +159,23 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
   controller,
   t,
   idPrefix = 'theme-customizer',
+  wallpaperAdapter,
+  wallpaperCoordinator,
 }) => {
   const draft = useAppearanceDraft(controller ?? undefined);
   const [saveFeedback, setSaveFeedback] = useState(false);
+  const [lifecycleRevision, setLifecycleRevision] = useState(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const localCoordinatorRef = useRef<WallpaperProcessCoordinator | null>(null);
+  if (!localCoordinatorRef.current) {
+    localCoordinatorRef.current = new WallpaperProcessCoordinator();
+  }
+  const activeCoordinator = wallpaperCoordinator || localCoordinatorRef.current;
+
   const actions = useMemo(
-    () => createThemeCustomizerActions(draft.controller),
-    [draft.controller]
+    () => createThemeCustomizerActions(draft.controller, activeCoordinator),
+    [draft.controller, activeCoordinator]
   );
 
   // Initialize draft session on mount or when controller reference changes.
@@ -125,17 +183,19 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
   useEffect(() => {
     if (controller && !controller.getState().isDrafting) {
       controller.begin();
+      setLifecycleRevision((r) => r + 1);
     }
   }, [controller]);
 
-  // Clean up any feedback timers on unmount
+  // Clean up any feedback timers or in-flight wallpaper processing on unmount
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
       }
+      activeCoordinator.cancel();
     };
-  }, []);
+  }, [activeCoordinator]);
 
   const activeTheme =
     draft.draft?.theme ?? draft.effectiveAppearance.theme ?? draft.saved.theme ?? 'dark';
@@ -215,8 +275,22 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
     [actions]
   );
 
+  const handleUpdateWallpaper = useCallback(
+    (patch: Partial<BackgroundImageConfig>) => {
+      actions.updateWallpaper(patch);
+      setSaveFeedback(false);
+    },
+    [actions]
+  );
+
+  const handleClearWallpaper = useCallback(() => {
+    actions.clearWallpaper();
+    setSaveFeedback(false);
+  }, [actions]);
+
   const handleConfirm = useCallback(() => {
     const result = actions.confirm();
+    setLifecycleRevision((r) => r + 1);
     if (result.success) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       setSaveFeedback(true);
@@ -226,11 +300,13 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
 
   const handleCancel = useCallback(() => {
     actions.cancel();
+    setLifecycleRevision((r) => r + 1);
     setSaveFeedback(false);
   }, [actions]);
 
   const handleResetAppearance = useCallback(() => {
     const result = actions.resetAppearance();
+    setLifecycleRevision((r) => r + 1);
     if (result.success) {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       setSaveFeedback(true);
@@ -303,8 +379,17 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
         idPrefix={idPrefix}
       />
 
-      {/* Wallpaper Placeholder for T5 */}
-      <WallpaperPlaceholder t={t} />
+      {/* Modular Translated Accessible Wallpaper Section */}
+      <WallpaperSection
+        imageConfig={draft.effectiveAppearance.customBackground?.image}
+        onUpdateImage={handleUpdateWallpaper}
+        onClearImage={handleClearWallpaper}
+        t={t}
+        idPrefix={idPrefix}
+        adapter={wallpaperAdapter}
+        coordinator={activeCoordinator}
+        lifecycleRevision={lifecycleRevision}
+      />
 
       {/* Live Preview Sandbox */}
       <PreviewSandbox

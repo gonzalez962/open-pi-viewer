@@ -4,6 +4,7 @@ import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
 } from '@infra/preferences';
+import { computeWallpaperStyles } from '@features/settings/wallpaper';
 
 export interface PreviewSandboxProps {
   effectiveAppearance: AppearancePreferences;
@@ -19,6 +20,11 @@ export const PreviewSandbox: React.FC<PreviewSandboxProps> = ({
     [effectiveAppearance.workAnimation]
   );
 
+  const wallpaperStyles = useMemo(
+    () => computeWallpaperStyles(effectiveAppearance.customBackground?.image),
+    [effectiveAppearance.customBackground?.image]
+  );
+
   return (
     <section className="theme-preview-sandbox-section" aria-label={t('theme.preview_title')}>
       <div className="section-title-wrap">
@@ -27,6 +33,13 @@ export const PreviewSandbox: React.FC<PreviewSandboxProps> = ({
       </div>
 
       <div className="sandbox-viewport">
+        {wallpaperStyles && (
+          <div
+            className="app-custom-background-layer"
+            style={wallpaperStyles as React.CSSProperties}
+            aria-hidden="true"
+          />
+        )}
         {/* Header Mock */}
         <div className="sandbox-header-mock">
           <span className="sandbox-brand">PI-Viewer</span>

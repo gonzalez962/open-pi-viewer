@@ -11,8 +11,13 @@ import { PresetGallery } from '@features/settings/components/appearance/PresetGa
 import { ColorOverrides } from '@features/settings/components/appearance/ColorOverrides';
 import { AreaTransparencySection } from '@features/settings/components/appearance/AreaTransparencySection';
 import { WorkAnimationSection } from '@features/settings/components/appearance/WorkAnimationSection';
-import { WallpaperPlaceholder } from '@features/settings/components/appearance/WallpaperPlaceholder';
+import { WallpaperSection } from '@features/settings/components/appearance/WallpaperSection';
 import { PreviewSandbox } from '@features/settings/components/appearance/PreviewSandbox';
+import {
+  WallpaperProcessCoordinator,
+  WallpaperProcessingError,
+  mapWallpaperErrorToTranslationKey,
+} from '@features/settings/wallpaper';
 import { AppearanceLifecycleController } from '@features/settings/appearance';
 import {
   PreferencesController,
@@ -195,16 +200,193 @@ test('ThemeCustomizer: WorkAnimationSection renders mode pills and preview loade
   assert.match(html, /Two Colors/);
 });
 
-test('ThemeCustomizer: WallpaperPlaceholder clearly indicates unavailable until T5 without file inputs', () => {
+test('ThemeCustomizer: WallpaperSection renders accessible controls, inputs, presets, and fit modes', () => {
   const html = renderToStaticMarkup(
-    React.createElement(WallpaperPlaceholder, {
+    React.createElement(WallpaperSection, {
+      imageConfig: {
+        enabled: true,
+        url: 'https://example.com/custom.jpg',
+        fit: 'repeat',
+        position: 'center',
+        repeat: true,
+        opacity: 0.65,
+        blur: 10,
+      },
+      onUpdateImage: () => {},
+      onClearImage: () => {},
       t: tEn,
     })
   );
 
+  // Section heading & active badge
   assert.match(html, /Background Image/);
-  assert.match(html, /T5/);
-  assert.doesNotMatch(html, /<input[^>]*type="file"/);
+  assert.match(html, /Active/);
+
+  // Accessible inputs
+  assert.match(html, /<input[^>]*type="checkbox"/);
+  assert.match(html, /<input[^>]*type="file"/);
+  assert.match(html, /<input[^>]*type="text"/);
+  assert.match(html, /Apply URL/);
+  assert.match(html, /Upload from device/);
+  assert.match(html, /Remove Image/);
+
+  // Bundled presets
+  assert.match(html, /Minimalist Ninja \(1080p\)/);
+  assert.match(html, /Minimalist Ninja \(Original\)/);
+
+  // Remote warning notice
+  assert.match(html, /Remote images contact an external host/);
+
+  // Fit & Position radiogroups
+  assert.match(html, /role="radiogroup"/);
+  assert.match(html, /Repeat Tile/);
+  assert.match(html, /Cover/);
+  assert.match(html, /Center/);
+
+  // Sliders
+  assert.match(html, /<input[^>]*type="range"/);
+  assert.match(html, /65%/);
+  assert.match(html, /10px/);
+});
+
+test('ThemeCustomizer: action adapter handles wallpaper updates, clearance, live preview, and atomic confirmation', () => {
+  let savedState: AppearancePreferences = {
+    theme: 'dark',
+    customBackground: null,
+  };
+  let commitCalls = 0;
+
+  const controller = new AppearanceLifecycleController({
+    getSavedAppearance: () => savedState,
+    commitAppearance: (c) => {
+      commitCalls++;
+      savedState = { ...savedState, ...c } as AppearancePreferences;
+      return { success: true };
+    },
+    resetAppearance: () => {
+      savedState = { theme: 'dark' };
+      return { success: true };
+    },
+  });
+
+  const actions = createThemeCustomizerActions(controller);
+
+  // 1. Begin draft
+  controller.begin();
+  assert.equal(commitCalls, 0);
+
+  // 2. Update wallpaper via UI adapter
+  actions.updateWallpaper({
+    enabled: true,
+    url: '/wallpapers/minimalist-ninja-1080p.jpg',
+    fit: 'repeat',
+    position: 'center',
+    opacity: 0.5,
+  });
+
+  assert.equal(commitCalls, 0, 'Updating wallpaper must not commit early');
+  assert.equal(controller.getState().isDirty, true);
+  assert.equal(
+    controller.getState().effectiveAppearance.customBackground?.image?.url,
+    '/wallpapers/minimalist-ninja-1080p.jpg'
+  );
+  assert.equal(
+    controller.getState().effectiveAppearance.customBackground?.image?.fit,
+    'repeat'
+  );
+
+  // 3. Clear wallpaper via UI adapter
+  actions.clearWallpaper();
+  assert.equal(commitCalls, 0);
+  assert.equal(
+    controller.getState().effectiveAppearance.customBackground?.image?.url,
+    ''
+  );
+
+  // 4. Cancel reverts to saved state (null background)
+  actions.cancel();
+  assert.equal(commitCalls, 0);
+  assert.equal(controller.getState().effectiveAppearance.customBackground, null);
+
+  // 5. Update and confirm persists atomically
+  controller.begin();
+  actions.updateWallpaper({
+    enabled: true,
+    url: '/wallpapers/minimalist-ninja-1080p.jpg',
+    fit: 'cover',
+  });
+  const res = actions.confirm();
+  assert.equal(res.success, true);
+  assert.equal(commitCalls, 1);
+  assert.equal(
+    savedState.customBackground?.image?.url,
+    '/wallpapers/minimalist-ninja-1080p.jpg'
+  );
+});
+
+test('ThemeCustomizer: UI action adapter synchronously cancels pending upload on confirm, cancel, reset, and preset', () => {
+  let savedState: AppearancePreferences = { theme: 'dark', customBackground: null };
+  const controller = new AppearanceLifecycleController({
+    getSavedAppearance: () => savedState,
+    commitAppearance: (c) => {
+      savedState = { ...savedState, ...c } as AppearancePreferences;
+      return { success: true };
+    },
+    resetAppearance: () => {
+      savedState = { theme: 'dark' };
+      return { success: true };
+    },
+  });
+
+  const coordinator = new WallpaperProcessCoordinator();
+  const actions = createThemeCustomizerActions(controller, coordinator);
+
+  controller.begin();
+
+  // Test 1: Preset switch cancels in-flight upload
+  coordinator.start();
+  assert.equal(coordinator.isProcessing(), true);
+  actions.selectPreset('DjRomoro');
+  assert.equal(coordinator.isProcessing(), false, 'Preset selection must cancel pending upload');
+
+  // Test 2: Clear wallpaper cancels in-flight upload
+  coordinator.start();
+  assert.equal(coordinator.isProcessing(), true);
+  actions.clearWallpaper();
+  assert.equal(coordinator.isProcessing(), false, 'Clear wallpaper must cancel pending upload');
+
+  // Test 3: Confirm cancels in-flight upload BEFORE commit
+  coordinator.start();
+  assert.equal(coordinator.isProcessing(), true);
+  actions.confirm();
+  assert.equal(coordinator.isProcessing(), false, 'Confirm must cancel pending upload before saving');
+
+  // Test 4: Cancel cancels in-flight upload
+  controller.begin();
+  coordinator.start();
+  assert.equal(coordinator.isProcessing(), true);
+  actions.cancel();
+  assert.equal(coordinator.isProcessing(), false, 'Cancel must cancel pending upload');
+
+  // Test 5: Reset appearance cancels in-flight upload
+  coordinator.start();
+  assert.equal(coordinator.isProcessing(), true);
+  actions.resetAppearance();
+  assert.equal(coordinator.isProcessing(), false, 'Reset appearance must cancel pending upload');
+});
+
+test('ThemeCustomizer: localized error mapping prevents raw untranslated error messages at boundary', () => {
+  const pixelError = new WallpaperProcessingError('pixel_limit_exceeded', 'Unsafe 24MP buffer in memory');
+  const enKey = mapWallpaperErrorToTranslationKey(pixelError);
+  const esKey = mapWallpaperErrorToTranslationKey(pixelError);
+
+  const enText = tEn(enKey);
+  const esText = tEs(esKey);
+
+  assert.equal(enText, 'Image resolution exceeds 16 megapixels limit.');
+  assert.equal(esText, 'La resolución de la imagen supera el límite de 16 megapíxeles.');
+  assert.doesNotMatch(enText, /Unsafe 24MP buffer/);
+  assert.doesNotMatch(esText, /Unsafe 24MP buffer/);
 });
 
 test('ThemeCustomizer: PreviewSandbox displays mock layout with syntax highlights and working loader', () => {
@@ -223,6 +405,33 @@ test('ThemeCustomizer: PreviewSandbox displays mock layout with syntax highlight
   assert.match(html, /sandbox-chat-area/);
   assert.match(html, /sandbox-code-card/);
   assert.match(html, /prompt-degraciao-loader/);
+});
+
+test('ThemeCustomizer: PreviewSandbox renders wallpaper layer with valid auto backgroundSize for repeat', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(PreviewSandbox, {
+      effectiveAppearance: {
+        theme: 'DjRomoro',
+        customBackground: {
+          image: {
+            enabled: true,
+            url: '/wallpapers/minimalist-ninja-1080p.jpg',
+            fit: 'repeat',
+            position: 'center',
+            repeat: true,
+            opacity: 0.5,
+            blur: 4,
+          },
+        },
+      },
+      t: tEn,
+    })
+  );
+
+  assert.match(html, /app-custom-background-layer/);
+  assert.match(html, /minimalist-ninja-1080p\.jpg/);
+  assert.match(html, /background-size:auto/i);
+  assert.match(html, /background-repeat:repeat/i);
 });
 
 test('ThemeCustomizer: controller delegation handles update, confirm, cancel, and resetAppearance without persisting early', () => {
