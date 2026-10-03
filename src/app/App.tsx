@@ -16,6 +16,10 @@ import {
   formatLocalizedStatusDetail,
   type TranslationKey,
 } from '@shared/i18n';
+import {
+  computeWorkAnimationStyles,
+  type AppearancePreferences,
+} from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
 import {
   MarkdownContent,
@@ -71,6 +75,7 @@ import {
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 import { usePreferences } from '@features/settings/hooks/usePreferences';
 import { useConnection } from '@features/settings/hooks/useConnection';
+import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
 import {
   findProjectByCwd,
@@ -262,8 +267,30 @@ export const App: React.FC = () => {
     setNotifications,
     setCustomCommands,
     setHiddenCommandIds,
+    appearanceController,
     t,
   } = usePreferences();
+
+  // Subscribes to effective appearance via central controller for live background & working animation
+  const [effectiveAppearance, setEffectiveAppearance] = useState<AppearancePreferences>(() =>
+    appearanceController.getEffectiveAppearance()
+  );
+  useEffect(() => {
+    return appearanceController.subscribe((controllerState) => {
+      setEffectiveAppearance(controllerState.effectiveAppearance);
+    });
+  }, [appearanceController]);
+
+  const runtimeWorkStyles = useMemo(
+    () => computeWorkAnimationStyles(effectiveAppearance.workAnimation),
+    [effectiveAppearance.workAnimation]
+  );
+
+  const activeBackground = effectiveAppearance.customBackground;
+  const activeWallpaperStyles = useMemo(
+    () => computeWallpaperStyles(activeBackground?.image),
+    [activeBackground?.image]
+  );
 
   // Slash command catalog (Issue #9 T7): built-ins first (they keep precedence), then the
   // user's custom commands registered in Settings. Shared by the palette and the dispatcher.
@@ -742,6 +769,13 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-container">
+      {activeWallpaperStyles && (
+        <div
+          className="app-custom-background-layer"
+          style={activeWallpaperStyles as React.CSSProperties}
+          aria-hidden="true"
+        />
+      )}
       <header className="app-header" role="banner">
         <div className="header-brand">
           <button
@@ -862,6 +896,7 @@ export const App: React.FC = () => {
               onNotificationsChange={setNotifications}
               onCustomCommandsChange={setCustomCommands}
               onHiddenCommandIdsChange={setHiddenCommandIds}
+              appearanceController={appearanceController}
               settingsError={settingsError}
               settingsStorageNotice={settingsStorageNotice}
               isBusy={isBusy}
@@ -1227,6 +1262,33 @@ export const App: React.FC = () => {
                   title={localizedStatusDetail || localizedStatusLabel}
                   aria-label={t('prompt.status_dot_aria', { status: localizedStatusLabel })}
                 />
+                {isBusy && (
+                  <span
+                    className={runtimeWorkStyles.className}
+                    style={runtimeWorkStyles.style as React.CSSProperties}
+                    aria-hidden="true"
+                  >
+                    <span className="loader">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+                        <span
+                          key={`wdot-1-${i}`}
+                          className="dot"
+                          style={{ '--i': i } as React.CSSProperties}
+                        />
+                      ))}
+                    </span>
+                    <span className="working-text">Working</span>
+                    <span className="loader">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
+                        <span
+                          key={`wdot-2-${i}`}
+                          className="dot"
+                          style={{ '--i': i } as React.CSSProperties}
+                        />
+                      ))}
+                    </span>
+                  </span>
+                )}
               </div>
               <span id="prompt-status-hint" className="prompt-hint">
                 {isBusy

@@ -15,7 +15,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-muted);
-  background-color: var(--bg-chat-viewport);
+  background-color: var(--custom-bg-chat, var(--bg-chat-viewport));
   padding: 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--md-scrollbar-thumb) transparent;
@@ -175,13 +175,13 @@
 }
 
 .message-user {
-  background-color: var(--bg-user-bubble);
+  background-color: var(--custom-bg-cards, var(--bg-user-bubble));
   border-color: var(--border-user-bubble);
   margin-left: 32px;
 }
 
 .message-assistant {
-  background-color: var(--bg-surface);
+  background-color: var(--custom-bg-cards, var(--bg-surface));
   border-color: var(--border-muted);
   margin-right: 32px;
 }
@@ -339,7 +339,7 @@
   margin: 6px 0;
   border-radius: var(--radius-md);
   border: 1px solid var(--md-code-border);
-  background-color: var(--md-code-bg);
+  background-color: var(--custom-bg-cards, var(--md-code-bg));
   overflow: hidden;
 }
 
@@ -658,7 +658,7 @@
   max-height: 200px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background-color: var(--bg-input);
+  background-color: var(--custom-bg-prompt, var(--bg-input));
   border: 1px solid var(--border-muted);
   color: var(--fg-default);
   font-family: var(--font-sans);
@@ -2350,8 +2350,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background-color: var(--tool-output-bg);
+  border: 1px solid var(--tool-output-border);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -2453,8 +2453,8 @@
 }
 
 .terminal-screen {
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background-color: var(--tool-output-bg);
+  border: 1px solid var(--tool-output-border);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   max-height: 280px;
@@ -2469,6 +2469,34 @@
   color: #c9d1d9;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Custom Cards Scoped Override (T10):
+   When cards area background customization is active ([data-custom-cards]),
+   the message item container (.message-item / .message-assistant / .message-user)
+   acts as the single surface owner. Nested cards, headers, bodies, args, and output
+   containers use transparent fills to avoid additive alpha stacking (preventing 0.5
+   from appearing opaque through multiplied alpha layers).
+   Text, buttons, icons, and status badges remain fully opaque.
+   Defaults remain unchanged when no cards customization is active. */
+[data-custom-cards] .process-group-card,
+[data-custom-cards] .process-group-header,
+[data-custom-cards] .process-category-children,
+[data-custom-cards] .thinking-card,
+[data-custom-cards] .thinking-body,
+[data-custom-cards] .tool-card,
+[data-custom-cards] .tool-card-header,
+[data-custom-cards] .tool-card-body,
+[data-custom-cards] .tool-args-pre,
+[data-custom-cards] .tool-output-container,
+[data-custom-cards] .terminal-command-bar,
+[data-custom-cards] .terminal-screen,
+[data-custom-cards] .tool-code-pre,
+[data-custom-cards] .markdown-code-block,
+[data-custom-cards] .markdown-code-header,
+[data-custom-cards] .markdown-code-pre {
+  background: transparent;
+  background-color: transparent;
 }
 
 /* File Attachment Selector & Popover */

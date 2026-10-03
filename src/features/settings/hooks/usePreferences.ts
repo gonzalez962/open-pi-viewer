@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  extractAppearancePreferences,
   loadUiPreferences,
   PreferencesController,
+  type AppearanceInput,
+  type PreferencesSaveResult,
   type UiPreferences,
 } from '@infra/preferences';
 import {
@@ -15,7 +18,8 @@ import {
   type SupportedLocale,
   type TranslationKey,
 } from '@shared/i18n';
-import { applyTheme, resolveTheme, watchSystemTheme, type AppTheme } from '@shared/theme';
+import type { AppTheme } from '@shared/theme';
+import { AppearanceLifecycleController } from '@features/settings/appearance';
 
 export interface UsePreferencesResult {
   preferences: UiPreferences;
@@ -28,25 +32,23 @@ export interface UsePreferencesResult {
   setCustomCommands: (commands: CustomCommand[]) => void;
   /** Replaces and persists the ids of commands hidden from the palette and "/help" (T8). */
   setHiddenCommandIds: (ids: string[]) => void;
+  /** Atomically commits candidate appearance preferences. */
+  commitAppearance: (candidate: AppearanceInput) => PreferencesSaveResult;
+  /** Atomically resets appearance customizations back to defaults. */
+  resetAppearance: () => PreferencesSaveResult;
+  /** Production lifecycle controller managing DOM appearance, system listeners, and draft preview. */
+  appearanceController: AppearanceLifecycleController;
+  appearanceControllerRef: React.MutableRefObject<AppearanceLifecycleController | null>;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
 /**
- * Owns UI preferences (language & theme), separate from connection settings.
- * Mirrors App.tsx's former inline state/effects exactly, including the
- * document-language sync effect and the theme resolution/system-watch effect.
- *
- * Fix folded into this extraction: the previous code called `loadUiPreferences()`
- * twice at mount (once per lazy initializer) to derive two independent pieces of
- * state from the same single storage read. `loadUiPreferences()` is a pure read
- * with no side effect beyond `storage.getItem` (see src/infra/preferences.ts) and
- * is idempotent, so two calls always produced the same result as one - the
- * duplication was wasted work, not a correctness difference. The read is done
- * once into a ref below and feeds both `preferences` and `preferencesWarning`.
+ * Owns UI preferences (language & visual appearance), separate from connection settings.
+ * Single owner for DOM appearance application and media-query system scheme listening
+ * via AppearanceLifecycleController.
  */
 export function usePreferences(): UsePreferencesResult {
-  // Single mount-time storage read feeding both pieces of state. App.tsx used to call
-  // loadUiPreferences() once per lazy initializer, reading storage twice for one snapshot.
+  // Single mount-time storage read feeding both pieces of state.
   const initialLoadRef = useRef<ReturnType<typeof loadUiPreferences> | null>(null);
   if (!initialLoadRef.current) {
     initialLoadRef.current = loadUiPreferences();
@@ -68,20 +70,8 @@ export function usePreferences(): UsePreferencesResult {
     setDocumentLanguage(preferences.language);
   }, [preferences.language]);
 
-  // Synchronize theme and subscribe to system changes when in 'system' mode
-  useEffect(() => {
-    const resolved = resolveTheme(preferences.theme);
-    applyTheme(resolved);
-
-    if (preferences.theme === 'system') {
-      const unwatch = watchSystemTheme((systemTheme) => {
-        applyTheme(systemTheme);
-      });
-      return unwatch;
-    }
-  }, [preferences.theme]);
-
-  // Preferences controller encapsulating immediate UI preferences logic
+  // Synchronous preferences ref for live reads without waiting on React re-render cycles.
+  // Updated synchronously inside setPreferences callback to eliminate stale consecutive mutations.
   const preferencesRef = useRef<UiPreferences>(preferences);
   preferencesRef.current = preferences;
 
@@ -89,39 +79,101 @@ export function usePreferences(): UsePreferencesResult {
   if (!preferencesControllerRef.current) {
     preferencesControllerRef.current = new PreferencesController({
       getPreferences: () => preferencesRef.current,
-      setPreferences: (updated) => setPreferences(updated),
+      setPreferences: (updated) => {
+        preferencesRef.current = updated;
+        setPreferences(updated);
+      },
       setWarning: (warning) => setPreferencesWarning(warning),
     });
   }
 
+  // Central appearance lifecycle controller:
+  // Pure constructor; effect-owned activation and single ownership of DOM/system watcher.
+  const appearanceControllerRef = useRef<AppearanceLifecycleController | null>(null);
+  if (!appearanceControllerRef.current) {
+    appearanceControllerRef.current = new AppearanceLifecycleController({
+      getSavedAppearance: () => extractAppearancePreferences(preferencesRef.current),
+      commitAppearance: (candidate) => preferencesControllerRef.current!.commitAppearance(candidate),
+      resetAppearance: () => preferencesControllerRef.current!.resetAppearance(),
+    });
+  }
+
+  // Effect-owned start/stop lifecycle: StrictMode-safe activation and teardown
+  useEffect(() => {
+    const controller = appearanceControllerRef.current;
+    if (!controller) return;
+
+    controller.start();
+
+    return () => {
+      controller.stop();
+    };
+  }, []);
+
+  // Synchronize saved appearance whenever persisted preferences change.
+  // Controller protects any active draft preview from being overwritten.
+  useEffect(() => {
+    appearanceControllerRef.current?.setSavedAppearance(
+      extractAppearancePreferences(preferences)
+    );
+  }, [
+    preferences.theme,
+    preferences.customAccent,
+    preferences.customTextColor,
+    preferences.customLabelColor,
+    preferences.workAnimation,
+    preferences.customBackground,
+  ]);
+
   // Immediate preferences updates without reconnecting Pi or resetting chat state
-  const handleThemeChange = (newTheme: AppTheme) => {
+  const handleThemeChange = useCallback((newTheme: AppTheme) => {
     preferencesControllerRef.current?.setTheme(newTheme);
-  };
+  }, []);
 
-  const handleLanguageChange = (newLanguage: SupportedLocale) => {
+  const handleLanguageChange = useCallback((newLanguage: SupportedLocale) => {
     preferencesControllerRef.current?.setLanguage(newLanguage);
-  };
+  }, []);
 
-  const setNotifications = (partial: Partial<NotificationPreferences>) => {
+  const setNotifications = useCallback((partial: Partial<NotificationPreferences>) => {
     preferencesControllerRef.current?.setNotifications(partial);
-  };
+  }, []);
 
-  const setCustomCommands = (commands: CustomCommand[]) => {
+  const setCustomCommands = useCallback((commands: CustomCommand[]) => {
     preferencesControllerRef.current?.setCustomCommands(commands);
-  };
+  }, []);
 
-  const setHiddenCommandIds = (ids: string[]) => {
+  const setHiddenCommandIds = useCallback((ids: string[]) => {
     preferencesControllerRef.current?.setHiddenCommandIds(ids);
-  };
+  }, []);
 
-  const dismissPreferencesWarning = () => {
+  const commitAppearance = useCallback((candidate: AppearanceInput): PreferencesSaveResult => {
+    return (
+      preferencesControllerRef.current?.commitAppearance(candidate) ?? {
+        success: false,
+        error: 'Preferences controller not initialized',
+      }
+    );
+  }, []);
+
+  const resetAppearance = useCallback((): PreferencesSaveResult => {
+    return (
+      preferencesControllerRef.current?.resetAppearance() ?? {
+        success: false,
+        error: 'Preferences controller not initialized',
+      }
+    );
+  }, []);
+
+  const dismissPreferencesWarning = useCallback(() => {
     setPreferencesWarning(null);
-  };
+  }, []);
 
   // Localized string resolver bound to current language
-  const t = (key: TranslationKey, params?: Record<string, string | number>): string =>
-    translate(preferences.language, key, params);
+  const t = useCallback(
+    (key: TranslationKey, params?: Record<string, string | number>): string =>
+      translate(preferences.language, key, params),
+    [preferences.language]
+  );
 
   return {
     preferences,
@@ -132,6 +184,10 @@ export function usePreferences(): UsePreferencesResult {
     setNotifications,
     setCustomCommands,
     setHiddenCommandIds,
+    commitAppearance,
+    resetAppearance,
+    appearanceController: appearanceControllerRef.current,
+    appearanceControllerRef,
     t,
   };
 }

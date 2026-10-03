@@ -68,11 +68,12 @@ Pi Viewer follows a layered hexagonal architecture. Detailed design documentatio
 ## Core Features & Design
 
 ### UI Localization & Theme Customization
-- **JSON Dictionaries with Key Parity**: Locales live in `src/locales/en.json` and `src/locales/es.json`. All chrome labels, aria descriptions, tooltips, hints, and empty states are externalized into stable keys. Parameter interpolation (`{count}`, `{flags}`, `{status}`) uses safe string replacement without HTML insertion.
+- **Full Appearance Customizer & Live Preview**: Complete visual customizer with instant live DOM preview, 7 theme presets (including Cyberpunk, Arch Electric, Gentleman Sexy DJR, and Minimalist Ninja OLED), 5 independent workspace transparency areas, custom text/label/accent overrides, customizable agent work loading animation, and bounded wallpaper uploads. Detailed usage guide, safety limits, and lifecycle semantics are documented in [docs/appearance-customization.md](docs/appearance-customization.md).
+- **JSON Dictionaries with Key Parity**: Locales live in `src/shared/locales/en.json` and `src/shared/locales/es.json`. All chrome labels, aria descriptions, tooltips, hints, and empty states are externalized into stable keys. Parameter interpolation (`{count}`, `{flags}`, `{status}`) uses safe string replacement without HTML insertion.
 - **Contract-Preserving Presentation Mapping**: Reducer internals and RPC contracts remain untouched in English. Presentation helpers (`formatLocalizedStatus` and `formatLocalizedStatusDetail`) explicitly map connection states and known status details to localized strings while passing through arbitrary technical error strings verbatim.
 - **Reusable Theme Tokens**: CSS tokens in `src/styles.css` define complete palettes for `:root` (dark default) and `[data-theme="light"]`. Tokens cover background canvas, surface, borders, inputs, focus rings, disabled controls, error banners, user message bubbles, and buttons. Native `color-scheme` property is synchronized to the root document.
 - **StrictMode-Safe System Theme Watcher**: When `system` theme is selected, `watchSystemTheme()` listens to `(prefers-color-scheme: dark)` changes and returns an idempotent cleanup function that prevents listener leaks across React remounts.
-- **Immediate Preferences**: Theme and language controls are available under **Settings -> Appearance & Language**. Selections take effect immediately and are saved to `pi_viewer_ui_preferences` without invoking bridge reconnection, resetting conversation context, or discarding typed prompts.
+- **Draft/Confirm/Cancel Lifecycle**: Appearance selections preview immediately via inline CSS variables without writing to disk. Changes are committed atomically to `pi_viewer_ui_preferences` on **Confirm**, or discarded cleanly on **Cancel** or modal unmount without invoking bridge reconnection, resetting conversation context, or discarding typed prompts. Storage quota errors preserve saved preferences intact.
 
 ### Safe Markdown Rendering & Copy Controls
 - **Strict Role Isolation**: Only assistant messages are processed by the safe Markdown parser. User and system messages remain literal plain text (`.message-literal`) with preserved whitespace (`white-space: pre-wrap;`), guaranteeing that user prompts containing markdown or HTML syntax are never parsed or styled as HTML.
@@ -88,7 +89,8 @@ Pi Viewer follows a layered hexagonal architecture. Detailed design documentatio
 ### Auto-Startup, Settings & Retry
 - **Automatic Connection**: On launch, Pi Viewer attempts to start the Pi RPC bridge using stored configuration.
 - **Settings Panel**: Accessible via the header or offline screen to configure:
-  - `Appearance & Language`: Interface Theme (Dark, Light, System) and Display Language (English, Español).
+  - `General Preferences`: Interface Theme and Display Language (English, Español).
+  - `Theme & Styles`: Full appearance customizer with live preview, presets, area transparency, and wallpaper settings.
   - `Node Executable Path`: Defaults to `node` (or absolute path).
   - `Pi CLI Entrypoint`: Absolute path to the Pi CLI `cli.js`.
   - `Working Directory`: Absolute path to the target project directory.
