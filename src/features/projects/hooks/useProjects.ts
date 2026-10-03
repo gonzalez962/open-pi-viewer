@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { pickDirectoryPi } from '@infra/bridge';
 import {
   addProject,
@@ -17,6 +17,8 @@ export interface UseProjectsOptions {
   isBusy: boolean;
   /** Inversion point: the connection cluster owns StartupManager; this hook only calls it. */
   applyWorkingDirectory: (workingDirectory: string) => void;
+  /** Optional callback to activate project chat state in multi-project state when a project becomes active. */
+  onActivateProject?: (projectId: string) => void;
 }
 
 export interface UseProjectsResult {
@@ -48,23 +50,30 @@ export function useProjects({
   workingDirectory,
   isBusy,
   applyWorkingDirectory,
+  onActivateProject,
 }: UseProjectsOptions): UseProjectsResult {
   const [projectsRegistry, setProjectsRegistry] = useState<ProjectsRegistry>(
     () => loadProjectsRegistry(undefined, workingDirectory).registry
   );
 
+  const projectsRegistryRef = useRef(projectsRegistry);
+  projectsRegistryRef.current = projectsRegistry;
+
   const handleSelectProject = useCallback(
     (project: ProjectItem) => {
-      const decision = decideSelectProject(projectsRegistry, project, isBusy);
+      const currentRegistry = projectsRegistryRef.current;
+      const decision = decideSelectProject(currentRegistry, project, isBusy);
       if (decision.action === 'noop') {
         return;
       }
 
       saveProjectsRegistry(decision.registry);
+      projectsRegistryRef.current = decision.registry;
       setProjectsRegistry(decision.registry);
+      onActivateProject?.(decision.registry.activeProjectId!);
       applyWorkingDirectory(decision.path!);
     },
-    [projectsRegistry, isBusy, applyWorkingDirectory]
+    [isBusy, applyWorkingDirectory, onActivateProject]
   );
 
   const handleAddProject = useCallback(
@@ -77,50 +86,62 @@ export function useProjects({
         }
       }
 
-      if (targetPath) {
-        const { registry: nextRegistry, project: addedProj } = addProject(
-          projectsRegistry,
-          targetPath,
-          customName
-        );
-        saveProjectsRegistry(nextRegistry);
-        setProjectsRegistry(nextRegistry);
-
-        applyWorkingDirectory(addedProj.path);
+      if (!targetPath) {
+        return;
       }
+
+      const currentRegistry = projectsRegistryRef.current;
+      const { registry: nextRegistry, project: addedProj } = addProject(
+        currentRegistry,
+        targetPath,
+        customName
+      );
+      saveProjectsRegistry(nextRegistry);
+      projectsRegistryRef.current = nextRegistry;
+      setProjectsRegistry(nextRegistry);
+
+      onActivateProject?.(addedProj.id);
+      applyWorkingDirectory(addedProj.path);
     },
-    [workingDirectory, projectsRegistry, applyWorkingDirectory]
+    [workingDirectory, applyWorkingDirectory, onActivateProject]
   );
 
   const handleRenameProject = useCallback(
     (projectId: string, newName: string) => {
-      const next = updateProjectName(projectsRegistry, projectId, newName);
+      const currentRegistry = projectsRegistryRef.current;
+      const next = updateProjectName(currentRegistry, projectId, newName);
       saveProjectsRegistry(next);
+      projectsRegistryRef.current = next;
       setProjectsRegistry(next);
     },
-    [projectsRegistry]
+    []
   );
 
   const handleRemoveProject = useCallback(
     (projectId: string) => {
-      const decision = decideRemoveProject(projectsRegistry, projectId);
+      const currentRegistry = projectsRegistryRef.current;
+      const decision = decideRemoveProject(currentRegistry, projectId);
       saveProjectsRegistry(decision.registry);
+      projectsRegistryRef.current = decision.registry;
       setProjectsRegistry(decision.registry);
 
-      if (decision.applyPath) {
+      if (decision.applyPath && decision.registry.activeProjectId) {
+        onActivateProject?.(decision.registry.activeProjectId);
         applyWorkingDirectory(decision.applyPath);
       }
     },
-    [projectsRegistry, applyWorkingDirectory]
+    [applyWorkingDirectory, onActivateProject]
   );
 
   const addProjectForPath = useCallback(
     (path: string) => {
-      const { registry: nextRegistry } = addProject(projectsRegistry, path);
+      const currentRegistry = projectsRegistryRef.current;
+      const { registry: nextRegistry } = addProject(currentRegistry, path);
       saveProjectsRegistry(nextRegistry);
+      projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
     },
-    [projectsRegistry]
+    []
   );
 
   return {

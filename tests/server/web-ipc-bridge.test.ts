@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
 import {
   getHomeDir,
   discoverNodeExecutable,
@@ -12,6 +13,10 @@ import {
 import {
   resolveCrossPlatformCwd,
   handleIpcCommand,
+  resolveSessionsDir,
+  setSessionsRootDirForTest,
+  setSubprocessSpawnerForTest,
+  resetPiRpcForTest,
 } from '@server/web-ipc-bridge';
 
 test('server/config: getHomeDir returns non-empty user home', () => {
@@ -125,4 +130,67 @@ test('server/bridge: IPC discover_environment reports discovered Node and valid 
   assert.ok(env.initialDirectory);
   assert.strictEqual(env.initialDirectory.status, 'discovered');
   assert.ok(path.isAbsolute(env.initialDirectory.path));
+});
+
+test('server/bridge: resolveSessionsDir isolates projects with same basename and avoids fuzzy matching', (t) => {
+  const tmpSessionsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-sessions-root-'));
+  setSessionsRootDirForTest(tmpSessionsRoot);
+
+  t.after(() => {
+    setSessionsRootDirForTest(null);
+    fs.rmSync(tmpSessionsRoot, { recursive: true, force: true });
+  });
+
+  // Project A has sessions in safe directory
+  const cwdA = path.resolve('tmp-fake-alpha', 'client');
+  const dirA = resolveSessionsDir(cwdA);
+  fs.mkdirSync(dirA, { recursive: true });
+  fs.writeFileSync(
+    path.join(dirA, '2026-01-01_sess-alpha.jsonl'),
+    JSON.stringify({ type: 'session', version: 3, id: 'sess-alpha', timestamp: '2026-01-01', cwd: cwdA }) + '\n'
+  );
+
+  // Project B has identical basename ("client") but in a distinct location
+  const cwdB = path.resolve('tmp-fake-beta', 'client');
+  const dirB = resolveSessionsDir(cwdB);
+
+  // Must NOT fuzzy-match project A's directory
+  assert.notStrictEqual(dirB, dirA, 'Projects with distinct paths must resolve to distinct session directories');
+  assert.ok(!dirB.includes('alpha'), 'Project B session directory must not point to project A');
+});
+
+test('server/bridge: connect to empty project creates and persists a new session file', async (t) => {
+  const tmpSessionsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-sessions-empty-'));
+  const tmpEmptyProject = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-project-empty-'));
+  setSessionsRootDirForTest(tmpSessionsRoot);
+  setSubprocessSpawnerForTest(() => null);
+
+  t.after(() => {
+    setSessionsRootDirForTest(null);
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+    fs.rmSync(tmpSessionsRoot, { recursive: true, force: true });
+    fs.rmSync(tmpEmptyProject, { recursive: true, force: true });
+  });
+
+  const res: any = await handleIpcCommand('connect', {
+    payload: { workingDirectory: tmpEmptyProject },
+  });
+
+  assert.strictEqual(res.connected, true);
+  assert.ok(res.sessionId, 'Connect must return a non-empty sessionId');
+  assert.ok(res.sessionFile, 'Connect must return a persisted sessionFile path for an empty project');
+  assert.ok(fs.existsSync(res.sessionFile), 'Session file must exist on disk');
+
+  const content = fs.readFileSync(res.sessionFile, 'utf8');
+  const header = JSON.parse(content.split('\n')[0]);
+  assert.strictEqual(header.type, 'session');
+  assert.strictEqual(header.id, res.sessionId);
+
+  // Subsequent list_sessions must discover this persisted session
+  const list: any = await handleIpcCommand('list_sessions', {
+    payload: { workingDirectory: tmpEmptyProject },
+  });
+  assert.strictEqual(list.length, 1, 'list_sessions must discover the created session');
+  assert.strictEqual(list[0].id, res.sessionId);
 });

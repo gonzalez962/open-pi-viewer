@@ -33,6 +33,11 @@ import {
   updateProjectName,
   validateProjectsRegistry,
 } from '@features/projects/projects';
+import {
+  useProjects,
+  type UseProjectsOptions,
+  type UseProjectsResult,
+} from '@features/projects/hooks/useProjects';
 
 function createMockStorage(initialStore?: Map<string, string>): Storage {
   const store = initialStore ?? new Map<string, string>();
@@ -956,5 +961,90 @@ test('projects: browseFilesystemPi provides safe fallback when invokeFn rejects'
   assert.ok(Array.isArray(res.folders));
   assert.ok(Array.isArray(res.shortcuts));
   assert.ok(res.shortcuts.length > 0);
+});
+
+test('useProjects: handleSelectProject calls onActivateProject and applyWorkingDirectory when switching project', (t) => {
+  const fakeStorage = createMockStorage();
+  const initialRegistry: ProjectsRegistry = {
+    activeProjectId: 'proj-1',
+    projects: [
+      { id: 'proj-1', path: '/path/to/one', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'proj-2', path: '/path/to/two', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+  fakeStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(initialRegistry));
+  (globalThis as any).window = { localStorage: fakeStorage };
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => {
+    delete (globalThis as any).window;
+    delete (globalThis as any).localStorage;
+  });
+
+  let activatedId: string | null = null;
+  let appliedPath: string | null = null;
+  let hookResult!: UseProjectsResult;
+
+  function Harness() {
+    hookResult = useProjects({
+      workingDirectory: '/path/to/one',
+      isBusy: false,
+      applyWorkingDirectory: (p) => { appliedPath = p; },
+      onActivateProject: (id: string) => { activatedId = id; },
+    } as UseProjectsOptions);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+
+  const proj2 = hookResult.projectsRegistry.projects[1];
+  assert.strictEqual(proj2.id, 'proj-2');
+
+  // Switch to proj-2
+  hookResult.handleSelectProject(proj2);
+  assert.strictEqual(activatedId, 'proj-2', 'Switching to different project must call onActivateProject');
+  assert.strictEqual(appliedPath, '/path/to/two', 'Switching to different project must call applyWorkingDirectory');
+
+  // Selecting proj-2 again must be a no-op (guarded no-op)
+  activatedId = null;
+  appliedPath = null;
+  hookResult.handleSelectProject(proj2);
+  assert.strictEqual(activatedId, null, 'Selecting already-active project must NOT call onActivateProject');
+  assert.strictEqual(appliedPath, null, 'Selecting already-active project must NOT call applyWorkingDirectory');
+});
+
+test('useProjects: handleAddProject activates newly added project and guards cancellation', async (t) => {
+  const fakeStorage = createMockStorage();
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => {
+    delete (globalThis as any).localStorage;
+  });
+
+  let activatedId: string | null = null;
+  let appliedPath: string | null = null;
+  let hookResult!: UseProjectsResult;
+
+  function Harness() {
+    hookResult = useProjects({
+      workingDirectory: '/path/to/one',
+      isBusy: false,
+      applyWorkingDirectory: (p) => { appliedPath = p; },
+      onActivateProject: (id: string) => { activatedId = id; },
+    } as UseProjectsOptions);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+
+  // Add project with explicit path
+  await hookResult.handleAddProject('/path/to/added-project', 'Added Project');
+
+  assert.ok(activatedId, 'handleAddProject must call onActivateProject for the added project');
+  assert.strictEqual(appliedPath, normalizeProjectPath('/path/to/added-project'));
+
+  // Cancelled add (when pickedPath is undefined and picker returns null)
+  activatedId = null;
+  appliedPath = null;
+  // In preview environment without window.__TAURI_INTERNALS__, pickDirectoryPi returns null
+  await hookResult.handleAddProject();
+  assert.strictEqual(activatedId, null, 'Cancelled project pick must NOT call onActivateProject');
+  assert.strictEqual(appliedPath, null, 'Cancelled project pick must NOT call applyWorkingDirectory');
 });
 
