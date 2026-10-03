@@ -893,7 +893,7 @@ export async function browseFilesystemPi(
   }
 
   return {
-    currentPath: targetPath || '/home/hermes/Desarrollos',
+    currentPath: targetPath || '',
     windowsPath: null,
     parentPath: null,
     folders: [],

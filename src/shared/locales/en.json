@@ -548,6 +548,7 @@
   "projects.folder_picker_shortcuts": "Quick Access",
   "projects.folder_picker_up": "Up one level",
   "projects.folder_picker_path": "Folder path",
+  "projects.folder_picker_path_placeholder": "/path/to/folder or Z:\\...",
   "projects.folder_picker_go": "Go",
   "projects.folder_picker_native": "OS Explorer",
   "projects.folder_picker_filter": "Filter folders...",

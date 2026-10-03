@@ -480,6 +480,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 
       <FolderPickerModal
         isOpen={isFolderPickerOpen}
+        initialPath={projects.find((p) => p.id === activeProjectId)?.path}
         onClose={() => setIsFolderPickerOpen(false)}
         onSelectFolder={(folderPath, customName) => {
           onAddProject(folderPath, customName);

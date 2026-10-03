@@ -24,9 +24,9 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   onSelectFolder,
   locale,
 }) => {
-  const [currentPath, setCurrentPath] = useState<string>(initialPath || '/home/hermes/Desarrollos');
-  const [pathInput, setPathInput] = useState<string>(initialPath || '/home/hermes/Desarrollos');
-  const [selectedFolder, setSelectedFolder] = useState<string>(initialPath || '/home/hermes/Desarrollos');
+  const [currentPath, setCurrentPath] = useState<string>(initialPath || '');
+  const [pathInput, setPathInput] = useState<string>(initialPath || '');
+  const [selectedFolder, setSelectedFolder] = useState<string>(initialPath || '');
   const [projectName, setProjectName] = useState<string>('');
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [windowsPath, setWindowsPath] = useState<string | null>(null);
@@ -56,7 +56,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      void loadDirectory(initialPath || '/home/hermes/Desarrollos');
+      void loadDirectory(initialPath || '');
     }
   }, [isOpen, initialPath, loadDirectory]);
 
@@ -165,7 +165,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
             className="folder-picker-path-input"
             value={pathInput}
             onChange={(e) => setPathInput(e.target.value)}
-            placeholder="/home/hermes/... o Z:\..."
+            placeholder={translate(locale, 'projects.folder_picker_path_placeholder')}
             aria-label={translate(locale, 'projects.folder_picker_path')}
           />
           <button

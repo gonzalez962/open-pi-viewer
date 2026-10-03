@@ -3,7 +3,11 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { pickDirectoryPi } from '@infra/bridge';
+import {
+  pickDirectoryPi,
+  browseFilesystemPi,
+  type BrowseFilesystemResult,
+} from '@infra/bridge';
 import {
   getProjectStatusClass,
   getProjectStatusLabel,
@@ -919,5 +923,38 @@ test('ProjectDock footer: clicking Settings button triggers onOpenSettings callb
   assert.strictEqual(typeof settingsBtn.props.onClick, 'function', 'onClick must be a function');
   settingsBtn.props.onClick();
   assert.strictEqual(opened, true, 'onClick must trigger onOpenSettings callback');
+});
+
+test('projects: browseFilesystemPi returns result from mock invoke', async () => {
+  const mockResult: BrowseFilesystemResult = {
+    currentPath: '/test/workspace',
+    windowsPath: 'Z:\\workspace',
+    parentPath: '/test',
+    folders: [{ name: 'sub', fullPath: '/test/workspace/sub', windowsPath: 'Z:\\workspace\\sub' }],
+    shortcuts: [{ name: 'Workspace', path: '/test/workspace', windowsPath: 'Z:\\workspace' }],
+  };
+
+  const res = await browseFilesystemPi('/test/workspace', async (cmd, args) => {
+    assert.strictEqual(cmd, 'browse_filesystem');
+    assert.deepStrictEqual(args, { payload: { path: '/test/workspace' } });
+    return mockResult as any;
+  });
+
+  assert.strictEqual(res.currentPath, '/test/workspace');
+  assert.strictEqual(res.windowsPath, 'Z:\\workspace');
+  assert.strictEqual(res.folders.length, 1);
+  assert.strictEqual(res.folders[0].name, 'sub');
+  assert.strictEqual(res.shortcuts.length, 1);
+});
+
+test('projects: browseFilesystemPi provides safe fallback when invokeFn rejects', async () => {
+  const res = await browseFilesystemPi('/fallback/dir', async () => {
+    throw new Error('Command failed');
+  });
+
+  assert.strictEqual(res.currentPath, '/fallback/dir');
+  assert.ok(Array.isArray(res.folders));
+  assert.ok(Array.isArray(res.shortcuts));
+  assert.ok(res.shortcuts.length > 0);
 });
 

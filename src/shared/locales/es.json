@@ -548,6 +548,7 @@
   "projects.folder_picker_shortcuts": "Accesos Rápidos",
   "projects.folder_picker_up": "Subir nivel",
   "projects.folder_picker_path": "Ruta de carpeta",
+  "projects.folder_picker_path_placeholder": "/ruta/a/carpeta o Z:\\...",
   "projects.folder_picker_go": "Ir",
   "projects.folder_picker_native": "Explorador del SO",
   "projects.folder_picker_filter": "Filtrar carpetas...",
