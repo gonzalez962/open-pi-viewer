@@ -555,6 +555,10 @@ test('SettingsView: renders theme tab and customizer, and includes 7 presets in 
 
   assert.match(themeTabHtml, /theme-customizer-container/);
   assert.match(themeTabHtml, /Theme Confirmation Module/);
+  assert.match(
+    themeTabHtml,
+    /<div class="settings-tab-pane"[^>]*>\s*<div class="settings-view-body">\s*<div class="theme-customizer-container"/
+  );
 });
 
 test('ThemeCustomizer: renders cleanly in Spanish without untranslated keys', () => {
@@ -715,4 +719,76 @@ test('regression: resetting single remaining background area via UI actions clea
 
   const reloaded = loadUiPreferences(mockStorage).preferences;
   assert.equal(reloaded.customBackground, undefined, 'Reloaded custom background must be undefined');
+});
+
+test('regression: Theme tab renders customizer inside shared settings-view-body container matching General tab structure', async () => {
+  const { SettingsView } = await import('@features/settings/SettingsView');
+
+  const sampleConfig = {
+    nodePath: 'node',
+    piEntrypoint: 'cli.js',
+    workingDirectory: 'C:\\test',
+    fileTreeRefreshInterval: 15,
+  };
+
+  const samplePrefs = {
+    theme: 'dark' as const,
+    language: 'en' as const,
+  };
+
+  const generalHtml = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePrefs,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      initialTab: 'general',
+      t: tEn,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  const themeTabHtml = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePrefs,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      initialTab: 'theme',
+      t: tEn,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  // Both General and Theme tabs must wrap their pane content in .settings-view-body
+  assert.match(
+    generalHtml,
+    /<div class="settings-tab-pane"[^>]*>\s*<div class="settings-view-body">/
+  );
+  assert.match(
+    themeTabHtml,
+    /<div class="settings-tab-pane"[^>]*>\s*<div class="settings-view-body">\s*<div class="theme-customizer-container"/
+  );
+  // Negative assertion: theme-customizer-container must not be a direct child of settings-tab-pane
+  assert.doesNotMatch(
+    themeTabHtml,
+    /<div class="settings-tab-pane"[^>]*>\s*<div class="theme-customizer-container"/,
+    'ThemeCustomizer must not be mounted directly in settings-tab-pane without settings-view-body'
+  );
 });

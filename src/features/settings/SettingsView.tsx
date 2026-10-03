@@ -796,16 +796,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {activeTab === 'theme' && (
         <div className="settings-tab-pane" role="tabpanel" aria-label={t('settings.tab_theme')}>
-          <ThemeCustomizer
-            controller={appearanceController}
-            currentTheme={preferences.theme}
-            onThemeChange={onThemeChange}
-            workAnimation={preferences.workAnimation}
-            customTextColor={preferences.customTextColor}
-            customLabelColor={preferences.customLabelColor}
-            customBackground={preferences.customBackground}
-            t={t}
-          />
+          <div className="settings-view-body">
+            <ThemeCustomizer
+              controller={appearanceController}
+              currentTheme={preferences.theme}
+              onThemeChange={onThemeChange}
+              workAnimation={preferences.workAnimation}
+              customTextColor={preferences.customTextColor}
+              customLabelColor={preferences.customLabelColor}
+              customBackground={preferences.customBackground}
+              t={t}
+            />
+          </div>
         </div>
       )}
 

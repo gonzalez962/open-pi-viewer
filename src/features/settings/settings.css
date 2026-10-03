@@ -1051,7 +1051,6 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 4px 0 24px 0;
 }
 
 .theme-customizer-header {
@@ -1239,7 +1238,7 @@
 
 .theme-presets-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
   gap: 12px;
 }
 
@@ -1524,6 +1523,7 @@
   font-size: 11px;
   color: var(--md-code-fg);
   line-height: 1.4;
+  overflow-x: auto;
 }
 
 .sandbox-pills-mock {
@@ -1581,9 +1581,29 @@
 }
 
 .loader-color-pickers { display: flex; flex-direction: column; gap: 14px; }
-.loader-color-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.loader-color-label { font-size: 12px; font-weight: 600; color: var(--fg-default); min-width: 110px; }
-.loader-swatches-wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.loader-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.loader-color-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-default);
+  min-width: 0;
+  max-width: 100%;
+}
+.loader-swatches-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
 .loader-swatch-btn {
   width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent;
   cursor: pointer; transition: transform 0.15s ease, border-color 0.15s ease;
@@ -1594,11 +1614,57 @@
 }
 
 .loader-preview-row {
-  display: flex; align-items: center; gap: 14px; padding: 10px 14px;
-  background-color: var(--bg-subtle); border: 1px dashed var(--border-muted);
-  border-radius: var(--radius-sm); margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background-color: var(--bg-subtle);
+  border: 1px dashed var(--border-muted);
+  border-radius: var(--radius-sm);
+  margin-top: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
-.loader-preview-caption { font-size: 11.5px; color: var(--fg-muted); font-family: var(--font-mono); }
+
+.loader-preview-row .prompt-degraciao-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+  min-width: 0;
+}
+
+.loader-preview-row .prompt-degraciao-loader .loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.5px;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.loader-preview-row .prompt-degraciao-loader .dot {
+  width: 3.5px;
+  height: 3.5px;
+  flex-shrink: 0;
+}
+
+.loader-preview-row .prompt-degraciao-loader h2,
+.loader-preview-row .prompt-degraciao-loader .working-text {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.loader-preview-caption {
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  min-width: 0;
+  max-width: 100%;
+  word-break: break-word;
+}
 
 /* ==========================================================================
    Area Background & Transparency Customization Section
@@ -1624,7 +1690,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
+  padding: 5px 12px;
   font-size: 12px;
   font-weight: 500;
   border-radius: var(--radius-sm);
@@ -1633,6 +1699,10 @@
   color: var(--fg-default);
   cursor: pointer;
   transition: all 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
 }
 
 .area-selector-btn.is-active {
@@ -1655,27 +1725,34 @@
 .bg-control-row {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px 14px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .bg-control-label {
   font-size: 12px;
   font-weight: 600;
   color: var(--fg-default);
-  min-width: 140px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .bg-slider-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1;
-  min-width: 200px;
+  gap: 8px 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .bg-range-input {
-  flex: 1;
+  flex: 1 1 80px;
+  min-width: 60px;
+  max-width: 100%;
   accent-color: var(--accent-primary);
   cursor: pointer;
 }
@@ -1684,8 +1761,20 @@
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--accent-primary);
-  min-width: 48px;
+  min-width: 36px;
+  flex-shrink: 0;
   font-weight: 600;
+}
+
+.bg-slider-wrap .btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-align: center;
+  font-size: 11px;
+  padding: 3px 8px;
+  line-height: 1.25;
 }
 
 /* Wallpaper Placeholder (Disabled in T4) */
@@ -1728,13 +1817,16 @@
 .bg-file-upload-wrap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .bg-url-input {
-  flex: 1;
-  min-width: 220px;
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 100%;
   padding: 6px 10px;
   font-size: 12px;
   font-family: var(--font-mono);
