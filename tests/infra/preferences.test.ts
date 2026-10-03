@@ -898,11 +898,18 @@ test('preferences: extractAppearancePreferences, hasCustomAppearance, and comput
 
   const cssVars = computeCustomThemeVariables(extracted);
   assert.strictEqual(cssVars['--accent-primary'], '#f43888');
+  assert.strictEqual(cssVars['--border-active'], '#f43888');
   assert.strictEqual(cssVars['--fg-default'], '#f8fafc');
   assert.strictEqual(cssVars['--text-primary'], '#f8fafc');
   assert.strictEqual(cssVars['--activity-badge-fg'], '#38bdf8');
   assert.ok(cssVars['--bg-canvas']?.includes('rgba(17, 24, 39, 0.8)'));
   assert.ok(cssVars['--bg-chat-viewport']?.includes('rgba(3, 7, 18, 0.9)'));
+
+  const withAnimation = computeCustomThemeVariables({
+    ...extracted,
+    workAnimation: { mode: 'single', color1: '#10b981', color2: '#3b82f6' },
+  });
+  assert.strictEqual(withAnimation['--loader-color1'], '#10b981');
 });
 
 test('PreferencesController: uses default window.localStorage when options.storage is omitted', () => {

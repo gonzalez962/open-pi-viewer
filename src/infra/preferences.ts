@@ -391,6 +391,7 @@ export function computeCustomThemeVariables(prefs: AppearancePreferences): Recor
   if (prefs.customAccent && isValidHexColor(prefs.customAccent)) {
     vars['--accent-primary'] = prefs.customAccent;
     vars['--accent-primary-hover'] = hexToRgba(prefs.customAccent, 0.85);
+    vars['--border-active'] = prefs.customAccent;
   }
 
   if (prefs.customTextColor && isValidHexColor(prefs.customTextColor)) {
@@ -407,6 +408,13 @@ export function computeCustomThemeVariables(prefs: AppearancePreferences): Recor
     vars['--md-inline-code-border'] = hexToRgba(lbl, 0.25);
     vars['--tag-color'] = lbl;
     vars['--syntax-keyword'] = lbl;
+  }
+
+  if (prefs.workAnimation) {
+    const animStyles = computeWorkAnimationStyles(prefs.workAnimation);
+    if (animStyles.style) {
+      Object.assign(vars, animStyles.style);
+    }
   }
 
   const bg = prefs.customBackground;
