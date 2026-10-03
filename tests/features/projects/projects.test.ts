@@ -3,7 +3,11 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { pickDirectoryPi } from '@infra/bridge';
+import {
+  pickDirectoryPi,
+  browseFilesystemPi,
+  type BrowseFilesystemResult,
+} from '@infra/bridge';
 import {
   getProjectStatusClass,
   getProjectStatusLabel,
@@ -29,6 +33,11 @@ import {
   updateProjectName,
   validateProjectsRegistry,
 } from '@features/projects/projects';
+import {
+  useProjects,
+  type UseProjectsOptions,
+  type UseProjectsResult,
+} from '@features/projects/hooks/useProjects';
 
 function createMockStorage(initialStore?: Map<string, string>): Storage {
   const store = initialStore ?? new Map<string, string>();
@@ -208,6 +217,25 @@ test('projects: isSameProjectPath handles Windows case-insensitivity and POSIX c
   // Empty paths
   assert.strictEqual(isSameProjectPath('', ''), true);
   assert.strictEqual(isSameProjectPath('', '/home'), false);
+});
+
+test('projects: isSameProjectPath matches network drive Z: with mapped Samba Desarrollos path', () => {
+  assert.strictEqual(
+    isSameProjectPath('Z:\\Prueba', '/home/hermes/Desarrollos/Prueba'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('Z:/Prueba/', '/home/hermes/Desarrollos/Prueba/'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('z:\\PI-Viewer', '/home/hermes/Desarrollos/PI-Viewer'),
+    true
+  );
+  assert.strictEqual(
+    isSameProjectPath('Z:\\Otro', '/home/hermes/Desarrollos/Prueba'),
+    false
+  );
 });
 
 // 2. Validation and Registry integrity
@@ -900,5 +928,123 @@ test('ProjectDock footer: clicking Settings button triggers onOpenSettings callb
   assert.strictEqual(typeof settingsBtn.props.onClick, 'function', 'onClick must be a function');
   settingsBtn.props.onClick();
   assert.strictEqual(opened, true, 'onClick must trigger onOpenSettings callback');
+});
+
+test('projects: browseFilesystemPi returns result from mock invoke', async () => {
+  const mockResult: BrowseFilesystemResult = {
+    currentPath: '/test/workspace',
+    windowsPath: 'Z:\\workspace',
+    parentPath: '/test',
+    folders: [{ name: 'sub', fullPath: '/test/workspace/sub', windowsPath: 'Z:\\workspace\\sub' }],
+    shortcuts: [{ name: 'Workspace', path: '/test/workspace', windowsPath: 'Z:\\workspace' }],
+  };
+
+  const res = await browseFilesystemPi('/test/workspace', async (cmd, args) => {
+    assert.strictEqual(cmd, 'browse_filesystem');
+    assert.deepStrictEqual(args, { payload: { path: '/test/workspace' } });
+    return mockResult as any;
+  });
+
+  assert.strictEqual(res.currentPath, '/test/workspace');
+  assert.strictEqual(res.windowsPath, 'Z:\\workspace');
+  assert.strictEqual(res.folders.length, 1);
+  assert.strictEqual(res.folders[0].name, 'sub');
+  assert.strictEqual(res.shortcuts.length, 1);
+});
+
+test('projects: browseFilesystemPi provides safe fallback when invokeFn rejects', async () => {
+  const res = await browseFilesystemPi('/fallback/dir', async () => {
+    throw new Error('Command failed');
+  });
+
+  assert.strictEqual(res.currentPath, '/fallback/dir');
+  assert.ok(Array.isArray(res.folders));
+  assert.ok(Array.isArray(res.shortcuts));
+  assert.ok(res.shortcuts.length > 0);
+});
+
+test('useProjects: handleSelectProject calls onActivateProject and applyWorkingDirectory when switching project', (t) => {
+  const fakeStorage = createMockStorage();
+  const initialRegistry: ProjectsRegistry = {
+    activeProjectId: 'proj-1',
+    projects: [
+      { id: 'proj-1', path: '/path/to/one', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'proj-2', path: '/path/to/two', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+  fakeStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(initialRegistry));
+  (globalThis as any).window = { localStorage: fakeStorage };
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => {
+    delete (globalThis as any).window;
+    delete (globalThis as any).localStorage;
+  });
+
+  let activatedId: string | null = null;
+  let appliedPath: string | null = null;
+  let hookResult!: UseProjectsResult;
+
+  function Harness() {
+    hookResult = useProjects({
+      workingDirectory: '/path/to/one',
+      isBusy: false,
+      applyWorkingDirectory: (p) => { appliedPath = p; },
+      onActivateProject: (id: string) => { activatedId = id; },
+    } as UseProjectsOptions);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+
+  const proj2 = hookResult.projectsRegistry.projects[1];
+  assert.strictEqual(proj2.id, 'proj-2');
+
+  // Switch to proj-2
+  hookResult.handleSelectProject(proj2);
+  assert.strictEqual(activatedId, 'proj-2', 'Switching to different project must call onActivateProject');
+  assert.strictEqual(appliedPath, '/path/to/two', 'Switching to different project must call applyWorkingDirectory');
+
+  // Selecting proj-2 again must be a no-op (guarded no-op)
+  activatedId = null;
+  appliedPath = null;
+  hookResult.handleSelectProject(proj2);
+  assert.strictEqual(activatedId, null, 'Selecting already-active project must NOT call onActivateProject');
+  assert.strictEqual(appliedPath, null, 'Selecting already-active project must NOT call applyWorkingDirectory');
+});
+
+test('useProjects: handleAddProject activates newly added project and guards cancellation', async (t) => {
+  const fakeStorage = createMockStorage();
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => {
+    delete (globalThis as any).localStorage;
+  });
+
+  let activatedId: string | null = null;
+  let appliedPath: string | null = null;
+  let hookResult!: UseProjectsResult;
+
+  function Harness() {
+    hookResult = useProjects({
+      workingDirectory: '/path/to/one',
+      isBusy: false,
+      applyWorkingDirectory: (p) => { appliedPath = p; },
+      onActivateProject: (id: string) => { activatedId = id; },
+    } as UseProjectsOptions);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+
+  // Add project with explicit path
+  await hookResult.handleAddProject('/path/to/added-project', 'Added Project');
+
+  assert.ok(activatedId, 'handleAddProject must call onActivateProject for the added project');
+  assert.strictEqual(appliedPath, normalizeProjectPath('/path/to/added-project'));
+
+  // Cancelled add (when pickedPath is undefined and picker returns null)
+  activatedId = null;
+  appliedPath = null;
+  // In preview environment without window.__TAURI_INTERNALS__, pickDirectoryPi returns null
+  await hookResult.handleAddProject();
+  assert.strictEqual(activatedId, null, 'Cancelled project pick must NOT call onActivateProject');
+  assert.strictEqual(appliedPath, null, 'Cancelled project pick must NOT call applyWorkingDirectory');
 });
 

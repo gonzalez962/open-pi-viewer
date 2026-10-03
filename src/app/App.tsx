@@ -285,6 +285,13 @@ export const App: React.FC = () => {
   // directory) lives in the pure decideSelectProject/decideRemoveProject; this hook is
   // thin glue delegating the actual working-directory switch to the connection cluster's
   // applyWorkingDirectory (the inversion this slice exists to make).
+  const handleActivateProject = useCallback(
+    (projectId: string) => {
+      dispatch({ type: 'SET_ACTIVE_PROJECT', payload: { projectId } });
+    },
+    [dispatch]
+  );
+
   const {
     projectsRegistry,
     handleSelectProject,
@@ -296,6 +303,7 @@ export const App: React.FC = () => {
     workingDirectory: config.workingDirectory,
     isBusy,
     applyWorkingDirectory,
+    onActivateProject: handleActivateProject,
   });
 
   const projectsRegistryRef = useRef(projectsRegistry);
@@ -305,10 +313,9 @@ export const App: React.FC = () => {
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
-      dispatch({ type: 'SET_ACTIVE_PROJECT', payload: { projectId: project.id } });
       handleSelectProject(project);
     },
-    [dispatch, handleSelectProject]
+    [handleSelectProject]
   );
 
   const handleRemoveProjectAndSync = useCallback(

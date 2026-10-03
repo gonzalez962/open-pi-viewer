@@ -221,3 +221,58 @@ test('multi-project reducer: unhandled actions return identical state reference'
   });
   assert.strictEqual(unchanged, state);
 });
+
+test('multi-project reducer: switching active project isolates session lists and never leaks prior project sessions', () => {
+  let state = createInitialMultiProjectState('proj-alpha');
+
+  // Load sessions into proj-alpha
+  state = multiProjectChatReducer(state, {
+    type: 'LOAD_SESSIONS_SUCCESS',
+    targetProjectId: 'proj-alpha',
+    payload: {
+      sessions: [
+        { id: 'sess-alpha-1', path: '/path/alpha/sess-1.jsonl', messageCount: 5 } as any,
+      ],
+    },
+  });
+
+  const alphaState = getActiveProjectState(state);
+  assert.strictEqual(alphaState.sessions.length, 1);
+  assert.strictEqual(alphaState.sessions[0].id, 'sess-alpha-1');
+
+  // Switch to new project proj-beta
+  state = multiProjectChatReducer(state, {
+    type: 'SET_ACTIVE_PROJECT',
+    payload: { projectId: 'proj-beta' },
+  });
+
+  // Proj-beta must start with fresh isolated empty session list
+  const betaInitialState = getActiveProjectState(state);
+  assert.strictEqual(betaInitialState.sessions.length, 0, 'New project must not inherit prior project sessions');
+
+  // Load sessions into proj-beta
+  state = multiProjectChatReducer(state, {
+    type: 'LOAD_SESSIONS_SUCCESS',
+    targetProjectId: 'proj-beta',
+    payload: {
+      sessions: [
+        { id: 'sess-beta-1', path: '/path/beta/sess-1.jsonl', messageCount: 2 } as any,
+      ],
+    },
+  });
+
+  const betaState = getActiveProjectState(state);
+  assert.strictEqual(betaState.sessions.length, 1);
+  assert.strictEqual(betaState.sessions[0].id, 'sess-beta-1');
+  assert.strictEqual(state.projects['proj-alpha'].sessions[0].id, 'sess-alpha-1');
+
+  // Switch back to proj-alpha
+  state = multiProjectChatReducer(state, {
+    type: 'SET_ACTIVE_PROJECT',
+    payload: { projectId: 'proj-alpha' },
+  });
+
+  const restoredAlpha = getActiveProjectState(state);
+  assert.strictEqual(restoredAlpha.sessions.length, 1);
+  assert.strictEqual(restoredAlpha.sessions[0].id, 'sess-alpha-1');
+});

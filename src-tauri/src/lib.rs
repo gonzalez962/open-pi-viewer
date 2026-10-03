@@ -57,6 +57,7 @@ pub fn run() {
             commands::toggle_pi_resource,
             commands::delete_pi_resource,
             commands::pick_directory,
+            commands::browse_filesystem,
             commands::get_sdd_profiles,
             commands::save_sdd_profile,
             commands::delete_sdd_profile,

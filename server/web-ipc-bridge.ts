@@ -10,7 +10,26 @@ import {
 
 const HOME_DIR = getHomeDir();
 const PI_AGENT_DIR = path.join(HOME_DIR, '.pi', 'agent');
-const SESSIONS_ROOT = path.join(PI_AGENT_DIR, 'sessions');
+const DEFAULT_SESSIONS_ROOT = path.join(PI_AGENT_DIR, 'sessions');
+
+let customSessionsRoot: string | null = null;
+export function setSessionsRootDirForTest(dir: string | null): void {
+  customSessionsRoot = dir;
+}
+export function getSessionsRootDir(): string {
+  return customSessionsRoot || DEFAULT_SESSIONS_ROOT;
+}
+
+export type SubprocessSpawner = (
+  command: string,
+  args: string[],
+  options: any
+) => ChildProcess | null;
+
+let customSubprocessSpawner: SubprocessSpawner | null = null;
+export function setSubprocessSpawnerForTest(spawner: SubprocessSpawner | null): void {
+  customSubprocessSpawner = spawner;
+}
 
 // ---------------------------------------------------------------------------
 // Server-Sent Events (SSE) Client Manager
@@ -224,7 +243,22 @@ class PiRpcSession {
     let childProc: ChildProcess | null = null;
     const env = getAgnosticExecEnv();
 
-    if (entrypoint && fs.existsSync(entrypoint)) {
+    if (customSubprocessSpawner) {
+      const args = ['--mode', 'rpc', '--approve'];
+      if (this.sessionFile && fs.existsSync(this.sessionFile)) {
+        args.push('--session', this.sessionFile);
+      }
+      try {
+        childProc = customSubprocessSpawner(nodePath, args, {
+          cwd: this.cwd,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env,
+        });
+      } catch (err) {
+        console.warn('[Pi RPC spawn error]:', err);
+        childProc = null;
+      }
+    } else if (entrypoint && fs.existsSync(entrypoint)) {
       const args = [entrypoint, '--mode', 'rpc', '--approve'];
       if (this.sessionFile && fs.existsSync(this.sessionFile)) {
         args.push('--session', this.sessionFile);
@@ -491,6 +525,15 @@ function getActiveRpc(): PiRpcSession | null {
   return rpc && rpc.isAlive() ? rpc : null;
 }
 
+export function resetPiRpcForTest(): void {
+  for (const rpc of sessionPool.values()) {
+    rpc.kill();
+  }
+  sessionPool.clear();
+  activeSessionFile = null;
+  activeSessionId = null;
+}
+
 const piRpc = {
   get sessionFile() {
     return activeSessionFile;
@@ -533,7 +576,8 @@ export function resolveSessionsDir(cwd: string): string {
   const resolved = resolveCrossPlatformCwd(cwd);
   const norm = path.resolve(resolved);
   const safe1 = '--' + norm.replace(/^\/+/, '').replace(/[\/\\:]/g, '-') + '--';
-  const dir1 = path.join(SESSIONS_ROOT, safe1);
+  const sessionsRoot = getSessionsRootDir();
+  const dir1 = path.join(sessionsRoot, safe1);
   if (fs.existsSync(dir1)) {
     const files = fs.readdirSync(dir1).filter((f) => f.endsWith('.jsonl'));
     if (files.length > 0) return dir1;
@@ -542,32 +586,21 @@ export function resolveSessionsDir(cwd: string): string {
   try {
     const real = fs.realpathSync(resolved);
     const safe2 = '--' + real.replace(/^\/+/, '').replace(/[\/\\:]/g, '-') + '--';
-    const dir2 = path.join(SESSIONS_ROOT, safe2);
+    const dir2 = path.join(sessionsRoot, safe2);
     if (fs.existsSync(dir2)) {
       const files2 = fs.readdirSync(dir2).filter((f) => f.endsWith('.jsonl'));
       if (files2.length > 0) return dir2;
     }
   } catch {}
 
-  const base = path.basename(norm);
-  if (fs.existsSync(SESSIONS_ROOT)) {
-    const all = fs.readdirSync(SESSIONS_ROOT);
-    for (const d of all) {
-      if (d.toLowerCase().includes(base.toLowerCase())) {
-        const dPath = path.join(SESSIONS_ROOT, d);
-        if (fs.existsSync(dPath) && fs.readdirSync(dPath).some((f) => f.endsWith('.jsonl'))) {
-          return dPath;
-        }
-      }
-    }
-  }
 
   return dir1;
 }
 
 export function discoverAllProjectsWithSessions() {
-  if (!fs.existsSync(SESSIONS_ROOT)) return [];
-  const entries = fs.readdirSync(SESSIONS_ROOT, { withFileTypes: true });
+  const sessionsRoot = getSessionsRootDir();
+  if (!fs.existsSync(sessionsRoot)) return [];
+  const entries = fs.readdirSync(sessionsRoot, { withFileTypes: true });
   const list: { id: string; path: string; customName: string; sessionCount: number }[] = [];
 
   for (const entry of entries) {
@@ -575,7 +608,7 @@ export function discoverAllProjectsWithSessions() {
     const name = entry.name;
     if (!name.startsWith('--') || !name.endsWith('--')) continue;
 
-    const fullDirPath = path.join(SESSIONS_ROOT, name);
+    const fullDirPath = path.join(sessionsRoot, name);
     const files = fs.readdirSync(fullDirPath).filter((f) => f.endsWith('.jsonl'));
     if (files.length === 0) continue;
 
@@ -1580,6 +1613,25 @@ export async function handleIpcCommand(cmd: string, args: any = {}) {
         targetFile = sessions[0].path;
       }
 
+      if (!targetFile && sessions.length === 0) {
+        const dir = resolveSessionsDir(targetCwd);
+        fs.mkdirSync(dir, { recursive: true });
+        const now = new Date();
+        const iso = now.toISOString();
+        const id = `sess-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const fileName = `${iso.replace(/[:.]/g, '-')}_${id}.jsonl`;
+        const filePath = path.join(dir, fileName);
+        const header = {
+          type: 'session',
+          version: 3,
+          id,
+          timestamp: iso,
+          cwd: targetCwd,
+        };
+        fs.writeFileSync(filePath, JSON.stringify(header) + '\n', 'utf8');
+        targetFile = filePath;
+      }
+
       let parsed: any = null;
       if (targetFile && fs.existsSync(targetFile)) {
         parsed = parseSessionFile(targetFile);
@@ -1590,6 +1642,9 @@ export async function handleIpcCommand(cmd: string, args: any = {}) {
 
       piRpc.sessionFile = resolvedSessionFile;
       piRpc.sessionId = resolvedSessionId;
+      if (resolvedSessionFile) {
+        setSessionStatus(resolvedSessionFile, 'completed', resolvedSessionId);
+      }
 
       // Warm up RPC process in background without blocking fast connection
       void piRpc.ensureRunning(targetCwd, resolvedSessionFile).catch((err) => {

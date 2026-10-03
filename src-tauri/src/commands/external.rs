@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tokio::sync::oneshot;
 
@@ -335,6 +336,228 @@ where
     })
     .await
     .map_err(|e| format!("Failed to run file dialog: {e}"))
+}
+
+/// Payload for browsing filesystem directories
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseFilesystemPayload {
+    pub path: Option<String>,
+}
+
+/// A directory folder item in browse result
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseFolderItem {
+    pub name: String,
+    pub full_path: String,
+    pub windows_path: Option<String>,
+}
+
+/// A shortcut entry in browse result
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseShortcutItem {
+    pub name: String,
+    pub path: String,
+    pub windows_path: Option<String>,
+}
+
+/// Result returned from browse_filesystem
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseFilesystemResult {
+    pub current_path: String,
+    pub windows_path: Option<String>,
+    pub parent_path: Option<String>,
+    pub folders: Vec<BrowseFolderItem>,
+    pub shortcuts: Vec<BrowseShortcutItem>,
+    pub error: Option<String>,
+}
+
+/// Resolves user home directory from USERPROFILE or HOME environment variables.
+pub fn get_user_home_dir() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+}
+
+/// Builds dynamic desktop shortcuts: workspace cwd, user home, and platform roots/drives.
+pub fn get_desktop_shortcuts(home: Option<&PathBuf>) -> Vec<BrowseShortcutItem> {
+    let mut shortcuts = Vec::new();
+
+    // 1. Current working directory
+    if let Ok(cwd) = std::env::current_dir() {
+        let canonical_cwd = dunce::canonicalize(&cwd).unwrap_or(cwd);
+        let cwd_str = canonical_cwd.to_string_lossy().to_string();
+        let name = canonical_cwd
+            .file_name()
+            .map(|n| format!("Workspace ({})", n.to_string_lossy()))
+            .unwrap_or_else(|| "Workspace".to_string());
+        shortcuts.push(BrowseShortcutItem {
+            name,
+            path: cwd_str.clone(),
+            windows_path: if cfg!(windows) { Some(cwd_str) } else { None },
+        });
+    }
+
+    // 2. User Home
+    if let Some(h) = home {
+        let canonical_home = dunce::canonicalize(h).unwrap_or_else(|_| h.clone());
+        let home_str = canonical_home.to_string_lossy().to_string();
+        shortcuts.push(BrowseShortcutItem {
+            name: "Home".to_string(),
+            path: home_str.clone(),
+            windows_path: if cfg!(windows) { Some(home_str) } else { None },
+        });
+    }
+
+    // 3. Platform-specific: Drives on Windows, Root on POSIX
+    if cfg!(windows) {
+        for letter in b'C'..=b'Z' {
+            let root = format!("{}:\\", letter as char);
+            let path = PathBuf::from(&root);
+            if path.exists() {
+                shortcuts.push(BrowseShortcutItem {
+                    name: format!("Drive ({root})"),
+                    path: root.clone(),
+                    windows_path: Some(root),
+                });
+            }
+        }
+    } else {
+        shortcuts.push(BrowseShortcutItem {
+            name: "Root (/)".to_string(),
+            path: "/".to_string(),
+            windows_path: None,
+        });
+    }
+
+    shortcuts
+}
+
+/// Core filesystem browser logic with path resolution and folder listing.
+pub fn browse_filesystem_internal(requested_path: Option<String>) -> BrowseFilesystemResult {
+    let home = get_user_home_dir();
+    let shortcuts = get_desktop_shortcuts(home.as_ref());
+
+    let target_path = match requested_path {
+        Some(ref p) if !p.trim().is_empty() => {
+            let trimmed = p.trim();
+            if trimmed == "~" {
+                home.clone().unwrap_or_else(|| PathBuf::from("."))
+            } else if trimmed.starts_with("~/") || trimmed.starts_with("~\\") {
+                if let Some(ref h) = home {
+                    h.join(&trimmed[2..])
+                } else {
+                    PathBuf::from(trimmed)
+                }
+            } else {
+                PathBuf::from(trimmed)
+            }
+        }
+        _ => std::env::current_dir()
+            .ok()
+            .or_else(|| home.clone())
+            .unwrap_or_else(|| PathBuf::from(".")),
+    };
+
+    let dir = if target_path.exists() {
+        if target_path.is_file() {
+            target_path.parent().map(|p| p.to_path_buf()).unwrap_or(target_path)
+        } else {
+            target_path
+        }
+    } else if let Some(ref h) = home {
+        if h.exists() {
+            h.clone()
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        }
+    } else {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    };
+
+    let canonical_dir = dunce::canonicalize(&dir).unwrap_or(dir);
+    let current_path_str = canonical_dir.to_string_lossy().to_string();
+
+    let parent_path = canonical_dir.parent().map(|p| {
+        let canon = dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        canon.to_string_lossy().to_string()
+    });
+
+    let windows_path = if cfg!(windows) {
+        Some(current_path_str.clone())
+    } else {
+        None
+    };
+
+    let mut folders = Vec::new();
+    let mut read_error = None;
+
+    match std::fs::read_dir(&canonical_dir) {
+        Ok(read_dir) => {
+            for entry_res in read_dir {
+                if let Ok(entry) = entry_res {
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if file_name.starts_with('.') && file_name != ".gentle-ai" {
+                        continue;
+                    }
+                    if file_name == "node_modules"
+                        || file_name == "target"
+                        || file_name == "dist"
+                        || file_name == ".git"
+                    {
+                        continue;
+                    }
+
+                    if let Ok(file_type) = entry.file_type() {
+                        if file_type.is_dir() {
+                            let full_path = entry.path();
+                            let canon_entry = dunce::canonicalize(&full_path).unwrap_or(full_path);
+                            let full_path_str = canon_entry.to_string_lossy().to_string();
+
+                            folders.push(BrowseFolderItem {
+                                name: file_name,
+                                full_path: full_path_str.clone(),
+                                windows_path: if cfg!(windows) {
+                                    Some(full_path_str)
+                                } else {
+                                    None
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+            folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        }
+        Err(err) => {
+            read_error = Some(format!("Failed to read directory: {err}"));
+        }
+    }
+
+    BrowseFilesystemResult {
+        current_path: current_path_str,
+        windows_path,
+        parent_path,
+        folders,
+        shortcuts,
+        error: read_error,
+    }
+}
+
+/// Browse filesystem directories and subfolders with shortcut resolution for folder picker modal.
+#[tauri::command]
+pub async fn browse_filesystem(
+    payload: Option<BrowseFilesystemPayload>,
+) -> Result<BrowseFilesystemResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let requested = payload.and_then(|p| p.path);
+        browse_filesystem_internal(requested)
+    })
+    .await
+    .map_err(|e| format!("Failed to browse filesystem: {e}"))
 }
 
 
@@ -856,6 +1079,65 @@ mod tests {
         assert!(res.is_err());
         let err = res.unwrap_err();
         assert!(err.contains("Failed to run file dialog"));
+    }
+
+    #[test]
+    fn test_browse_filesystem_empty_path_returns_valid_result() {
+        let res = browse_filesystem_internal(None);
+        assert!(!res.current_path.is_empty());
+        assert!(!res.shortcuts.is_empty());
+        assert!(res.error.is_none());
+    }
+
+    #[test]
+    fn test_browse_filesystem_discovers_subfolders_and_filters_ignored() {
+        struct TempDirGuard {
+            path: PathBuf,
+        }
+        impl Drop for TempDirGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        let temp_root = std::env::temp_dir().join(format!(
+            "test_browse_fs_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        let _guard = TempDirGuard {
+            path: temp_root.clone(),
+        };
+
+        // Create allowed directories
+        std::fs::create_dir_all(temp_root.join("alpha")).unwrap();
+        std::fs::create_dir_all(temp_root.join("beta")).unwrap();
+        std::fs::create_dir_all(temp_root.join(".gentle-ai")).unwrap();
+
+        // Create ignored directories
+        std::fs::create_dir_all(temp_root.join("node_modules")).unwrap();
+        std::fs::create_dir_all(temp_root.join(".git")).unwrap();
+        std::fs::create_dir_all(temp_root.join(".hidden")).unwrap();
+
+        // Create a regular file (should not be listed in folders)
+        std::fs::write(temp_root.join("file.txt"), "hello").unwrap();
+
+        let res = browse_filesystem_internal(Some(temp_root.to_string_lossy().to_string()));
+        assert!(res.error.is_none());
+
+        let folder_names: Vec<String> = res.folders.into_iter().map(|f| f.name).collect();
+        assert!(folder_names.contains(&"alpha".to_string()));
+        assert!(folder_names.contains(&"beta".to_string()));
+        assert!(folder_names.contains(&".gentle-ai".to_string()));
+
+        assert!(!folder_names.contains(&"node_modules".to_string()));
+        assert!(!folder_names.contains(&".git".to_string()));
+        assert!(!folder_names.contains(&".hidden".to_string()));
+        assert!(!folder_names.contains(&"file.txt".to_string()));
     }
 
 }
