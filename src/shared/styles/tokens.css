@@ -16,12 +16,6 @@
   --bg-chat-viewport: rgba(22, 27, 34, 0.4);
   --bg-prompt: var(--bg-surface);
 
-  --custom-bg-canvas: var(--bg-canvas);
-  --custom-bg-sidebar: var(--bg-surface);
-  --custom-bg-chat: var(--bg-chat-viewport);
-  --custom-bg-prompt: var(--bg-surface);
-  --custom-bg-cards: var(--bg-elevated);
-
   --border-muted: #30363d;
   --border-default: var(--border-muted);
   --border-subtle: #21262d;

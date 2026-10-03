@@ -783,3 +783,64 @@ test('external controller ownership: unmounting consumer cancels draft but prese
   assert.strictEqual(mockWin.getListenerCount(), 0);
   parentController.dispose();
 });
+
+test('applyAppearance and controller manage data-custom-cards attribute and opacity-only area variables', () => {
+  const domTarget = createMockDomTarget();
+  let saved: AppearancePreferences = { theme: 'dark' };
+
+  const controller = new AppearanceLifecycleController({
+    getSavedAppearance: () => saved,
+    commitAppearance: (c) => {
+      saved = { ...saved, ...c } as AppearancePreferences;
+      return { success: true };
+    },
+    resetAppearance: () => {
+      saved = { theme: 'dark' };
+      return { success: true };
+    },
+    rootElement: domTarget,
+  });
+  controller.start();
+
+  // Initially no custom cards: attribute absent
+  assert.strictEqual(domTarget.attributes.has('data-custom-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-cards'), false);
+
+  // Draft with opacity-only cards and opacity-only chat
+  controller.begin();
+  controller.update({
+    customBackground: {
+      cards: { opacity: 0.5 },
+      chat: { opacity: 0.4 },
+    },
+  });
+
+  assert.strictEqual(domTarget.attributes.get('data-custom-cards'), 'true');
+  assert.strictEqual(domTarget.styles.get('--custom-bg-cards'), 'color-mix(in srgb, var(--bg-elevated) 50%, transparent)');
+  assert.strictEqual(domTarget.styles.get('--custom-bg-chat'), 'color-mix(in srgb, var(--bg-chat-viewport) 40%, transparent)');
+
+  // Cancel restores saved state: removes data-custom-cards attribute and custom variables
+  controller.cancel();
+  assert.strictEqual(domTarget.attributes.has('data-custom-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-chat'), false);
+
+  // Commit with cards: attribute persists
+  controller.begin();
+  controller.update({
+    customBackground: {
+      cards: { color: '#223344', opacity: 0.8 },
+    },
+  });
+  assert.strictEqual(domTarget.attributes.get('data-custom-cards'), 'true');
+  controller.confirm();
+  assert.strictEqual(domTarget.attributes.get('data-custom-cards'), 'true');
+  assert.strictEqual(domTarget.styles.get('--custom-bg-cards'), 'rgba(34, 51, 68, 0.8)');
+
+  // Reset appearance clears attribute and variables
+  controller.resetAppearance();
+  assert.strictEqual(domTarget.attributes.has('data-custom-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-cards'), false);
+
+  controller.dispose();
+});

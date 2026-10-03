@@ -91,6 +91,12 @@ export function applyAppearance(
   root.setAttribute('data-theme', resolved);
   root.style.colorScheme = resolved === 'light' ? 'light' : 'dark';
 
+  if (appearance.customBackground?.cards) {
+    root.setAttribute('data-custom-cards', 'true');
+  } else {
+    root.removeAttribute?.('data-custom-cards');
+  }
+
   const nextVars = computeCustomThemeVariables(appearance);
 
   for (const varName of MANAGED_APPEARANCE_VARIABLES) {
@@ -123,6 +129,8 @@ export function clearAppearanceCustomVariables(
   if (!root) {
     return;
   }
+
+  root.removeAttribute?.('data-custom-cards');
 
   for (const varName of MANAGED_APPEARANCE_VARIABLES) {
     root.style.removeProperty(varName);

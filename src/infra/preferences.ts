@@ -382,6 +382,34 @@ export function hasCustomAppearance(prefs: UiPreferences): boolean {
 }
 
 /**
+ * Computes CSS background string for an area config:
+ * - 0 opacity -> 'transparent'
+ * - explicit valid hex color -> rgba(color, opacity)
+ * - opacity-only (color undefined) -> dedicated CSS color-mix with preset token
+ */
+export function computeAreaBackgroundCss(
+  tokenVar: string,
+  config?: AreaBackgroundConfig
+): string | undefined {
+  if (!config) return undefined;
+  const boundedOpacity =
+    typeof config.opacity === 'number' && Number.isFinite(config.opacity)
+      ? Math.max(0, Math.min(1, config.opacity))
+      : 1;
+
+  if (boundedOpacity <= 0) {
+    return 'transparent';
+  }
+
+  if (config.color && isValidHexColor(config.color)) {
+    return hexToRgba(config.color, boundedOpacity);
+  }
+
+  const pct = Math.round(boundedOpacity * 1000) / 10;
+  return `color-mix(in srgb, var(${tokenVar}) ${pct}%, transparent)`;
+}
+
+/**
  * Computes the complete CSS custom properties map for the active visual appearance.
  * Reusable for live preview, unmount restoration, and persistent styling.
  */
@@ -420,49 +448,34 @@ export function computeCustomThemeVariables(prefs: AppearancePreferences): Recor
   const bg = prefs.customBackground;
   if (bg) {
     if (bg.canvas) {
-      if (bg.canvas.opacity === 0) {
-        vars['--custom-bg-canvas'] = 'transparent';
-      } else if (bg.canvas.color) {
-        vars['--custom-bg-canvas'] = hexToRgba(bg.canvas.color, bg.canvas.opacity);
-      }
+      const val = computeAreaBackgroundCss('--bg-canvas', bg.canvas);
+      if (val) vars['--custom-bg-canvas'] = val;
     } else if (bg.image?.enabled && bg.image?.url) {
       vars['--custom-bg-canvas'] = 'transparent';
     }
 
     if (bg.sidebar) {
-      if (bg.sidebar.opacity === 0) {
-        vars['--custom-bg-sidebar'] = 'transparent';
-      } else if (bg.sidebar.color) {
-        vars['--custom-bg-sidebar'] = hexToRgba(bg.sidebar.color, bg.sidebar.opacity);
-      }
+      const val = computeAreaBackgroundCss('--bg-surface', bg.sidebar);
+      if (val) vars['--custom-bg-sidebar'] = val;
     }
 
     if (bg.chat) {
-      if (bg.chat.opacity === 0) {
-        vars['--custom-bg-chat'] = 'transparent';
-      } else if (bg.chat.color) {
-        vars['--custom-bg-chat'] = hexToRgba(bg.chat.color, bg.chat.opacity);
-      }
+      const val = computeAreaBackgroundCss('--bg-chat-viewport', bg.chat);
+      if (val) vars['--custom-bg-chat'] = val;
     } else if (bg.image?.enabled && bg.image?.url) {
       vars['--custom-bg-chat'] = 'transparent';
     }
 
     if (bg.prompt) {
-      if (bg.prompt.opacity === 0) {
-        vars['--custom-bg-prompt'] = 'transparent';
-      } else if (bg.prompt.color) {
-        vars['--custom-bg-prompt'] = hexToRgba(bg.prompt.color, bg.prompt.opacity);
-      }
+      const val = computeAreaBackgroundCss('--bg-surface', bg.prompt);
+      if (val) vars['--custom-bg-prompt'] = val;
     } else if (bg.image?.enabled && bg.image?.url) {
       vars['--custom-bg-prompt'] = 'rgba(10, 10, 10, 0.55)';
     }
 
     if (bg.cards) {
-      if (bg.cards.opacity === 0) {
-        vars['--custom-bg-cards'] = 'transparent';
-      } else if (bg.cards.color) {
-        vars['--custom-bg-cards'] = hexToRgba(bg.cards.color, bg.cards.opacity);
-      }
+      const val = computeAreaBackgroundCss('--bg-elevated', bg.cards);
+      if (val) vars['--custom-bg-cards'] = val;
     }
   }
 

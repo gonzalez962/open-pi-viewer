@@ -792,3 +792,82 @@ test('regression: Theme tab renders customizer inside shared settings-view-body 
     'ThemeCustomizer must not be mounted directly in settings-tab-pane without settings-view-body'
   );
 });
+
+test('ThemeCustomizer: UI action adapter supports opacity-only changes without injecting explicit colors', () => {
+  const domTarget = {
+    attrs: new Map<string, string>(),
+    styles: new Map<string, string>(),
+    setAttribute(name: string, value: string) {
+      this.attrs.set(name, value);
+    },
+    removeAttribute(name: string) {
+      this.attrs.delete(name);
+    },
+    style: {
+      colorScheme: 'dark',
+      setProperty(name: string, value: string) {
+        domTarget.styles.set(name, value);
+      },
+      removeProperty(name: string) {
+        domTarget.styles.delete(name);
+      },
+    },
+  };
+
+  let savedState: AppearancePreferences = {
+    theme: 'dark',
+  };
+
+  const controller = new AppearanceLifecycleController({
+    getSavedAppearance: () => savedState,
+    commitAppearance: (c) => {
+      savedState = { ...savedState, ...c } as AppearancePreferences;
+      return { success: true };
+    },
+    resetAppearance: () => {
+      savedState = { theme: 'dark' };
+      return { success: true };
+    },
+    rootElement: domTarget,
+  });
+  controller.start();
+
+  const actions = createThemeCustomizerActions(controller);
+
+  // Update cards area opacity only (0.5) without choosing a color
+  actions.updateAreaOpacity('cards', 0.5);
+
+  const effective = controller.getEffectiveAppearance();
+  assert.strictEqual(effective.customBackground?.cards?.opacity, 0.5);
+  assert.strictEqual(effective.customBackground?.cards?.color, undefined);
+
+  // Live preview sets color-mix and data-custom-cards
+  assert.strictEqual(domTarget.attrs.get('data-custom-cards'), 'true');
+  assert.strictEqual(
+    domTarget.styles.get('--custom-bg-cards'),
+    'color-mix(in srgb, var(--bg-elevated) 50%, transparent)'
+  );
+
+  // Update chat opacity only (0.3) without choosing a color
+  actions.updateAreaOpacity('chat', 0.3);
+  assert.strictEqual(
+    domTarget.styles.get('--custom-bg-chat'),
+    'color-mix(in srgb, var(--bg-chat-viewport) 30%, transparent)'
+  );
+
+  // Confirm atomically persists stored opacity only (no color frozen)
+  const confirmResult = actions.confirm();
+  assert.strictEqual(confirmResult.success, true);
+  assert.strictEqual(savedState.customBackground?.cards?.opacity, 0.5);
+  assert.strictEqual(savedState.customBackground?.cards?.color, undefined);
+  assert.strictEqual(savedState.customBackground?.chat?.opacity, 0.3);
+  assert.strictEqual(savedState.customBackground?.chat?.color, undefined);
+
+  // Reset appearance clears custom styles and attribute
+  actions.resetAppearance();
+  assert.strictEqual(domTarget.attrs.has('data-custom-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-cards'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-chat'), false);
+
+  controller.dispose();
+});

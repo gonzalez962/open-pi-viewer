@@ -1351,3 +1351,68 @@ test('PreferencesController: all ordinary preference mutations preserve customAc
   assert.strictEqual(activePrefs.customAccent, null);
   assert.strictEqual(loadUiPreferences(storage).preferences.customAccent, null);
 });
+
+test('computeCustomThemeVariables: supports opacity-only without explicit color for all five areas using color-mix', () => {
+  // All 5 areas with opacity 0.5 without color
+  const halfOpacity = computeCustomThemeVariables({
+    theme: 'dark',
+    customBackground: {
+      canvas: { opacity: 0.5 },
+      sidebar: { opacity: 0.5 },
+      chat: { opacity: 0.5 },
+      prompt: { opacity: 0.5 },
+      cards: { opacity: 0.5 },
+    },
+  });
+
+  assert.strictEqual(halfOpacity['--custom-bg-canvas'], 'color-mix(in srgb, var(--bg-canvas) 50%, transparent)');
+  assert.strictEqual(halfOpacity['--custom-bg-sidebar'], 'color-mix(in srgb, var(--bg-surface) 50%, transparent)');
+  assert.strictEqual(halfOpacity['--custom-bg-chat'], 'color-mix(in srgb, var(--bg-chat-viewport) 50%, transparent)');
+  assert.strictEqual(halfOpacity['--custom-bg-prompt'], 'color-mix(in srgb, var(--bg-surface) 50%, transparent)');
+  assert.strictEqual(halfOpacity['--custom-bg-cards'], 'color-mix(in srgb, var(--bg-elevated) 50%, transparent)');
+
+  // All 5 areas with opacity 0 (transparent)
+  const zeroOpacity = computeCustomThemeVariables({
+    theme: 'dark',
+    customBackground: {
+      canvas: { opacity: 0 },
+      sidebar: { opacity: 0 },
+      chat: { opacity: 0 },
+      prompt: { opacity: 0 },
+      cards: { opacity: 0 },
+    },
+  });
+
+  assert.strictEqual(zeroOpacity['--custom-bg-canvas'], 'transparent');
+  assert.strictEqual(zeroOpacity['--custom-bg-sidebar'], 'transparent');
+  assert.strictEqual(zeroOpacity['--custom-bg-chat'], 'transparent');
+  assert.strictEqual(zeroOpacity['--custom-bg-prompt'], 'transparent');
+  assert.strictEqual(zeroOpacity['--custom-bg-cards'], 'transparent');
+
+  // All 5 areas with opacity 1 without color
+  const fullOpacity = computeCustomThemeVariables({
+    theme: 'dark',
+    customBackground: {
+      canvas: { opacity: 1 },
+      sidebar: { opacity: 1 },
+      chat: { opacity: 1 },
+      prompt: { opacity: 1 },
+      cards: { opacity: 1 },
+    },
+  });
+
+  assert.strictEqual(fullOpacity['--custom-bg-canvas'], 'color-mix(in srgb, var(--bg-canvas) 100%, transparent)');
+  assert.strictEqual(fullOpacity['--custom-bg-sidebar'], 'color-mix(in srgb, var(--bg-surface) 100%, transparent)');
+  assert.strictEqual(fullOpacity['--custom-bg-chat'], 'color-mix(in srgb, var(--bg-chat-viewport) 100%, transparent)');
+  assert.strictEqual(fullOpacity['--custom-bg-prompt'], 'color-mix(in srgb, var(--bg-surface) 100%, transparent)');
+  assert.strictEqual(fullOpacity['--custom-bg-cards'], 'color-mix(in srgb, var(--bg-elevated) 100%, transparent)');
+
+  // Explicit hex color is preserved with alpha
+  const customHex = computeCustomThemeVariables({
+    theme: 'dark',
+    customBackground: {
+      canvas: { color: '#ff0000', opacity: 0.5 },
+    },
+  });
+  assert.strictEqual(customHex['--custom-bg-canvas'], 'rgba(255, 0, 0, 0.5)');
+});
