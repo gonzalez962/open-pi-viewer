@@ -1951,7 +1951,7 @@
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  line-height: 1.35;
+  line-height: 1;
   user-select: none;
   background-color: var(--activity-badge-bg);
   border: 1px solid var(--border-muted);
@@ -3728,6 +3728,3 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-
-
