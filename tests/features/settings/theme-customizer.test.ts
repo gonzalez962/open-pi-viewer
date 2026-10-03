@@ -716,4 +716,3 @@ test('regression: resetting single remaining background area via UI actions clea
   const reloaded = loadUiPreferences(mockStorage).preferences;
   assert.equal(reloaded.customBackground, undefined, 'Reloaded custom background must be undefined');
 });
-

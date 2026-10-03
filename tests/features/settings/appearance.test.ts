@@ -783,5 +783,3 @@ test('external controller ownership: unmounting consumer cancels draft but prese
   assert.strictEqual(mockWin.getListenerCount(), 0);
   parentController.dispose();
 });
-
-
