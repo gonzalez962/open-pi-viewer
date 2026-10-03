@@ -30,7 +30,7 @@ const CATEGORY_LABEL_KEYS: Record<ProcessCategory, TranslationKey> = {
  * category present, a global expand/compact toggle, and per-category +/- controls that
  * reveal that category's child cards (reusing the existing `ThinkingCard`/`ToolCard`).
  */
-export const ProcessGroupCard: React.FC<ProcessGroupCardProps> = ({ group, t }) => {
+const ProcessGroupCardComponent: React.FC<ProcessGroupCardProps> = ({ group, t }) => {
   const [expandedCategories, setExpandedCategories] = useState<ReadonlySet<ProcessCategory>>(
     () => new Set()
   );
@@ -127,3 +127,8 @@ export const ProcessGroupCard: React.FC<ProcessGroupCardProps> = ({ group, t }) 
     </div>
   );
 };
+
+export const ProcessGroupCard: React.FC<ProcessGroupCardProps> = Object.assign(
+  (props: ProcessGroupCardProps) => ProcessGroupCardComponent(props),
+  React.memo(ProcessGroupCardComponent)
+) as unknown as React.FC<ProcessGroupCardProps>;

@@ -1,0 +1,20 @@
+{
+  "baseWorkspace": "/home/developer/projects",
+  "nodeExecutable": "/usr/bin/node",
+  "piCliPath": "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "engramBinary": "engram",
+  "engramServerUrl": "https://engram.example.com",
+  "allowUnconfinedNavigation": true,
+  "driveMappings": {
+    "Z": "/mnt/shared-projects"
+  },
+  "uncMappings": {
+    "shared-storage": "/mnt/shared-storage"
+  },
+  "customShortcuts": [
+    {
+      "name": "Team Repositories",
+      "path": "/home/developer/projects/team"
+    }
+  ]
+}

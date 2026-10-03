@@ -208,7 +208,7 @@ const CodePreview: React.FC<{ code: string; language?: string }> = ({ code, lang
  * Collapsible Thinking Accordion component.
  * Expanded while streaming, collapsed by default when complete.
  */
-export const ThinkingCard: React.FC<ThinkingCardProps> = ({ block, t }) => {
+export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(({ block, t }) => {
   const [userToggled, setUserToggled] = useState<boolean | null>(null);
 
   // If streaming and user hasn't toggled, expand by default; collapse when done
@@ -268,7 +268,7 @@ export const ThinkingCard: React.FC<ThinkingCardProps> = ({ block, t }) => {
       )}
     </div>
   );
-};
+});
 
 /**
  * Render appropriate icon for a given tool name.
@@ -331,7 +331,7 @@ export function ToolIcon({ name }: { name: string }) {
  * Collapsible Tool Execution Card.
  * Displays tool name, primary argument badge, status pill, and expandable output with copy button.
  */
-export const ToolCard: React.FC<ToolCardProps> = ({ block, t, defaultOpen = false }) => {
+export const ToolCard: React.FC<ToolCardProps> = React.memo(({ block, t, defaultOpen = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
@@ -527,4 +527,4 @@ export const ToolCard: React.FC<ToolCardProps> = ({ block, t, defaultOpen = fals
       )}
     </div>
   );
-};
+});

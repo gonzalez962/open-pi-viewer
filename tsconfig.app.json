@@ -21,7 +21,8 @@
       "@shared/*": ["src/shared/*"],
       "@infra/*": ["src/infra/*"],
       "@features/*": ["src/features/*"],
-      "@app/*": ["src/app/*"]
+      "@app/*": ["src/app/*"],
+      "@server/*": ["server/*"]
     },
 
     /* Linting / Strictness */
