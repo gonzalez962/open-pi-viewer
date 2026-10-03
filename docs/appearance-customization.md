@@ -213,6 +213,17 @@ All confirmed customizations are serialized into the single `pi_viewer_ui_prefer
 | **Production Build** | **Passed** | `npm run build` compiles frontend assets with zero TypeScript or bundling errors. |
 | **Browser Runtime Walkthrough** | **Passed** | 11 scenarios in isolated headless Chrome with actual React StrictMode: preview/cancel, confirm/reload, color and area resets, area tokens, system theme, real FileReader/canvas upload, Spanish file errors, built-ins/repeat/disable/clear, and simulated storage failure. Existing cached Playwright was used without installation; backend routes were mocked. |
 | **Delayed Upload Cancellation** | **Unit-tested; browser stress check pending** | Deferred-promise regression tests cover superseded uploads and parent lifecycle transitions. The browser cancellation scenario checked clear/error cleanup, not a deliberately delayed upload race. |
-| **Tauri Desktop Acceptance** | **Pending** | Native desktop rendering, WebView CSP, file picker behavior and window composition have not been exercised. Browser results do not establish native desktop acceptance. |
+| **Native Rust Check** | **Passed** | `cargo check --manifest-path src-tauri/Cargo.toml` exited 0. Static inspection found the existing CSP allows inline styles and self/data/http/https images; actual WebView behavior remains untested. |
+| **Tauri Desktop Acceptance** | **Pending** | Native launch was withheld because startup can connect to host Pi and existing user sessions, and no isolated native mock mode or WebView automation driver was available. Browser results do not establish native desktop acceptance. |
 
 The isolated browser run logged repeated MCP-query errors because its backend mock returned null; no appearance subsystem errors were observed. Runtime busy-agent animation was not exercised against a live agent.
+
+### Manual native acceptance
+
+Run this only when you intend to allow the application to discover/connect to your local Pi environment:
+
+1. Run `npm run tauri dev` and confirm the native window opens.
+2. Open **Settings → Theme & Styles**. Preview a preset and color; use **Reset to Previous Theme** to confirm cancellation restores the saved appearance.
+3. Select a bundled wallpaper, then upload a local image. Confirm both render; inspect WebView developer tools for CSP/image errors when available.
+4. Adjust area opacity, confirm the appearance, restart the application, and verify restoration of the saved values.
+5. Record native window/file-picker results and any errors before declaring desktop acceptance complete.
