@@ -19,7 +19,7 @@
   bottom: 0;
   width: 52px;
   height: 100%;
-  background-color: var(--bg-surface);
+  background-color: var(--custom-bg-sidebar, var(--bg-surface));
   border-right: 1px solid var(--border-muted);
   display: flex;
   flex-direction: column;

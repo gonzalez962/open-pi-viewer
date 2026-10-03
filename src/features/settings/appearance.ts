@@ -42,15 +42,11 @@ export const MANAGED_APPEARANCE_VARIABLES: readonly string[] = [
   '--md-inline-code-border',
   '--tag-color',
   '--syntax-keyword',
-  '--bg-canvas',
-  '--bg-surface',
-  '--bg-subtle',
-  '--bg-chat-viewport',
-  '--bg-prompt',
-  '--bg-input',
-  '--bg-elevated',
-  '--activity-card-bg',
-  '--bg-user-bubble',
+  '--custom-bg-canvas',
+  '--custom-bg-sidebar',
+  '--custom-bg-chat',
+  '--custom-bg-prompt',
+  '--custom-bg-cards',
   '--loader-color1',
   '--loader-color1-border',
   '--loader-color1-glow',
@@ -186,11 +182,11 @@ export function isAppearanceDirty(
     const savedText =
       saved.customTextColor && isValidHexColor(saved.customTextColor)
         ? saved.customTextColor.trim()
-        : '';
+        : null;
     const draftText =
       draft.customTextColor && isValidHexColor(draft.customTextColor)
         ? draft.customTextColor.trim()
-        : '';
+        : null;
     if (draftText !== savedText) {
       return true;
     }
@@ -201,11 +197,11 @@ export function isAppearanceDirty(
     const savedLabel =
       saved.customLabelColor && isValidHexColor(saved.customLabelColor)
         ? saved.customLabelColor.trim()
-        : '';
+        : null;
     const draftLabel =
       draft.customLabelColor && isValidHexColor(draft.customLabelColor)
         ? draft.customLabelColor.trim()
-        : '';
+        : null;
     if (draftLabel !== savedLabel) {
       return true;
     }
@@ -220,8 +216,10 @@ export function isAppearanceDirty(
 
   // Background comparison
   if ('customBackground' in draft) {
-    const savedBgStr = JSON.stringify(saved.customBackground ?? {});
-    const draftBgStr = JSON.stringify(draft.customBackground ?? {});
+    const savedBg = saved.customBackground && Object.keys(saved.customBackground).length > 0 ? saved.customBackground : null;
+    const draftBg = draft.customBackground && Object.keys(draft.customBackground).length > 0 ? draft.customBackground : null;
+    const savedBgStr = JSON.stringify(savedBg);
+    const draftBgStr = JSON.stringify(draftBg);
     if (savedBgStr !== draftBgStr) {
       return true;
     }
@@ -253,17 +251,19 @@ export function computeEffectiveAppearance(
   }
 
   if ('customTextColor' in draft) {
-    if (draft.customTextColor) {
-      effective.customTextColor = draft.customTextColor;
-    }
+    effective.customTextColor =
+      draft.customTextColor && isValidHexColor(draft.customTextColor)
+        ? draft.customTextColor.trim()
+        : null;
   } else if (saved.customTextColor) {
     effective.customTextColor = saved.customTextColor;
   }
 
   if ('customLabelColor' in draft) {
-    if (draft.customLabelColor) {
-      effective.customLabelColor = draft.customLabelColor;
-    }
+    effective.customLabelColor =
+      draft.customLabelColor && isValidHexColor(draft.customLabelColor)
+        ? draft.customLabelColor.trim()
+        : null;
   } else if (saved.customLabelColor) {
     effective.customLabelColor = saved.customLabelColor;
   }
@@ -277,9 +277,10 @@ export function computeEffectiveAppearance(
   }
 
   if ('customBackground' in draft) {
-    if (draft.customBackground) {
-      effective.customBackground = draft.customBackground;
-    }
+    effective.customBackground =
+      draft.customBackground && Object.keys(draft.customBackground).length > 0
+        ? draft.customBackground
+        : null;
   } else if (saved.customBackground) {
     effective.customBackground = saved.customBackground;
   }
@@ -529,21 +530,21 @@ export class AppearanceLifecycleController {
 
     if ('customTextColor' in partial) {
       if (partial.customTextColor === null || partial.customTextColor === '') {
-        delete currentDraft.customTextColor;
+        currentDraft.customTextColor = null;
       } else if (isValidHexColor(partial.customTextColor)) {
         currentDraft.customTextColor = partial.customTextColor.trim();
       } else {
-        delete currentDraft.customTextColor;
+        currentDraft.customTextColor = null;
       }
     }
 
     if ('customLabelColor' in partial) {
       if (partial.customLabelColor === null || partial.customLabelColor === '') {
-        delete currentDraft.customLabelColor;
+        currentDraft.customLabelColor = null;
       } else if (isValidHexColor(partial.customLabelColor)) {
         currentDraft.customLabelColor = partial.customLabelColor.trim();
       } else {
-        delete currentDraft.customLabelColor;
+        currentDraft.customLabelColor = null;
       }
     }
 
@@ -556,14 +557,14 @@ export class AppearanceLifecycleController {
     }
 
     if ('customBackground' in partial) {
-      if (partial.customBackground === null) {
-        delete currentDraft.customBackground;
+      if (partial.customBackground === null || (typeof partial.customBackground === 'object' && Object.keys(partial.customBackground).length === 0)) {
+        currentDraft.customBackground = null;
       } else if (partial.customBackground !== undefined) {
         const validatedBg = validateCustomBackgroundPreferences(partial.customBackground);
-        if (validatedBg) {
+        if (validatedBg && Object.keys(validatedBg).length > 0) {
           currentDraft.customBackground = validatedBg;
         } else {
-          delete currentDraft.customBackground;
+          currentDraft.customBackground = null;
         }
       }
     }

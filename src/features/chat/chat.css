@@ -15,7 +15,7 @@
   display: flex;
   flex-direction: column;
   border: 1px solid var(--border-muted);
-  background-color: var(--bg-chat-viewport);
+  background-color: var(--custom-bg-chat, var(--bg-chat-viewport));
   padding: 20px;
   scrollbar-width: thin;
   scrollbar-color: var(--md-scrollbar-thumb) transparent;
@@ -175,13 +175,13 @@
 }
 
 .message-user {
-  background-color: var(--bg-user-bubble);
+  background-color: var(--custom-bg-cards, var(--bg-user-bubble));
   border-color: var(--border-user-bubble);
   margin-left: 32px;
 }
 
 .message-assistant {
-  background-color: var(--bg-surface);
+  background-color: var(--custom-bg-cards, var(--bg-surface));
   border-color: var(--border-muted);
   margin-right: 32px;
 }
@@ -339,7 +339,7 @@
   margin: 6px 0;
   border-radius: var(--radius-md);
   border: 1px solid var(--md-code-border);
-  background-color: var(--md-code-bg);
+  background-color: var(--custom-bg-cards, var(--md-code-bg));
   overflow: hidden;
 }
 
@@ -658,7 +658,7 @@
   max-height: 200px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
-  background-color: var(--bg-input);
+  background-color: var(--custom-bg-prompt, var(--bg-input));
   border: 1px solid var(--border-muted);
   color: var(--fg-default);
   font-family: var(--font-sans);

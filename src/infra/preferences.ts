@@ -293,10 +293,10 @@ export function validateCustomBackgroundPreferences(
 export interface AppearancePreferences {
   theme?: AppTheme;
   customAccent?: string | null;
-  customTextColor?: string;
-  customLabelColor?: string;
+  customTextColor?: string | null;
+  customLabelColor?: string | null;
   workAnimation?: WorkAnimationPreferences;
-  customBackground?: CustomBackgroundPreferences;
+  customBackground?: CustomBackgroundPreferences | null;
 }
 
 export type AppearanceInput = Partial<AppearancePreferences> & {
@@ -421,56 +421,47 @@ export function computeCustomThemeVariables(prefs: AppearancePreferences): Recor
   if (bg) {
     if (bg.canvas) {
       if (bg.canvas.opacity === 0) {
-        vars['--bg-canvas'] = 'transparent';
+        vars['--custom-bg-canvas'] = 'transparent';
       } else if (bg.canvas.color) {
-        vars['--bg-canvas'] = hexToRgba(bg.canvas.color, bg.canvas.opacity);
+        vars['--custom-bg-canvas'] = hexToRgba(bg.canvas.color, bg.canvas.opacity);
       }
     } else if (bg.image?.enabled && bg.image?.url) {
-      vars['--bg-canvas'] = 'transparent';
+      vars['--custom-bg-canvas'] = 'transparent';
     }
 
     if (bg.sidebar) {
       if (bg.sidebar.opacity === 0) {
-        vars['--bg-surface'] = 'transparent';
-        vars['--bg-subtle'] = 'transparent';
+        vars['--custom-bg-sidebar'] = 'transparent';
       } else if (bg.sidebar.color) {
-        vars['--bg-surface'] = hexToRgba(bg.sidebar.color, bg.sidebar.opacity);
-        vars['--bg-subtle'] = hexToRgba(bg.sidebar.color, Math.min(1, bg.sidebar.opacity + 0.08));
+        vars['--custom-bg-sidebar'] = hexToRgba(bg.sidebar.color, bg.sidebar.opacity);
       }
     }
 
     if (bg.chat) {
       if (bg.chat.opacity === 0) {
-        vars['--bg-chat-viewport'] = 'transparent';
+        vars['--custom-bg-chat'] = 'transparent';
       } else if (bg.chat.color) {
-        vars['--bg-chat-viewport'] = hexToRgba(bg.chat.color, bg.chat.opacity);
+        vars['--custom-bg-chat'] = hexToRgba(bg.chat.color, bg.chat.opacity);
       }
     } else if (bg.image?.enabled && bg.image?.url) {
-      vars['--bg-chat-viewport'] = 'transparent';
+      vars['--custom-bg-chat'] = 'transparent';
     }
 
     if (bg.prompt) {
       if (bg.prompt.opacity === 0) {
-        vars['--bg-prompt'] = 'transparent';
-        vars['--bg-input'] = 'rgba(0, 0, 0, 0.25)';
+        vars['--custom-bg-prompt'] = 'transparent';
       } else if (bg.prompt.color) {
-        vars['--bg-prompt'] = hexToRgba(bg.prompt.color, bg.prompt.opacity);
-        vars['--bg-input'] = hexToRgba(bg.prompt.color, Math.min(1, bg.prompt.opacity * 0.9));
+        vars['--custom-bg-prompt'] = hexToRgba(bg.prompt.color, bg.prompt.opacity);
       }
     } else if (bg.image?.enabled && bg.image?.url) {
-      vars['--bg-prompt'] = 'rgba(10, 10, 10, 0.55)';
-      vars['--bg-input'] = 'rgba(0, 0, 0, 0.35)';
+      vars['--custom-bg-prompt'] = 'rgba(10, 10, 10, 0.55)';
     }
 
     if (bg.cards) {
       if (bg.cards.opacity === 0) {
-        vars['--bg-elevated'] = 'transparent';
-        vars['--activity-card-bg'] = 'transparent';
-        vars['--bg-user-bubble'] = 'transparent';
+        vars['--custom-bg-cards'] = 'transparent';
       } else if (bg.cards.color) {
-        vars['--bg-elevated'] = hexToRgba(bg.cards.color, bg.cards.opacity);
-        vars['--activity-card-bg'] = hexToRgba(bg.cards.color, bg.cards.opacity);
-        vars['--bg-user-bubble'] = hexToRgba(bg.cards.color, bg.cards.opacity);
+        vars['--custom-bg-cards'] = hexToRgba(bg.cards.color, bg.cards.opacity);
       }
     }
   }
@@ -965,11 +956,11 @@ export class PreferencesController {
     }
 
     if (candidate.customBackground !== undefined) {
-      if (candidate.customBackground === null) {
+      if (candidate.customBackground === null || (typeof candidate.customBackground === 'object' && Object.keys(candidate.customBackground).length === 0)) {
         delete nextPrefs.customBackground;
       } else {
         const bg = validateCustomBackgroundPreferences(candidate.customBackground);
-        if (bg) {
+        if (bg && Object.keys(bg).length > 0) {
           nextPrefs.customBackground = bg;
         } else {
           delete nextPrefs.customBackground;

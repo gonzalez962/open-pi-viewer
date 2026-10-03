@@ -5,7 +5,26 @@
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background-color: var(--bg-canvas);
+  background-color: var(--custom-bg-canvas, var(--bg-canvas));
+  position: relative;
+}
+
+/* Custom Background Image Layer */
+.app-custom-background-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.25s ease, filter 0.25s ease;
+}
+
+.app-header,
+.app-workspace {
+  position: relative;
+  z-index: 1;
 }
 
 /* App Workspace (Sidebar + Main Area) */
@@ -16,6 +35,7 @@
   width: 100%;
   overflow: hidden;
   position: relative;
+  background-color: transparent !important;
 }
 
 .text-fg-default {
@@ -30,6 +50,7 @@
   min-height: 0;
   overflow: hidden;
   position: relative;
+  background-color: transparent !important;
 }
 
 /* Main Viewport */
@@ -175,6 +196,80 @@
 .app-footer {
   flex-shrink: 0;
   padding: 14px 20px;
-  background-color: var(--bg-surface);
+  background-color: var(--custom-bg-prompt, var(--bg-surface));
   border-top: 1px solid var(--border-muted);
+}
+
+/* Working Animation Loader (Decorative Accessible Motion) */
+.prompt-degraciao-loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.prompt-degraciao-loader .loader {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.prompt-degraciao-loader .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+  animation: prompt-loader-bounce 1.2s infinite ease-in-out;
+  animation-delay: calc(var(--i, 0) * 0.1s);
+}
+
+.prompt-degraciao-loader h2,
+.prompt-degraciao-loader .working-text {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0;
+  color: var(--fg-default);
+}
+
+/* Mode: Single Color */
+.prompt-degraciao-loader.is-mode-single .dot {
+  background-color: var(--loader-color1, var(--accent-primary));
+  box-shadow: 0 0 4px var(--loader-color1-glow, rgba(0, 229, 255, 0.45));
+}
+
+/* Mode: Dual Color */
+.prompt-degraciao-loader.is-mode-dual .dot:nth-child(odd) {
+  background-color: var(--loader-color1, var(--accent-primary));
+  box-shadow: 0 0 4px var(--loader-color1-glow, rgba(0, 229, 255, 0.45));
+}
+
+.prompt-degraciao-loader.is-mode-dual .dot:nth-child(even) {
+  background-color: var(--loader-color2, var(--accent-primary-hover));
+  box-shadow: 0 0 4px var(--loader-color2-glow, rgba(0, 229, 255, 0.45));
+}
+
+/* Mode: Multicolor (Rainbow) */
+.prompt-degraciao-loader.is-mode-multicolor .dot {
+  background-color: hsl(calc(var(--i, 0) * 36deg), 100%, 65%);
+  box-shadow: 0 0 4px hsl(calc(var(--i, 0) * 36deg), 100%, 65%);
+}
+
+@keyframes prompt-loader-bounce {
+  0%, 100% {
+    transform: scale(0.7);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prompt-degraciao-loader .dot {
+    animation: none;
+    opacity: 0.85;
+  }
 }

@@ -902,8 +902,8 @@ test('preferences: extractAppearancePreferences, hasCustomAppearance, and comput
   assert.strictEqual(cssVars['--fg-default'], '#f8fafc');
   assert.strictEqual(cssVars['--text-primary'], '#f8fafc');
   assert.strictEqual(cssVars['--activity-badge-fg'], '#38bdf8');
-  assert.ok(cssVars['--bg-canvas']?.includes('rgba(17, 24, 39, 0.8)'));
-  assert.ok(cssVars['--bg-chat-viewport']?.includes('rgba(3, 7, 18, 0.9)'));
+  assert.ok(cssVars['--custom-bg-canvas']?.includes('rgba(17, 24, 39, 0.8)'));
+  assert.ok(cssVars['--custom-bg-chat']?.includes('rgba(3, 7, 18, 0.9)'));
 
   const withAnimation = computeCustomThemeVariables({
     ...extracted,

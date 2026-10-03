@@ -147,7 +147,7 @@ test('cancel: discards draft and removes all preview-only inline custom variable
   assert.strictEqual(domTarget.styles.get('--accent-primary'), '#ff1493');
   assert.strictEqual(domTarget.styles.get('--fg-default'), '#112233');
   assert.strictEqual(domTarget.styles.get('--activity-badge-fg'), '#445566');
-  assert.ok(domTarget.styles.has('--bg-canvas'));
+  assert.ok(domTarget.styles.has('--custom-bg-canvas'));
 
   // Cancel draft
   controller.cancel();
@@ -160,7 +160,7 @@ test('cancel: discards draft and removes all preview-only inline custom variable
   assert.strictEqual(domTarget.styles.has('--fg-default'), false);
   assert.strictEqual(domTarget.styles.has('--text-primary'), false);
   assert.strictEqual(domTarget.styles.has('--activity-badge-fg'), false);
-  assert.strictEqual(domTarget.styles.has('--bg-canvas'), false);
+  assert.strictEqual(domTarget.styles.has('--custom-bg-canvas'), false);
 
   assert.strictEqual(controller.getState().isDrafting, false);
   assert.strictEqual(controller.getState().draft, null);
@@ -549,8 +549,8 @@ test('centralized applyAppearance: correctly sets data-theme, colorScheme, and d
   assert.strictEqual(domTarget.styles.get('--fg-default'), '#f8fafc');
   assert.strictEqual(domTarget.styles.get('--activity-badge-fg'), '#a855f7');
   assert.strictEqual(domTarget.styles.get('--loader-color1'), '#00ff66');
-  assert.ok(domTarget.styles.get('--bg-canvas')?.includes('rgba(5, 5, 5, 0.8)'));
-  assert.ok(domTarget.styles.get('--bg-surface')?.includes('rgba(16, 16, 16, 0.9)'));
+  assert.ok(domTarget.styles.get('--custom-bg-canvas')?.includes('rgba(5, 5, 5, 0.8)'));
+  assert.ok(domTarget.styles.get('--custom-bg-sidebar')?.includes('rgba(16, 16, 16, 0.9)'));
 
   // Test clearAppearanceCustomVariables
   clearAppearanceCustomVariables(domTarget);
