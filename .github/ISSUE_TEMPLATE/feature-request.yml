@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a feature or track the integration of an existing proposal.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or objective
+      description: Explain the user need and the outcome this proposal should achieve.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed scope
+      description: Describe the intended changes and identify anything out of scope.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: List observable outcomes and the checks needed to verify them.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Related issues and pull requests
+      description: Link existing proposals, original issues, or pull requests when applicable.
+    validations:
+      required: false
