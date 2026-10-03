@@ -211,4 +211,8 @@ All confirmed customizations are serialized into the single `pi_viewer_ui_prefer
 | **Full Unit & Integration Suite** | **Passed** | Full frontend test suite (1056 tests passing across core, features, infra, shared, and architecture suites). |
 | **Architectural Boundary Rules** | **Passed** | `npm run check:arch` passes all 8 boundary rules. |
 | **Production Build** | **Passed** | `npm run build` compiles frontend assets with zero TypeScript or bundling errors. |
-| **Browser / Tauri Runtime Walkthrough** | **Pending (T7)** | Test environment harness lacks Playwright/browser runners. Automated runtime browser execution, computed styles across all five areas, and desktop acceptance remain pending task T7 runtime verification rather than asserting complete source contracts. |
+| **Browser Runtime Walkthrough** | **Passed** | 11 scenarios in isolated headless Chrome with actual React StrictMode: preview/cancel, confirm/reload, color and area resets, area tokens, system theme, real FileReader/canvas upload, Spanish file errors, built-ins/repeat/disable/clear, and simulated storage failure. Existing cached Playwright was used without installation; backend routes were mocked. |
+| **Delayed Upload Cancellation** | **Unit-tested; browser stress check pending** | Deferred-promise regression tests cover superseded uploads and parent lifecycle transitions. The browser cancellation scenario checked clear/error cleanup, not a deliberately delayed upload race. |
+| **Tauri Desktop Acceptance** | **Pending** | Native desktop rendering, WebView CSP, file picker behavior and window composition have not been exercised. Browser results do not establish native desktop acceptance. |
+
+The isolated browser run logged repeated MCP-query errors because its backend mock returned null; no appearance subsystem errors were observed. Runtime busy-agent animation was not exercised against a live agent.
