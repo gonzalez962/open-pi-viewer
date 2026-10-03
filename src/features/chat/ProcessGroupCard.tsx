@@ -6,6 +6,11 @@ import {
   type ProcessCategory,
   type ProcessGroup,
 } from '@core/process-grouping';
+import {
+  extractOddDelegationSummary,
+  type AgentIndicatorStatus,
+  type OddRole,
+} from './odd-agent-indicators';
 import { ThinkingCard, ToolCard } from './ActivityBlocks';
 
 export interface ProcessGroupCardProps {
@@ -24,16 +29,35 @@ const CATEGORY_LABEL_KEYS: Record<ProcessCategory, TranslationKey> = {
   other: 'process_group.category_other',
 };
 
+const ROLE_LABEL_KEYS: Record<OddRole, TranslationKey> = {
+  explore: 'odd_agents.role_explore',
+  verify: 'odd_agents.role_verify',
+  worker: 'odd_agents.role_worker',
+  judge: 'odd_agents.role_judge',
+  review: 'odd_agents.role_review',
+  fix: 'odd_agents.role_fix',
+  unknown: 'odd_agents.role_unknown',
+};
+
+const STATUS_LABEL_KEYS: Record<AgentIndicatorStatus, TranslationKey> = {
+  dispatching: 'odd_agents.status_dispatching',
+  dispatched: 'odd_agents.status_dispatched',
+  error: 'odd_agents.status_error',
+};
+
 /**
- * Compact card for a `ProcessGroup` (Issue #8): a run of consecutive thinking/tool_call
- * blocks within one assistant turn. Shows the total activity count and a badge per
- * category present, a global expand/compact toggle, and per-category +/- controls that
- * reveal that category's child cards (reusing the existing `ThinkingCard`/`ToolCard`).
+ * Compact card for a `ProcessGroup` (Issue #8, Issue #22): a run of consecutive
+ * thinking/tool_call blocks within one assistant turn. Shows optional left-aligned
+ * ODD agent delegation indicators (Issue #22) when explicit delegation occurred,
+ * the total activity count and category badges, a global expand/compact toggle,
+ * and per-category +/- controls that reveal that category's child cards.
  */
 const ProcessGroupCardComponent: React.FC<ProcessGroupCardProps> = ({ group, t }) => {
   const [expandedCategories, setExpandedCategories] = useState<ReadonlySet<ProcessCategory>>(
     () => new Set()
   );
+
+  const delegation = extractOddDelegationSummary(group);
 
   const orderedCategories = PROCESS_CATEGORY_ORDER.filter((cat) =>
     group.categoryOrder.includes(cat)
@@ -63,6 +87,53 @@ const ProcessGroupCardComponent: React.FC<ProcessGroupCardProps> = ({ group, t }
     >
       <div className="process-group-header">
         <div className="process-group-summary">
+          {delegation.hasDelegation && delegation.orchestrator && (
+            <div
+              className="odd-agent-indicators"
+              role="status"
+              aria-label={t('odd_agents.delegation_aria_label')}
+            >
+              <span
+                className={`odd-agent-indicator odd-agent-orchestrator odd-agent-status-${delegation.orchestrator.status}${
+                  delegation.orchestrator.status === 'dispatching' ? ' is-dispatching' : ''
+                }`}
+                title={t('odd_agents.indicator_title', {
+                  role: t('odd_agents.role_orchestrator'),
+                  status: t(STATUS_LABEL_KEYS[delegation.orchestrator.status]),
+                })}
+              >
+                <span className="odd-agent-dot" aria-hidden="true" />
+                <span className="odd-agent-label">{t('odd_agents.role_orchestrator')}</span>
+              </span>
+
+              {delegation.indicators.map((ind) => (
+                <span
+                  key={ind.id}
+                  className={`odd-agent-indicator odd-agent-${ind.role} odd-agent-status-${ind.status}${
+                    ind.status === 'dispatching' ? ' is-dispatching' : ''
+                  }`}
+                  title={t('odd_agents.indicator_title', {
+                    role:
+                      ind.role === 'unknown' && ind.customName
+                        ? ind.customName
+                        : t(ROLE_LABEL_KEYS[ind.role]),
+                    status: t(STATUS_LABEL_KEYS[ind.status]),
+                  })}
+                >
+                  <span className="odd-agent-dot" aria-hidden="true" />
+                  <span className="odd-agent-label">
+                    {ind.role === 'unknown' && ind.customName
+                      ? ind.customName
+                      : t(ROLE_LABEL_KEYS[ind.role])}
+                  </span>
+                  {ind.count > 1 && (
+                    <span className="odd-agent-count">· {ind.count}</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+
           <span className="process-group-count">
             {t('process_group.activity_count', { count: group.total })}
           </span>

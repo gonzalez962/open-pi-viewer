@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -251,4 +253,136 @@ test('ToolCard: other (unhandled) tool category keeps the plain JSON args view',
   );
   assert.ok(markup.includes('tool-args-pre'));
   assert.ok(markup.includes('pattern'));
+});
+
+// --- ODD Agent Indicators in ProcessGroupCard (Issue #22) ---
+
+test('ProcessGroupCard: explicit subagent dispatch renders left-aligned Orchestrator and role indicators', () => {
+  const group = buildGroup([
+    tool('subagent_run', {
+      args: { agent: 'gentle-ai-explore' },
+      status: 'completed',
+    }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.ok(markup.includes('odd-agent-indicators'), 'should render .odd-agent-indicators container');
+  assert.ok(markup.includes('odd-agent-orchestrator'), 'should render Orchestrator badge');
+  assert.ok(markup.includes('Orchestrator'), 'should display localized Orchestrator label');
+  assert.ok(markup.includes('odd-agent-explore'), 'should render explore role indicator');
+  assert.ok(markup.includes('Explore'), 'should display localized Explore label');
+  assert.ok(markup.includes('odd-agent-status-dispatched'), 'completed tool maps to dispatched status');
+  assert.equal(markup.includes('is-running'), false, 'dispatched status should not have is-running');
+});
+
+test('ProcessGroupCard: running dispatch tool renders is-dispatching pulse class on indicator and localized tooltip', () => {
+  const group = buildGroup([
+    tool('subagent_run', {
+      args: { agent: 'gentle-ai-verify' },
+      status: 'running',
+    }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.ok(markup.includes('odd-agent-verify'));
+  assert.ok(markup.includes('Verify'));
+  assert.ok(markup.includes('odd-agent-status-dispatching'));
+  assert.ok(markup.includes('is-dispatching'));
+  assert.ok(markup.includes('title="Verify (Dispatching)"'));
+});
+
+test('ProcessGroupCard: ordinary tools and status commands produce NO agent indicators or Orchestrator', () => {
+  const group = buildGroup([
+    tool('bash', { args: { command: 'git status' } }),
+    tool('subagent_status', { args: { id: 'task-1' } }),
+    tool('read', { args: { path: 'a.ts' } }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.equal(markup.includes('odd-agent-indicators'), false, 'should NOT render .odd-agent-indicators');
+  assert.equal(markup.includes('odd-agent-orchestrator'), false, 'should NOT render Orchestrator badge');
+});
+
+test('ProcessGroupCard: supports Spanish localization for agent indicators and dispatching lifecycle', () => {
+  const tEs = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate('es', key, params);
+
+  const group = buildGroup([
+    tool('subagent_run', {
+      args: { agent: 'gentle-ai-worker' },
+      status: 'running',
+    }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t: tEs }));
+
+  assert.ok(markup.includes('Orquestador'), 'Spanish Orchestrator label');
+  assert.ok(markup.includes('Trabajador'), 'Spanish Worker label');
+  assert.ok(markup.includes('title="Trabajador (Despachando)"'));
+});
+
+test('ProcessGroupCard: multiple dispatches of the same role renders count badge', () => {
+  const group = buildGroup([
+    tool('subagent_run', { args: { agent: 'gentle-ai-explore' }, status: 'completed' }),
+    tool('subagent_run', { args: { agent: 'gentle-ai-explore' }, status: 'completed' }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.ok(markup.includes('odd-agent-count'));
+  assert.ok(markup.includes('· 2'));
+});
+
+test('ProcessGroupCard: unknown agent displays conservative label without pretending a known role', () => {
+  const group = buildGroup([
+    tool('subagent_run', { args: { agent: 'custom-analyzer' }, status: 'completed' }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.ok(markup.includes('odd-agent-unknown'));
+  assert.ok(markup.includes('custom-analyzer'));
+});
+
+test('ProcessGroupCard: preserves full extreme long agent identifier without spaces for wrapping layout', () => {
+  const longName = 'custom-extreme-long-agent-identifier-without-spaces-2026';
+  const group = buildGroup([
+    tool('subagent_run', { args: { agent: longName }, status: 'completed' }),
+  ]);
+  const markup = renderToStaticMarkup(React.createElement(ProcessGroupCard, { group, t }));
+
+  assert.ok(markup.includes('odd-agent-indicator'));
+  assert.ok(markup.includes('odd-agent-label'));
+  assert.ok(markup.includes(longName), 'must preserve full unknown identifier without truncation');
+});
+
+test('chat.css: ODD agent indicators enforce pill/header shrink and label wrapping without nowrap overflow', () => {
+  const css = readFileSync(join(process.cwd(), 'src/features/chat/chat.css'), 'utf8');
+
+  // Verify .odd-agent-indicator does not have white-space: nowrap which causes overflow at 320px
+  const indicatorRuleMatch = css.match(/\.odd-agent-indicator\s*\{([^}]+)\}/);
+  assert.ok(indicatorRuleMatch, 'should find .odd-agent-indicator CSS rule');
+  const indicatorProps = indicatorRuleMatch[1];
+  assert.equal(
+    indicatorProps.includes('white-space: nowrap'),
+    false,
+    '.odd-agent-indicator must not set white-space: nowrap'
+  );
+  assert.match(
+    indicatorProps,
+    /max-width:\s*100%/,
+    '.odd-agent-indicator must have max-width: 100% for container shrink'
+  );
+
+  // Verify .odd-agent-label supports breaking/wrapping for long names without spaces
+  const labelRuleMatch = css.match(/\.odd-agent-label\s*\{([^}]+)\}/);
+  assert.ok(labelRuleMatch, 'should find .odd-agent-label CSS rule');
+  const labelProps = labelRuleMatch[1];
+  assert.match(
+    labelProps,
+    /overflow-wrap:\s*anywhere/,
+    '.odd-agent-label must have overflow-wrap: anywhere'
+  );
+  assert.match(
+    labelProps,
+    /word-break:\s*break-word/,
+    '.odd-agent-label must have word-break: break-word'
+  );
 });
