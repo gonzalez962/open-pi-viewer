@@ -22,6 +22,7 @@ import {
 } from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
+import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import {
   MarkdownContent,
   shouldRenderAsMarkdown,
@@ -1371,6 +1372,13 @@ export const App: React.FC = () => {
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                    ) : msg.role === 'user' ? (
+                      <>
+                        {msg.images && msg.images.length > 0 && (
+                          <MessageImageThumbnails images={msg.images} t={t} />
+                        )}
+                        <UserMessageContent content={msg.content} />
+                      </>
                     ) : (
                       <>
                         {msg.images && msg.images.length > 0 && (
