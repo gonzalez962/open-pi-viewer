@@ -91,6 +91,12 @@ import { CommandPalettePopover } from '@features/chat/components/CommandPaletteP
 import { useModels } from '@features/providers/hooks/useModels';
 import { useMcpServers } from '@features/mcp/hooks/useMcpServers';
 import { usePiResources } from '@features/extensions/hooks/usePiResources';
+import {
+  determineZenFocusTarget,
+  hasActiveModalOrOverlay,
+  resolveZenKeyboardAction,
+  ZEN_MODE_CONTAINER_CLASS,
+} from './zen-mode';
 
 export const App: React.FC = () => {
   const [multiProjectState, multiDispatch] = useReducer(
@@ -118,6 +124,10 @@ export const App: React.FC = () => {
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [showSettings, setShowSettings] = useState(false);
+  const [isZenMode, setIsZenMode] = useState(false);
+  const zenToggleRef = useRef<HTMLButtonElement>(null);
+  const floatingExitRef = useRef<HTMLButtonElement>(null);
+  const prevZenModeRef = useRef<boolean | undefined>(undefined);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsStorageNotice, setSettingsStorageNotice] = useState<string | null>(null);
 
@@ -718,6 +728,120 @@ export const App: React.FC = () => {
     setShowSettings(false);
   };
 
+  const handleToggleZenMode = useCallback(() => {
+    const hasOpenModal = Boolean(
+      viewingFile ||
+      profilesHook.isModalOpen ||
+      commandPalette.isOpen ||
+      activeDialog ||
+      hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
+    );
+    if (hasOpenModal) {
+      return;
+    }
+    if (showSettings) {
+      setShowSettings(false);
+    }
+    setIsZenMode((prev) => !prev);
+  }, [
+    showSettings,
+    viewingFile,
+    profilesHook.isModalOpen,
+    commandPalette.isOpen,
+    activeDialog,
+  ]);
+
+  const handleExitZenMode = useCallback(() => {
+    setIsZenMode(false);
+  }, []);
+
+  useEffect(() => {
+    if (prevZenModeRef.current === undefined) {
+      prevZenModeRef.current = isZenMode;
+      return;
+    }
+
+    const prev = prevZenModeRef.current;
+    prevZenModeRef.current = isZenMode;
+
+    if (prev === isZenMode) {
+      return;
+    }
+
+    const hasOpenModal = Boolean(
+      viewingFile ||
+      profilesHook.isModalOpen ||
+      showSettings ||
+      commandPalette.isOpen ||
+      activeDialog ||
+      hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
+    );
+
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+    const isInputOrTextarea =
+      activeEl instanceof HTMLInputElement || activeEl instanceof HTMLTextAreaElement;
+
+    const target = determineZenFocusTarget({
+      isZenMode,
+      prevZenMode: prev,
+      hasOpenModal,
+      activeElementIsInputOrTextarea: isInputOrTextarea,
+    });
+
+    if (target === 'floating-exit') {
+      floatingExitRef.current?.focus();
+    } else if (target === 'header-toggle') {
+      zenToggleRef.current?.focus();
+    }
+  }, [
+    isZenMode,
+    viewingFile,
+    profilesHook.isModalOpen,
+    showSettings,
+    commandPalette.isOpen,
+    activeDialog,
+  ]);
+
+  useEffect(() => {
+    const handleWindowKeyDown = (e: KeyboardEvent) => {
+      const hasOpenModal = Boolean(
+        viewingFile ||
+        profilesHook.isModalOpen ||
+        showSettings ||
+        commandPalette.isOpen ||
+        activeDialog ||
+        hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
+      );
+
+      const action = resolveZenKeyboardAction(e, {
+        isZenMode,
+        hasOpenModal,
+      });
+
+      if (action === 'toggle') {
+        e.preventDefault();
+        handleToggleZenMode();
+      } else if (action === 'exit') {
+        e.preventDefault();
+        handleExitZenMode();
+      }
+    };
+
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleWindowKeyDown);
+    };
+  }, [
+    isZenMode,
+    viewingFile,
+    profilesHook.isModalOpen,
+    showSettings,
+    commandPalette.isOpen,
+    activeDialog,
+    handleToggleZenMode,
+    handleExitZenMode,
+  ]);
+
 
   const handleSaveAndApplySettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -768,7 +892,7 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className="app-container">
+    <div className={`app-container ${isZenMode ? ZEN_MODE_CONTAINER_CLASS : ''}`}>
       {activeWallpaperStyles && (
         <div
           className="app-custom-background-layer"
@@ -833,6 +957,31 @@ export const App: React.FC = () => {
               {t('action.retry')}
             </button>
           )}
+
+          <button
+            ref={zenToggleRef}
+            type="button"
+            className="btn-zen-toggle"
+            onClick={handleToggleZenMode}
+            title={isZenMode ? t('zen.exit_title') : t('zen.enter_title')}
+            aria-label={isZenMode ? t('zen.exit_title') : t('zen.enter_title')}
+            aria-pressed={isZenMode}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+            </svg>
+            <span className="zen-toggle-text">{t('zen.toggle_button')}</span>
+          </button>
         </div>
       </header>
 
@@ -885,6 +1034,31 @@ export const App: React.FC = () => {
         )}
 
         <main className="workspace-main" role="main">
+          {isZenMode && (
+            <button
+              ref={floatingExitRef}
+              type="button"
+              className="btn-zen-floating-exit"
+              onClick={handleExitZenMode}
+              title={t('zen.exit_title')}
+              aria-label={t('zen.exit_title')}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+              </svg>
+              <span>{t('zen.exit_button')}</span>
+            </button>
+          )}
           {showSettings ? (
             <SettingsView
               config={config}
