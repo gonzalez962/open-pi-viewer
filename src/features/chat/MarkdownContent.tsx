@@ -305,20 +305,6 @@ export const MarkdownLink: React.FC<{
       >
         {children}
       </span>
-      <span
-        className="markdown-link-destination"
-        title={linkTitle}
-        onClick={handleClick}
-      >
-        ({href})
-      </span>
-      <span
-        className="markdown-link-hint"
-        title={linkTitle}
-        onClick={handleClick}
-      >
-        [{linkHint}]
-      </span>
       <button
         type="button"
         className="markdown-link-copy-btn"
