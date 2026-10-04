@@ -21,6 +21,7 @@ import {
   type AppearancePreferences,
 } from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
+import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
 import {
   MarkdownContent,
   shouldRenderAsMarkdown,
@@ -1371,7 +1372,12 @@ export const App: React.FC = () => {
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
                     ) : (
-                      <div className="message-literal">{msg.content}</div>
+                      <>
+                        {msg.images && msg.images.length > 0 && (
+                          <MessageImageThumbnails images={msg.images} t={t} />
+                        )}
+                        <div className="message-literal">{msg.content}</div>
+                      </>
                     )}
                     {msg.isStreaming && (
                       <span

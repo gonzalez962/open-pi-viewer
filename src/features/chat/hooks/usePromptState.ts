@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import {
   abortPi,
   sendPromptPi,
-  type PromptImageAttachment,
 } from '@infra/bridge';
 import { generatePromptRequestId } from '@core/protocol';
 import { buildCopyAllCodeText, getLastAssistantCodeBlocks } from '@core/markdown';
@@ -17,7 +16,7 @@ import {
   type ReloadRequest,
 } from '@core/commands';
 import type { ChatAction } from '@core/reducer';
-import type { ChatMessage } from '@core/types/messages';
+import type { ChatMessage, ImageContent } from '@core/types/messages';
 import { copyText } from '@shared/clipboard';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import type { AttachedFile } from '../types';
@@ -247,18 +246,23 @@ export function usePromptState({
       ? '(see attached image)'
       : '(see attached file)';
     const reqId = generatePromptRequestId();
-    dispatch({
-      type: queuing ? 'PROMPT_QUEUED' : 'PROMPT_SUBMIT',
-      payload: { id: reqId, message: trimmed || defaultAttachmentText },
-    });
 
-    const imageAttachments: PromptImageAttachment[] = attachedFiles
-      .filter((f) => f.type === 'image' && f.data)
+    const imageAttachments: ImageContent[] = attachedFiles
+      .filter((f) => f.type === 'image' && Boolean(f.data))
       .map((f) => ({
         type: 'image',
         data: f.data!,
         mimeType: f.mimeType,
       }));
+
+    dispatch({
+      type: queuing ? 'PROMPT_QUEUED' : 'PROMPT_SUBMIT',
+      payload: {
+        id: reqId,
+        message: trimmed || defaultAttachmentText,
+        images: imageAttachments.length > 0 ? imageAttachments : undefined,
+      },
+    });
 
     const textFiles = attachedFiles.filter((f) => f.type === 'text' && f.content !== undefined);
     let messageToSend = trimmed;

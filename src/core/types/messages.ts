@@ -25,6 +25,12 @@ export interface ToolCallBlock {
 
 export type MessageBlock = TextBlock | ThinkingBlock | ToolCallBlock;
 
+export interface ImageContent {
+  type: 'image';
+  data: string;
+  mimeType: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -38,5 +44,6 @@ export interface ChatMessage {
    * abort, since Pi discards its queue at that point.
    */
   isQueued?: boolean;
+  images?: ImageContent[];
   blocks?: MessageBlock[];
 }

@@ -1656,3 +1656,184 @@ test('Reducer: ADD_SYSTEM_MESSAGE appends after existing messages, preserving or
   assert.strictEqual(state.messages[1].role, 'assistant');
   assert.strictEqual(state.messages[1].content, 'Reconnected.');
 });
+
+test('Reducer: PROMPT_SUBMIT preserves optimistic image attachments in user message', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  const testImages = [
+    { type: 'image' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', mimeType: 'image/png' },
+  ];
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-img-1', message: 'Check this image', images: testImages } as any,
+  });
+
+  assert.strictEqual(state.messages.length, 1);
+  const msg = state.messages[0];
+  assert.strictEqual(msg.id, 'prompt-img-1');
+  assert.strictEqual(msg.content, 'Check this image');
+  assert.deepEqual((msg as any).images, testImages);
+});
+
+test('Reducer: PROMPT_QUEUED preserves optimistic image attachments in queued message', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Running turn' },
+  });
+
+  const testImages = [
+    { type: 'image' as const, data: '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=', mimeType: 'image/jpeg' },
+  ];
+
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-queued-img', message: 'Queued image turn', images: testImages } as any,
+  });
+
+  const queuedMsg = state.messages.find((m) => m.id === 'prompt-queued-img');
+  assert.ok(queuedMsg);
+  assert.strictEqual(queuedMsg.isQueued, true);
+  assert.deepEqual((queuedMsg as any).images, testImages);
+});
+
+test('Reducer: EVENT_MESSAGE_START preserves queued images when processing starts', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Running' },
+  });
+
+  const testImages = [
+    { type: 'image' as const, data: 'UklGRkAAAABXRUJQVlA4IDQAAADwAQCdASoBAAEAAQAcJaACdLoAAP7/2AAA', mimeType: 'image/webp' },
+  ];
+
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-q', message: '(see attached image)', images: testImages } as any,
+  });
+
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: {
+        id: 'echo-1',
+        role: 'user',
+        content: '(see attached image)',
+      },
+    },
+  });
+
+  const processedMsg = state.messages.find((m) => m.id === 'prompt-q');
+  assert.ok(processedMsg);
+  assert.strictEqual(processedMsg.isQueued, false);
+  assert.deepEqual((processedMsg as any).images, testImages);
+});
+
+test('Reducer regression: EVENT_MESSAGE_START running image echo does not dequeue unrelated queued follow-up and preserves abort cancellation', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  const imageA = [
+    { type: 'image' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', mimeType: 'image/png' },
+  ];
+  const imageB = [
+    { type: 'image' as const, data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', mimeType: 'image/gif' },
+  ];
+
+  // 1. Submit running prompt A with image A
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-running-A', message: '(see attached image)', images: imageA },
+  });
+
+  // 2. Queue follow-up prompt B with image B
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-queued-B', message: '(see attached image)', images: imageB },
+  });
+
+  // 3. Pi emits echo of running prompt A with image A
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: {
+        id: 'echo-running-A',
+        role: 'user',
+        content: [
+          { type: 'text', text: '(see attached image)' },
+          { type: 'image', data: imageA[0].data, mimeType: 'image/png' },
+        ],
+      },
+    },
+  });
+
+  // Queued prompt B must NOT be dequeued by running prompt A's echo
+  const promptBAfterEcho = state.messages.find((m) => m.id === 'prompt-queued-B');
+  assert.ok(promptBAfterEcho);
+  assert.strictEqual(promptBAfterEcho.isQueued, true, 'Queued prompt B must remain queued');
+
+  // 4. Abort while prompt A is running
+  state = chatReducer(state, { type: 'ABORT_CLICKED' });
+  state = chatReducer(state, { type: 'ABORT_COMPLETED' });
+
+  // Abort must cancel prompt B because it was still queued
+  const promptBAfterAbort = state.messages.find((m) => m.id === 'prompt-queued-B');
+  assert.ok(promptBAfterAbort);
+  assert.strictEqual(promptBAfterAbort.isQueued, false);
+  assert.strictEqual(promptBAfterAbort.isCancelled, true, 'Prompt B must be cancelled on abort');
+});
+
+test('Reducer: EVENT_MESSAGE_START image-only echo matches queued message by image identity without text', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'CONNECT_SUCCESS',
+    payload: { model: { id: 'test-model' } },
+  });
+
+  const imageB = [
+    { type: 'image' as const, data: 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', mimeType: 'image/gif' },
+  ];
+
+  state = chatReducer(state, {
+    type: 'PROMPT_SUBMIT',
+    payload: { id: 'prompt-1', message: 'Running' },
+  });
+
+  state = chatReducer(state, {
+    type: 'PROMPT_QUEUED',
+    payload: { id: 'prompt-queued-imgonly', message: '', images: imageB },
+  });
+
+  // Pi emits user-role message_start with ONLY an image block and no text
+  state = chatReducer(state, {
+    type: 'EVENT_MESSAGE_START',
+    payload: {
+      message: {
+        id: 'echo-imgonly',
+        role: 'user',
+        content: [
+          { type: 'image', data: imageB[0].data, mimeType: 'image/gif' },
+        ],
+      },
+    },
+  });
+
+  const queuedMsg = state.messages.find((m) => m.id === 'prompt-queued-imgonly');
+  assert.ok(queuedMsg);
+  assert.strictEqual(queuedMsg.isQueued, false);
+  assert.deepEqual(queuedMsg.images, imageB);
+});

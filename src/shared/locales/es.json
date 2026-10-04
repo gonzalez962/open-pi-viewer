@@ -183,6 +183,8 @@
   "message.status_cancelled": "Cancelado",
   "message.cancelled_note": "Generación cancelada",
   "message.status_queued": "En cola",
+  "message.attached_images": "Imágenes adjuntas",
+  "message.attached_image": "Imagen adjunta {index}",
 
   "markdown.copy_code": "Copiar",
   "markdown.copy_url": "Copiar URL",
