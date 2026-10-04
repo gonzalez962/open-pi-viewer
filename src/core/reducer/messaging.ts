@@ -1,15 +1,25 @@
-import { extractTextFromContent, parseMessageBlocks } from '../protocol';
+import {
+  extractImagesFromMessage,
+  extractTextFromContent,
+  parseMessageBlocks,
+} from '../protocol';
 import { isMessageEmpty } from '../prompt-controls-utils';
 import type { AuthoritativeMessage } from '../types/events';
-import type { ChatMessage, ToolCallBlock } from '../types/messages';
+import type { ChatMessage, ImageContent, ToolCallBlock } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
 import type { ChatAction } from './index';
 
 export type MessagingAction =
-  | { type: 'PROMPT_SUBMIT'; payload: { id: string; message: string } }
+  | {
+      type: 'PROMPT_SUBMIT';
+      payload: { id: string; message: string; images?: ImageContent[] };
+    }
   | { type: 'PROMPT_ACCEPTED'; payload: { id: string } }
   | { type: 'PROMPT_REJECTED'; payload: { id: string; error: string } }
-  | { type: 'PROMPT_QUEUED'; payload: { id: string; message: string } }
+  | {
+      type: 'PROMPT_QUEUED';
+      payload: { id: string; message: string; images?: ImageContent[] };
+    }
   | { type: 'QUEUED_PROMPT_REJECTED'; payload: { id: string; error: string } }
   | {
       type: 'EVENT_MESSAGE_START';
@@ -64,6 +74,10 @@ export function messagingReducer(
         role: 'user',
         content: action.payload.message,
         timestamp: new Date().toLocaleTimeString(),
+        images:
+          action.payload.images && action.payload.images.length > 0
+            ? action.payload.images
+            : undefined,
       };
 
       return {
@@ -129,6 +143,10 @@ export function messagingReducer(
         content: action.payload.message,
         timestamp: new Date().toLocaleTimeString(),
         isQueued: true,
+        images:
+          action.payload.images && action.payload.images.length > 0
+            ? action.payload.images
+            : undefined,
       };
 
       return {
@@ -164,28 +182,49 @@ export function messagingReducer(
 
       if (msg.role === 'user') {
         // Pi emits a user-role message_start when it begins processing a queued
-        // follow-up turn. Clear the earliest queued message whose text the echo starts with
-        // (the sent text may carry appended file blocks) in place, so the "Queued" badge
-        // disappears once that turn actually starts without moving the message. No
-        // positional fallback: the echo of the running prompt must not clear a follow-up;
-        // unmatched leftovers are cleared on EVENT_AGENT_SETTLED.
+        // follow-up turn. Clear the earliest queued message whose text or image identity
+        // unambiguously matches the echo. No unconstrained positional fallback: the echo
+        // of the running prompt must not clear an unrelated follow-up; unmatched leftovers
+        // are cleared on EVENT_AGENT_SETTLED.
         const content = extractTextFromContent(msg.content);
-        const targetIndex = content
-          ? state.messages.findIndex(
-              (m) =>
-                m.role === 'user' &&
-                m.isQueued &&
-                m.content.length > 0 &&
-                content.startsWith(m.content)
-            )
-          : -1;
+        const msgImages = extractImagesFromMessage(msg);
+
+        const targetIndex = state.messages.findIndex((m) => {
+          if (m.role !== 'user' || !m.isQueued) return false;
+
+          const imagesMatch =
+            msgImages.length > 0 &&
+            Boolean(m.images?.some((img) => msgImages.some((mi) => mi.data === img.data)));
+
+          if (content && m.content.length > 0 && content.startsWith(m.content)) {
+            // If both carry images, they must not contradict each other
+            if (msgImages.length > 0 && m.images && m.images.length > 0) {
+              return imagesMatch;
+            }
+            return true;
+          }
+
+          // Image-only correlation when echo has no matching text
+          return Boolean(!content && imagesMatch);
+        });
 
         if (targetIndex < 0) {
           return state;
         }
 
         const updatedMessages = state.messages.map((m, i) =>
-          i === targetIndex ? { ...m, isQueued: false } : m
+          i === targetIndex
+            ? {
+                ...m,
+                isQueued: false,
+                images:
+                  m.images && m.images.length > 0
+                    ? m.images
+                    : msgImages.length > 0
+                      ? msgImages
+                      : undefined,
+              }
+            : m
         );
 
         return { ...state, messages: updatedMessages };

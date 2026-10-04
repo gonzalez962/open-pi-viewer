@@ -283,6 +283,34 @@
   white-space: normal;
 }
 
+/* Sent-message image thumbnails */
+.message-image-thumbnails {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  white-space: normal;
+}
+
+.message-image-thumbnail-item {
+  display: inline-flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  max-width: 100%;
+}
+
+.message-image-thumbnail {
+  display: block;
+  max-width: 240px;
+  max-height: 180px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 5px;
+}
+
 
 /* Safe Markdown Elements */
 .markdown-body {

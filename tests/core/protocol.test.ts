@@ -37,11 +37,13 @@ import {
   createExtensionUiResponse,
   defaultDialogAdapter,
   extractChatTextDelta,
+  extractImagesFromMessage,
   extractTextFromContent,
   extractThinkingDelta,
   extractToolCallDelta,
   extractToolOutput,
   generatePromptRequestId,
+  getSafePreviewImageSrc,
   isDialogExtensionUiRequest,
   isSupportedDialogExtensionUiRequest,
   isToolExecutionEndEvent,
@@ -1816,6 +1818,139 @@ test('Message conversion: hydrateChatMessages converts full multi-turn conversat
   assert.strictEqual(hydrated[2].content, 'Second prompt');
   assert.strictEqual(hydrated[3].content, 'Second answer');
   assert.ok(!hydrated[3].content.includes('Hidden chain of thought'));
+});
+
+test('Message conversion: convertRpcMessageToChatMessage parses image blocks in user messages', () => {
+  const validPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const userMsgWithImages = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'Here is the diagram' },
+      { type: 'image', data: validPng, mimeType: 'image/png' },
+    ],
+    timestamp: 1726760010000,
+  };
+  const converted = convertRpcMessageToChatMessage(userMsgWithImages, 0);
+  assert.ok(converted);
+  assert.strictEqual(converted.role, 'user');
+  assert.strictEqual(converted.content, 'Here is the diagram');
+  assert.deepEqual((converted as any).images, [
+    { type: 'image', data: validPng, mimeType: 'image/png' },
+  ]);
+});
+
+test('Message conversion: hydrateChatMessages retains user message with only images and no text', () => {
+  const validWebp = 'UklGRkAAAABXRUJQVlA4IDQAAADwAQCdASoBAAEAAQAcJaACdLoAAP7/2AAA';
+  const rawList = [
+    {
+      role: 'user',
+      content: [
+        { type: 'image', data: validWebp, mimeType: 'image/webp' },
+      ],
+      timestamp: 1000,
+    },
+  ];
+  const hydrated = hydrateChatMessages(rawList);
+  assert.strictEqual(hydrated.length, 1);
+  assert.strictEqual(hydrated[0].role, 'user');
+  assert.strictEqual(hydrated[0].content, '');
+  assert.deepEqual((hydrated[0] as any).images, [
+    { type: 'image', data: validWebp, mimeType: 'image/webp' },
+  ]);
+});
+
+test('Message conversion: rejects invalid/dangerous MIME types or missing image data without synthesizing', () => {
+  const validJpeg = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+  const userMsgWithInvalidImages = {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'Malicious or invalid' },
+      { type: 'image', data: 'alert(1)', mimeType: 'text/html' },
+      { type: 'image', data: '', mimeType: 'image/png' },
+      { type: 'image', mimeType: 'image/png' },
+      { type: 'image', data: validJpeg, mimeType: 'image/jpeg' },
+    ],
+    timestamp: 1726760020000,
+  };
+  const converted = convertRpcMessageToChatMessage(userMsgWithInvalidImages, 0);
+  assert.ok(converted);
+  assert.strictEqual(converted.content, 'Malicious or invalid');
+  // Only the valid image should be retained, no synthesis
+  assert.deepEqual((converted as any).images, [
+    { type: 'image', data: validJpeg, mimeType: 'image/jpeg' },
+  ]);
+});
+
+test('Message conversion: extractImagesFromMessage deduplicates identical images between content and images list while preserving repeated items in content', () => {
+  const validPngData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  const msgWithDuplicateBetweenContentAndImages = {
+    role: 'user',
+    content: [
+      { type: 'image', data: validPngData, mimeType: 'image/png' },
+      { type: 'image', data: validPngData, mimeType: 'image/png' },
+    ],
+    images: [
+      { type: 'image', data: validPngData, mimeType: 'image/png' },
+    ],
+  };
+
+  const images = extractImagesFromMessage(msgWithDuplicateBetweenContentAndImages);
+  // Preserves 2 legitimate repeats in content, but does NOT add the 3rd duplicate from images list
+  assert.strictEqual(images.length, 2);
+});
+
+test('Message conversion: preserves non-preview image MIME types like HEIC in domain model', () => {
+  const validHeicData = 'AAAAHGZ0eXBoZWljAAAAAG1pZjFtaGVpYw==';
+  const userMsgWithHeic = {
+    role: 'user',
+    content: [
+      { type: 'image', data: validHeicData, mimeType: 'image/heic' },
+    ],
+  };
+  const converted = convertRpcMessageToChatMessage(userMsgWithHeic, 0);
+  assert.ok(converted);
+  assert.strictEqual(converted.images?.length, 1);
+  assert.strictEqual(converted.images?.[0].mimeType, 'image/heic');
+});
+
+test('Preview image validation: validates raw base64 and dataURI, rejecting malformed prefixes and non-base64', () => {
+  const validPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+
+  // Valid raw base64
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: validPng, mimeType: 'image/png' }),
+    `data:image/png;base64,${validPng}`
+  );
+
+  // Valid prefixed data URI
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: `data:image/png;base64,${validPng}`, mimeType: 'image/png' }),
+    `data:image/png;base64,${validPng}`
+  );
+
+  // Mismatched/dangerous prefix: data:text/html with png mimeType -> REJECTED
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: `data:text/html;base64,${validPng}`, mimeType: 'image/png' }),
+    null
+  );
+
+  // Arbitrary non-image prefix -> REJECTED
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: `data:application/javascript;base64,${validPng}`, mimeType: 'image/png' }),
+    null
+  );
+
+  // Malformed base64 with invalid chars (scripts, spaces) -> REJECTED
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: '<script>alert(1)</script>', mimeType: 'image/png' }),
+    null
+  );
+
+  // Non-preview MIME (HEIC/TIFF) -> REJECTED for preview display
+  assert.strictEqual(
+    getSafePreviewImageSrc({ type: 'image', data: validPng, mimeType: 'image/heic' }),
+    null
+  );
 });
 
 test('Bridge: getMessagesPi and newSessionPi invoke respective Tauri commands', async () => {

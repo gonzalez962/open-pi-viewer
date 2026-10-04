@@ -8,7 +8,7 @@ import type {
   ToolExecutionStartEvent,
   ToolExecutionUpdateEvent,
 } from './types/events';
-import type { MessageBlock } from './types/messages';
+import type { ImageContent, MessageBlock } from './types/messages';
 
 /** Maximum record buffer size (16 MB) */
 export const MAX_RECORD_SIZE = 16 * 1024 * 1024;
@@ -170,6 +170,126 @@ export function parseMessageBlocks(content: unknown): MessageBlock[] {
 
   return blocks;
 }
+
+const SAFE_PREVIEW_MIME_REGEX = /^image\/(png|jpe?g|webp|gif|bmp|svg\+xml|avif)$/i;
+
+/**
+ * Validates that a MIME type is a safe image preview format for browser/webview display.
+ */
+export function isSafePreviewImageMimeType(mimeType: unknown): boolean {
+  if (typeof mimeType !== 'string') return false;
+  const normalized = mimeType.trim().toLowerCase().split(';')[0];
+  return SAFE_PREVIEW_MIME_REGEX.test(normalized);
+}
+
+export const isSafeImageMimeType = isSafePreviewImageMimeType;
+
+/**
+ * Validates whether an object conforms to real ImageContent with non-empty data and an image MIME.
+ * Preserves outbound/domain non-preview image formats (e.g. HEIC, TIFF).
+ */
+export function isValidImageContent(item: unknown): item is ImageContent {
+  if (!item || typeof item !== 'object') return false;
+  const obj = item as Record<string, unknown>;
+  return (
+    obj.type === 'image' &&
+    typeof obj.data === 'string' &&
+    obj.data.trim().length > 0 &&
+    typeof obj.mimeType === 'string' &&
+    /^image\/[a-zA-Z0-9.\+_-]+$/i.test(obj.mimeType.trim().toLowerCase().split(';')[0])
+  );
+}
+
+const BASE64_CHAR_REGEX = /^[A-Za-z0-9+/=]+$/;
+
+/**
+ * Validates preview image payload and returns a safe data: URI for img rendering,
+ * or null if the payload is malformed or not an allowed display MIME.
+ */
+export function getSafePreviewImageSrc(image: ImageContent | unknown): string | null {
+  if (!image || typeof image !== 'object') return null;
+  const obj = image as Record<string, unknown>;
+  if (obj.type !== 'image' || typeof obj.data !== 'string' || typeof obj.mimeType !== 'string') {
+    return null;
+  }
+
+  const rawMime = obj.mimeType.trim().toLowerCase().split(';')[0];
+  if (!isSafePreviewImageMimeType(rawMime)) {
+    return null;
+  }
+
+  const dataStr = obj.data.trim();
+  if (dataStr.length === 0) {
+    return null;
+  }
+
+  if (dataStr.startsWith('data:')) {
+    const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataStr);
+    if (!match) {
+      return null;
+    }
+    const uriMime = match[1].trim().toLowerCase();
+    if (!isSafePreviewImageMimeType(uriMime)) {
+      return null;
+    }
+    const cleanBase64 = match[2].trim().replace(/\s+/g, '');
+    if (!BASE64_CHAR_REGEX.test(cleanBase64)) {
+      return null;
+    }
+    return `data:${uriMime};base64,${cleanBase64}`;
+  }
+
+  const cleanBase64 = dataStr.replace(/\s+/g, '');
+  if (!BASE64_CHAR_REGEX.test(cleanBase64)) {
+    return null;
+  }
+
+  return `data:${rawMime};base64,${cleanBase64}`;
+}
+
+/**
+ * Extracts validated ImageContent blocks from authoritative message content or image lists.
+ * Preserves repeated images inside content, but prevents duplicating the same image
+ * when present in both content and the images list.
+ */
+export function extractImagesFromMessage(
+  msg: AuthoritativeMessage | Record<string, unknown>
+): ImageContent[] {
+  const images: ImageContent[] = [];
+
+  if (Array.isArray(msg.content)) {
+    for (const block of msg.content) {
+      if (isValidImageContent(block)) {
+        images.push({
+          type: 'image',
+          data: block.data,
+          mimeType: block.mimeType,
+        });
+      }
+    }
+  }
+
+  const rawMsg = msg as Record<string, unknown>;
+  if (Array.isArray(rawMsg.images)) {
+    for (const item of rawMsg.images) {
+      if (isValidImageContent(item)) {
+        const alreadyInContent = images.some(
+          (existing) => existing.data === item.data && existing.mimeType === item.mimeType
+        );
+        if (!alreadyInContent) {
+          images.push({
+            type: 'image',
+            data: item.data,
+            mimeType: item.mimeType,
+          });
+        }
+      }
+    }
+  }
+
+  return images;
+}
+
 export function extractTextFromContent(
   content: string | MessageContentBlock[] | unknown
 ): string {

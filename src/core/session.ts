@@ -1,4 +1,5 @@
 import {
+  extractImagesFromMessage,
   extractTextFromContent,
   extractToolOutput,
   parseMessageBlocks,
@@ -352,6 +353,7 @@ export function convertRpcMessageToChatMessage(
       : `hydrated-${role}-${index}-${msg.timestamp ?? Date.now()}`;
 
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
+  const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
 
   return {
     id,
@@ -360,6 +362,7 @@ export function convertRpcMessageToChatMessage(
     timestamp,
     isStreaming: false,
     blocks: blocks && blocks.length > 0 ? blocks : undefined,
+    images: images && images.length > 0 ? images : undefined,
   };
 }
 
@@ -406,6 +409,7 @@ export function hydrateChatMessages(rawMessages: unknown[]): ChatMessage[] {
         converted &&
         (converted.content.length > 0 ||
           (converted.blocks && converted.blocks.length > 0) ||
+          (converted.images && converted.images.length > 0) ||
           converted.role === 'assistant')
       ) {
         hydrated.push(converted);
