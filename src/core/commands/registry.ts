@@ -52,6 +52,17 @@ export const COMMANDS: CommandSpec[] = [
     execution: 'client',
   },
   {
+    id: 'export',
+    name: '/export',
+    argumentHint: '[md|json]',
+    description: {
+      es: 'Exporta la conversación actual a Markdown o JSON.',
+      en: 'Exports the current conversation to Markdown or JSON.',
+    },
+    origin: 'pi-core',
+    execution: 'client',
+  },
+  {
     id: 'compact',
     name: '/compact',
     description: {

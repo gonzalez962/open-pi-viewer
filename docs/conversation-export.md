@@ -6,7 +6,9 @@ Pure deterministic Markdown and versioned JSON serializers for the current loade
 
 Conversation export allows users to export the active transcript displayed in the viewer into clean Markdown (`.md`) or versioned JSON (`.json`) files.
 
-This document describes the pure core logic implemented in **T1** (`src/core/export.ts` and `src/core/types/export.ts`). Browser download triggers, `/export` slash-command registration, and UI integration are part of **T2** and **T3** and are tracked as pending.
+This document describes the pure core logic implemented in **T1** (`src/core/export.ts` and `src/core/types/export.ts`), the host download adapter and command catalog registration in **T2** (`src/infra/download.ts`, `src/core/commands/registry.ts`), and the remaining hook/UI orchestration planned for **T3**.
+
+> **Note on T2 / T3 boundary**: `/export` is registered in the core slash-command catalog and localized notices are defined. The actual command dispatch handler and hook orchestration remain pending **T3**.
 
 ## Content Policy: `conversation_summary`
 
@@ -136,12 +138,40 @@ Export filenames are generated via `sanitizeExportFilename` and `generateExportF
 - **Determinism & Epoch Fallbacks**: Accepts `exportedAt` (Date or ISO 8601 string). When absent, malformed, or an `Invalid Date` object, pure domain utilities deterministically fall back to the Unix epoch (`1970-01-01` for filenames, `1970-01-01T00:00:00.000Z` for markdown/JSON metadata), never accessing the ambient system clock.
 - **Consistent UTC Parsing**: Date strings with timezone offsets (such as `2026-01-01T01:00:00+05:00`) are parsed and converted to UTC (`2025-12-31`). Calendar components are validated intentionally to reject impossible dates (such as `2026-02-31` or `9999-99-99`), falling back to epoch rather than normalizing to another date.
 
+## Download Adapter & Initiation Semantics (T2)
+
+The download adapter (`src/infra/download.ts`) triggers downloads via a Blob and temporary anchor click strategy:
+
+```typescript
+import { triggerDownload, createDownloadAdapter } from '@infra/download';
+
+const result = triggerDownload({
+  content: mdContent,
+  filename: 'pi-conversation-2026-03-30.md',
+  mimeType: 'text/markdown;charset=utf-8',
+});
+
+// result: { success: true, initiated: true, filename: '...' }
+```
+
+### Resource Lifecycle & Race Protection
+- **Pre-Click Deferred Revocation Scheduling**: Revoking the `blob:` URL immediately after `.click()` creates a race condition in browsers/webviews where the download manager has not yet read the blob stream. Revocation is scheduled with a bounded delay (default: 60,000 ms; configurable via `revokeDelayMs`) **before** invoking `anchor.click()`. If timer scheduling throws or fails, execution aborts before click: the anchor is detached, the URL is revoked immediately, and `initiated: false` is reported honestly without leaks or phantom clicks.
+- **Post-Click Failure & Idempotent Cleanup**: Once timer scheduling succeeds, `anchor.click()` is invoked with delayed revocation already registered. If `click()` throws, the URL is revoked immediately and an idempotent guard ensures the later-firing timer callback will not double-revoke or fail. When `revokeDelayMs: 0` is passed (test-only), URL revocation executes immediately after click; this mode offers **no** download streaming race safety.
+- **DOM Cleanup**: The temporary `<a>` element is appended to `document.body`, clicked, and removed within the same synchronous tick. DOM removal error handling prevents unmount or detach exceptions from interrupting user feedback; however, if `removeChild` throws, complete DOM detachment cannot be guaranteed. Honest initiation (`initiated: true`) is preserved when `removeChild` throws after a successful click.
+- **Mandatory Capabilities & Host Isolation**: Both `isDownloadSupported` and `triggerDownload` require all mandatory capabilities (`Blob`, `createObjectURL`, `revokeObjectURL`, `document.createElement`/`document.body.appendChild`, and `setTimeout` scheduler) before creating URLs or clicking. Injected hosts do not silently fall back to ambient global properties when properties are explicitly absent. Unused cancellation (`clearTimeout`) is omitted to avoid introducing leaky cancellation semantics.
+- **No Microtask Fallback**: Microtasks run at the end of the current microtask checkpoint before the next browser task, so microtask scheduling cannot protect against browser download streaming races. The adapter requires a mandatory macrotask scheduler (`setTimeout`) rather than relying on microtask fallbacks.
+- **Explicit Host Interface**: `DownloadHost` allows full dependency injection (`Blob`, `createObjectURL`, `revokeObjectURL`, `document`, `setTimeout`) for deterministic testing in Node without globals or jsdom.
+
+### Platform Semantics & Limitations
+- **Initiated vs. Saved (No Browser Save Promises)**: `initiated: true` confirms only that the host download sequence was successfully triggered via anchor click. It **does not guarantee, confirm, or prove** that the file was saved to persistent disk by the user or operating system.
+- **Tauri WebView Limitation**: Unit tests mock the host interface and verify DOM lifecycle, not native OS disk persistence. The existing Tauri backend has no native `save_file` dialog or file-export command; WebView anchor downloads depend on the OS webview download manager. Any confirmed filesystem persistence would require native Tauri plugins/commands in a future scope.
+
 ## Integration Roadmap
 
 | Task | Scope | Status |
 |---|---|---|
 | **T1** | Pure serializers, types, safe filenames, policy tests, documentation | **Completed** |
-| **T2** | Browser/native download adapter (`src/infra/download.ts`), `/export` command registration | Pending |
+| **T2** | Browser download adapter (`src/infra/download.ts`), `/export` command catalog & EN/ES notices | **Completed** |
 | **T3** | Hook orchestration (`useConversationExport`), UI command wire-up, end-to-end checks | Pending |
 
 ## Acceptance Checklist
@@ -156,3 +186,9 @@ Export filenames are generated via `sanitizeExportFilename` and `generateExportF
 - [x] Input immutability verified (no array or object mutation).
 - [x] Empty transcript handling and `isExportableTranscript` guard.
 - [x] Architecture boundary verified (zero imports outside `core/`).
+- [x] Injectable download adapter (`src/infra/download.ts`) with explicit host interface.
+- [x] Immediate DOM cleanup and deferred URL revocation to prevent download race condition.
+- [x] Error-path cleanup revoking temporary URLs immediately on failure.
+- [x] Honest initiation semantics (`initiated: true` strictly distinct from confirmed save).
+- [x] Slash command `/export` registered with `origin: 'pi-core'`, `execution: 'client'`, and argument hint `[md|json]`.
+- [x] Localized notices (success/empty/invalid/error) added to `en.json` and `es.json` with 100% key parity.
