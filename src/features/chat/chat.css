@@ -1888,6 +1888,8 @@
   gap: 10px;
   padding: 8px 12px;
   background-color: var(--activity-card-header-bg);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .process-group-summary {
@@ -1895,6 +1897,8 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
 }
 
 .process-group-count {
@@ -1924,6 +1928,208 @@
   color: var(--tool-error-fg);
   background-color: var(--tool-error-bg);
   border-color: var(--tool-error-border);
+}
+
+/* ODD Agent Delegation Indicators (Issue #22)
+   Rendered left-aligned inside .process-group-summary when explicit delegation occurred. */
+.odd-agent-indicators {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.odd-agent-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1.5px 8px;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+  background-color: var(--activity-badge-bg);
+  border: 1px solid var(--border-muted);
+  color: var(--fg-default);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.odd-agent-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: currentColor;
+}
+
+.odd-agent-label {
+  letter-spacing: 0.2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.odd-agent-count {
+  font-size: 10px;
+  opacity: 0.8;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Orchestrator Badge: Electric Violet / Purple Accent */
+.odd-agent-orchestrator {
+  background-color: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #c084fc;
+}
+
+/* Explorer: Cyan / Electric Blue */
+.odd-agent-explore {
+  background-color: rgba(6, 182, 212, 0.12);
+  border-color: rgba(6, 182, 212, 0.45);
+  color: #22d3ee;
+}
+
+/* Verifier: Emerald / Mint Green */
+.odd-agent-verify {
+  background-color: var(--status-green-bg);
+  border-color: var(--status-green-border);
+  color: var(--status-green);
+}
+
+/* Worker: Amber / Gold */
+.odd-agent-worker {
+  background-color: var(--status-amber-bg);
+  border-color: var(--status-amber-border);
+  color: var(--status-amber-fg);
+}
+
+/* Judge: Magenta / Violet */
+.odd-agent-judge {
+  background-color: rgba(236, 72, 153, 0.12);
+  border-color: rgba(236, 72, 153, 0.45);
+  color: #f472b6;
+}
+
+/* Review: Azure / Sky Blue */
+.odd-agent-review {
+  background-color: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.45);
+  color: #60a5fa;
+}
+
+/* Fix: Coral / Terracotta */
+.odd-agent-fix {
+  background-color: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.45);
+  color: #fb7185;
+}
+
+/* Unknown / Generic Agent: Muted Neutral */
+.odd-agent-unknown {
+  background-color: var(--activity-badge-bg);
+  border-color: var(--border-muted);
+  color: var(--fg-muted);
+}
+
+/* Status: Dispatched (Neutral, static, no pulse) */
+.odd-agent-status-dispatched .odd-agent-dot {
+  opacity: 0.85;
+}
+
+/* Status: Dispatching (Pulse animation on dot while dispatch tool is in flight) */
+.odd-agent-status-dispatching .odd-agent-dot,
+.is-dispatching .odd-agent-dot,
+.odd-agent-status-running.is-running .odd-agent-dot {
+  animation: odd-agent-pulse 1.8s infinite ease-in-out;
+}
+
+/* Status: Error */
+.odd-agent-status-error {
+  border-color: var(--tool-error-border);
+}
+.odd-agent-status-error .odd-agent-dot {
+  background-color: var(--tool-error-fg);
+}
+
+/* Pulse animation for active running agent */
+@keyframes odd-agent-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+}
+
+/* Reduced motion accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .odd-agent-status-dispatching .odd-agent-dot,
+  .is-dispatching .odd-agent-dot,
+  .odd-agent-status-running.is-running .odd-agent-dot {
+    animation: none;
+  }
+}
+
+/* Narrow layout responsiveness */
+@media (max-width: 600px) {
+  .process-group-header {
+    gap: 8px;
+  }
+  .odd-agent-indicators {
+    gap: 4px;
+  }
+  .odd-agent-indicator {
+    font-size: 10px;
+    padding: 1px 6px;
+    gap: 4px;
+  }
+}
+
+/* Light theme overrides for vibrant legible contrast */
+[data-theme="light"] .odd-agent-orchestrator {
+  background-color: rgba(147, 51, 234, 0.08);
+  border-color: rgba(147, 51, 234, 0.35);
+  color: #7e22ce;
+}
+[data-theme="light"] .odd-agent-explore {
+  background-color: rgba(14, 116, 144, 0.08);
+  border-color: rgba(14, 116, 144, 0.35);
+  color: #0e7490;
+}
+[data-theme="light"] .odd-agent-judge {
+  background-color: rgba(190, 24, 93, 0.08);
+  border-color: rgba(190, 24, 93, 0.35);
+  color: #be185d;
+}
+[data-theme="light"] .odd-agent-review {
+  background-color: rgba(29, 78, 216, 0.08);
+  border-color: rgba(29, 78, 216, 0.35);
+  color: #1d4ed8;
+}
+[data-theme="light"] .odd-agent-fix {
+  background-color: rgba(190, 18, 60, 0.08);
+  border-color: rgba(190, 18, 60, 0.35);
+  color: #be123c;
+}
+
+/* Custom cards background transparency preservation */
+[data-custom-cards] .odd-agent-indicators {
+  background: transparent;
+  background-color: transparent;
 }
 
 .process-group-global-toggle {
@@ -3522,6 +3728,3 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
-
-
-
