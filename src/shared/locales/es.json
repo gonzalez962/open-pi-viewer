@@ -19,6 +19,10 @@
   "header.retry_title": "Reintentar conexión con Pi usando la configuración aplicada",
   "header.new_title": "Iniciar una nueva conversación (restablece el contexto de sesión de Pi)",
   "header.settings_title": "Configuración",
+  "zen.toggle_button": "Zen",
+  "zen.enter_title": "Activar modo Zen (Alt+Z)",
+  "zen.exit_title": "Salir del modo Zen (Esc o Alt+Z)",
+  "zen.exit_button": "Salir de Zen",
 
   "sidebar.title": "Sesiones",
   "sidebar.toggle": "Alternar historial de sesiones",
