@@ -279,6 +279,34 @@
   white-space: pre-wrap;
 }
 
+/* User message autolinks */
+.user-message-link {
+  color: var(--md-link-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+  transition: color 0.15s;
+}
+
+.user-message-link:hover {
+  color: var(--accent-primary-hover);
+}
+
+.user-message-link:focus-visible {
+  outline: 2px solid var(--border-active);
+  outline-offset: 1px;
+}
+
+.user-message-link-opening {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.user-message-link-failed {
+  color: var(--status-error);
+}
+
 .message-assistant .message-content {
   white-space: normal;
 }
