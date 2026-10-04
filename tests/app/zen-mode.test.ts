@@ -182,4 +182,3 @@ test('zen-mode: determineZenFocusTarget transfers focus sensibly and avoids stea
     null
   );
 });
-

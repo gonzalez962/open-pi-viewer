@@ -118,4 +118,3 @@ export function determineZenFocusTarget(
 
   return isZenMode ? 'floating-exit' : 'header-toggle';
 }
-
