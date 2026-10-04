@@ -9,11 +9,16 @@ export interface BridgeStatus {
   model?: ModelInfo | null;
 }
 
+export type ConnectionType = 'local' | 'mesh';
+
 export interface ConnectConfig {
   nodePath: string;
   piEntrypoint: string;
   workingDirectory: string;
   fileTreeRefreshInterval?: number;
+  connectionType?: ConnectionType;
+  meshCoordinatorUrl?: string;
+  meshToken?: string;
 }
 
 export interface ConnectSessionOptions {

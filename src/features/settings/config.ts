@@ -47,6 +47,54 @@ export function validateConnectConfig(input: unknown): ConfigValidationResult {
 
   const raw = input as Record<string, unknown>;
 
+  // Check if Gentle Mesh connection type is selected
+  if (raw.connectionType === 'mesh') {
+    let meshCoordinatorUrl = 'http://localhost:8080';
+    if (typeof raw.meshCoordinatorUrl === 'string' && raw.meshCoordinatorUrl.trim() !== '') {
+      meshCoordinatorUrl = raw.meshCoordinatorUrl.trim();
+    }
+    if (!meshCoordinatorUrl.startsWith('http://') && !meshCoordinatorUrl.startsWith('https://')) {
+      return {
+        valid: false,
+        error: `Gentle Mesh coordinator URL must begin with http:// or https://, got: '${meshCoordinatorUrl}'`,
+      };
+    }
+
+    const workingDirectory =
+      typeof raw.workingDirectory === 'string' && raw.workingDirectory.trim() !== ''
+        ? raw.workingDirectory.trim()
+        : '.';
+
+    let fileTreeRefreshInterval = 15;
+    if (raw.fileTreeRefreshInterval !== undefined) {
+      if (
+        typeof raw.fileTreeRefreshInterval === 'number' &&
+        Number.isFinite(raw.fileTreeRefreshInterval) &&
+        raw.fileTreeRefreshInterval >= 0
+      ) {
+        fileTreeRefreshInterval = Math.round(raw.fileTreeRefreshInterval);
+      } else {
+        return {
+          valid: false,
+          error: 'File tree refresh interval must be a non-negative number of seconds',
+        };
+      }
+    }
+
+    return {
+      valid: true,
+      config: {
+        nodePath: typeof raw.nodePath === 'string' ? raw.nodePath : 'node',
+        piEntrypoint: typeof raw.piEntrypoint === 'string' ? raw.piEntrypoint : '',
+        workingDirectory,
+        fileTreeRefreshInterval,
+        connectionType: 'mesh',
+        meshCoordinatorUrl,
+        meshToken: typeof raw.meshToken === 'string' ? raw.meshToken.trim() : '',
+      },
+    };
+  }
+
   // 1. Node executable validation
   if (typeof raw.nodePath !== 'string') {
     return { valid: false, error: 'Node executable path must be a string' };
@@ -201,7 +249,10 @@ export function loadConnectConfig(storage?: Storage | null): ConfigLoadResult {
   }
 
   const rawObj = parsed as Record<string, unknown>;
-  const requiredFields = ['nodePath', 'piEntrypoint', 'workingDirectory'];
+  const isMesh = rawObj.connectionType === 'mesh';
+  const requiredFields = isMesh
+    ? ['meshCoordinatorUrl']
+    : ['nodePath', 'piEntrypoint', 'workingDirectory'];
   const missingFields = requiredFields.filter((f) => !(f in rawObj));
   if (missingFields.length > 0) {
     return {
