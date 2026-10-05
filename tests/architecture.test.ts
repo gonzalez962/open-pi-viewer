@@ -289,6 +289,7 @@ test('architecture: backend commands monolith eliminated into modular domain tre
   const expectedSubmodules = [
     'config_files.rs',
     'connection.rs',
+    'conversation_export.rs',
     'discovery.rs',
     'external.rs',
     'mod.rs',
