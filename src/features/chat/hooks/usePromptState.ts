@@ -85,6 +85,11 @@ export interface UsePromptStateOptions {
    */
   onReload: () => ReloadRequest;
   /**
+   * Exports the loaded conversation (Issue #59's "/export" client command).
+   * Receives the trailing arguments (e.g. "" for default md, "md", "json", or invalid args).
+   */
+  onExport?: (args: string) => void;
+  /**
    * Command catalog used for dispatch and "/help": built-ins plus the user's custom
    * commands (Issue #9 T7, see `buildCommandCatalog`). Defaults to the built-in `COMMANDS`.
    * Custom commands always resolve as 'agent', so they are forwarded to Pi verbatim.
@@ -96,6 +101,62 @@ export interface UsePromptStateOptions {
    * hiding is purely visual.
    */
   helpCommands?: readonly CommandSpec[];
+}
+
+export interface PromptDispatchPlan {
+  action: 'client_command' | 'send_prompt' | 'blocked';
+  commandId?: string;
+  args?: string;
+}
+
+/**
+ * Pure decision planner for prompt submission dispatch:
+ * - Rejects empty inputs.
+ * - Recognizes '/export' locally regardless of attached files (preserving drafts).
+ * - Enforces standard readiness guards (blocked offline; permitted when idle ready or busy with queueing).
+ * - Preserves existing dispatch behavior for all other commands and messages.
+ */
+export function planPromptDispatch({
+  prompt,
+  hasAttachments,
+  isReadyToSend,
+  canQueue,
+  commands = COMMANDS,
+}: {
+  prompt: string;
+  hasAttachments: boolean;
+  isReadyToSend: boolean;
+  canQueue: boolean;
+  commands?: readonly CommandSpec[];
+}): PromptDispatchPlan {
+  const trimmed = prompt.trim();
+  if (!trimmed && !hasAttachments) {
+    return { action: 'blocked' };
+  }
+
+  const decision = trimmed ? decideCommandDispatch(trimmed, commands) : null;
+
+  if (decision?.kind === 'client' && decision.command) {
+    const isExport = decision.command.id === 'export';
+    // Finding 1 & 2: /export is recognized locally regardless of attachments.
+    // Normal readiness guards apply: must be ready or queueable.
+    if (isExport || !hasAttachments) {
+      if (!isReadyToSend && !canQueue) {
+        return { action: 'blocked' };
+      }
+      return {
+        action: 'client_command',
+        commandId: decision.command.id,
+        args: decision.args,
+      };
+    }
+  }
+
+  if (!isReadyToSend && !canQueue) {
+    return { action: 'blocked' };
+  }
+
+  return { action: 'send_prompt' };
 }
 
 /**
@@ -112,6 +173,7 @@ export function usePromptState({
   language,
   onNewConversation,
   onReload,
+  onExport,
   commands = COMMANDS,
   helpCommands = commands,
 }: UsePromptStateOptions) {
@@ -166,7 +228,7 @@ export function usePromptState({
    * unrecognized commands — those fall through to the ordinary send path below and reach
    * Pi unchanged, exactly as typed.
    */
-  const executeClientCommand = (commandId: string) => {
+  const executeClientCommand = (commandId: string, args: string = '') => {
     switch (commandId) {
       case 'clear': {
         dispatch({ type: 'CLEAR_MESSAGES' });
@@ -174,6 +236,10 @@ export function usePromptState({
       }
       case 'new': {
         void onNewConversation();
+        return;
+      }
+      case 'export': {
+        onExport?.(args);
         return;
       }
       case 'reload': {
@@ -226,20 +292,23 @@ export function usePromptState({
     // isReadyToSend and canQueue are mutually exclusive (canQueue requires isBusy, which
     // isReadyToSend excludes); `queuing` picks which lifecycle this submit follows.
     const queuing = !isReadyToSend && canQueue;
-    if ((!trimmed && !hasAttachments) || (!isReadyToSend && !canQueue)) return;
 
-    // Slash command dispatch (Issue #9 T4): a recognized 'client' command executes locally
-    // and never reaches Pi. Skipped when files are attached — attaching a file alongside
-    // "/something" is ambiguous enough that sending it literally is the safer default.
-    // Agent commands and unrecognized "/xxx" commands are NOT special-cased here: they fall
-    // straight through to the normal send below, which forwards `trimmed` unchanged.
-    if (!hasAttachments) {
-      const decision = decideCommandDispatch(trimmed, commands);
-      if (decision.kind === 'client' && decision.command) {
-        setPrompt('');
-        executeClientCommand(decision.command.id);
-        return;
-      }
+    const plan = planPromptDispatch({
+      prompt: trimmed,
+      hasAttachments,
+      isReadyToSend,
+      canQueue,
+      commands,
+    });
+
+    if (plan.action === 'blocked') {
+      return;
+    }
+
+    if (plan.action === 'client_command' && plan.commandId) {
+      setPrompt('');
+      executeClientCommand(plan.commandId, plan.args ?? '');
+      return;
     }
 
     const defaultAttachmentText = attachedFiles.some((f) => f.type === 'image')

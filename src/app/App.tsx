@@ -88,6 +88,8 @@ import {
 } from '@features/projects/projects';
 import { useSessions } from '@features/sessions/hooks/useSessions';
 import { usePromptState } from '@features/chat/hooks/usePromptState';
+import { useConversationExport } from '@features/chat/hooks/useConversationExport';
+import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
 import { useModels } from '@features/providers/hooks/useModels';
@@ -483,6 +485,20 @@ export const App: React.FC = () => {
       startConnection,
     });
 
+  // Active session title for export (customTitle wins, falls back to firstMessage)
+  const activeSession = useMemo(
+    () => state.sessions.find((s) => s.id === state.sessionId),
+    [state.sessions, state.sessionId]
+  );
+  const activeSessionTitle = resolveExportTitle(activeSession);
+
+  const { handleExport } = useConversationExport({
+    messages: state.messages,
+    sessionTitle: activeSessionTitle,
+    language: preferences.language,
+    dispatch,
+  });
+
   // Prompt cluster: draft text, send/abort, and the Enter-to-send binding. Declared here
   // (rather than near useChatScroll, where it originally lived) because the Issue #9 slash
   // command dispatcher it now owns needs onReload (handleRetry) and onNewConversation
@@ -508,6 +524,7 @@ export const App: React.FC = () => {
     language: preferences.language,
     onNewConversation: handleNewConversation,
     onReload: requestRetry,
+    onExport: handleExport,
     commands: commandCatalog,
     helpCommands: visibleCommandCatalog,
   });
