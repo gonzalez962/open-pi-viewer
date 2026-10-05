@@ -85,10 +85,19 @@ function resolveCapabilities(host?: DownloadHost): ResolvedHostCapabilities {
   if (host !== undefined) {
     return {
       BlobClass: host.Blob,
-      createUrl: host.createObjectURL,
-      revokeUrl: host.revokeObjectURL,
+      createUrl:
+        typeof host.createObjectURL === 'function'
+          ? (blob: Blob) => host.createObjectURL!(blob)
+          : undefined,
+      revokeUrl:
+        typeof host.revokeObjectURL === 'function'
+          ? (url: string) => host.revokeObjectURL!(url)
+          : undefined,
       doc: host.document,
-      scheduleTimeout: host.setTimeout,
+      scheduleTimeout:
+        typeof host.setTimeout === 'function'
+          ? (handler: () => void, timeout?: number) => host.setTimeout!(handler, timeout)
+          : undefined,
     };
   }
 
@@ -107,7 +116,11 @@ function resolveCapabilities(host?: DownloadHost): ResolvedHostCapabilities {
         ? (document as unknown as DownloadDocumentHost)
         : undefined,
     scheduleTimeout:
-      typeof setTimeout !== 'undefined' ? setTimeout : undefined,
+      typeof globalThis !== 'undefined' && typeof globalThis.setTimeout === 'function'
+        ? (handler: () => void, timeout?: number) => globalThis.setTimeout(handler, timeout)
+        : typeof setTimeout === 'function'
+          ? (handler: () => void, timeout?: number) => setTimeout(handler, timeout)
+          : undefined,
   };
 }
 

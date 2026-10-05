@@ -504,3 +504,203 @@ test('download: when removeChild throws after click, does not throw and honestly
   assert.equal(result.initiated, true);
   assert.equal(result.success, true);
 });
+
+test('download: ambient resolution binds setTimeout to global receiver preventing Illegal invocation in browser/webview', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalDocument = (globalThis as unknown as { document?: unknown }).document;
+
+  let timerScheduled = false;
+  let clicked = false;
+
+  try {
+    let scheduledDelay: number | undefined;
+    let scheduledCallback: (() => void) | undefined;
+
+    // Simulate browser WebIDL binding that rejects invocation without global receiver
+    const receiverSensitiveSetTimeout = function (
+      this: unknown,
+      handler: () => void,
+      timeout?: number
+    ) {
+      if (this !== globalThis) {
+        throw new TypeError('Illegal invocation');
+      }
+      timerScheduled = true;
+      scheduledDelay = timeout;
+      scheduledCallback = handler;
+      return 1;
+    };
+
+    globalThis.setTimeout = receiverSensitiveSetTimeout as unknown as typeof setTimeout;
+
+    (globalThis as unknown as { document: DownloadDocumentHost }).document = {
+      createElement: (tagName: string) => {
+        if (tagName !== 'a') throw new Error(`Unexpected tag: ${tagName}`);
+        return {
+          href: '',
+          download: '',
+          rel: '',
+          style: {},
+          click: () => {
+            clicked = true;
+          },
+        };
+      },
+      body: {
+        appendChild: (node: unknown) => node,
+        removeChild: (node: unknown) => node,
+      },
+    };
+
+    const result = triggerDownload({
+      content: 'ambient receiver test',
+      filename: 'ambient-export.txt',
+    });
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.success, true);
+    assert.equal(result.initiated, true);
+    assert.equal(timerScheduled, true);
+    assert.equal(scheduledDelay, 60_000);
+    assert.equal(typeof scheduledCallback, 'function');
+    assert.doesNotThrow(() => {
+      scheduledCallback!();
+    });
+    assert.equal(clicked, true);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    if (originalDocument === undefined) {
+      delete (globalThis as unknown as { document?: unknown }).document;
+    } else {
+      (globalThis as unknown as { document: unknown }).document = originalDocument;
+    }
+  }
+});
+
+test('download: injected host methods preserve host receiver for setTimeout and URL methods', () => {
+  let timerScheduled = false;
+  let clicked = false;
+  let urlCreated = false;
+  let urlRevoked = false;
+
+  const host: DownloadHost = {
+    Blob: Blob,
+    createObjectURL(this: unknown, _blob: Blob) {
+      if (this !== host) {
+        throw new TypeError('Illegal invocation on createObjectURL: expected host receiver');
+      }
+      urlCreated = true;
+      return 'blob:receiver-test://1';
+    },
+    revokeObjectURL(this: unknown, _url: string) {
+      if (this !== host) {
+        throw new TypeError('Illegal invocation on revokeObjectURL: expected host receiver');
+      }
+      urlRevoked = true;
+    },
+    setTimeout(this: unknown, handler: () => void, _timeout?: number) {
+      if (this !== host) {
+        throw new TypeError('Illegal invocation on setTimeout: expected host receiver');
+      }
+      timerScheduled = true;
+      // trigger handler synchronously for test revocation verification
+      handler();
+      return 1;
+    },
+    document: {
+      createElement(this: unknown, _tagName: string) {
+        return {
+          href: '',
+          download: '',
+          rel: '',
+          style: {},
+          click: () => {
+            clicked = true;
+          },
+        };
+      },
+      body: {
+        appendChild(this: unknown, node: unknown) {
+          return node;
+        },
+        removeChild(this: unknown, node: unknown) {
+          return node;
+        },
+      },
+    },
+  };
+
+  const result = triggerDownload(
+    { content: 'host receiver test', filename: 'receiver.txt' },
+    { host }
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.success, true);
+  assert.equal(result.initiated, true);
+  assert.equal(urlCreated, true);
+  assert.equal(timerScheduled, true);
+  assert.equal(urlRevoked, true);
+  assert.equal(clicked, true);
+});
+
+test('download: preserves document and body receivers for DOM methods', () => {
+  let docReceiverVerified = false;
+  let bodyAppendReceiverVerified = false;
+  let bodyRemoveReceiverVerified = false;
+
+  const mockDoc: DownloadDocumentHost = {
+    createElement(this: unknown, _tagName: string) {
+      if (this !== mockDoc) {
+        throw new TypeError('Illegal invocation on createElement: expected document receiver');
+      }
+      docReceiverVerified = true;
+      return {
+        href: '',
+        download: '',
+        rel: '',
+        style: {},
+        click: () => {},
+      };
+    },
+    body: {
+      appendChild(this: unknown, node: unknown) {
+        if (this !== mockDoc.body) {
+          throw new TypeError('Illegal invocation on appendChild: expected body receiver');
+        }
+        bodyAppendReceiverVerified = true;
+        return node;
+      },
+      removeChild(this: unknown, node: unknown) {
+        if (this !== mockDoc.body) {
+          throw new TypeError('Illegal invocation on removeChild: expected body receiver');
+        }
+        bodyRemoveReceiverVerified = true;
+        return node;
+      },
+    },
+  };
+
+  const host: DownloadHost = {
+    Blob: Blob,
+    createObjectURL: () => 'blob:mock://1',
+    revokeObjectURL: () => {},
+    setTimeout: (handler) => {
+      handler();
+      return 1;
+    },
+    document: mockDoc,
+  };
+
+  const result = triggerDownload(
+    { content: 'dom receiver test', filename: 'dom-receiver.txt' },
+    { host }
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.success, true);
+  assert.equal(result.initiated, true);
+  assert.equal(docReceiverVerified, true);
+  assert.equal(bodyAppendReceiverVerified, true);
+  assert.equal(bodyRemoveReceiverVerified, true);
+});
