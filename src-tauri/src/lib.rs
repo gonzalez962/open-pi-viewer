@@ -72,6 +72,7 @@ pub fn run() {
             commands::cancel_oauth_login,
             commands::send_oauth_prompt_response,
             commands::logout_oauth_provider,
+            commands::save_conversation_export,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

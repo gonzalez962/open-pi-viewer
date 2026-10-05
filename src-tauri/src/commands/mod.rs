@@ -76,12 +76,25 @@ impl Default for AppState {
 
 pub mod config_files;
 pub mod connection;
+pub mod conversation_export;
 pub mod discovery;
 pub mod external;
 pub mod models;
 pub mod oauth;
 pub mod sessions;
 pub mod workspace;
+
+pub use conversation_export::{
+    save_conversation_export,
+    __cmd__save_conversation_export,
+    __tauri_command_name_save_conversation_export,
+    save_conversation_export_with_dialog,
+    validate_format,
+    validate_suggested_filename,
+    ensure_appropriate_extension,
+    write_export_file,
+    ExportFormat,
+};
 
 pub use connection::{
     abort,
