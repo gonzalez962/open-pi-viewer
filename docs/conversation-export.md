@@ -8,7 +8,7 @@ Conversation export allows users to export the active transcript displayed in th
 
 This document describes the pure core logic implemented in **T1** (`src/core/export.ts` and `src/core/types/export.ts`), the host download adapter and command catalog registration in **T2** (`src/infra/download.ts`, `src/core/commands/registry.ts`), and the remaining hook/UI orchestration planned for **T3**.
 
-> **Note on T2 / T3 boundary**: `/export` is registered in the core slash-command catalog and localized notices are defined. The actual command dispatch handler and hook orchestration remain pending **T3**.
+> **Architecture Overview**: Implemented in three layers: pure core serializers in **T1** (`src/core/export.ts`, `src/core/types/export.ts`), host download adapter & slash catalog in **T2** (`src/infra/download.ts`, `src/core/commands/registry.ts`), and feature controller & hook orchestration in **T3** (`src/features/chat/conversation-export.ts`, `src/features/chat/hooks/useConversationExport.ts`, `src/features/chat/hooks/usePromptState.ts`, `src/app/App.tsx`).
 
 ## Content Policy: `conversation_summary`
 
@@ -166,13 +166,33 @@ const result = triggerDownload({
 - **Initiated vs. Saved (No Browser Save Promises)**: `initiated: true` confirms only that the host download sequence was successfully triggered via anchor click. It **does not guarantee, confirm, or prove** that the file was saved to persistent disk by the user or operating system.
 - **Tauri WebView Limitation**: Unit tests mock the host interface and verify DOM lifecycle, not native OS disk persistence. The existing Tauri backend has no native `save_file` dialog or file-export command; WebView anchor downloads depend on the OS webview download manager. Any confirmed filesystem persistence would require native Tauri plugins/commands in a future scope.
 
+## Command Dispatch & Hook Orchestration (T3)
+
+The local slash-command flow connects prompt entry to the host download adapter:
+
+```typescript
+import { exportConversation, resolveExportTitle } from '@features/chat/conversation-export';
+import { useConversationExport } from '@features/chat/hooks/useConversationExport';
+```
+
+### Execution Lifecycle
+1. **Slash Interception & Draft Preservation**: When the prompt draft starts with `/export`, `planPromptDispatch` intercepts the command locally regardless of attached files, never forwarding `/export` to the Pi agent. The prompt text is cleared while attached draft files are preserved in the prompt controls. Unrelated client and agent commands retain their existing dispatch behaviors.
+2. **Readiness Guards & Busy Operation**: The prompt controls disable user interaction when offline (`!isReadyToSend && !canQueue`). The export planner maintains these standard readiness guards, blocking `/export` when offline rather than claiming offline prompt execution. When the agent is busy but prompt queueing is active (`canQueue: true`), local `/export` is permitted consistent with the active UI state.
+3. **Format Parsing & Local Validation**: Accepts `/export` (defaults to Markdown), `/export md`, or `/export json` (case-insensitive). Any extra or invalid arguments (e.g. `/export foo` or `/export md extra`) are rejected locally with a localized `command_palette.export_invalid_format` system message and are **never** forwarded to the Pi agent.
+4. **Session Title Resolution**: Prefers `session.customTitle?.trim()`, falls back to `session.firstMessage?.trim()`, or leaves title undefined for fallback (`pi-conversation` / `Conversation Export`). Never references an invented `activeSession.name`.
+5. **Message Snapshot Timing**: `messages` is shallow-snapshotted before dispatching any feedback actions so subsequent system notices are never captured inside the exported file.
+6. **Single Timestamp Boundary**: A single `Date` is captured once at the feature boundary and passed synchronously to both `generateExportFilename` and the serializer (`exportToMarkdown` or `exportToJson`), ensuring timestamp parity.
+7. **Preparation Pipeline & Error Catching**: The entire preparation and download pipeline (content validation, timestamp capture, filename generation, serialization, and download initiation) is enclosed in structured error handling. Clock failures or serialization property errors are captured cleanly and dispatch `command_palette.export_failed` without invoking downloads.
+8. **Exportable Content Guard & Canonical Precedence**: `hasExportableContent` ensures empty, whitespace-only, or thought-only transcripts do not trigger downloads. Canonical text precedence is strictly respected: when blocks contain `TextBlock` items, they take precedence over `content`. Thinking blocks are omitted per privacy policy and do not count as exportable content, whereas tool executions (name/status) and attached image metadata do count as exportable.
+9. **Initiation Notice**: Dispatches a visible `command_palette.export_success` notice confirming initiation with the generated filename. Download failures dispatch `command_palette.export_failed`.
+
 ## Integration Roadmap
 
 | Task | Scope | Status |
 |---|---|---|
 | **T1** | Pure serializers, types, safe filenames, policy tests, documentation | **Completed** |
 | **T2** | Browser download adapter (`src/infra/download.ts`), `/export` command catalog & EN/ES notices | **Completed** |
-| **T3** | Hook orchestration (`useConversationExport`), UI command wire-up, end-to-end checks | Pending |
+| **T3** | Hook orchestration (`useConversationExport`), UI command wire-up, end-to-end checks | **Completed** |
 
 ## Acceptance Checklist
 
@@ -192,3 +212,15 @@ const result = triggerDownload({
 - [x] Honest initiation semantics (`initiated: true` strictly distinct from confirmed save).
 - [x] Slash command `/export` registered with `origin: 'pi-core'`, `execution: 'client'`, and argument hint `[md|json]`.
 - [x] Localized notices (success/empty/invalid/error) added to `en.json` and `es.json` with 100% key parity.
+- [x] Pure feature controller (`src/features/chat/conversation-export.ts`) with testable format validation and title resolution.
+- [x] Client slash command dispatch executes `/export`, `/export md`, and `/export json` locally.
+- [x] Extra/invalid format arguments rejected locally with visible notices and never forwarded to Pi.
+- [x] Prompt draft is consistently cleared upon command execution while attached files are preserved.
+- [x] Session title derived from `customTitle` (winning over `firstMessage`), never invented `name`.
+- [x] Snapshot of messages captured prior to feedback dispatch so system notices are excluded from export.
+- [x] Single deterministic timestamp captured at boundary and passed to both serializers and filename generator.
+- [x] Preparation and download pipeline fully wrapped in error handling with honest failure notices.
+- [x] Exportable content validation honors canonical text precedence, tool/image metadata, and strictly omits thinking-only blocks.
+- [x] Controller tests decoupled from prompt state hook, enabling clean independent commit staging.
+- [x] Busy execution permitted within queue-ready UI state; normal readiness guards preserved without false offline claims.
+- [x] Original messages array and objects are never mutated.
