@@ -277,14 +277,14 @@ test('hasExportableContent: canonical text precedence and content fallback edges
   assert.equal(hasExportableContent(thinkingWithTool), true);
 });
 
-test('exportConversation: default format exports markdown and initiates download', () => {
+test('exportConversation: default format exports markdown and initiates download', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let downloadedPayload: { content: string; filename: string; mimeType?: string } | null = null;
 
   const fixedDate = new Date('2026-03-30T14:00:00.000Z');
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: '',
     messages,
     sessionTitle: 'Log Inspection',
@@ -320,12 +320,12 @@ test('exportConversation: default format exports markdown and initiates download
   );
 });
 
-test('exportConversation: explicit "md" argument initiates markdown export', () => {
+test('exportConversation: explicit "md" argument initiates markdown export', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let capturedFilename = '';
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md',
     messages,
     language: 'en',
@@ -343,14 +343,14 @@ test('exportConversation: explicit "md" argument initiates markdown export', () 
   assert.ok(capturedFilename.endsWith('.md'));
 });
 
-test('exportConversation: explicit "json" argument exports versioned JSON', () => {
+test('exportConversation: explicit "json" argument exports versioned JSON', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let downloadedPayload: { content: string; filename: string; mimeType?: string } | null = null;
 
   const fixedDate = new Date('2026-03-30T14:00:00.000Z');
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'json',
     messages,
     sessionTitle: 'Log Inspection',
@@ -390,12 +390,12 @@ test('exportConversation: explicit "json" argument exports versioned JSON', () =
   );
 });
 
-test('exportConversation: rejects invalid format without triggering download', () => {
+test('exportConversation: rejects invalid format without triggering download', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let downloadTriggered = false;
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'yaml',
     messages,
     language: 'en',
@@ -418,12 +418,12 @@ test('exportConversation: rejects invalid format without triggering download', (
   );
 });
 
-test('exportConversation: rejects extra arguments after valid format', () => {
+test('exportConversation: rejects extra arguments after valid format', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let downloadTriggered = false;
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md extra',
     messages,
     language: 'es',
@@ -446,11 +446,11 @@ test('exportConversation: rejects extra arguments after valid format', () => {
   );
 });
 
-test('exportConversation: reports empty notice and skips download when messages list is empty', () => {
+test('exportConversation: reports empty notice and skips download when messages list is empty', async () => {
   const dispatched: ChatAction[] = [];
   let downloadTriggered = false;
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: '',
     messages: [],
     language: 'en',
@@ -470,7 +470,7 @@ test('exportConversation: reports empty notice and skips download when messages 
   assert.equal(dispatched[0].payload.content, translate('en', 'command_palette.export_empty'));
 });
 
-test('exportConversation: reports empty notice when messages have only whitespace placeholder', () => {
+test('exportConversation: reports empty notice when messages have only whitespace placeholder', async () => {
   const dispatched: ChatAction[] = [];
   let downloadTriggered = false;
 
@@ -483,7 +483,7 @@ test('exportConversation: reports empty notice when messages have only whitespac
     },
   ];
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md',
     messages: placeholderMessages,
     language: 'en',
@@ -503,11 +503,11 @@ test('exportConversation: reports empty notice when messages have only whitespac
   assert.equal(dispatched[0].payload.content, translate('en', 'command_palette.export_empty'));
 });
 
-test('exportConversation: handles download failure and dispatches visible failure notice', () => {
+test('exportConversation: handles download failure and dispatches visible failure notice', async () => {
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: '',
     messages,
     language: 'en',
@@ -534,13 +534,13 @@ test('exportConversation: handles download failure and dispatches visible failur
   );
 });
 
-test('exportConversation: encompasses throwing clock in preparation pipeline with honest failure notice', () => {
+test('exportConversation: encompasses throwing clock in preparation pipeline with honest failure notice', async () => {
   // Finding 3: now() throws outside try in old code; must be caught with honest failure notice
   const messages = createSampleMessages();
   const dispatched: ChatAction[] = [];
   let downloadCalled = false;
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md',
     messages,
     language: 'en',
@@ -569,7 +569,7 @@ test('exportConversation: encompasses throwing clock in preparation pipeline wit
   );
 });
 
-test('exportConversation: encompasses throwing serialization field getters with honest failure notice', () => {
+test('exportConversation: encompasses throwing serialization field getters with honest failure notice', async () => {
   // Finding 3: Serializer throwing during preparation must be caught, not escape to caller
   const throwingMessage: ChatMessage = {
     id: 'm-throw',
@@ -582,7 +582,7 @@ test('exportConversation: encompasses throwing serialization field getters with 
   const dispatched: ChatAction[] = [];
   let downloadCalled = false;
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md',
     messages: [throwingMessage],
     language: 'en',
@@ -608,12 +608,12 @@ test('exportConversation: encompasses throwing serialization field getters with 
   );
 });
 
-test('exportConversation: snapshots messages before feedback so feedback notice is not in export', () => {
+test('exportConversation: snapshots messages before feedback so feedback notice is not in export', async () => {
   const messages = createSampleMessages();
   const dynamicMessages = [...messages];
   let serializedContent = '';
 
-  const outcome = exportConversation({
+  const outcome = await exportConversation({
     args: 'md',
     messages: dynamicMessages,
     language: 'en',
@@ -643,11 +643,11 @@ test('exportConversation: snapshots messages before feedback so feedback notice 
   assert.equal(dynamicMessages.length, 3);
 });
 
-test('exportConversation: does not mutate original input messages', () => {
+test('exportConversation: does not mutate original input messages', async () => {
   const messages = createSampleMessages();
   const originalSnapshot = JSON.stringify(messages);
 
-  exportConversation({
+  await exportConversation({
     args: 'md',
     messages,
     language: 'en',
@@ -664,7 +664,7 @@ test('exportConversation: does not mutate original input messages', () => {
   assert.equal(JSON.stringify(messages), originalSnapshot);
 });
 
-test('integration: end-to-end export workflow never calls agent or mutates messages', () => {
+test('integration: end-to-end export workflow never calls agent or mutates messages', async () => {
   const originalMessages = createSampleMessages();
   const stateMessages = [...originalMessages];
 
@@ -678,7 +678,7 @@ test('integration: end-to-end export workflow never calls agent or mutates messa
   };
 
   // Run valid /export
-  const outcome1 = exportConversation({
+  const outcome1 = await exportConversation({
     args: '',
     messages: stateMessages,
     sessionTitle: 'Test Conversation',
@@ -689,7 +689,7 @@ test('integration: end-to-end export workflow never calls agent or mutates messa
   assert.equal(outcome1.status, 'success');
 
   // Run invalid /export
-  const outcome2 = exportConversation({
+  const outcome2 = await exportConversation({
     args: 'unsupported_format',
     messages: stateMessages,
     sessionTitle: 'Test Conversation',

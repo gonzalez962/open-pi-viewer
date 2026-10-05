@@ -8,6 +8,11 @@ import type { ChatAction } from '@core/reducer';
 import type { ChatMessage, TextBlock } from '@core/types/messages';
 import type { SessionSummary } from '@core/types/sessions';
 import { triggerDownload } from '@infra/download';
+import {
+  saveConversationExport,
+  type SaveExportPayload,
+  type SaveExportOptions,
+} from '@infra/conversation-export';
 import { translate, type SupportedLocale } from '@shared/i18n';
 
 export type ResolvedExportFormat = 'markdown' | 'json';
@@ -104,6 +109,7 @@ export function hasExportableContent(
 
 export type ExportOutcome =
   | { status: 'success'; filename: string }
+  | { status: 'cancelled' }
   | { status: 'empty' }
   | { status: 'invalid_format'; error: string }
   | { status: 'failed'; error: string };
@@ -114,6 +120,16 @@ export interface ExportConversationOptions {
   sessionTitle?: string;
   language: SupportedLocale;
   dispatch: (action: ChatAction) => void;
+  /**
+   * Platform-aware save adapter (Tauri native dialog or browser download).
+   * Defaults to saveConversationExport from @infra/conversation-export.
+   * Injected in tests to avoid real I/O.
+   */
+  saveAdapter?: (
+    payload: SaveExportPayload,
+    options?: SaveExportOptions
+  ) => ReturnType<typeof saveConversationExport>;
+  /** @deprecated Use saveAdapter. Kept for tests that mock browser downloads directly. */
   downloadAdapter?: {
     triggerDownload: (payload: {
       content: string;
@@ -130,22 +146,24 @@ export interface ExportConversationOptions {
 }
 
 /**
- * Pure feature controller for /export execution:
+ * Async feature controller for /export execution:
  * 1. Validates format arguments locally (default md; rejects extra/invalid args).
  * 2. Snapshots messages before any dispatch/feedback occurs.
- * 3. Encompasses entire preparation pipeline (empty checks, clock, serialization, download) in try/catch.
+ * 3. Encompasses entire preparation + save pipeline in try/catch.
  * 4. Captures timestamp once at boundary and passes to filename + serializers.
- * 5. Initiates host download adapter and dispatches visible system notices.
+ * 5. Delegates persistence to saveAdapter (Tauri: native Save As dialog; web: browser download).
+ * 6. Returns 'cancelled' silently when user dismisses the native dialog.
  */
-export function exportConversation({
+export async function exportConversation({
   args,
   messages,
   sessionTitle,
   language,
   dispatch,
-  downloadAdapter = { triggerDownload },
+  saveAdapter = saveConversationExport,
+  downloadAdapter,
   now = () => new Date(),
-}: ExportConversationOptions): ExportOutcome {
+}: ExportConversationOptions): Promise<ExportOutcome> {
   // 1. Validate format arguments locally
   const parsedFormat = parseExportFormat(args);
   if (!parsedFormat.ok) {
@@ -164,7 +182,6 @@ export function exportConversation({
   // 2. Snapshot messages BEFORE any feedback or dispatch
   const messagesSnapshot = Array.isArray(messages) ? [...messages] : [];
 
-  // Encompass entire preparation and download pipeline in try/catch
   try {
     // 3. Check for exportable content
     if (!hasExportableContent(messagesSnapshot)) {
@@ -179,7 +196,7 @@ export function exportConversation({
     // 4. Capture timestamp ONCE at feature boundary
     const timestamp = now();
 
-    // 5. Generate content and safe filename
+    // 5. Generate serialized content and safe filename
     const format = parsedFormat.format;
     const filename = generateExportFilename({
       title: sessionTitle,
@@ -187,7 +204,7 @@ export function exportConversation({
       exportedAt: timestamp,
     });
 
-    const content =
+    const serialized =
       format === 'json'
         ? exportToJson(messagesSnapshot, {
             title: sessionTitle,
@@ -203,23 +220,24 @@ export function exportConversation({
         ? 'application/json;charset=utf-8'
         : 'text/markdown;charset=utf-8';
 
-    // 6. Trigger host download initiation
-    const result = downloadAdapter.triggerDownload({
-      content,
-      filename,
-      mimeType,
-    });
-
-    if (result.success && result.initiated) {
-      const notice = translate(language, 'command_palette.export_success', {
-        filename: result.filename,
+    // 6. Persist via platform-aware adapter (native dialog in Tauri, browser download on web)
+    // Legacy downloadAdapter path kept for backward compatibility with existing tests.
+    if (downloadAdapter) {
+      const result = downloadAdapter.triggerDownload({
+        content: serialized,
+        filename,
+        mimeType,
       });
-      dispatch({
-        type: 'ADD_SYSTEM_MESSAGE',
-        payload: { content: notice },
-      });
-      return { status: 'success', filename: result.filename };
-    } else {
+      if (result.success && result.initiated) {
+        const notice = translate(language, 'command_palette.export_success', {
+          filename: result.filename,
+        });
+        dispatch({
+          type: 'ADD_SYSTEM_MESSAGE',
+          payload: { content: notice },
+        });
+        return { status: 'success', filename: result.filename };
+      }
       const errorMsg = result.error || 'Download initiation failed';
       const notice = translate(language, 'command_palette.export_failed', {
         error: errorMsg,
@@ -230,6 +248,33 @@ export function exportConversation({
       });
       return { status: 'failed', error: errorMsg };
     }
+
+    const saveResult = await saveAdapter({ content: serialized, defaultFilename: filename, format, mimeType });
+
+    if (saveResult.outcome === 'cancelled') {
+      // User dismissed the native dialog — silent, no error message
+      return { status: 'cancelled' };
+    }
+
+    if (saveResult.outcome === 'saved' || saveResult.outcome === 'initiated') {
+      const savedFilename =
+        saveResult.outcome === 'saved' ? saveResult.filename : saveResult.filename;
+      const notice = translate(language, 'command_palette.export_success', {
+        filename: savedFilename,
+      });
+      dispatch({
+        type: 'ADD_SYSTEM_MESSAGE',
+        payload: { content: notice },
+      });
+      return { status: 'success', filename: savedFilename };
+    }
+
+    // Unexpected outcome
+    const notice = translate(language, 'command_palette.export_failed', {
+      error: 'Unexpected save result',
+    });
+    dispatch({ type: 'ADD_SYSTEM_MESSAGE', payload: { content: notice } });
+    return { status: 'failed', error: 'Unexpected save result' };
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     const notice = translate(language, 'command_palette.export_failed', {

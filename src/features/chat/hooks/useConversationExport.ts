@@ -21,7 +21,7 @@ export function useConversationExport({
   dispatch,
 }: UseConversationExportOptions) {
   const handleExport = useCallback(
-    (args: string): ExportOutcome => {
+    (args: string): Promise<ExportOutcome> => {
       return exportConversation({
         args,
         messages,

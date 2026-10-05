@@ -192,7 +192,40 @@ import { useConversationExport } from '@features/chat/hooks/useConversationExpor
 |---|---|---|
 | **T1** | Pure serializers, types, safe filenames, policy tests, documentation | **Completed** |
 | **T2** | Browser download adapter (`src/infra/download.ts`), `/export` command catalog & EN/ES notices | **Completed** |
-| **T3** | Hook orchestration (`useConversationExport`), UI command wire-up, end-to-end checks | **Completed** |
+| **T3** | Hook orchestration (`useConversationExport`), UI command wire-up, end-to-end checks | **Completed (source; runtime pending)** |
+| **T4** | Native Save As adapter (`src-tauri/.../conversation_export.rs`, `src/infra/conversation-export.ts`), tests | **Completed (source/unit tests; runtime pending)** |
+| **T5** | Async export flow, ephemeral toast UI, native vs web outcome handling | **Pending** |
+
+## Native Save Adapter & OS Dialog (T4)
+
+Implemented in **T4** to satisfy native desktop export requirements without plugin or dependency expansion:
+
+```typescript
+import { saveConversationExport } from '@infra/conversation-export';
+
+const result = await saveConversationExport({
+  defaultFilename: 'conversation-2026-03-30.md',
+  content: mdContent,
+  format: 'markdown',
+});
+
+// result in Tauri (saved):     { outcome: 'saved', status: 'saved', path: '...', filename: '...' }
+// result in Tauri (cancelled): { outcome: 'cancelled', status: 'cancelled' }
+// result in Web (initiated):   { outcome: 'initiated', status: 'initiated', filename: '...' }
+```
+
+### Tauri Backend Command (`save_conversation_export`)
+- **OS Native Dialog (`rfd`)**: Spawns OS native Save As file dialog on a dedicated thread via `tokio::task::spawn_blocking`, reusing existing `rfd 0.17.2`.
+- **No Arbitrary Caller Paths**: The caller passes `default_filename`, `content`, and `format`. Target directory and final path selection are strictly user-driven through the OS dialog.
+- **Strict Input Validation**: Validates format (`markdown`/`md` or `json`) and ensures `default_filename` is a safe, single-component path name without directory separators (`/`, `\`), path traversal (`..`), null bytes, control characters, illegal filesystem characters, or Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`).
+- **Extension Enforcement & Overwrite Safety**: Ensures appropriate extension matching the chosen format. If an extension must be adjusted and the adjusted path already exists on disk, the operation fails safely rather than overwriting a file the user was not prompted to replace in the dialog.
+- **Write Before Success**: UTF-8 bytes are written directly to the chosen path; errors are returned before success is reported. Dialog cancellation returns `Ok(None)` without writing.
+- **Deterministic Headless Tests**: All Rust unit tests execute purely in-memory using temporary test directories and injectable dialog mocks; no GUI dialogs are ever opened in automated `cargo test`.
+
+### Platform Adapter (`src/infra/conversation-export.ts`)
+- **Isolation & Propagation**: Uses `@tauri-apps/api/core` `invoke` and `isTauri` strictly within `src/infra/`. In Tauri environments, native invocation errors propagate immediately without falling back to browser anchor downloads.
+- **Web Parity**: In non-Tauri browser environments, cleanly delegates to `triggerDownload` and reports honest `initiated` status without claiming persistent disk writes.
+- **Pending UI Integration (T5)**: Feature hook and prompt state integration remain on the synchronous T3 flow pending async save flow and ephemeral toast feedback in T5. Interactive OS dialog display has not been verified in automated headless test runners and remains pending manual desktop runtime verification.
 
 ## Acceptance Checklist
 
@@ -224,3 +257,11 @@ import { useConversationExport } from '@features/chat/hooks/useConversationExpor
 - [x] Controller tests decoupled from prompt state hook, enabling clean independent commit staging.
 - [x] Busy execution permitted within queue-ready UI state; normal readiness guards preserved without false offline claims.
 - [x] Original messages array and objects are never mutated.
+- [x] Dedicated Rust backend command `save_conversation_export` using existing `rfd` and `spawn_blocking`.
+- [x] Safe single-component suggested filename validation (rejection of separators, traversal, nulls, controls, Windows devices).
+- [x] Extension enforcement and overwrite protection preventing silent overwriting of unconfirmed files.
+- [x] UTF-8 file write executed before reporting success; cancellation returns `None` without disk writes.
+- [x] Pure injectable dialog helper enabling 100% headless Rust unit testing without GUI popups.
+- [x] Unified platform adapter (`src/infra/conversation-export.ts`) distinguishing `saved`, `cancelled`, and `initiated`.
+- [x] Native invocation errors propagate honestly in Tauri without falling back to web downloads.
+- [x] Architecture submodule registration in `tests/architecture.test.ts` maintaining clean boundary assertions.
