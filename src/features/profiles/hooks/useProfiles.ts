@@ -48,6 +48,7 @@ export interface UseProfilesResult {
   effectiveScope: 'project' | 'global' | null;
   categories: AgentCategory[];
   allAgents: string[];
+  agentMeta: Record<string, DiscoveredAgentMeta>;
   availableModels: ModelInfo[];
   modelThinkingLevels: ModelThinkingLevelsMap;
   isLoading: boolean;
@@ -270,6 +271,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   const [effectiveScope, setEffectiveScope] = useState<'project' | 'global' | null>(null);
   const [categories, setCategories] = useState<AgentCategory[]>([]);
   const [allAgents, setAllAgents] = useState<string[]>([]);
+  const [agentMeta, setAgentMeta] = useState<Record<string, DiscoveredAgentMeta>>({});
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>(() => []);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
   const customProvidersRef = useRef<CustomProvidersMap>({});
@@ -317,6 +319,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       setEffectiveScope(profilesData.effectiveScope || null);
       setCategories(profilesData.categories || []);
       setAllAgents(profilesData.allAgents || []);
+      setAgentMeta(profilesData.agentMeta || {});
       setAvailableModels(enrichedModels);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -655,6 +658,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
     effectiveScope,
     categories,
     allAgents,
+    agentMeta,
     availableModels,
     modelThinkingLevels,
     isLoading,

@@ -4,6 +4,7 @@ import type {
   ProfileScope,
   ReasoningEffort,
   AgentCategory,
+  DiscoveredAgentMeta,
   ModelProfileEntry,
   ProfilesPayload,
   SaveProfilePayload,
@@ -17,6 +18,7 @@ export type {
   ProfileScope,
   ReasoningEffort,
   AgentCategory,
+  DiscoveredAgentMeta,
   ModelProfileEntry,
   ProfilesPayload,
   SaveProfilePayload,
@@ -62,6 +64,7 @@ export interface ProfileModalProps {
   error: string | null;
   availableModels: ModelInfo[];
   categories: AgentCategory[];
+  agentMeta?: Record<string, DiscoveredAgentMeta>;
   modelThinkingLevels?: ModelThinkingLevelsMap;
   cwd?: string;
   onClose: () => void;

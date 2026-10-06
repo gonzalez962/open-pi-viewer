@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { openExternalUrl } from '@infra/opener';
+import { getPiChainsPi, type PiChain } from '@infra/bridge';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
 import { useProfiles } from './hooks/useProfiles';
 import { ProfileCard } from './components/ProfileCard';
@@ -29,6 +30,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
     effectiveActiveProfile: _effectiveActiveProfile,
     effectiveScope,
     categories,
+    agentMeta,
     availableModels,
     modelThinkingLevels,
     isLoading,
@@ -59,6 +61,19 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [scopeFilter, setScopeFilter] = useState<'all' | ProfileScope>('all');
+  const [chains, setChains] = useState<PiChain[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    getPiChainsPi()
+      .then((c) => {
+        if (active && c) setChains(c);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const tLocal = (key: TranslationKey, params?: Record<string, string | number>): string => {
     return t ? t(key, params) : translate(getActiveLocale(), key, params);
@@ -378,6 +393,42 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
             ))}
           </div>
         )}
+
+        {/* Pi Execution Chains Section */}
+        {chains.length > 0 && (
+          <div className="profiles-chains-section">
+            <div className="profiles-section-header">
+              <h3 className="profiles-section-title">Cadenas de Trabajo / Chains ({chains.length})</h3>
+              <p className="profiles-section-subtitle">
+                Pipelines coordinados de subagentes para planificación, verificación y revisión formal.
+              </p>
+            </div>
+            <div className="chains-grid">
+              {chains.map((chain) => (
+                <div key={chain.name} className="chain-card">
+                  <div className="chain-card-header">
+                    <span className="chain-badge">Chain</span>
+                    <h4 className="chain-name">{chain.name}</h4>
+                  </div>
+                  <p className="chain-desc">{chain.description}</p>
+                  <div className="chain-steps">
+                    <span className="chain-steps-label">Flujo de ejecución:</span>
+                    <div className="chain-steps-flow">
+                      {chain.steps.map((st, sIdx) => (
+                        <React.Fragment key={st.name}>
+                          <span className="chain-step-chip" title={st.description || st.name}>
+                            {st.name}
+                          </span>
+                          {sIdx < chain.steps.length - 1 && <span className="chain-step-arrow">→</span>}
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Modal Dialog */}
@@ -389,6 +440,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
         error={modalError}
         availableModels={availableModels}
         categories={categories}
+        agentMeta={agentMeta}
         modelThinkingLevels={modelThinkingLevels}
         cwd={cwd}
         onClose={closeModal}
