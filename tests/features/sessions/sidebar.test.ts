@@ -333,7 +333,7 @@ test('App handleNewConversation logic: closes settings when open', () => {
   assert.strictEqual(canStartNewConversation(true, false, false), false);
 });
 
-test('SessionSidebar: renders runtime status badges for working, waiting, completed, and unloaded sessions', () => {
+test('SessionSidebar: renders runtime status badges for working, waiting, and completed sessions', () => {
   const sessions: SessionSummary[] = [
     {
       id: 'sess-w',
@@ -358,14 +358,6 @@ test('SessionSidebar: renders runtime status badges for working, waiting, comple
       messageCount: 3,
       isActive: false,
       status: 'completed',
-    },
-    {
-      id: 'sess-unl',
-      path: '/path/unl.jsonl',
-      firstMessage: 'Unloaded session',
-      messageCount: 3,
-      isActive: false,
-      status: 'unloaded',
     },
   ];
 
@@ -393,8 +385,7 @@ test('SessionSidebar: renders runtime status badges for working, waiting, comple
   assert.ok(html.includes('Pidiendo permiso'));
   assert.ok(html.includes('session-status-badge status-completed'));
   assert.ok(html.includes('Terminada'));
-  assert.ok(html.includes('session-status-badge status-unloaded'));
-  assert.ok(html.includes('No cargada'));
+  assert.ok(!html.includes('session-status-badge status-unloaded'));
 });
 
 

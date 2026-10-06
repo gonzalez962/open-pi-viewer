@@ -24,7 +24,7 @@ export interface SessionPersistenceStatus {
   fileExists: boolean;
 }
 
-export type SessionRuntimeStatus = 'working' | 'completed' | 'waiting' | 'unloaded';
+export type SessionRuntimeStatus = 'working' | 'completed' | 'waiting';
 
 export interface SessionSummary {
   id: string;

@@ -279,7 +279,7 @@ export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null)
         rpc.kill();
         sessionPool.delete(sFile);
         if (sessionStatusMap.get(sFile) !== 'waiting') {
-          sessionStatusMap.set(sFile, 'unloaded');
+          sessionStatusMap.delete(sFile);
         }
         break;
       }

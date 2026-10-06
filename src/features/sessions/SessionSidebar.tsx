@@ -459,12 +459,6 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                                       <span>{t('sidebar.status_completed')}</span>
                                     </span>
                                   )}
-                                  {session.status === 'unloaded' && (
-                                    <span className="session-status-badge status-unloaded" title={t('sidebar.status_unloaded')}>
-                                      <span aria-hidden="true">○</span>
-                                      <span>{t('sidebar.status_unloaded')}</span>
-                                    </span>
-                                  )}
                                   {isActive && (
                                     <span className="active-badge">
                                       {t('sidebar.active')}

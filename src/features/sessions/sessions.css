@@ -363,13 +363,6 @@
   animation: pulse 2s infinite ease-in-out;
 }
 
-.session-status-badge.status-unloaded {
-  background-color: var(--bg-subtle);
-  color: var(--fg-muted);
-  border: 1px solid var(--border-muted);
-  opacity: 0.75;
-}
-
 .active-badge {
   flex-shrink: 0;
   font-size: 9.5px;

@@ -34,7 +34,6 @@
   "sidebar.status_working": "Trabajando",
   "sidebar.status_completed": "Terminada",
   "sidebar.status_waiting": "Pidiendo permiso",
-  "sidebar.status_unloaded": "No cargada",
   "sidebar.active": "Actual",
   "sidebar.messages_count": "{count} mensajes",
   "sidebar.single_message": "1 mensaje",
