@@ -2156,6 +2156,37 @@ export async function enrollEngramProjectPi(
   }
 }
 
+export interface PiChainStep {
+  name: string;
+  output?: string;
+  reads?: string;
+  description?: string;
+}
+
+export interface PiChain {
+  name: string;
+  description: string;
+  path: string;
+  steps: PiChainStep[];
+}
+
+/**
+ * Retrieve discovered Pi chains from ~/.pi/agent/chains/ and gentle-pi assets via Tauri IPC.
+ */
+export async function getPiChainsPi(
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<PiChain[]> {
+  if (!isTauri() && invokeFn === defaultInvoke) {
+    return [];
+  }
+  try {
+    const res = await invokeFn<PiChain[]>('get_pi_chains');
+    return res ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export type DiscoveryStatus = 'discovered' | 'missing' | 'ambiguous';
 export type EnvironmentStatus = 'ready' | 'missing' | 'ambiguous';
 

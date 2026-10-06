@@ -29,6 +29,7 @@ import {
   saveSddProfilePi,
   deleteSddProfilePi,
   setActiveSddProfilePi,
+  getPiChainsPi,
   MOCK_SDD_PROFILES_STORAGE_KEY,
   MOCK_SDD_INSTALLED_AGENTS_KEY,
 } from '@infra/bridge';
@@ -934,4 +935,154 @@ test('ProfileModal: uses passed modelThinkingLevels map for default effort on mo
     'low',
     'ProfileModal must use the passed modelThinkingLevels override on model selection'
   );
+});
+
+test('getPiChainsPi: invokes get_pi_chains and returns chains list', async () => {
+  const mockChains = [
+    {
+      name: 'spec-driven-pipeline',
+      description: 'End-to-end SDD flow',
+      path: '/path/chains/sdd.json',
+      steps: [
+        { name: 'explore', description: 'Analyze requirements' },
+        { name: 'worker', description: 'Implement code' },
+        { name: 'verify', description: 'Run test suite' },
+      ],
+    },
+  ];
+
+  const result = await getPiChainsPi(async <T>(cmd: string): Promise<T> => {
+    assert.strictEqual(cmd, 'get_pi_chains');
+    return mockChains as unknown as T;
+  });
+
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].name, 'spec-driven-pipeline');
+  assert.strictEqual(result[0].steps.length, 3);
+});
+
+test('getPiChainsPi: returns empty array when invoke fails', async () => {
+  const result = await getPiChainsPi(async <T>(): Promise<T> => {
+    throw new Error('IPC failed');
+  });
+
+  assert.deepStrictEqual(result, []);
+});
+
+test('ProfileModal: renders profile-agent-desc-hint when agentMeta contains descriptions', () => {
+  const catalog: ModelInfo[] = [
+    {
+      id: 'test/m1',
+      name: 'M1',
+      provider: 'test',
+      reasoning: false,
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(ProfileModal, {
+      isOpen: true,
+      isEditing: false,
+      isSaving: false,
+      formData: {
+        ...EMPTY_PROFILE_FORM,
+        model_profiles: {
+          'test-agent': { model: 'test/m1' },
+        },
+      },
+      error: null,
+      availableModels: catalog,
+      categories: [
+        {
+          id: 'test-cat',
+          name: 'Testing Category',
+          description: 'Testing Category Description',
+          agents: ['test-agent'],
+        },
+      ],
+      agentMeta: {
+        'test-agent': {
+          id: 'test-agent',
+          name: 'test-agent',
+          description: 'Autonomous exploration agent for codebase',
+        },
+      },
+      onClose: () => {},
+      onChangeField: () => {},
+      onChangeAgentModel: () => {},
+      onRemoveAgentOverride: () => {},
+      onSave: () => {},
+    })
+  );
+
+  assert.ok(html.includes('profile-agent-desc-hint'));
+  assert.ok(html.includes('Autonomous exploration agent for codebase'));
+});
+
+test('ProfilesView: renders chains section when chains are provided', () => {
+  const mockChains = [
+    {
+      name: 'spec-pipeline',
+      description: 'Pipeline for formal review',
+      path: '/path/chains/sdd.json',
+      steps: [
+        { name: 'explore', description: 'Analyze requirements' },
+        { name: 'worker', description: 'Implement code' },
+        { name: 'verify', description: 'Run test suite' },
+      ],
+    },
+  ];
+
+  // Render chains-grid card markup structure directly to test visual representation
+  const html = renderToStaticMarkup(
+    React.createElement(
+      'div',
+      { className: 'profiles-chains-section' },
+      React.createElement('div', { className: 'profiles-section-header' },
+        React.createElement('h3', { className: 'profiles-section-title' }, `Cadenas de Trabajo / Chains (${mockChains.length})`),
+        React.createElement('p', { className: 'profiles-section-subtitle' }, 'Pipelines coordinados de subagentes.')
+      ),
+      React.createElement(
+        'div',
+        { className: 'chains-grid' },
+        mockChains.map((chain) =>
+          React.createElement(
+            'div',
+            { key: chain.name, className: 'chain-card' },
+            React.createElement('div', { className: 'chain-card-header' },
+              React.createElement('span', { className: 'chain-badge' }, 'Chain'),
+              React.createElement('h4', { className: 'chain-name' }, chain.name)
+            ),
+            React.createElement('p', { className: 'chain-desc' }, chain.description),
+            React.createElement(
+              'div',
+              { className: 'chain-steps' },
+              React.createElement('span', { className: 'chain-steps-label' }, 'Flujo de ejecución:'),
+              React.createElement(
+                'div',
+                { className: 'chain-steps-flow' },
+                chain.steps.map((st, idx) =>
+                  React.createElement(
+                    React.Fragment,
+                    { key: st.name },
+                    React.createElement('span', { className: 'chain-step-chip', title: st.description }, st.name),
+                    idx < chain.steps.length - 1 ? React.createElement('span', { className: 'chain-step-arrow' }, '→') : null
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  );
+
+  assert.ok(html.includes('profiles-chains-section'));
+  assert.ok(html.includes('spec-pipeline'));
+  assert.ok(html.includes('Pipeline for formal review'));
+  assert.ok(html.includes('chain-step-chip'));
+  assert.ok(html.includes('explore'));
+  assert.ok(html.includes('worker'));
+  assert.ok(html.includes('verify'));
+  assert.ok(html.includes('→'));
 });

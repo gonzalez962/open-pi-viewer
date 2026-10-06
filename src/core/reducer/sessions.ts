@@ -1,6 +1,6 @@
 import type { ChatMessage } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
-import type { SessionSummary } from '../types/sessions';
+import type { SessionSummary, SessionRuntimeStatus } from '../types/sessions';
 import type { ChatAction } from './index';
 
 export type SessionsAction =
@@ -28,6 +28,14 @@ export type SessionsAction =
     }
   | { type: 'SWITCH_SESSION_CANCELLED' }
   | { type: 'SWITCH_SESSION_ERROR'; payload: { error: string } }
+  | {
+      type: 'UPDATE_SESSION_STATUS';
+      payload: {
+        sessionPath?: string;
+        sessionId?: string;
+        status: SessionRuntimeStatus;
+      };
+    }
   | { type: 'TOGGLE_SIDEBAR'; payload?: { isOpen?: boolean } };
 
 /**
@@ -171,6 +179,19 @@ export function sessionsReducer(
         isSwitchingSession: false,
         lastError: action.payload.error,
         statusDetail: `Session switch error: ${action.payload.error}`,
+      };
+    }
+
+    case 'UPDATE_SESSION_STATUS': {
+      const { sessionPath, sessionId, status } = action.payload;
+      return {
+        ...state,
+        sessions: state.sessions.map((s) => {
+          if ((sessionPath && s.path === sessionPath) || (sessionId && s.id === sessionId)) {
+            return { ...s, status };
+          }
+          return s;
+        }),
       };
     }
 

@@ -59,7 +59,10 @@ export class PiRpcSession {
     const entrypoint = cfg.piCliPath;
 
     let childProc: ChildProcess | null = null;
-    const env = getAgnosticExecEnv();
+    const env = {
+      ...getAgnosticExecEnv(),
+      GENTLE_SHELL_INTERACTIVE_HOST: '1',
+    };
     const customSpawner = getSubprocessSpawner();
 
     if (customSpawner) {
@@ -276,7 +279,7 @@ export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null)
         rpc.kill();
         sessionPool.delete(sFile);
         if (sessionStatusMap.get(sFile) !== 'waiting') {
-          sessionStatusMap.set(sFile, 'unloaded');
+          sessionStatusMap.delete(sFile);
         }
         break;
       }

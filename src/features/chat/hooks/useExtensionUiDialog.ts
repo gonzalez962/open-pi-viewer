@@ -44,6 +44,7 @@ export interface ParsedMultiSelect {
   isMultiSelect: boolean;
   choices: ParsedMultiSelectChoice[];
   doneOption: string;
+  backOption?: string;
 }
 
 export interface HistoryDialogEntry {
@@ -85,6 +86,21 @@ const QUESTION_TYPE_KEYWORDS =
 export function cleanQuestionText(raw?: string): string {
   if (!raw || typeof raw !== 'string') return '';
   let text = raw.trim();
+
+  // 0. Strip trailing preview blocks (e.g. '--- 1. Option preview --- ...' or '\n\n--- 1. ...')
+  text = text.replace(/(?:\r?\n|\s)+---\s*\d*\.?\s*.*?(?:preview|vista\s*previa)\s*---[\s\S]*$/i, '');
+
+  // Strip trailing options block starting with '--- 1. ...' or after newline
+  text = text.replace(/(?:\r?\n|\s)+---\s*\d+\.\s+[\s\S]*$/i, '');
+
+  // Strip trailing numbered option list if formatted like '\n\n1. ... \n2. ...'
+  text = text.replace(/(?:\r?\n)+(?:\d+\.\s+.*[\r?\n]*)+$/i, '');
+
+  // Strip trailing options header block (e.g. '\n\nOptions:\n...' or '\n\nOpciones:\n...')
+  text = text.replace(/(?:\r?\n)+(?:options?|opciones?|choices?|elecciones?)\s*:[\s\S]*$/i, '');
+
+  // Strip trailing instructions like 'Enter option number (1-4)...' or 'Type your answer:'
+  text = text.replace(/(?:\r?\n)+(?:enter option number|type your answer|select an option|elige una opci[oó]n|selecciona una opci[oó]n)[\s\S]*$/i, '');
 
   let prev = '';
   // Iteratively peel off leading metadata components
@@ -254,20 +270,60 @@ export function isMultiQuestionTitle(title?: string): boolean {
 }
 
 /**
+ * Detects if an option represents a Back navigation token or button
+ * (e.g. "← Back", "Back", "← Anterior", "Atrás", "__back__").
+ */
+export function isBackOptionLabel(opt?: string): boolean {
+  if (!opt || typeof opt !== 'string') return false;
+  const lower = opt.trim().toLowerCase();
+  return (
+    lower === '← back' ||
+    lower === 'back' ||
+    lower === '← anterior' ||
+    lower === 'anterior' ||
+    lower === 'atrás' ||
+    lower === '__back__' ||
+    lower.startsWith('__back__:') ||
+    lower.startsWith('←')
+  );
+}
+
+/**
  * Detects if options follow the multi-select round convention used by gentle-pi / Pi extensions:
  * - At least 2 options
- * - The last option is "Done" (case-insensitive)
+ * - "Done" option is either at the end or penultimate before a back option ("← Back")
  * - All preceding options start with [ ] or [x]
  */
 export function parseMultiSelectOptions(options?: string[]): ParsedMultiSelect {
   if (!options || options.length < 2) {
     return { isMultiSelect: false, choices: [], doneOption: '' };
   }
-  const last = options[options.length - 1].trim();
-  if (last.toLowerCase() !== 'done') {
+
+  let doneIndex = -1;
+  let backOption: string | undefined;
+
+  const lastIndex = options.length - 1;
+  const last = options[lastIndex].trim();
+
+  if (last.toLowerCase() === 'done') {
+    doneIndex = lastIndex;
+  } else if (isBackOptionLabel(last) && options.length >= 3) {
+    const penultimate = options[lastIndex - 1].trim();
+    if (penultimate.toLowerCase() === 'done') {
+      doneIndex = lastIndex - 1;
+      backOption = options[lastIndex];
+    }
+  }
+
+  if (doneIndex === -1) {
     return { isMultiSelect: false, choices: [], doneOption: '' };
   }
-  const candidates = options.slice(0, -1);
+
+  const candidates = options.slice(0, doneIndex);
+  if (candidates.length === 0) {
+    return { isMultiSelect: false, choices: [], doneOption: '' };
+  }
+
   const choices: ParsedMultiSelectChoice[] = [];
   for (const raw of candidates) {
     const trimmed = raw.trim();
@@ -281,7 +337,12 @@ export function parseMultiSelectOptions(options?: string[]): ParsedMultiSelect {
       toggled: match[1].toLowerCase() === 'x',
     });
   }
-  return { isMultiSelect: true, choices, doneOption: options[options.length - 1] };
+  return {
+    isMultiSelect: true,
+    choices,
+    doneOption: options[doneIndex],
+    backOption,
+  };
 }
 
 export interface QuestionIdentity {
@@ -692,7 +753,14 @@ export class ExtensionUiDialogQueue {
     const dialog = itemKey
       ? this.queue.find((d) => d.itemKey === itemKey)
       : this.getActiveDialog();
-    return isMultiQuestionTitle(dialog?.request?.title);
+    if (isMultiQuestionTitle(dialog?.request?.title)) {
+      return true;
+    }
+    const opts = dialog?.request?.options;
+    if (opts && opts.length > 0 && isBackOptionLabel(opts[opts.length - 1])) {
+      return true;
+    }
+    return false;
   }
 
   /**

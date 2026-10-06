@@ -10,6 +10,7 @@ import { modelsReducer } from '@core/reducer/models';
 import { generatePromptRequestId } from '@core/protocol';
 import type { ChatMessage, ThinkingBlock, ToolCallBlock } from '@core/types/messages';
 import type { ModelInfo, SessionStats } from '@core/types/models';
+import type { SessionSummary } from '@core/types/sessions';
 
 test('Reducer: initial state has honest disconnected status', () => {
   assert.strictEqual(INITIAL_STATE.connectionStatus, 'disconnected');
@@ -1169,6 +1170,36 @@ test('Reducer: TOGGLE_SIDEBAR opens, closes, and explicitly sets state', () => {
 
   state = chatReducer(state, { type: 'TOGGLE_SIDEBAR', payload: { isOpen: true } });
   assert.strictEqual(state.isSidebarOpen, true);
+});
+
+test('Reducer: UPDATE_SESSION_STATUS updates runtime status of matching session by id or path', () => {
+  const initialSessions: SessionSummary[] = [
+    { id: 's1', path: '/path/s1.jsonl', messageCount: 5, isActive: true, firstMessage: 'Hello' },
+    { id: 's2', path: '/path/s2.jsonl', messageCount: 2, isActive: false, firstMessage: 'Background' },
+  ];
+  let state = { ...INITIAL_STATE, sessions: initialSessions };
+
+  // Update s2 by id to working
+  state = chatReducer(state, {
+    type: 'UPDATE_SESSION_STATUS',
+    payload: { sessionId: 's2', status: 'working' },
+  });
+  assert.strictEqual(state.sessions.find((s) => s.id === 's2')?.status, 'working');
+  assert.strictEqual(state.sessions.find((s) => s.id === 's1')?.status, undefined);
+
+  // Update s2 by path to waiting
+  state = chatReducer(state, {
+    type: 'UPDATE_SESSION_STATUS',
+    payload: { sessionPath: '/path/s2.jsonl', status: 'waiting' },
+  });
+  assert.strictEqual(state.sessions.find((s) => s.id === 's2')?.status, 'waiting');
+
+  // Update s2 to completed
+  state = chatReducer(state, {
+    type: 'UPDATE_SESSION_STATUS',
+    payload: { sessionId: 's2', status: 'completed' },
+  });
+  assert.strictEqual(state.sessions.find((s) => s.id === 's2')?.status, 'completed');
 });
 
 test('Reducer: model, thinking level, and session stats actions update state correctly', () => {

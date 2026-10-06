@@ -105,6 +105,61 @@ export class SessionEventController {
     const eventType = event.type;
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
 
+    const currentSessionId = this.options.getCurrentSessionId();
+    const eventSessionId = (event as any).sessionId;
+    const isCurrentSession = !eventSessionId || !currentSessionId || eventSessionId === currentSessionId;
+
+    if (eventType === 'session_status_changed') {
+      const payload = event as any;
+      if (payload.status) {
+        this.options.dispatch({
+          type: 'UPDATE_SESSION_STATUS',
+          payload: {
+            sessionPath: payload.sessionPath,
+            sessionId: payload.sessionId,
+            status: payload.status,
+          },
+          targetProjectId,
+        });
+      }
+      return;
+    }
+
+    if (!isCurrentSession) {
+      if (eventType === 'message_start' || eventType === 'message_update') {
+        this.options.dispatch({
+          type: 'UPDATE_SESSION_STATUS',
+          payload: {
+            sessionPath: (event as any).sessionFile,
+            sessionId: (event as any).sessionId,
+            status: 'working',
+          },
+          targetProjectId,
+        });
+      } else if (eventType === 'agent_end' || eventType === 'agent_settled') {
+        this.options.dispatch({
+          type: 'UPDATE_SESSION_STATUS',
+          payload: {
+            sessionPath: (event as any).sessionFile,
+            sessionId: (event as any).sessionId,
+            status: 'completed',
+          },
+          targetProjectId,
+        });
+      } else if (eventType === 'extension_ui_request') {
+        this.options.dispatch({
+          type: 'UPDATE_SESSION_STATUS',
+          payload: {
+            sessionPath: (event as any).sessionFile,
+            sessionId: (event as any).sessionId,
+            status: 'waiting',
+          },
+          targetProjectId,
+        });
+      }
+      return;
+    }
+
     if (eventType === 'message_start') {
       const msg = event.message as AuthoritativeMessage;
       if (msg) {

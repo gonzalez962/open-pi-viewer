@@ -456,6 +456,22 @@ test('parseMultiSelectOptions: parses choices, detects non-multiselect, and dete
     label: 'Third Feature',
     toggled: true,
   });
+
+  // Multi-select with trailing Back option (from gentle-pi when canGoBack is true)
+  const parsedWithBack = parseMultiSelectOptions([
+    '[ ] Hexadecimal (#RRGGBB)',
+    '[ ] rgb() / rgba()',
+    '[ ] oklch() / oklab()',
+    '[ ] <color-val>',
+    'Done',
+    '← Back',
+  ]);
+  assert.strictEqual(parsedWithBack.isMultiSelect, true);
+  assert.strictEqual(parsedWithBack.doneOption, 'Done');
+  assert.strictEqual(parsedWithBack.backOption, '← Back');
+  assert.strictEqual(parsedWithBack.choices.length, 4);
+  assert.strictEqual(parsedWithBack.choices[0].label, 'Hexadecimal (#RRGGBB)');
+  assert.strictEqual(parsedWithBack.choices[3].label, '<color-val>');
 });
 
 test('extractQuestionIdentity and isSameQuestionIdentity: accurately binds question identity and handles legacy requests', () => {
@@ -1150,6 +1166,62 @@ test('ExtensionUiPromptBar: renders multi-select prompt bar with checkboxes and 
   assert.ok(markup.includes('Cancelar'));
 });
 
+test('ExtensionUiPromptBar: renders multi-select prompt bar when options include trailing Done and ← Back', () => {
+  const dialogItem: QueuedExtensionUiDialog = {
+    id: 'test-multiselect-back',
+    itemKey: createDialogItemKey('test-multiselect-back', '/workspace/my-app'),
+    method: 'select',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 20000,
+    resolve: () => {},
+    request: {
+      type: 'extension_ui_request',
+      id: 'test-multiselect-back',
+      method: 'select',
+      title: 'Seleccione formatos de color',
+      message: 'Formatos soportados:',
+      options: [
+        '[ ] Hexadecimal (#RRGGBB)',
+        '[ ] rgb() / rgba()',
+        '[ ] oklch() / oklab()',
+        '[ ] <color-val>',
+        'Done',
+        '← Back',
+      ],
+      cwd: '/workspace/my-app',
+      timeout: 20000,
+    },
+  };
+
+  const markup = renderToStaticMarkup(
+    React.createElement(ExtensionUiPromptBar, {
+      dialog: dialogItem,
+      pendingCount: 1,
+      canGoBack: true,
+      onSelect: () => {},
+      onMultiSelectSubmit: () => {},
+      onInput: () => {},
+      onConfirm: () => {},
+      onCancel: () => {},
+      onBack: () => {},
+    })
+  );
+
+  assert.ok(markup.includes('extension-prompt-multiselect-container'));
+  assert.ok(markup.includes('extension-prompt-checkbox-list'));
+  assert.ok(markup.includes('Hexadecimal (#RRGGBB)'));
+  assert.ok(markup.includes('rgb() / rgba()'));
+  assert.ok(markup.includes('oklch() / oklab()'));
+  assert.ok(markup.includes('&lt;color-val&gt;'));
+  // Must NOT render Done or Back as checkbox choices
+  assert.strictEqual(markup.includes('[ ] Done'), false);
+  assert.strictEqual(markup.includes('[ ] ← Back'), false);
+  // Must render Done action button
+  assert.ok(markup.includes('btn-extension-prompt-done'));
+  // Must render Back button
+  assert.ok(markup.includes('btn-extension-prompt-back'));
+});
+
 test('ExtensionUiPromptBar: renders single-select prompt bar with option buttons and disabled submit until chosen', () => {
   const dialogItem: QueuedExtensionUiDialog = {
     id: 'test-select-1',
@@ -1714,6 +1786,26 @@ test('cleanQuestionText: eliminates redundant question types, step tags, and hea
   assert.strictEqual(
     cleanQuestionText('Confirm that the repository is clean'),
     'Confirm that the repository is clean'
+  );
+
+  // Trailing preview blocks and attached option lists
+  assert.strictEqual(
+    cleanQuestionText(
+      '¿Cómo prefieres resolver la visualización de los iconos en las categorías de procesos de PI-Viewer? --- 1. Iconos SVG vectoriales (Recommended) preview --- [ + ] [□ SVG Agentes] 7 subagentes [jd-fix-agent] [gentle-ai-worker] [ + ] [□ SVG Bash] 7 ejecuciones [ + ] [□ SVG Edit] 11 ediciones --- 2. Mantener fuentes Nerd Font preview --- Requiere instalar fuentes TTF/OTF con símbolos en el sistema operativo host. --- 3. Solo texto sin iconos preview --- [ + ] agentes 7 subagentes [jd-fix-agent] [ + ] bash 7 ejecuciones [ + ] edit 11 ediciones'
+    ),
+    '¿Cómo prefieres resolver la visualización de los iconos en las categorías de procesos de PI-Viewer?'
+  );
+  assert.strictEqual(
+    cleanQuestionText('¿Cuál es tu color preferido?\n\n1. Azul\n2. Rojo\n3. Verde'),
+    '¿Cuál es tu color preferido?'
+  );
+  assert.strictEqual(
+    cleanQuestionText('Choose your database\n\nOptions:\n- PostgreSQL\n- MySQL'),
+    'Choose your database'
+  );
+  assert.strictEqual(
+    cleanQuestionText('¿Desea continuar?\n\nEnter option number (1-2) or exact option:'),
+    '¿Desea continuar?'
   );
 
   // Edge cases: null, undefined, empty

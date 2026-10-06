@@ -33,7 +33,7 @@ export function getSubprocessSpawner(): SubprocessSpawner | null {
   return customSubprocessSpawner;
 }
 
-export type SessionStatus = 'working' | 'completed' | 'waiting' | 'unloaded';
+export type SessionStatus = 'working' | 'completed' | 'waiting';
 
 export const sessionStatusMap = new Map<string, SessionStatus>();
 
@@ -43,9 +43,9 @@ export function setSessionAliveChecker(checker: (norm: string) => boolean): void
   sessionAliveChecker = checker;
 }
 
-export function getSessionStatus(sessionPath: string): SessionStatus {
+export function getSessionStatus(sessionPath: string): SessionStatus | undefined {
   const norm = sessionPath ? path.resolve(sessionPath) : '';
-  if (!norm) return 'unloaded';
+  if (!norm) return undefined;
 
   const isAlive = sessionAliveChecker(norm);
 
@@ -61,7 +61,7 @@ export function getSessionStatus(sessionPath: string): SessionStatus {
   if (isAlive) {
     return 'completed';
   }
-  return 'unloaded';
+  return undefined;
 }
 
 export function setSessionStatus(

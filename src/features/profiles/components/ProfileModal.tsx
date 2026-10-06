@@ -36,6 +36,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   error,
   availableModels,
   categories,
+  agentMeta,
   modelThinkingLevels: modelThinkingLevelsProp,
   cwd,
   onClose,
@@ -72,7 +73,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   // Accordion state: dynamically expanded first category when available
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    () => new Set()
+    () => (categories.length > 0 ? new Set([categories[0].id]) : new Set())
   );
   const autoExpandedRef = useRef(false);
 
@@ -575,6 +576,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                                       >
                                         <div className="profile-col-agent">
                                           <code className="profile-agent-name">{agentKey}</code>
+                                          {agentMeta?.[agentKey]?.description && (
+                                            <div className="profile-agent-desc-hint" title={agentMeta[agentKey].description}>
+                                              {agentMeta[agentKey].description}
+                                            </div>
+                                          )}
                                         </div>
 
                                         <div className="profile-col-model">
@@ -718,6 +724,11 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                                     >
                                       <div className="profile-col-agent">
                                         <code className="profile-agent-name">{agentKey}</code>
+                                        {agentMeta?.[agentKey]?.description && (
+                                          <div className="profile-agent-desc-hint" title={agentMeta[agentKey].description}>
+                                            {agentMeta[agentKey].description}
+                                          </div>
+                                        )}
                                         <span className="profile-agent-legacy-tag">
                                           {tLocal('profiles.legacy_badge')}
                                         </span>

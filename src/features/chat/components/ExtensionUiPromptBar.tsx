@@ -5,6 +5,7 @@ import type {
 } from '../hooks/useExtensionUiDialog';
 import {
   cleanQuestionText,
+  isBackOptionLabel,
   parseMultiSelectOptions,
   parseQuestionStepInfo,
 } from '../hooks/useExtensionUiDialog';
@@ -38,6 +39,20 @@ export interface ExtensionUiPromptBarProps {
  * Supports multi-choice option toggling without round-trip re-renders, standard single select chips,
  * text input prompts, and confirmation dialogs with safe defaults and keyboard navigation.
  */
+export function isOptionCustom(opt: string, idx: number, total: number): boolean {
+  if (!opt) return false;
+  const lower = opt.toLowerCase().trim();
+  return (
+    lower.includes('type something') ||
+    lower.includes('personaliz') ||
+    lower.includes('custom') ||
+    lower.includes('otro') ||
+    lower.includes('otra') ||
+    lower.includes('other') ||
+    (idx === total - 1 && (lower.endsWith('...') || lower.includes('escrib') || lower.includes('texto')))
+  );
+}
+
 export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   dialog,
   pendingCount = 1,
@@ -104,7 +119,16 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   }, [method, request.options]);
 
   const isMultiSelect = multiSelect.isMultiSelect;
-  const singleSelectOptions = useMemo(() => request.options ?? [], [request.options]);
+  const singleSelectOptions = useMemo(() => {
+    if (!request.options) return [];
+    if ((canGoBack || currentStep > 1) && request.options.length > 1) {
+      const last = request.options[request.options.length - 1];
+      if (isBackOptionLabel(last)) {
+        return request.options.slice(0, -1);
+      }
+    }
+    return request.options;
+  }, [request.options, canGoBack, currentStep]);
 
   // Local state for multi-select checkboxes
   const [checkedIndices, setCheckedIndices] = useState<Set<number>>(() => {
@@ -148,6 +172,9 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
     return -1;
   });
 
+  const [customOptionText, setCustomOptionText] = useState<string>('');
+  const [isTypingCustomOption, setIsTypingCustomOption] = useState<boolean>(false);
+
   // Value for input dialog
   const [inputValue, setInputValue] = useState<string>(() => {
     const saved = flowAnswers?.find((r) => r.step === currentStep);
@@ -174,6 +201,8 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
     setModifyingStep(null);
     setIsNavigatingBack(false);
     setIsSubmittingFinal(false);
+    setCustomOptionText('');
+    setIsTypingCustomOption(false);
 
     const savedRecord = flowAnswers?.find((r) => r.step === currentStep);
 
@@ -460,6 +489,15 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
           };
         }
       } else {
+        if (isTypingCustomOption && customOptionText.trim()) {
+          const val = customOptionText.trim();
+          return {
+            step: currentStep,
+            question: currentQuestionText,
+            answerText: val,
+            singleChoice: val,
+          };
+        }
         if (selectedOptionIndex >= 0 && selectedOptionIndex < singleSelectOptions.length) {
           const choice = singleSelectOptions[selectedOptionIndex];
           return {
@@ -757,6 +795,31 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
 
       // Single-select keyboard navigation
       if (method === 'select' && !isMultiSelect && singleSelectOptions.length > 0) {
+        if (isTypingCustomOption) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            setIsTypingCustomOption(false);
+            return;
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const val = customOptionText.trim();
+            if (val) {
+              if (isMultiStepFlow) {
+                if (currentStep < totalSteps) {
+                  onSelect(itemKey, val);
+                } else {
+                  setIsReviewingSummary(true);
+                }
+              } else {
+                onSelect(itemKey, val);
+              }
+            }
+            return;
+          }
+          return;
+        }
+
         if ((canGoBack || currentStep > 1) && onBack && (e.key === 'Backspace' || (e.key === 'ArrowLeft' && selectedOptionIndex === -1))) {
           e.preventDefault();
           handleBackClick();
@@ -840,7 +903,14 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
     confirmValue,
   ]);
 
-  const message = request.message;
+  const message = useMemo(() => {
+    if (!request.message) return undefined;
+    const cleaned = cleanQuestionText(request.message);
+    if (!cleaned || cleaned.toLowerCase() === displayTitle.toLowerCase()) {
+      return undefined;
+    }
+    return cleaned;
+  }, [request.message, displayTitle]);
   const headerTitle = isReviewingSummary ? REVIEW_SUMMARY_TITLE : displayTitle;
 
   const singlePrimaryButtonLabel = useMemo(() => {
@@ -1099,6 +1169,7 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                   {singleSelectOptions.map((opt, idx) => {
                     const isSelected = selectedOptionIndex >= 0 && idx === selectedOptionIndex;
                     const shortcutNum = idx < 9 ? idx + 1 : null;
+                    const isOtherOrCustom = isOptionCustom(opt, idx, singleSelectOptions.length);
                     return (
                       <button
                         key={`${idx}-${opt}`}
@@ -1110,8 +1181,15 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                         aria-selected={isSelected}
                         className={`extension-prompt-option-btn ${
                           isSelected ? 'is-selected' : ''
-                        }`}
-                        onClick={() => setSelectedOptionIndex(idx)}
+                        } ${isOtherOrCustom ? 'is-custom-choice' : ''}`}
+                        onClick={() => {
+                          setSelectedOptionIndex(idx);
+                          if (isOtherOrCustom) {
+                            setIsTypingCustomOption(true);
+                          } else {
+                            setIsTypingCustomOption(false);
+                          }
+                        }}
                       >
                         {shortcutNum !== null && (
                           <span className="extension-prompt-shortcut">
@@ -1124,21 +1202,51 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                   })}
                 </div>
 
+                {/* Inline Custom Input when user picks the custom/other option */}
+                {isTypingCustomOption && (
+                  <div className="extension-prompt-custom-input-box">
+                    <input
+                      type="text"
+                      className="extension-prompt-input-field"
+                      placeholder="Escriba su respuesta personalizada..."
+                      value={customOptionText}
+                      onChange={(e) => setCustomOptionText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const val = customOptionText.trim();
+                          if (val) {
+                            onSelect(itemKey, val);
+                          }
+                        }
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                )}
+
                 <div className="extension-prompt-footer-actions">
                   <button
                     type="button"
                     className="btn-extension-prompt-primary"
-                    disabled={selectedOptionIndex < 0}
+                    disabled={
+                      selectedOptionIndex < 0 ||
+                      (isTypingCustomOption && customOptionText.trim().length === 0)
+                    }
                     onClick={() => {
                       if (selectedOptionIndex >= 0 && selectedOptionIndex < singleSelectOptions.length) {
+                        const answerValue = isTypingCustomOption
+                          ? customOptionText.trim()
+                          : singleSelectOptions[selectedOptionIndex];
+
                         if (isMultiStepFlow) {
                           if (currentStep < totalSteps) {
-                            onSelect(itemKey, singleSelectOptions[selectedOptionIndex]);
+                            onSelect(itemKey, answerValue);
                           } else {
                             setIsReviewingSummary(true);
                           }
                         } else {
-                          onSelect(itemKey, singleSelectOptions[selectedOptionIndex]);
+                          onSelect(itemKey, answerValue);
                         }
                       }
                     }}

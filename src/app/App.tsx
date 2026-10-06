@@ -1665,6 +1665,7 @@ export const App: React.FC = () => {
           error={profilesHook.modalError}
           availableModels={profilesHook.availableModels}
           categories={profilesHook.categories}
+          agentMeta={profilesHook.agentMeta}
           cwd={config.workingDirectory}
           onClose={profilesHook.closeModal}
           onChangeField={profilesHook.updateFormField}

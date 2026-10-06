@@ -861,6 +861,15 @@
   color: var(--fg-default);
 }
 
+.profile-agent-desc-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+  white-space: normal;
+  line-height: 1.3;
+  opacity: 0.85;
+}
+
 .profile-agent-custom-model-input {
   display: flex;
   gap: 6px;
@@ -1141,4 +1150,112 @@
   background: rgba(234, 179, 8, 0.15);
   color: #ca8a04;
   font-weight: 500;
+}
+
+/* Chains section in ProfilesView */
+.profiles-chains-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-muted, #30363d);
+}
+
+.profiles-section-header {
+  margin-bottom: 16px;
+}
+
+.profiles-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg-default, #c9d1d9);
+  margin: 0 0 4px 0;
+}
+
+.profiles-section-subtitle {
+  font-size: 13px;
+  color: var(--fg-muted, #8b949e);
+  margin: 0;
+}
+
+.chains-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.chain-card {
+  background: var(--bg-surface, #0d1117);
+  border: 1px solid var(--border-muted, #30363d);
+  border-radius: var(--radius-md, 6px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chain-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chain-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(155, 92, 255, 0.15);
+  color: #c084fc;
+  font-weight: 600;
+}
+
+.chain-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg-default, #c9d1d9);
+  margin: 0;
+  font-family: var(--font-mono);
+}
+
+.chain-desc {
+  font-size: 12px;
+  color: var(--fg-muted, #8b949e);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.chain-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-muted, #30363d);
+}
+
+.chain-steps-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-subtle, #8b949e);
+}
+
+.chain-steps-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chain-step-chip {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: var(--bg-subtle, #161b22);
+  border: 1px solid var(--border-muted, #30363d);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--fg-default, #c9d1d9);
+}
+
+.chain-step-arrow {
+  color: var(--fg-muted, #8b949e);
+  font-size: 11px;
 }
