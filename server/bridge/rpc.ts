@@ -59,7 +59,10 @@ export class PiRpcSession {
     const entrypoint = cfg.piCliPath;
 
     let childProc: ChildProcess | null = null;
-    const env = getAgnosticExecEnv();
+    const env = {
+      ...getAgnosticExecEnv(),
+      GENTLE_SHELL_INTERACTIVE_HOST: '1',
+    };
     const customSpawner = getSubprocessSpawner();
 
     if (customSpawner) {

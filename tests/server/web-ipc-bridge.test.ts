@@ -194,3 +194,22 @@ test('server/bridge: connect to empty project creates and persists a new session
   assert.strictEqual(list.length, 1, 'list_sessions must discover the created session');
   assert.strictEqual(list[0].id, res.sessionId);
 });
+
+test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1 in environment', async (t) => {
+  let capturedEnv: any = null;
+  setSubprocessSpawnerForTest((cmd, args, options) => {
+    capturedEnv = options.env;
+    return null;
+  });
+  t.after(() => {
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+  });
+
+  await handleIpcCommand('connect', {
+    payload: { workingDirectory: process.cwd() },
+  });
+
+  assert.ok(capturedEnv, 'Spawner must be called');
+  assert.strictEqual(capturedEnv.GENTLE_SHELL_INTERACTIVE_HOST, '1');
+});
