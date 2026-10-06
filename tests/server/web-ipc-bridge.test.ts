@@ -197,7 +197,7 @@ test('server/bridge: connect to empty project creates and persists a new session
 
 test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1 in environment', async (t) => {
   let capturedEnv: any = null;
-  setSubprocessSpawnerForTest((cmd, args, options) => {
+  setSubprocessSpawnerForTest((_cmd, _args, options) => {
     capturedEnv = options.env;
     return null;
   });
