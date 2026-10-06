@@ -1,7 +1,10 @@
 import assert from 'node:assert';
 import test from 'node:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 import {
+  SessionSidebar,
   canSelectSession,
   categorizeSessionTime,
   formatSessionTimestamp,
@@ -328,6 +331,68 @@ test('App handleNewConversation logic: closes settings when open', () => {
   // Exercises the real canStartNewConversation guard, not a hand-reimplementation.
   assert.strictEqual(canStartNewConversation(false, false, false), true);
   assert.strictEqual(canStartNewConversation(true, false, false), false);
+});
+
+test('SessionSidebar: renders runtime status badges for working, waiting, completed, and unloaded sessions', () => {
+  const sessions: SessionSummary[] = [
+    {
+      id: 'sess-w',
+      path: '/path/w.jsonl',
+      firstMessage: 'Working session',
+      messageCount: 3,
+      isActive: false,
+      status: 'working',
+    },
+    {
+      id: 'sess-wait',
+      path: '/path/wait.jsonl',
+      firstMessage: 'Waiting session',
+      messageCount: 3,
+      isActive: false,
+      status: 'waiting',
+    },
+    {
+      id: 'sess-comp',
+      path: '/path/comp.jsonl',
+      firstMessage: 'Completed session',
+      messageCount: 3,
+      isActive: false,
+      status: 'completed',
+    },
+    {
+      id: 'sess-unl',
+      path: '/path/unl.jsonl',
+      firstMessage: 'Unloaded session',
+      messageCount: 3,
+      isActive: false,
+      status: 'unloaded',
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(SessionSidebar, {
+      sessions,
+      isLoading: false,
+      isSwitching: false,
+      activeSessionId: null,
+      onSelectSession: () => {},
+      onNewSession: () => {},
+      onDeleteSession: () => {},
+      onRenameSession: () => {},
+      onClose: () => {},
+      locale: 'es',
+      filesPanel: null,
+    })
+  );
+
+  assert.ok(html.includes('session-status-badge status-working'));
+  assert.ok(html.includes('Trabajando'));
+  assert.ok(html.includes('session-status-badge status-waiting'));
+  assert.ok(html.includes('Pidiendo permiso'));
+  assert.ok(html.includes('session-status-badge status-completed'));
+  assert.ok(html.includes('Terminada'));
+  assert.ok(html.includes('session-status-badge status-unloaded'));
+  assert.ok(html.includes('No cargada'));
 });
 
 

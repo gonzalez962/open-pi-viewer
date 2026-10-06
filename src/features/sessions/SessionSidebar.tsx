@@ -441,6 +441,30 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
                                   {displayTitle}
                                 </span>
                                 <div className="item-badges-and-actions">
+                                  {session.status === 'working' && (
+                                    <span className="session-status-badge status-working" title={t('sidebar.status_working')}>
+                                      <span className="mini-spinner" aria-hidden="true" />
+                                      <span>{t('sidebar.status_working')}</span>
+                                    </span>
+                                  )}
+                                  {session.status === 'waiting' && (
+                                    <span className="session-status-badge status-waiting" title={t('sidebar.status_waiting')}>
+                                      <span aria-hidden="true">⚠</span>
+                                      <span>{t('sidebar.status_waiting')}</span>
+                                    </span>
+                                  )}
+                                  {session.status === 'completed' && (
+                                    <span className="session-status-badge status-completed" title={t('sidebar.status_completed')}>
+                                      <span aria-hidden="true">✓</span>
+                                      <span>{t('sidebar.status_completed')}</span>
+                                    </span>
+                                  )}
+                                  {session.status === 'unloaded' && (
+                                    <span className="session-status-badge status-unloaded" title={t('sidebar.status_unloaded')}>
+                                      <span aria-hidden="true">○</span>
+                                      <span>{t('sidebar.status_unloaded')}</span>
+                                    </span>
+                                  )}
                                   {isActive && (
                                     <span className="active-badge">
                                       {t('sidebar.active')}

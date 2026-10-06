@@ -1468,3 +1468,54 @@ test('executeAutoStart: leaves targetProjectId undefined when workingDirectory i
   assert.strictEqual(dispatched[0].type, 'CONNECT_FAIL');
   assert.strictEqual(dispatched[0].targetProjectId, undefined, 'targetProjectId must be undefined to avoid project identity mismatch');
 });
+
+test('SessionEventController: dispatches UPDATE_SESSION_STATUS for background sessions on message_start, extension_ui_request, and agent_settled', () => {
+  const dispatched: Array<ChatAction & { targetProjectId?: string }> = [];
+
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({
+      nodePath: 'node',
+      piEntrypoint: 'cli.js',
+      workingDirectory: '/repo',
+    }),
+    getCurrentSessionId: () => 'active-session-1',
+    dispatch: (action) => dispatched.push(action),
+  });
+
+  // Event from background session 'bg-session-2'
+  controller.handleEvent({
+    type: 'message_start',
+    sessionId: 'bg-session-2',
+    sessionFile: '/repo/bg2.jsonl',
+    message: { id: 'm-1', role: 'assistant', content: '' },
+  } as any);
+
+  assert.strictEqual(dispatched.length, 1);
+  assert.strictEqual(dispatched[0].type, 'UPDATE_SESSION_STATUS');
+  assert.strictEqual((dispatched[0] as any).payload.sessionId, 'bg-session-2');
+  assert.strictEqual((dispatched[0] as any).payload.status, 'working');
+
+  // Extension UI request from background session
+  controller.handleEvent({
+    type: 'extension_ui_request',
+    sessionId: 'bg-session-2',
+    sessionFile: '/repo/bg2.jsonl',
+    id: 'req-1',
+    method: 'select',
+  } as any);
+
+  assert.strictEqual(dispatched.length, 2);
+  assert.strictEqual(dispatched[1].type, 'UPDATE_SESSION_STATUS');
+  assert.strictEqual((dispatched[1] as any).payload.status, 'waiting');
+
+  // Agent settled from background session
+  controller.handleEvent({
+    type: 'agent_settled',
+    sessionId: 'bg-session-2',
+    sessionFile: '/repo/bg2.jsonl',
+  } as any);
+
+  assert.strictEqual(dispatched.length, 3);
+  assert.strictEqual(dispatched[2].type, 'UPDATE_SESSION_STATUS');
+  assert.strictEqual((dispatched[2] as any).payload.status, 'completed');
+});
