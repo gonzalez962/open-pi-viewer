@@ -3187,6 +3187,15 @@
   outline: none;
 }
 
+.extension-prompt-option-btn.is-custom-choice {
+  border-style: dashed;
+}
+
+.extension-prompt-custom-input-box {
+  margin-top: 6px;
+  animation: fadeIn 0.15s ease;
+}
+
 /* Input Dialog Row */
 .extension-prompt-input-row {
   display: flex;

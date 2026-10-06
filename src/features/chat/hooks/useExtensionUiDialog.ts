@@ -86,6 +86,21 @@ export function cleanQuestionText(raw?: string): string {
   if (!raw || typeof raw !== 'string') return '';
   let text = raw.trim();
 
+  // 0. Strip trailing preview blocks (e.g. '--- 1. Option preview --- ...' or '\n\n--- 1. ...')
+  text = text.replace(/(?:\r?\n|\s)+---\s*\d*\.?\s*.*?(?:preview|vista\s*previa)\s*---[\s\S]*$/i, '');
+
+  // Strip trailing options block starting with '--- 1. ...' or after newline
+  text = text.replace(/(?:\r?\n|\s)+---\s*\d+\.\s+[\s\S]*$/i, '');
+
+  // Strip trailing numbered option list if formatted like '\n\n1. ... \n2. ...'
+  text = text.replace(/(?:\r?\n)+(?:\d+\.\s+.*[\r?\n]*)+$/i, '');
+
+  // Strip trailing options header block (e.g. '\n\nOptions:\n...' or '\n\nOpciones:\n...')
+  text = text.replace(/(?:\r?\n)+(?:options?|opciones?|choices?|elecciones?)\s*:[\s\S]*$/i, '');
+
+  // Strip trailing instructions like 'Enter option number (1-4)...' or 'Type your answer:'
+  text = text.replace(/(?:\r?\n)+(?:enter option number|type your answer|select an option|elige una opci[oó]n|selecciona una opci[oó]n)[\s\S]*$/i, '');
+
   let prev = '';
   // Iteratively peel off leading metadata components
   while (text !== prev && text.length > 0) {
