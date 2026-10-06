@@ -90,6 +90,21 @@ export default defineConfig({
       "@app": path.join(srcDir, "app"),
     },
   },
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+            return "vendor-react";
+          }
+          if (/[\\/]node_modules[\\/](highlight\.js|lowlight)[\\/]/.test(id)) {
+            return "vendor-highlight";
+          }
+        },
+      },
+    },
+  },
   server: {
     host: "0.0.0.0",
     port: Number(process.env.PORT) || 5173,

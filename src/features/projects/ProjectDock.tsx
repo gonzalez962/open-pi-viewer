@@ -5,10 +5,13 @@ import {
   getProjectDisplayName,
   getProjectMonogram,
 } from './projects';
-import { FolderPickerModal } from './components/FolderPickerModal';
 import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
+
+const FolderPickerModal = React.lazy(() =>
+  import('./components/FolderPickerModal').then((m) => ({ default: m.FolderPickerModal }))
+);
 
 export interface ProjectDockProps {
   projects: ProjectItem[];
@@ -478,15 +481,19 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
         </div>
       </aside>
 
-      <FolderPickerModal
-        isOpen={isFolderPickerOpen}
-        initialPath={projects.find((p) => p.id === activeProjectId)?.path}
-        onClose={() => setIsFolderPickerOpen(false)}
-        onSelectFolder={(folderPath, customName) => {
-          onAddProject(folderPath, customName);
-        }}
-        locale={locale}
-      />
+      {isFolderPickerOpen && (
+        <React.Suspense fallback={null}>
+          <FolderPickerModal
+            isOpen={isFolderPickerOpen}
+            initialPath={projects.find((p) => p.id === activeProjectId)?.path}
+            onClose={() => setIsFolderPickerOpen(false)}
+            onSelectFolder={(folderPath, customName) => {
+              onAddProject(folderPath, customName);
+            }}
+            locale={locale}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 };

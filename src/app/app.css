@@ -354,3 +354,15 @@
   outline: 2px solid var(--accent-primary);
   outline-offset: 1px;
 }
+
+/* Settings Lazy Loading Pane */
+.settings-loading-pane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 300px;
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+

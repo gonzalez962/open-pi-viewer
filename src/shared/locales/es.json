@@ -95,6 +95,7 @@
   "action.dismiss_error": "Descartar error",
 
   "settings.title": "Configuración",
+  "settings.loading": "Cargando configuración...",
   "settings.close": "Cerrar configuración",
   "settings.back_to_chat": "Volver al chat",
   "settings.view_subtitle": "Configuración de apariencia, conexión, permisos de herramientas y sincronización",
