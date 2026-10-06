@@ -5,6 +5,7 @@ import {
   categorizeToolName,
   groupChatMessages,
   groupMessageBlocks,
+  isInteractiveUserTool,
   mergeConsecutiveAssistantMessages,
   type ProcessGroup,
 } from '@core/process-grouping';
@@ -251,4 +252,32 @@ test('mergeConsecutiveAssistantMessages: single messages are returned unchanged'
   const merged = mergeConsecutiveAssistantMessages([u, a]);
   assert.equal(merged[0], u);
   assert.equal(merged[1], a);
+});
+
+test('isInteractiveUserTool: recognizes user interaction tools', () => {
+  assert.equal(isInteractiveUserTool('ask_user_question'), true);
+  assert.equal(isInteractiveUserTool('ask_user_choice'), true);
+  assert.equal(isInteractiveUserTool('ask_user_confirmation'), true);
+  assert.equal(isInteractiveUserTool('question'), true);
+  assert.equal(isInteractiveUserTool('ASK_USER_QUESTION'), true);
+  assert.equal(isInteractiveUserTool('bash'), false);
+  assert.equal(isInteractiveUserTool('read'), false);
+  assert.equal(isInteractiveUserTool(undefined), false);
+});
+
+test('groupMessageBlocks: decouples interactive user tools from process groups', () => {
+  const blocks: MessageBlock[] = [
+    tool('bash'),
+    tool('read'),
+    tool('ask_user_question', { id: 'q-1' }),
+    tool('edit'),
+  ];
+  const items = groupMessageBlocks(blocks);
+  assert.equal(items.length, 3);
+  assert.equal(items[0].type, 'process_group');
+  assert.equal((items[0] as ProcessGroup).total, 2);
+  assert.equal(items[1].type, 'block');
+  assert.equal((items[1] as any).block.name, 'ask_user_question');
+  assert.equal(items[2].type, 'process_group');
+  assert.equal((items[2] as ProcessGroup).total, 1);
 });

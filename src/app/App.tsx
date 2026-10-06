@@ -27,7 +27,11 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { groupMessageBlocks, mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import {
+  groupMessageBlocks,
+  isInteractiveUserTool,
+  mergeConsecutiveAssistantMessages,
+} from '@core/process-grouping';
 import { PromptControls } from '@features/chat/PromptControls';
 import {
   isMessageEmpty,
@@ -75,6 +79,7 @@ import {
   type AnsweredQuestionRecord,
 } from '@features/chat/hooks/useExtensionUiDialog';
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
+import { InteractiveQuestionCard } from '@features/chat/components/InteractiveQuestionCard';
 import { usePreferences } from '@features/settings/hooks/usePreferences';
 import { useConnection } from '@features/settings/hooks/useConnection';
 import { computeWallpaperStyles } from '@features/settings/wallpaper';
@@ -403,6 +408,21 @@ export const App: React.FC = () => {
     handleCancel: handleDialogCancel,
     handleBack,
   } = useExtensionUiDialog();
+
+  const handleSelectInteractiveOption = useCallback(
+    (label: string) => {
+      if (activeDialog) {
+        handleDialogSelect(activeDialog.itemKey, label);
+      } else {
+        setPrompt(label);
+        const textarea = document.querySelector<HTMLTextAreaElement>('#prompt-input');
+        if (textarea) {
+          textarea.focus();
+        }
+      }
+    },
+    [activeDialog, handleDialogSelect, setPrompt]
+  );
 
   const handleDialogBack = useCallback(
     (
@@ -1386,6 +1406,16 @@ export const App: React.FC = () => {
                                 content={block.text}
                                 t={t}
                                 onInsertCode={insertCodeIntoPrompt}
+                              />
+                            );
+                          }
+                          if (block.type === 'tool_call' && isInteractiveUserTool(block.name)) {
+                            return (
+                              <InteractiveQuestionCard
+                                key={block.id || `interactive-${iIndex}`}
+                                block={block}
+                                onSelectOption={handleSelectInteractiveOption}
+                                t={t}
                               />
                             );
                           }
