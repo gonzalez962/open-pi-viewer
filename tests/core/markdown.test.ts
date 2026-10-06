@@ -34,9 +34,11 @@ import {
   parseCodeFenceHeader,
   parseInline,
   parseMarkdown,
+  parseTableDelimiter,
   sanitizeFilename,
   sanitizeLanguage,
   shouldRenderAsMarkdown,
+  splitTableCells,
 } from '@core/markdown';
 import type { ChatMessage } from '@core/types/messages';
 
@@ -337,6 +339,59 @@ test('parser: unclosed fence at EOF streams as code block (crucial for streaming
 });
 
 // ============================================================================
+// Group 6b: GFM Markdown Tables
+// ============================================================================
+
+test('tables: splitTableCells handles leading/trailing pipes, code spans, and escapes', () => {
+  const row = '| First | Second | Third |';
+  assert.deepEqual(splitTableCells(row), ['First', 'Second', 'Third']);
+
+  const withoutOuterPipes = 'Col 1 | Col 2';
+  assert.deepEqual(splitTableCells(withoutOuterPipes), ['Col 1', 'Col 2']);
+
+  const withCodeSpan = '| Name | `x | y` | Value |';
+  assert.deepEqual(splitTableCells(withCodeSpan), ['Name', '`x | y`', 'Value']);
+
+  const withEscapes = '| Col \\| 1 | Col 2 |';
+  assert.deepEqual(splitTableCells(withEscapes), ['Col | 1', 'Col 2']);
+});
+
+test('tables: parseTableDelimiter correctly parses column alignments', () => {
+  const delim = '| :--- | :---: | ---: | --- |';
+  const alignments = parseTableDelimiter(delim);
+  assert.deepEqual(alignments, ['left', 'center', 'right', null]);
+
+  const invalid = '| not-a-delim | --- |';
+  assert.equal(parseTableDelimiter(invalid), null);
+});
+
+test('tables: parseMarkdown parses full GFM table into AST with headers and rows', () => {
+  const tableMd = `
+| Acción del Usuario | Antes | Ahora (pi-messages) |
+| :--- | :---: | ---: |
+| Identificar archivo | Texto plano o roto | Encabezado estilizado con glifo |
+| Resaltado de sintaxis | Todo en blanco plano | PiColor enriquecido |
+`;
+
+  const ast = parseMarkdown(tableMd);
+  assert.equal(ast.children.length, 1);
+  const tableNode = ast.children[0];
+  assert.equal(tableNode.type, 'table');
+  if (tableNode.type === 'table') {
+    assert.equal(tableNode.headers.length, 3);
+    assert.equal(tableNode.headers[0].align, 'left');
+    assert.equal(tableNode.headers[1].align, 'center');
+    assert.equal(tableNode.headers[2].align, 'right');
+    assert.equal(tableNode.rows.length, 2);
+    assert.equal(tableNode.rows[0].length, 3);
+    assert.equal(tableNode.rows[0][0].children[0].type, 'text');
+    if (tableNode.rows[0][0].children[0].type === 'text') {
+      assert.equal(tableNode.rows[0][0].children[0].value, 'Identificar archivo');
+    }
+  }
+});
+
+// ============================================================================
 // Group 7: Link Policy, Safe URL Validation & Raw HTML Text
 // ============================================================================
 
@@ -429,6 +484,95 @@ test('links: unsafe or malformed links are rendered as literal text without link
       href: 'https://gentle.ai',
     },
   ]);
+});
+
+test('links: autolinks automatically parse bare URLs and bracketed URLs as link nodes', () => {
+  // 1. Bare https link in sentence
+  const bare1 = parseInline('Visit https://github.com/gonzalez962/open-pi-viewer to install');
+  assert.deepEqual(bare1, [
+    { type: 'text', value: 'Visit ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://github.com/gonzalez962/open-pi-viewer' }],
+      href: 'https://github.com/gonzalez962/open-pi-viewer',
+    },
+    { type: 'text', value: ' to install' },
+  ]);
+
+  // 2. Localhost IP with port
+  const bareIp = parseInline('Open http://127.0.0.1:7317 in your browser');
+  assert.deepEqual(bareIp, [
+    { type: 'text', value: 'Open ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'http://127.0.0.1:7317' }],
+      href: 'http://127.0.0.1:7317',
+    },
+    { type: 'text', value: ' in your browser' },
+  ]);
+
+  // 3. Trailing sentence punctuation stripped from link href
+  const barePunct = parseInline('Check https://example.com/api.');
+  assert.deepEqual(barePunct, [
+    { type: 'text', value: 'Check ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/api' }],
+      href: 'https://example.com/api',
+    },
+    { type: 'text', value: '.' },
+  ]);
+
+  // 4. Bracketed autolink <https://...>
+  const bracketed = parseInline('See <https://example.com/docs> now');
+  assert.deepEqual(bracketed, [
+    { type: 'text', value: 'See ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/docs' }],
+      href: 'https://example.com/docs',
+    },
+    { type: 'text', value: ' now' },
+  ]);
+
+  // 5. Parentheses balanced in URL vs enclosing parentheses
+  const inParens = parseInline('(see https://example.com/page)');
+  assert.deepEqual(inParens, [
+    { type: 'text', value: '(see ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/page' }],
+      href: 'https://example.com/page',
+    },
+    { type: 'text', value: ')' },
+  ]);
+
+  // 6. Unsafe bracketed scheme remains plain text
+  const unsafeBracketed = parseInline('Payload <javascript:alert(1)> here');
+  assert.equal(
+    unsafeBracketed.some((n) => n.type === 'link'),
+    false
+  );
+});
+
+test('links: link label cannot contain nested links (CommonMark compliance preventing duplicate copy controls)', () => {
+  const formattedUrl = parseInline('[https://example.com](https://example.com)');
+  assert.deepEqual(formattedUrl, [
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com' }],
+      href: 'https://example.com',
+    },
+  ]);
+
+  const nestedMarkdown = parseInline('[Visit [Nested](https://nested.com)](https://example.com)');
+  assert.equal(nestedMarkdown[0].type, 'link');
+  if (nestedMarkdown[0].type === 'link') {
+    assert.equal(
+      nestedMarkdown[0].label.some((n) => n.type === 'link'),
+      false
+    );
+  }
 });
 
 test('links: credentials, mailto queries/percent-encoding/multiple recipients render as inert plain text in parser', () => {

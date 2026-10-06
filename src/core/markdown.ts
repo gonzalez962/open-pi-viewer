@@ -55,6 +55,19 @@ export interface ListBlockNode {
   items: ListItemNode[];
 }
 
+export type TableAlign = 'left' | 'center' | 'right' | null;
+
+export interface TableCellNode {
+  children: InlineNode[];
+  align?: TableAlign;
+}
+
+export interface TableBlockNode {
+  type: 'table';
+  headers: TableCellNode[];
+  rows: TableCellNode[][];
+}
+
 /**
  * Maximum permitted recursion depth for nested list parsing.
  * Beyond this cap, deeply indented sub-lines are deterministically flattened into
@@ -66,7 +79,8 @@ export type BlockNode =
   | HeadingBlockNode
   | CodeBlockNode
   | ParagraphBlockNode
-  | ListBlockNode;
+  | ListBlockNode
+  | TableBlockNode;
 
 export interface MarkdownRoot {
   type: 'root';
@@ -345,8 +359,10 @@ export function isSafeUrl(rawUrl: string): boolean {
 /**
  * Parses inline formatting with bounded linear recursion.
  * Delimiters without matching closures are kept as literal text.
+ * When allowLinks is false (e.g. inside a link label), link and autolink parsing
+ * is disabled to strictly uphold the CommonMark invariant that links cannot be nested.
  */
-export function parseInline(input: string, depth = 0): InlineNode[] {
+export function parseInline(input: string, depth = 0, allowLinks = true): InlineNode[] {
   if (!input) return [];
   if (depth > 6) {
     return [{ type: 'text', value: input }];
@@ -381,8 +397,8 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
       }
     }
 
-    // 2. Links: [label](url)
-    if (input[i] === '[') {
+    // 2. Links: [label](url) - forbidden if already inside a link label
+    if (allowLinks && input[i] === '[') {
       const closeBracket = input.indexOf(']', i + 1);
       if (closeBracket !== -1 && input[closeBracket + 1] === '(') {
         const closeParen = input.indexOf(')', closeBracket + 2);
@@ -391,7 +407,8 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           if (isSafeUrl(rawUrl)) {
             flushText();
             const labelText = input.slice(i + 1, closeBracket);
-            const labelNodes = parseInline(labelText, depth + 1);
+            // Disable links within link label to prevent nested links and duplicate controls
+            const labelNodes = parseInline(labelText, depth + 1, false);
             nodes.push({
               type: 'link',
               label: labelNodes.length > 0 ? labelNodes : [{ type: 'text', value: rawUrl }],
@@ -408,6 +425,61 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
       continue;
     }
 
+    // 2b. Bracketed autolinks: <https://...> or <http://...>
+    if (allowLinks && input[i] === '<' && (input.startsWith('<http://', i) || input.startsWith('<https://', i))) {
+      const closeIdx = input.indexOf('>', i + 1);
+      if (closeIdx !== -1) {
+        const rawUrl = input.slice(i + 1, closeIdx).trim();
+        if (isSafeUrl(rawUrl)) {
+          flushText();
+          nodes.push({
+            type: 'link',
+            label: [{ type: 'text', value: rawUrl }],
+            href: rawUrl,
+          });
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    }
+
+    // 2c. Bare URL autolinks: https://... or http://...
+    if (
+      allowLinks &&
+      (input.startsWith('https://', i) || input.startsWith('http://', i)) &&
+      (i === 0 || /[\s\(\[\{<"']/.test(input[i - 1]))
+    ) {
+      let endIdx = i;
+      while (endIdx < input.length && !/[\s<>"'`\*\~]/.test(input[endIdx])) {
+        endIdx++;
+      }
+      let rawUrl = input.slice(i, endIdx);
+      while (rawUrl.length > 0 && /[.,;:!?)]/.test(rawUrl[rawUrl.length - 1])) {
+        if (rawUrl.endsWith(')')) {
+          const openParens = (rawUrl.match(/\(/g) || []).length;
+          const closeParens = (rawUrl.match(/\)/g) || []).length;
+          if (closeParens > openParens) {
+            rawUrl = rawUrl.slice(0, -1);
+            continue;
+          }
+          break;
+        } else {
+          rawUrl = rawUrl.slice(0, -1);
+        }
+      }
+
+      if (rawUrl && isSafeUrl(rawUrl)) {
+        flushText();
+        nodes.push({
+          type: 'link',
+          label: [{ type: 'text', value: rawUrl }],
+          href: rawUrl,
+        });
+        i += rawUrl.length;
+        continue;
+      }
+    }
+
     // 3. Bold + Italic: ***...*** or ___...___
     if (input.startsWith('***', i)) {
       const closeIdx = input.indexOf('***', i + 3);
@@ -419,7 +491,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           children: [
             {
               type: 'emphasis',
-              children: parseInline(inner, depth + 1),
+              children: parseInline(inner, depth + 1, allowLinks),
             },
           ],
         });
@@ -441,7 +513,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           children: [
             {
               type: 'emphasis',
-              children: parseInline(inner, depth + 1),
+              children: parseInline(inner, depth + 1, allowLinks),
             },
           ],
         });
@@ -462,7 +534,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 2, closeIdx);
         nodes.push({
           type: 'strong',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 2;
         continue;
@@ -479,7 +551,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 2, closeIdx);
         nodes.push({
           type: 'strong',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 2;
         continue;
@@ -498,7 +570,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 1, closeIdx);
         nodes.push({
           type: 'emphasis',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 1;
         continue;
@@ -511,7 +583,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 1, closeIdx);
         nodes.push({
           type: 'emphasis',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 1;
         continue;
@@ -698,6 +770,65 @@ function parseListBlock(
 }
 
 /**
+ * Splits a Markdown table row line into trimmed cell contents, respecting inline code backticks.
+ */
+export function splitTableCells(line: string): string[] {
+  let content = line.trim();
+  if (content.startsWith('|')) {
+    content = content.slice(1);
+  }
+  if (content.endsWith('|') && !content.endsWith('\\|')) {
+    content = content.slice(0, -1);
+  }
+
+  const cells: string[] = [];
+  let current = '';
+  let inCode = false;
+
+  for (let j = 0; j < content.length; j++) {
+    const char = content[j];
+    if (char === '`') {
+      inCode = !inCode;
+      current += char;
+    } else if (char === '\\' && j + 1 < content.length && content[j + 1] === '|') {
+      current += '|';
+      j++;
+    } else if (char === '|' && !inCode) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+/**
+ * Parses a table delimiter row (e.g. '| :--- | :---: | ---: |') into column alignments.
+ */
+export function parseTableDelimiter(line: string): TableAlign[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.includes('-')) return null;
+
+  const cells = splitTableCells(trimmed);
+  if (cells.length === 0) return null;
+
+  const alignments: TableAlign[] = [];
+  for (const cell of cells) {
+    const m = cell.match(/^(:?)-+(:?)$/);
+    if (!m) return null;
+    const left = m[1] === ':';
+    const right = m[2] === ':';
+    if (left && right) alignments.push('center');
+    else if (right) alignments.push('right');
+    else if (left) alignments.push('left');
+    else alignments.push(null);
+  }
+  return alignments;
+}
+
+/**
  * Main parser entrypoint.
  * Converts raw Markdown text into a typed Abstract Syntax Tree (AST).
  */
@@ -800,6 +931,54 @@ export function parseMarkdown(raw: string): MarkdownRoot {
       blocks.push(listBlock);
       i = nextIndex;
       continue;
+    }
+
+    // Check for GFM table
+    if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('-')) {
+      const delimiterAlignments = parseTableDelimiter(lines[i + 1]);
+      if (delimiterAlignments && delimiterAlignments.length > 0) {
+        flushParagraph();
+        const headerRawCells = splitTableCells(line);
+        const colCount = delimiterAlignments.length;
+
+        const headers: TableCellNode[] = [];
+        for (let c = 0; c < colCount; c++) {
+          const rawCell = headerRawCells[c] || '';
+          headers.push({
+            children: parseInline(rawCell),
+            align: delimiterAlignments[c],
+          });
+        }
+
+        const rows: TableCellNode[][] = [];
+        let rIndex = i + 2;
+        while (rIndex < lines.length) {
+          const rowLine = lines[rIndex];
+          if (!rowLine.trim() || !rowLine.includes('|')) {
+            break;
+          }
+          const rawRowCells = splitTableCells(rowLine);
+          const rowCells: TableCellNode[] = [];
+          for (let c = 0; c < colCount; c++) {
+            const rawCell = rawRowCells[c] || '';
+            rowCells.push({
+              children: parseInline(rawCell),
+              align: delimiterAlignments[c],
+            });
+          }
+          rows.push(rowCells);
+          rIndex++;
+        }
+
+        blocks.push({
+          type: 'table',
+          headers,
+          rows,
+        });
+
+        i = rIndex;
+        continue;
+      }
     }
 
     // Blank line

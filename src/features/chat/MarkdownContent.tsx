@@ -349,7 +349,8 @@ export const MarkdownLink: React.FC<{
 function renderInline(
   nodes: InlineNode[],
   keyPrefix: string,
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  insideLink = false
 ): React.ReactNode[] {
   return nodes.map((node, index) => {
     const key = `${keyPrefix}-in-${index}`;
@@ -365,19 +366,26 @@ function renderInline(
       case 'strong':
         return (
           <strong key={key}>
-            {renderInline(node.children, key, t)}
+            {renderInline(node.children, key, t, insideLink)}
           </strong>
         );
       case 'emphasis':
         return (
           <em key={key}>
-            {renderInline(node.children, key, t)}
+            {renderInline(node.children, key, t, insideLink)}
           </em>
         );
       case 'link':
+        if (insideLink) {
+          return (
+            <React.Fragment key={key}>
+              {renderInline(node.label, `${key}-lbl`, t, true)}
+            </React.Fragment>
+          );
+        }
         return (
           <MarkdownLink key={key} href={node.href} t={t}>
-            {renderInline(node.label, `${key}-lbl`, t)}
+            {renderInline(node.label, `${key}-lbl`, t, true)}
           </MarkdownLink>
         );
     }
@@ -459,6 +467,42 @@ function renderBlock(
         <ul key={key} className="markdown-ul">
           {items}
         </ul>
+      );
+    }
+    case 'table': {
+      return (
+        <div key={key} className="markdown-table-wrapper">
+          <table className="markdown-table">
+            <thead className="markdown-thead">
+              <tr className="markdown-tr">
+                {block.headers.map((header, hIdx) => (
+                  <th
+                    key={`${key}-th-${hIdx}`}
+                    className="markdown-th"
+                    style={header.align ? { textAlign: header.align } : undefined}
+                  >
+                    {renderInline(header.children, `${key}-th-${hIdx}`, t)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="markdown-tbody">
+              {block.rows.map((row, rIdx) => (
+                <tr key={`${key}-tr-${rIdx}`} className="markdown-tr">
+                  {row.map((cell, cIdx) => (
+                    <td
+                      key={`${key}-td-${rIdx}-${cIdx}`}
+                      className="markdown-td"
+                      style={cell.align ? { textAlign: cell.align } : undefined}
+                    >
+                      {renderInline(cell.children, `${key}-td-${rIdx}-${cIdx}`, t)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     }
   }

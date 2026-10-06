@@ -188,3 +188,31 @@ test('planPromptDispatch: preserves existing behavior for other commands and mes
   });
   assert.equal(emptyBlocked.action, 'blocked');
 });
+
+test('planPromptDispatch: /zen and /focus client commands resolve properly', () => {
+  const readyZen = planPromptDispatch({
+    prompt: '/zen',
+    hasAttachments: false,
+    isReadyToSend: true,
+    canQueue: false,
+  });
+  assert.equal(readyZen.action, 'client_command');
+  assert.equal(readyZen.commandId, 'zen');
+
+  const readyFocus = planPromptDispatch({
+    prompt: '/focus',
+    hasAttachments: false,
+    isReadyToSend: true,
+    canQueue: false,
+  });
+  assert.equal(readyFocus.action, 'client_command');
+  assert.equal(readyFocus.commandId, 'zen');
+
+  const offlineZen = planPromptDispatch({
+    prompt: '/zen',
+    hasAttachments: false,
+    isReadyToSend: false,
+    canQueue: false,
+  });
+  assert.equal(offlineZen.action, 'blocked');
+});

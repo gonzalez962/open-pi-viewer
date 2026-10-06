@@ -493,6 +493,8 @@ export const App: React.FC = () => {
   );
   const activeSessionTitle = resolveExportTitle(activeSession);
 
+  const handleToggleZenModeRef = useRef<() => void>(() => {});
+
   const {
     handleExport,
     toast: exportToast,
@@ -530,6 +532,7 @@ export const App: React.FC = () => {
     onNewConversation: handleNewConversation,
     onReload: requestRetry,
     onExport: handleExport,
+    onZenToggle: () => handleToggleZenModeRef.current(),
     commands: commandCatalog,
     helpCommands: visibleCommandCatalog,
   });
@@ -774,6 +777,7 @@ export const App: React.FC = () => {
     commandPalette.isOpen,
     activeDialog,
   ]);
+  handleToggleZenModeRef.current = handleToggleZenMode;
 
   const handleExitZenMode = useCallback(() => {
     setIsZenMode(false);

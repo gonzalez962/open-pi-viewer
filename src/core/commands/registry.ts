@@ -86,4 +86,15 @@ export const COMMANDS: CommandSpec[] = [
     origin: 'pi-core',
     execution: 'client',
   },
+  {
+    id: 'zen',
+    name: '/zen',
+    aliases: ['/focus'],
+    description: {
+      es: 'Activa o desactiva el modo de concentración Zen sin distracciones.',
+      en: 'Toggles distraction-free Zen Focus Mode.',
+    },
+    origin: 'pi-core',
+    execution: 'client',
+  },
 ];
