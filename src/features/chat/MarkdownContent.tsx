@@ -461,6 +461,42 @@ function renderBlock(
         </ul>
       );
     }
+    case 'table': {
+      return (
+        <div key={key} className="markdown-table-wrapper">
+          <table className="markdown-table">
+            <thead className="markdown-thead">
+              <tr className="markdown-tr">
+                {block.headers.map((header, hIdx) => (
+                  <th
+                    key={`${key}-th-${hIdx}`}
+                    className="markdown-th"
+                    style={header.align ? { textAlign: header.align } : undefined}
+                  >
+                    {renderInline(header.children, `${key}-th-${hIdx}`, t)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="markdown-tbody">
+              {block.rows.map((row, rIdx) => (
+                <tr key={`${key}-tr-${rIdx}`} className="markdown-tr">
+                  {row.map((cell, cIdx) => (
+                    <td
+                      key={`${key}-td-${rIdx}-${cIdx}`}
+                      className="markdown-td"
+                      style={cell.align ? { textAlign: cell.align } : undefined}
+                    >
+                      {renderInline(cell.children, `${key}-td-${rIdx}-${cIdx}`, t)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
   }
 }
 
