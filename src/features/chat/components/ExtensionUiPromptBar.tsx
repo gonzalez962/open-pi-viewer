@@ -5,6 +5,7 @@ import type {
 } from '../hooks/useExtensionUiDialog';
 import {
   cleanQuestionText,
+  isBackOptionLabel,
   parseMultiSelectOptions,
   parseQuestionStepInfo,
 } from '../hooks/useExtensionUiDialog';
@@ -118,7 +119,16 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   }, [method, request.options]);
 
   const isMultiSelect = multiSelect.isMultiSelect;
-  const singleSelectOptions = useMemo(() => request.options ?? [], [request.options]);
+  const singleSelectOptions = useMemo(() => {
+    if (!request.options) return [];
+    if ((canGoBack || currentStep > 1) && request.options.length > 1) {
+      const last = request.options[request.options.length - 1];
+      if (isBackOptionLabel(last)) {
+        return request.options.slice(0, -1);
+      }
+    }
+    return request.options;
+  }, [request.options, canGoBack, currentStep]);
 
   // Local state for multi-select checkboxes
   const [checkedIndices, setCheckedIndices] = useState<Set<number>>(() => {
