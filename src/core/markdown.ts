@@ -408,6 +408,60 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
       continue;
     }
 
+    // 2b. Bracketed autolinks: <https://...> or <http://...>
+    if (input[i] === '<' && (input.startsWith('<http://', i) || input.startsWith('<https://', i))) {
+      const closeIdx = input.indexOf('>', i + 1);
+      if (closeIdx !== -1) {
+        const rawUrl = input.slice(i + 1, closeIdx).trim();
+        if (isSafeUrl(rawUrl)) {
+          flushText();
+          nodes.push({
+            type: 'link',
+            label: [{ type: 'text', value: rawUrl }],
+            href: rawUrl,
+          });
+          i = closeIdx + 1;
+          continue;
+        }
+      }
+    }
+
+    // 2c. Bare URL autolinks: https://... or http://...
+    if (
+      (input.startsWith('https://', i) || input.startsWith('http://', i)) &&
+      (i === 0 || /[\s\(\[\{<"']/.test(input[i - 1]))
+    ) {
+      let endIdx = i;
+      while (endIdx < input.length && !/[\s<>"'`\*\~]/.test(input[endIdx])) {
+        endIdx++;
+      }
+      let rawUrl = input.slice(i, endIdx);
+      while (rawUrl.length > 0 && /[.,;:!?)]/.test(rawUrl[rawUrl.length - 1])) {
+        if (rawUrl.endsWith(')')) {
+          const openParens = (rawUrl.match(/\(/g) || []).length;
+          const closeParens = (rawUrl.match(/\)/g) || []).length;
+          if (closeParens > openParens) {
+            rawUrl = rawUrl.slice(0, -1);
+            continue;
+          }
+          break;
+        } else {
+          rawUrl = rawUrl.slice(0, -1);
+        }
+      }
+
+      if (rawUrl && isSafeUrl(rawUrl)) {
+        flushText();
+        nodes.push({
+          type: 'link',
+          label: [{ type: 'text', value: rawUrl }],
+          href: rawUrl,
+        });
+        i += rawUrl.length;
+        continue;
+      }
+    }
+
     // 3. Bold + Italic: ***...*** or ___...___
     if (input.startsWith('***', i)) {
       const closeIdx = input.indexOf('***', i + 3);

@@ -431,6 +431,75 @@ test('links: unsafe or malformed links are rendered as literal text without link
   ]);
 });
 
+test('links: autolinks automatically parse bare URLs and bracketed URLs as link nodes', () => {
+  // 1. Bare https link in sentence
+  const bare1 = parseInline('Visit https://github.com/gonzalez962/open-pi-viewer to install');
+  assert.deepEqual(bare1, [
+    { type: 'text', value: 'Visit ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://github.com/gonzalez962/open-pi-viewer' }],
+      href: 'https://github.com/gonzalez962/open-pi-viewer',
+    },
+    { type: 'text', value: ' to install' },
+  ]);
+
+  // 2. Localhost IP with port
+  const bareIp = parseInline('Open http://127.0.0.1:7317 in your browser');
+  assert.deepEqual(bareIp, [
+    { type: 'text', value: 'Open ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'http://127.0.0.1:7317' }],
+      href: 'http://127.0.0.1:7317',
+    },
+    { type: 'text', value: ' in your browser' },
+  ]);
+
+  // 3. Trailing sentence punctuation stripped from link href
+  const barePunct = parseInline('Check https://example.com/api.');
+  assert.deepEqual(barePunct, [
+    { type: 'text', value: 'Check ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/api' }],
+      href: 'https://example.com/api',
+    },
+    { type: 'text', value: '.' },
+  ]);
+
+  // 4. Bracketed autolink <https://...>
+  const bracketed = parseInline('See <https://example.com/docs> now');
+  assert.deepEqual(bracketed, [
+    { type: 'text', value: 'See ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/docs' }],
+      href: 'https://example.com/docs',
+    },
+    { type: 'text', value: ' now' },
+  ]);
+
+  // 5. Parentheses balanced in URL vs enclosing parentheses
+  const inParens = parseInline('(see https://example.com/page)');
+  assert.deepEqual(inParens, [
+    { type: 'text', value: '(see ' },
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com/page' }],
+      href: 'https://example.com/page',
+    },
+    { type: 'text', value: ')' },
+  ]);
+
+  // 6. Unsafe bracketed scheme remains plain text
+  const unsafeBracketed = parseInline('Payload <javascript:alert(1)> here');
+  assert.equal(
+    unsafeBracketed.some((n) => n.type === 'link'),
+    false
+  );
+});
+
 test('links: credentials, mailto queries/percent-encoding/multiple recipients render as inert plain text in parser', () => {
   const rejectedLinks = [
     '[Evil](http://user:pass@example.com)',
