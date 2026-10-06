@@ -90,6 +90,10 @@ export interface UsePromptStateOptions {
    */
   onExport?: (args: string) => void;
   /**
+   * Toggles Zen focus mode (client-side '/zen' and '/focus' slash command).
+   */
+  onZenToggle?: () => void;
+  /**
    * Command catalog used for dispatch and "/help": built-ins plus the user's custom
    * commands (Issue #9 T7, see `buildCommandCatalog`). Defaults to the built-in `COMMANDS`.
    * Custom commands always resolve as 'agent', so they are forwarded to Pi verbatim.
@@ -174,6 +178,7 @@ export function usePromptState({
   onNewConversation,
   onReload,
   onExport,
+  onZenToggle,
   commands = COMMANDS,
   helpCommands = commands,
 }: UsePromptStateOptions) {
@@ -240,6 +245,10 @@ export function usePromptState({
       }
       case 'export': {
         onExport?.(args);
+        return;
+      }
+      case 'zen': {
+        onZenToggle?.();
         return;
       }
       case 'reload': {
