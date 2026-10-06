@@ -101,6 +101,25 @@ export function discoverPiCli(configured?: string | null): string | null {
   return null;
 }
 
+export function discoverEngramServerUrl(configured?: string): string {
+  if (configured && configured.trim()) {
+    return configured.trim();
+  }
+  if (process.env.PI_VIEWER_ENGRAM_SERVER_URL && process.env.PI_VIEWER_ENGRAM_SERVER_URL.trim()) {
+    return process.env.PI_VIEWER_ENGRAM_SERVER_URL.trim();
+  }
+  const cloudJsonPath = path.join(getHomeDir(), '.engram', 'cloud.json');
+  if (fs.existsSync(cloudJsonPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(cloudJsonPath, 'utf8'));
+      if (typeof data.server_url === 'string' && data.server_url.trim()) {
+        return data.server_url.trim();
+      }
+    } catch {}
+  }
+  return 'https://engram.example.com';
+}
+
 export function discoverEngramBinary(configured?: string): string {
   if (configured && configured.trim()) {
     const trimmed = configured.trim();
@@ -203,10 +222,7 @@ export function loadBridgeConfig(customConfigPath?: string): BridgeConfig {
   const nodeExecutable = discoverNodeExecutable(raw.nodeExecutable);
   const piCliPath = discoverPiCli(raw.piCliPath);
   const engramBinary = discoverEngramBinary(raw.engramBinary);
-  const engramServerUrl =
-    raw.engramServerUrl?.trim() ||
-    process.env.PI_VIEWER_ENGRAM_SERVER_URL?.trim() ||
-    'https://engram.example.com';
+  const engramServerUrl = discoverEngramServerUrl(raw.engramServerUrl);
 
   const allowUnconfinedNavigation =
     raw.allowUnconfinedNavigation !== undefined ? Boolean(raw.allowUnconfinedNavigation) : true;

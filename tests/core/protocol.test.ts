@@ -3160,6 +3160,13 @@ test('Bridge: listSessionsPi and switchSessionPi invoke respective Tauri command
   assert.deepStrictEqual(calls[1].args, { payload: { sessionPath: '/sessions/sess-2.jsonl' } });
   assert.strictEqual(switchRes.sessionId, 'sess-2');
   assert.strictEqual(switchRes.cancelled, false);
+
+  // Test switchSessionPi with options (loadAll, limit)
+  await switchSessionPi('/sessions/sess-2.jsonl', { loadAll: true, limit: 50 }, mockInvoke);
+  assert.strictEqual(calls[2].cmd, 'switch_session');
+  assert.deepStrictEqual(calls[2].args, {
+    payload: { sessionPath: '/sessions/sess-2.jsonl', loadAll: true, limit: 50 },
+  });
 });
 
 test('Session Storage: recordSessionSwitched updates stored session record for cwd', () => {

@@ -44,6 +44,8 @@ pub struct ConnectPayload {
     pub working_directory: String,
     pub session_file: Option<String>,
     pub require_session_file_exists: Option<bool>,
+    #[serde(default)]
+    pub load_all: Option<bool>,
 }
 
 /// Bounded diagnostics collector for child stderr.

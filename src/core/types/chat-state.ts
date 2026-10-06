@@ -17,6 +17,8 @@ export interface ChatSessionState {
   sessionStats: SessionStats | null;
   modelStats: Record<string, SessionStats>;
   messages: ChatMessage[];
+  hasMoreMessages?: boolean;
+  isLoadingOlderMessages?: boolean;
   activeAssistantMessageId: string | null;
   pendingPromptId: string | null;
   lastError: string | null;

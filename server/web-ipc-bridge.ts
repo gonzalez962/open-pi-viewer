@@ -5,6 +5,9 @@ export {
   setSubprocessSpawnerForTest,
   getSessionStatus,
   setSessionStatus,
+  setSessionAliveChecker,
+  sessionParseCache,
+  invalidateSessionParseCache,
   getActiveThinkingLevel,
 } from './bridge/state';
 
@@ -33,6 +36,9 @@ export {
   getEngramCloudStatusImpl,
   enrollEngramProjectImpl,
   getEngramObservationsImpl,
+  parseEngramProjectFromStats,
+  parseEngramCloudStatus,
+  clearEngramCacheForTest,
 } from './bridge/engram';
 
 export { getMcpServersImpl, getPiResourcesImpl, getAvailableModelsImpl } from './bridge/models';

@@ -5,6 +5,7 @@ import {
   scrollToBottom,
   ScrollController,
   shouldShowScrollToBottom,
+  preserveScrollOnPrepend,
   DEFAULT_BOTTOM_THRESHOLD_PX,
   type ScrollMetrics,
 } from '@shared/scroll';
@@ -164,5 +165,24 @@ test('shouldShowScrollToBottom: returns true only when scrolled up away from bot
   // No messages -> false (even if scrolled up)
   assert.equal(shouldShowScrollToBottom(false, 0), false);
   assert.equal(shouldShowScrollToBottom(false, -1), false);
+});
+
+test('preserveScrollOnPrepend: adjusts scrollTop by scrollHeight delta accurately', () => {
+  const mockElement = {
+    scrollTop: 100,
+    scrollHeight: 1500,
+  };
+
+  // Prepending items increased scrollHeight from 1000 to 1500 (+500px)
+  preserveScrollOnPrepend(mockElement, 1000);
+  assert.equal(mockElement.scrollTop, 600);
+
+  // When scrollHeight is unchanged, scrollTop remains untouched
+  preserveScrollOnPrepend(mockElement, 1500);
+  assert.equal(mockElement.scrollTop, 600);
+
+  // Null/undefined does not throw
+  assert.doesNotThrow(() => preserveScrollOnPrepend(null, 1000));
+  assert.doesNotThrow(() => preserveScrollOnPrepend(undefined, 1000));
 });
 

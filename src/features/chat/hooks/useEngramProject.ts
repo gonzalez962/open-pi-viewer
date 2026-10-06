@@ -32,13 +32,18 @@ export function useEngramProject({ cwd }: UseEngramProjectOptions = {}): UseEngr
 
       let merged: EngramCloudStatus = { ...status };
 
-      if (status.daemonRunning) {
+      if (status.daemonRunning && status.enrolled === true) {
         try {
           const port = status.daemonPort || 7437;
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 1500);
           const projectParam = engramProject ? `?project=${encodeURIComponent(engramProject)}` : '';
-          const res = await fetch(`http://127.0.0.1:${port}/sync/status${projectParam}`, {
+          const isWebIpc = typeof window !== 'undefined' && Boolean((window as any).__IS_WEB_IPC__);
+          const daemonUrl = isWebIpc
+            ? `/api/engram-daemon/sync/status${projectParam}`
+            : `http://127.0.0.1:${port}/sync/status${projectParam}`;
+
+          const res = await fetch(daemonUrl, {
             signal: controller.signal,
           });
           clearTimeout(timeoutId);
@@ -46,12 +51,17 @@ export function useEngramProject({ cwd }: UseEngramProjectOptions = {}): UseEngr
           if (res.ok) {
             const data = await res.json();
             if (data && typeof data === 'object') {
+              const daemonErr = data.last_error || data.reason_message;
+              const isProjectError = Boolean(
+                engramProject && typeof daemonErr === 'string' && daemonErr.includes(engramProject)
+              );
+
               merged = {
                 ...merged,
-                phase: data.phase ?? merged.phase,
+                phase: isProjectError ? (data.phase ?? merged.phase) : (merged.phase ?? 'synced'),
                 lastSyncAt: data.last_sync_at ?? merged.lastSyncAt,
-                lastError: data.last_error ?? data.reason_message ?? merged.lastError,
-                reasonCode: data.reason_code ?? merged.reasonCode,
+                lastError: isProjectError ? (daemonErr ?? merged.lastError) : merged.lastError,
+                reasonCode: isProjectError ? (data.reason_code ?? merged.reasonCode) : merged.reasonCode,
               };
             }
           }
@@ -99,16 +109,22 @@ export function useEngramProject({ cwd }: UseEngramProjectOptions = {}): UseEngr
 
   useEffect(() => {
     let cancelled = false;
-    setCloudStatus(null);
     void (async () => {
       try {
         const project = await getEngramProjectPi(cwd);
         if (!cancelled) {
           setEngramProject(project);
+          try {
+            const status = await getEngramCloudStatusPi(project ?? undefined, cwd);
+            if (!cancelled && status) {
+              setCloudStatus(status);
+            }
+          } catch {}
         }
       } catch {
         if (!cancelled) {
           setEngramProject(null);
+          setCloudStatus(null);
         }
       }
     })();

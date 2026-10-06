@@ -180,14 +180,23 @@ pub async fn connect(
                 (serde_json::json!({}), None, None, Vec::new())
             });
 
+        let total_count = messages.len() as u64;
+        let (initial_messages, has_more) = crate::commands::sessions::window_messages(
+            messages,
+            payload.load_all,
+            None,
+            80,
+        );
+
         return Ok(serde_json::json!({
             "connected": true,
             "model": model_info,
             "sessionId": session_id,
             "sessionFile": session_file,
-            "messageCount": messages.len(),
+            "messageCount": total_count,
             "canonicalCwd": cwd.to_string_lossy(),
-            "messages": messages,
+            "messages": initial_messages,
+            "hasMore": has_more,
         }));
     }
 
@@ -308,14 +317,23 @@ pub async fn connect(
         }
     }
 
+    let total_count = message_count;
+    let (initial_messages, has_more) = crate::commands::sessions::window_messages(
+        messages,
+        payload.load_all,
+        None,
+        80,
+    );
+
     Ok(serde_json::json!({
         "connected": true,
         "model": model_info,
         "sessionId": session_id,
         "sessionFile": session_file,
-        "messageCount": message_count,
+        "messageCount": total_count,
         "canonicalCwd": cwd.to_string_lossy(),
-        "messages": messages,
+        "messages": initial_messages,
+        "hasMore": has_more,
     }))
 }
 

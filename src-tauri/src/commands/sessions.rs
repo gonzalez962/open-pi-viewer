@@ -54,6 +54,10 @@ pub struct ListSessionsPayload {
 #[serde(rename_all = "camelCase")]
 pub struct SwitchSessionPayload {
     pub session_path: String,
+    #[serde(default)]
+    pub load_all: Option<bool>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 
@@ -66,7 +70,28 @@ pub struct SwitchSessionResult {
     pub session_file: Option<String>,
     pub message_count: u64,
     pub messages: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
     pub error: Option<String>,
+}
+
+/// Helper to window a slice of messages based on limit and load_all preferences
+pub fn window_messages(
+    mut messages: Vec<Value>,
+    load_all: Option<bool>,
+    limit: Option<usize>,
+    default_limit: usize,
+) -> (Vec<Value>, bool) {
+    let load_all_val = load_all.unwrap_or(false);
+    let effective_limit = limit.or_else(|| if load_all_val { None } else { Some(default_limit) });
+    let total_len = messages.len();
+    match effective_limit {
+        Some(lim) if lim < total_len => {
+            let offset = total_len - lim;
+            (messages.split_off(offset), true)
+        }
+        _ => (messages, false),
+    }
 }
 
 
@@ -691,6 +716,7 @@ pub async fn switch_session(
             session_file: None,
             message_count: 0,
             messages: Vec::new(),
+            has_more: None,
             error: None,
         });
     }
@@ -723,6 +749,7 @@ pub async fn switch_session(
             session_file: None,
             message_count: 0,
             messages: Vec::new(),
+            has_more: None,
             error: Some(format!("Failed to send get_state after switch_session: child stdin closed ({e})")),
         });
     }
@@ -739,6 +766,7 @@ pub async fn switch_session(
                 session_file: None,
                 message_count: 0,
                 messages: Vec::new(),
+                has_more: None,
                 error: Some("get_state response channel closed after switch_session".to_string()),
             });
         }
@@ -751,6 +779,7 @@ pub async fn switch_session(
                 session_file: None,
                 message_count: 0,
                 messages: Vec::new(),
+                has_more: None,
                 error: Some("Timeout waiting for get_state after switch_session (15s)".to_string()),
             });
         }
@@ -772,6 +801,7 @@ pub async fn switch_session(
             session_file: None,
             message_count: 0,
             messages: Vec::new(),
+            has_more: None,
             error: Some(format!("get_state failed after switch_session: {err_msg}")),
         });
     }
@@ -799,6 +829,7 @@ pub async fn switch_session(
             session_file: None,
             message_count,
             messages: Vec::new(),
+            has_more: None,
             error: Some("get_state after switch_session returned missing sessionId or sessionFile".to_string()),
         });
     }
@@ -828,6 +859,7 @@ pub async fn switch_session(
                 session_file,
                 message_count,
                 messages: Vec::new(),
+                has_more: None,
                 error: Some(format!("Failed to send get_messages after switch_session: child stdin closed ({e})")),
             });
         }
@@ -844,6 +876,7 @@ pub async fn switch_session(
                     session_file,
                     message_count,
                     messages: Vec::new(),
+                    has_more: None,
                     error: Some("get_messages response channel closed after switch_session".to_string()),
                 });
             }
@@ -856,6 +889,7 @@ pub async fn switch_session(
                     session_file,
                     message_count,
                     messages: Vec::new(),
+                    has_more: None,
                     error: Some("Timeout waiting for get_messages after switch_session (15s)".to_string()),
                 });
             }
@@ -877,6 +911,7 @@ pub async fn switch_session(
                 session_file,
                 message_count,
                 messages: Vec::new(),
+                has_more: None,
                 error: Some(format!("get_messages failed after switch_session: {err_msg}")),
             });
         }
@@ -889,6 +924,8 @@ pub async fn switch_session(
             messages = arr.clone();
         }
     }
+
+    let (windowed_messages, has_more) = window_messages(messages, payload.load_all, payload.limit, 60);
 
     // Step 4: Update active.current_session_id and active.current_session_file
     {
@@ -903,7 +940,8 @@ pub async fn switch_session(
         session_id,
         session_file,
         message_count,
-        messages,
+        messages: windowed_messages,
+        has_more: Some(has_more),
         error: None,
     })
 }
@@ -1778,9 +1816,13 @@ mod tests {
 
         let switch_payload = SwitchSessionPayload {
             session_path: "/path/to/session.jsonl".to_string(),
+            load_all: Some(false),
+            limit: Some(60),
         };
         let switch_json = serde_json::to_string(&switch_payload).unwrap();
         assert!(switch_json.contains("\"sessionPath\":\"/path/to/session.jsonl\""));
+        assert!(switch_json.contains("\"loadAll\":false"));
+        assert!(switch_json.contains("\"limit\":60"));
         let deserialized_switch: SwitchSessionPayload = serde_json::from_str(&switch_json).unwrap();
         assert_eq!(deserialized_switch, switch_payload);
 
@@ -1790,6 +1832,7 @@ mod tests {
             session_file: Some("/sessions/sess-new-1.jsonl".to_string()),
             message_count: 2,
             messages: vec![serde_json::json!({"role": "user", "content": "hi"})],
+            has_more: Some(false),
             error: None,
         };
         let switch_res_json = serde_json::to_string(&switch_res).unwrap();
@@ -1798,6 +1841,7 @@ mod tests {
         assert!(switch_res_json.contains("\"sessionFile\":\"/sessions/sess-new-1.jsonl\""));
         assert!(switch_res_json.contains("\"messageCount\":2"));
         assert!(switch_res_json.contains("\"messages\":["));
+        assert!(switch_res_json.contains("\"hasMore\":false"));
         assert!(switch_res_json.contains("\"error\":null"));
 
         let deserialized_res: SwitchSessionResult = serde_json::from_str(&switch_res_json).unwrap();
@@ -1822,6 +1866,39 @@ mod tests {
         assert!(delete_res_json.contains("\"newSession\":null"));
         let deserialized_del_res: DeleteSessionResult = serde_json::from_str(&delete_res_json).unwrap();
         assert_eq!(deserialized_del_res, delete_res);
+    }
+
+    #[test]
+    fn test_window_messages_sliding_logic() {
+        let msgs: Vec<Value> = (0..100)
+            .map(|i| serde_json::json!({ "id": format!("msg-{}", i), "content": format!("text {}", i) }))
+            .collect();
+
+        // 1. Default windowing (default_limit = 60)
+        let (w1, has_more1) = window_messages(msgs.clone(), None, None, 60);
+        assert_eq!(w1.len(), 60);
+        assert_eq!(has_more1, true);
+        assert_eq!(w1[0]["id"], "msg-40");
+        assert_eq!(w1[59]["id"], "msg-99");
+
+        // 2. Count <= limit -> no windowing, has_more = false
+        let small_msgs: Vec<Value> = (0..30)
+            .map(|i| serde_json::json!({ "id": format!("msg-{}", i) }))
+            .collect();
+        let (w2, has_more2) = window_messages(small_msgs.clone(), None, None, 60);
+        assert_eq!(w2.len(), 30);
+        assert_eq!(has_more2, false);
+
+        // 3. Explicit limit
+        let (w3, has_more3) = window_messages(msgs.clone(), None, Some(10), 60);
+        assert_eq!(w3.len(), 10);
+        assert_eq!(has_more3, true);
+        assert_eq!(w3[0]["id"], "msg-90");
+
+        // 4. load_all = true -> returns all, has_more = false
+        let (w4, has_more4) = window_messages(msgs.clone(), Some(true), None, 60);
+        assert_eq!(w4.len(), 100);
+        assert_eq!(has_more4, false);
     }
 
     #[tokio::test]

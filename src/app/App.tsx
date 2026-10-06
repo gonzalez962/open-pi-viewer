@@ -16,6 +16,7 @@ import {
   formatLocalizedStatusDetail,
   type TranslationKey,
 } from '@shared/i18n';
+import { preserveScrollOnPrepend } from '@shared/scroll';
 import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
@@ -225,6 +226,7 @@ export const App: React.FC = () => {
           sessionFile: res.sessionFile,
           messages: hydrated,
           model: res.model,
+          hasMore: res.hasMore,
           detail:
             hydrated.length > 0
               ? `Resumed session (${hydrated.length} messages)`
@@ -465,7 +467,13 @@ export const App: React.FC = () => {
   // early return, the busy/switching guards, and what happens when a delete or a reset
   // targets the active session) lives in the pure, tested functions in
   // features/sessions/session-actions.ts.
-  const { handleSelectSession, handleDeleteSession, handleRenameSession, handleNewConversation } = useSessions({
+  const {
+    handleSelectSession,
+    handleDeleteSession,
+    handleRenameSession,
+    handleNewConversation,
+    handleLoadOlderMessages: triggerLoadOlderMessages,
+  } = useSessions({
       activeProjectId: projectsRegistry.activeProjectId,
       connectionStatus: state.connectionStatus,
       config,
@@ -485,6 +493,17 @@ export const App: React.FC = () => {
       scrollToBottomNextFrame,
       startConnection,
     });
+
+  const handleLoadOlderMessages = useCallback(async () => {
+    const viewport = chatViewportRef.current;
+    const prevScrollHeight = viewport ? viewport.scrollHeight : 0;
+    await triggerLoadOlderMessages();
+    if (viewport && prevScrollHeight > 0) {
+      requestAnimationFrame(() => {
+        preserveScrollOnPrepend(viewport, prevScrollHeight);
+      });
+    }
+  }, [triggerLoadOlderMessages]);
 
   // Active session title for export (customTitle wins, falls back to firstMessage)
   const activeSession = useMemo(
@@ -1346,6 +1365,26 @@ export const App: React.FC = () => {
             </div>
           ) : (
             <ul className="message-list">
+              {state.hasMoreMessages && (
+                <li className="load-older-messages-item">
+                  <button
+                    type="button"
+                    className="load-older-messages-btn"
+                    onClick={handleLoadOlderMessages}
+                    disabled={state.isLoadingOlderMessages}
+                    aria-label={t('chat.load_older_messages')}
+                  >
+                    {state.isLoadingOlderMessages ? (
+                      <span className="load-older-spinner" aria-hidden="true" />
+                    ) : null}
+                    <span>
+                      {state.isLoadingOlderMessages
+                        ? t('chat.loading_older_messages')
+                        : t('chat.load_older_messages')}
+                    </span>
+                  </button>
+                </li>
+              )}
               {mergeConsecutiveAssistantMessages(
                 state.messages.filter((msg) => !isMessageEmpty(msg))
               ).map((msg) => (

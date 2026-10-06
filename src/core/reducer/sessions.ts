@@ -24,10 +24,20 @@ export type SessionsAction =
         sessionId: string;
         sessionFile: string;
         messages: ChatMessage[];
+        hasMore?: boolean;
       };
     }
   | { type: 'SWITCH_SESSION_CANCELLED' }
   | { type: 'SWITCH_SESSION_ERROR'; payload: { error: string } }
+  | { type: 'LOAD_OLDER_MESSAGES_START' }
+  | {
+      type: 'LOAD_OLDER_MESSAGES_SUCCESS';
+      payload: {
+        messages: ChatMessage[];
+        hasMore?: boolean;
+      };
+    }
+  | { type: 'LOAD_OLDER_MESSAGES_ERROR'; payload: { error: string } }
   | {
       type: 'UPDATE_SESSION_STATUS';
       payload: {
@@ -66,6 +76,8 @@ export function sessionsReducer(
         sessionId: nextSessionId,
         sessionFile: nextSessionFile,
         messages: [],
+        hasMoreMessages: false,
+        isLoadingOlderMessages: false,
         pendingApprovals: [],
         activeAssistantMessageId: null,
         pendingPromptId: null,
@@ -150,6 +162,8 @@ export function sessionsReducer(
         sessionId: nextSessionId,
         sessionFile: nextSessionFile,
         messages: action.payload.messages,
+        hasMoreMessages: action.payload.hasMore ?? false,
+        isLoadingOlderMessages: false,
         pendingApprovals: [],
         activeAssistantMessageId: null,
         pendingPromptId: null,
@@ -179,6 +193,32 @@ export function sessionsReducer(
         isSwitchingSession: false,
         lastError: action.payload.error,
         statusDetail: `Session switch error: ${action.payload.error}`,
+      };
+    }
+
+    case 'LOAD_OLDER_MESSAGES_START': {
+      return {
+        ...state,
+        isLoadingOlderMessages: true,
+      };
+    }
+
+    case 'LOAD_OLDER_MESSAGES_SUCCESS': {
+      const existingIds = new Set(state.messages.map((m) => m.id));
+      const older = action.payload.messages.filter((m) => !existingIds.has(m.id));
+      return {
+        ...state,
+        isLoadingOlderMessages: false,
+        messages: [...older, ...state.messages],
+        hasMoreMessages: action.payload.hasMore ?? false,
+      };
+    }
+
+    case 'LOAD_OLDER_MESSAGES_ERROR': {
+      return {
+        ...state,
+        isLoadingOlderMessages: false,
+        statusDetail: `Error loading older messages: ${action.payload.error}`,
       };
     }
 

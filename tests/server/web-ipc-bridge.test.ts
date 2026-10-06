@@ -17,6 +17,15 @@ import {
   setSessionsRootDirForTest,
   setSubprocessSpawnerForTest,
   resetPiRpcForTest,
+  getSessionStatus,
+  setSessionStatus,
+  setSessionAliveChecker,
+  sessionParseCache,
+  invalidateSessionParseCache,
+  parseSessionFile,
+  parseEngramProjectFromStats,
+  parseEngramCloudStatus,
+  clearEngramCacheForTest,
 } from '@server/web-ipc-bridge';
 
 test('server/config: getHomeDir returns non-empty user home', () => {
@@ -212,4 +221,196 @@ test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1
 
   assert.ok(capturedEnv, 'Spawner must be called');
   assert.strictEqual(capturedEnv.GENTLE_SHELL_INTERACTIVE_HOST, '1');
+});
+
+test('server/bridge: getSessionStatus automatically drops zombie sessions from working/waiting to completed', (t) => {
+  const fakeSessionPath = path.resolve('fake-session-test.jsonl');
+  const anotherPath = path.resolve('another-alive-session.jsonl');
+  let isProcessAlive = false;
+
+  setSessionAliveChecker((norm) => (norm === fakeSessionPath || norm === anotherPath) && isProcessAlive);
+  t.after(() => {
+    setSessionAliveChecker(() => false);
+  });
+
+  // 1. Alive process preserves 'working'
+  isProcessAlive = true;
+  setSessionStatus(fakeSessionPath, 'working');
+  assert.strictEqual(getSessionStatus(fakeSessionPath), 'working');
+
+  // 2. Dead process immediately drops 'working' to 'completed'
+  isProcessAlive = false;
+  assert.strictEqual(getSessionStatus(fakeSessionPath), 'completed');
+
+  // 3. Dead process with 'waiting' immediately drops to 'completed'
+  isProcessAlive = false;
+  setSessionStatus(fakeSessionPath, 'waiting');
+  assert.strictEqual(getSessionStatus(fakeSessionPath), 'completed');
+
+  // 4. Alive process with no recorded status returns completed
+  isProcessAlive = true;
+  assert.strictEqual(getSessionStatus(anotherPath), 'completed');
+});
+
+test('server/bridge: sessionParseCache caches parsed sessions and invalidates on modification', (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-parse-cache-test-'));
+  const filePath = path.join(tmpDir, 'test-cache-sess.jsonl');
+
+  t.after(() => {
+    invalidateSessionParseCache(filePath);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const header = { type: 'session', version: 3, id: 'cache-sess-1', timestamp: new Date().toISOString() };
+  const msg1 = { type: 'message', message: { role: 'user', content: 'hello cache' } };
+  fs.writeFileSync(filePath, JSON.stringify(header) + '\n' + JSON.stringify(msg1) + '\n', 'utf8');
+
+  // First parse puts entry into sessionParseCache
+  const parsed1 = parseSessionFile(filePath);
+  assert.ok(parsed1);
+  assert.strictEqual(parsed1.id, 'cache-sess-1');
+  assert.strictEqual(parsed1.messageCount, 1);
+  assert.ok(sessionParseCache.has(filePath));
+
+  // Second parse reads from cache
+  const parsed2 = parseSessionFile(filePath);
+  assert.strictEqual(parsed2?.id, 'cache-sess-1');
+
+  // Invalidate cache explicitly
+  invalidateSessionParseCache(filePath);
+  assert.strictEqual(sessionParseCache.has(filePath), false);
+
+  // Re-parse re-populates cache
+  const parsed3 = parseSessionFile(filePath);
+  assert.strictEqual(parsed3?.id, 'cache-sess-1');
+  assert.ok(sessionParseCache.has(filePath));
+});
+
+test('server/bridge: switch_session honors sliding window limit, loadAll, and hasMore flag', async (t) => {
+  setSubprocessSpawnerForTest(() => null);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-switch-window-test-'));
+  const filePath = path.join(tmpDir, 'sess-large.jsonl');
+
+  t.after(() => {
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+    invalidateSessionParseCache(filePath);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const header = { type: 'session', version: 3, id: 'sess-large-1', timestamp: new Date().toISOString() };
+  let content = JSON.stringify(header) + '\n';
+  for (let i = 0; i < 100; i++) {
+    content += JSON.stringify({
+      type: 'message',
+      message: { id: `m-${i}`, role: i % 2 === 0 ? 'user' : 'assistant', content: `Message #${i}` },
+    }) + '\n';
+  }
+  fs.writeFileSync(filePath, content, 'utf8');
+
+  // 1. Default windowing (limit = 60)
+  const resDefault: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath },
+  });
+  assert.strictEqual(resDefault.cancelled, false);
+  assert.strictEqual(resDefault.messageCount, 100);
+  assert.strictEqual(resDefault.messages.length, 60);
+  assert.strictEqual(resDefault.hasMore, true);
+  assert.strictEqual(resDefault.messages[0].id, 'm-40');
+  assert.strictEqual(resDefault.messages[59].id, 'm-99');
+
+  // 2. Custom limit (limit = 10)
+  const resLimit: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath, limit: 10 },
+  });
+  assert.strictEqual(resLimit.messages.length, 10);
+  assert.strictEqual(resLimit.hasMore, true);
+  assert.strictEqual(resLimit.messages[0].id, 'm-90');
+  assert.strictEqual(resLimit.messages[9].id, 'm-99');
+
+  // 3. loadAll = true (returns all 100 messages, hasMore = false)
+  const resLoadAll: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath, loadAll: true },
+  });
+  assert.strictEqual(resLoadAll.messages.length, 100);
+  assert.strictEqual(resLoadAll.hasMore, false);
+  assert.strictEqual(resLoadAll.messages[0].id, 'm-0');
+  assert.strictEqual(resLoadAll.messages[99].id, 'm-99');
+});
+
+test('server/bridge: Engram project and cloud status caches avoid repetitive subshell calls', async (t) => {
+  clearEngramCacheForTest();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-engram-test-'));
+  const engramDir = path.join(tmpDir, '.engram');
+  fs.mkdirSync(engramDir, { recursive: true });
+  fs.writeFileSync(path.join(engramDir, 'config.json'), JSON.stringify({ name: 'cached-test-project' }), 'utf8');
+
+  t.after(() => {
+    clearEngramCacheForTest();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Test get_engram_project fast-path and memory caching
+  const proj1 = await handleIpcCommand('get_engram_project', { payload: { cwd: tmpDir } });
+  assert.strictEqual(proj1, 'cached-test-project');
+
+  // Second call must hit memory cache instantly
+  const start2 = Date.now();
+  const proj2 = await handleIpcCommand('get_engram_project', { payload: { cwd: tmpDir } });
+  const elapsed2 = Date.now() - start2;
+  assert.strictEqual(proj2, 'cached-test-project');
+  assert.ok(elapsed2 < 10, 'Cached lookup must resolve in < 10ms');
+
+  // Test get_engram_cloud_status cache hit
+  const status1 = await handleIpcCommand('get_engram_cloud_status', { payload: { project: 'test-p', cwd: tmpDir } });
+  const startStatus2 = Date.now();
+  const status2 = await handleIpcCommand('get_engram_cloud_status', { payload: { project: 'test-p', cwd: tmpDir } });
+  const elapsedStatus2 = Date.now() - startStatus2;
+  assert.deepStrictEqual(status1, status2);
+  assert.ok(elapsedStatus2 < 10, 'Cached cloud status lookup must resolve in < 10ms');
+});
+
+test('server/bridge: parseEngramProjectFromStats extracts project name and handles none yet', () => {
+  const sample1 = `
+Engram Memory Stats
+  Sessions:     188
+  Observations: 245
+  Prompts:      438
+  Projects:     my-real-project
+  Database:     C:\\Users\\Personal\\.engram/engram.db
+`;
+  assert.strictEqual(parseEngramProjectFromStats(sample1), 'my-real-project');
+
+  const sample2 = `
+Engram Memory Stats
+  Projects:     none yet
+`;
+  assert.strictEqual(parseEngramProjectFromStats(sample2), null);
+
+  const sample3 = `Projects:`;
+  assert.strictEqual(parseEngramProjectFromStats(sample3), null);
+
+  const sampleEmpty = `No projects section here`;
+  assert.strictEqual(parseEngramProjectFromStats(sampleEmpty), null);
+});
+
+test('server/bridge: parseEngramCloudStatus parses real CLI output accurately', () => {
+  const stdout = `
+Cloud status: configured (target=cloud)
+Server: https://memory.myshortener.xyz/
+Server source: cloud.json
+Auth status: ready (token read from cloud.json)
+Sync readiness: ready for explicit --project sync (project must be enrolled)
+Project remotes:
+  - adbuho: server=https://engram.marketcat.io token set, ****Sceg remote_id=33472dba5886
+Project enrollment: not enrolled (open-pi-viewer)
+Local daemon: running on port 7437
+`;
+  const parsed = parseEngramCloudStatus(stdout);
+  assert.strictEqual(parsed.configured, true);
+  assert.strictEqual(parsed.serverUrl, 'https://memory.myshortener.xyz/');
+  assert.strictEqual(parsed.authReady, true);
+  assert.strictEqual(parsed.enrolled, false);
+  assert.strictEqual(parsed.daemonRunning, true);
+  assert.strictEqual(parsed.daemonPort, 7437);
 });

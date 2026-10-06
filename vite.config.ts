@@ -24,6 +24,29 @@ function piWebIpcPlugin(): Plugin {
         });
       });
 
+      server.middlewares.use("/api/engram-daemon", async (req, res) => {
+        try {
+          const queryOrPath = req.url || "";
+          const daemonUrl = `http://127.0.0.1:7437${queryOrPath}`;
+          const proxyRes = await fetch(daemonUrl, {
+            method: req.method || "GET",
+          });
+          res.writeHead(proxyRes.status, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          });
+          const text = await proxyRes.text();
+          res.end(text);
+        } catch (err: any) {
+          res.writeHead(502, {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(JSON.stringify({ error: "Engram daemon unreachable", details: String(err) }));
+        }
+      });
+
       server.middlewares.use("/api/ipc", async (req, res) => {
         if (req.method !== "POST") {
           res.statusCode = 405;

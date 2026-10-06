@@ -363,9 +363,11 @@ export async function handleConnect(args: any = {}) {
   });
 
   let initialMessages: any[] = [];
+  let hasMore = false;
   if (parsed?.messages) {
     const total = parsed.messages.length;
     const loadAll = Boolean(payload.loadAll);
+    hasMore = !loadAll && total > 80;
     // Window messages to recent 80 on connect for instantaneous load across network
     initialMessages = loadAll || total <= 80 ? parsed.messages : parsed.messages.slice(-80);
   }
@@ -378,6 +380,7 @@ export async function handleConnect(args: any = {}) {
     messageCount: parsed?.messageCount || 0,
     canonicalCwd: getActiveCwd(),
     messages: initialMessages,
+    hasMore,
   };
 }
 

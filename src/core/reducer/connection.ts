@@ -19,6 +19,7 @@ export type ConnectionAction =
         sessionFile?: string | null;
         messages: ChatMessage[];
         model?: ModelInfo | null;
+        hasMore?: boolean;
         detail?: string;
       };
     }
@@ -137,6 +138,8 @@ export function connectionReducer(
         sessionId: action.payload.sessionId ?? state.sessionId,
         sessionFile: action.payload.sessionFile ?? state.sessionFile,
         messages: action.payload.messages,
+        hasMoreMessages: action.payload.hasMore ?? false,
+        isLoadingOlderMessages: false,
         modelInfo: action.payload.model ?? state.modelInfo,
         statusLabel: 'Connected',
         statusDetail: action.payload.detail || 'Conversation ready',

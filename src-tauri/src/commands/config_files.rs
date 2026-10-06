@@ -1,6 +1,6 @@
 //! Configuration file operations for custom providers and model thinking levels.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
@@ -4984,11 +4984,73 @@ pub fn parse_engram_project_from_stats(stdout: &str) -> Option<String> {
     None
 }
 
+#[derive(Clone, Debug)]
+struct EngramProjectCacheEntry {
+    project: Option<String>,
+    expires: std::time::Instant,
+}
+
+#[derive(Clone, Debug)]
+struct EngramCloudStatusCacheEntry {
+    status: Option<EngramCloudStatus>,
+    expires: std::time::Instant,
+}
+
+static ENGRAM_PROJECT_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, EngramProjectCacheEntry>>> = std::sync::OnceLock::new();
+static ENGRAM_CLOUD_STATUS_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<String, EngramCloudStatusCacheEntry>>> = std::sync::OnceLock::new();
+
+fn engram_project_cache() -> &'static std::sync::Mutex<HashMap<String, EngramProjectCacheEntry>> {
+    ENGRAM_PROJECT_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+fn engram_cloud_status_cache() -> &'static std::sync::Mutex<HashMap<String, EngramCloudStatusCacheEntry>> {
+    ENGRAM_CLOUD_STATUS_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+pub fn clear_engram_caches_for_test() {
+    if let Ok(mut cache) = engram_project_cache().lock() {
+        cache.clear();
+    }
+    if let Ok(mut cache) = engram_cloud_status_cache().lock() {
+        cache.clear();
+    }
+}
+
 /// Implementation of engram project detection for a given working directory.
 /// Gracefully returns Ok(None) if engram is not installed, fails, or has no project.
 pub async fn get_engram_project_impl(cwd: Option<&str>) -> Result<Option<String>, String> {
     let target_dir = cwd.map(|c| c.trim()).filter(|c| !c.is_empty()).map(Path::new);
+    let target_key = target_dir
+        .map(|d| d.to_string_lossy().to_string())
+        .unwrap_or_default();
 
+    let now = std::time::Instant::now();
+    {
+        if let Ok(cache) = engram_project_cache().lock() {
+            if let Some(entry) = cache.get(&target_key) {
+                if entry.expires > now {
+                    return Ok(entry.project.clone());
+                }
+            }
+        }
+    }
+
+    let detected = get_engram_project_detected(target_dir).await?;
+
+    if let Ok(mut cache) = engram_project_cache().lock() {
+        cache.insert(
+            target_key,
+            EngramProjectCacheEntry {
+                project: detected.clone(),
+                expires: now + std::time::Duration::from_secs(60),
+            },
+        );
+    }
+
+    Ok(detected)
+}
+
+async fn get_engram_project_detected(target_dir: Option<&Path>) -> Result<Option<String>, String> {
     // Fast path: check if local .engram/config.json exists
     if let Some(dir) = target_dir {
         let config_path = dir.join(".engram").join("config.json");
@@ -5195,6 +5257,43 @@ pub fn apply_cloud_sync_permission_result(
 /// When enrolled, executes a remote check using `engram sync --cloud --status --project <proj>` with a 4s timeout.
 /// Returns Ok(None) if engram is not installed or command fails.
 pub async fn get_engram_cloud_status_impl(
+    project: Option<&str>,
+    cwd: Option<&str>,
+) -> Result<Option<EngramCloudStatus>, String> {
+    let cache_key = format!("{}_{}", project.unwrap_or(""), cwd.unwrap_or(""));
+    let now = std::time::Instant::now();
+    {
+        if let Ok(cache) = engram_cloud_status_cache().lock() {
+            if let Some(entry) = cache.get(&cache_key) {
+                if entry.expires > now {
+                    return Ok(entry.status.clone());
+                }
+            }
+        }
+    }
+
+    let status_opt = get_engram_cloud_status_detected(project, cwd).await?;
+
+    let ttl = if status_opt.is_some() {
+        std::time::Duration::from_secs(20)
+    } else {
+        std::time::Duration::from_secs(10)
+    };
+
+    if let Ok(mut cache) = engram_cloud_status_cache().lock() {
+        cache.insert(
+            cache_key,
+            EngramCloudStatusCacheEntry {
+                status: status_opt.clone(),
+                expires: now + ttl,
+            },
+        );
+    }
+
+    Ok(status_opt)
+}
+
+async fn get_engram_cloud_status_detected(
     project: Option<&str>,
     cwd: Option<&str>,
 ) -> Result<Option<EngramCloudStatus>, String> {
@@ -9301,6 +9400,53 @@ mod tests {
         assert_eq!(res, Some("custom-detected-project".to_string()));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_engram_project_ttl_cache_behavior() {
+        clear_engram_caches_for_test();
+        let temp_dir = std::env::temp_dir().join(format!("test_engram_cache_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let engram_dir = temp_dir.join(".engram");
+        std::fs::create_dir_all(&engram_dir).unwrap();
+
+        let cfg1 = serde_json::json!({ "name": "initial-project" });
+        std::fs::write(engram_dir.join("config.json"), serde_json::to_string(&cfg1).unwrap()).unwrap();
+
+        let dir_str = temp_dir.to_string_lossy().to_string();
+
+        // First call populates cache
+        let res1 = get_engram_project_impl(Some(&dir_str)).await.unwrap();
+        assert_eq!(res1, Some("initial-project".to_string()));
+
+        // Mutate the file on disk
+        let cfg2 = serde_json::json!({ "name": "mutated-project" });
+        std::fs::write(engram_dir.join("config.json"), serde_json::to_string(&cfg2).unwrap()).unwrap();
+
+        // Second call should return cached value without reading mutated disk file
+        let res2 = get_engram_project_impl(Some(&dir_str)).await.unwrap();
+        assert_eq!(res2, Some("initial-project".to_string()));
+
+        // Clearing cache should force re-reading
+        clear_engram_caches_for_test();
+        let res3 = get_engram_project_impl(Some(&dir_str)).await.unwrap();
+        assert_eq!(res3, Some("mutated-project".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        clear_engram_caches_for_test();
+    }
+
+    #[tokio::test]
+    async fn test_engram_cloud_status_cache_behavior() {
+        clear_engram_caches_for_test();
+        let key_proj = "test-cached-project";
+
+        // Seed cache through call (falls back gracefully and caches)
+        let res1 = get_engram_cloud_status_impl(Some(key_proj), None).await.unwrap();
+        let res2 = get_engram_cloud_status_impl(Some(key_proj), None).await.unwrap();
+        assert_eq!(res1, res2);
+
+        clear_engram_caches_for_test();
     }
 
     #[test]

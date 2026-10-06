@@ -19,6 +19,7 @@ export interface ConnectConfig {
 export interface ConnectSessionOptions {
   sessionFile?: string;
   requireSessionFileExists?: boolean;
+  loadAll?: boolean;
 }
 
 export interface ConnectResult {
@@ -29,4 +30,5 @@ export interface ConnectResult {
   messageCount?: number;
   canonicalCwd?: string;
   messages?: unknown[];
+  hasMore?: boolean;
 }
