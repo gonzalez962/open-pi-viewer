@@ -34,9 +34,11 @@ import {
   parseCodeFenceHeader,
   parseInline,
   parseMarkdown,
+  parseTableDelimiter,
   sanitizeFilename,
   sanitizeLanguage,
   shouldRenderAsMarkdown,
+  splitTableCells,
 } from '@core/markdown';
 import type { ChatMessage } from '@core/types/messages';
 
@@ -333,6 +335,59 @@ test('parser: unclosed fence at EOF streams as code block (crucial for streaming
   if (codeBlock.type === 'code_block') {
     assert.equal(codeBlock.language, 'typescript');
     assert.equal(codeBlock.code, 'function add(a: number, b: number) {\n  return a + b;');
+  }
+});
+
+// ============================================================================
+// Group 6b: GFM Markdown Tables
+// ============================================================================
+
+test('tables: splitTableCells handles leading/trailing pipes, code spans, and escapes', () => {
+  const row = '| First | Second | Third |';
+  assert.deepEqual(splitTableCells(row), ['First', 'Second', 'Third']);
+
+  const withoutOuterPipes = 'Col 1 | Col 2';
+  assert.deepEqual(splitTableCells(withoutOuterPipes), ['Col 1', 'Col 2']);
+
+  const withCodeSpan = '| Name | `x | y` | Value |';
+  assert.deepEqual(splitTableCells(withCodeSpan), ['Name', '`x | y`', 'Value']);
+
+  const withEscapes = '| Col \\| 1 | Col 2 |';
+  assert.deepEqual(splitTableCells(withEscapes), ['Col | 1', 'Col 2']);
+});
+
+test('tables: parseTableDelimiter correctly parses column alignments', () => {
+  const delim = '| :--- | :---: | ---: | --- |';
+  const alignments = parseTableDelimiter(delim);
+  assert.deepEqual(alignments, ['left', 'center', 'right', null]);
+
+  const invalid = '| not-a-delim | --- |';
+  assert.equal(parseTableDelimiter(invalid), null);
+});
+
+test('tables: parseMarkdown parses full GFM table into AST with headers and rows', () => {
+  const tableMd = `
+| Acción del Usuario | Antes | Ahora (pi-messages) |
+| :--- | :---: | ---: |
+| Identificar archivo | Texto plano o roto | Encabezado estilizado con glifo |
+| Resaltado de sintaxis | Todo en blanco plano | PiColor enriquecido |
+`;
+
+  const ast = parseMarkdown(tableMd);
+  assert.equal(ast.children.length, 1);
+  const tableNode = ast.children[0];
+  assert.equal(tableNode.type, 'table');
+  if (tableNode.type === 'table') {
+    assert.equal(tableNode.headers.length, 3);
+    assert.equal(tableNode.headers[0].align, 'left');
+    assert.equal(tableNode.headers[1].align, 'center');
+    assert.equal(tableNode.headers[2].align, 'right');
+    assert.equal(tableNode.rows.length, 2);
+    assert.equal(tableNode.rows[0].length, 3);
+    assert.equal(tableNode.rows[0][0].children[0].type, 'text');
+    if (tableNode.rows[0][0].children[0].type === 'text') {
+      assert.equal(tableNode.rows[0][0].children[0].value, 'Identificar archivo');
+    }
   }
 });
 
