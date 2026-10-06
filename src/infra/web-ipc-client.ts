@@ -48,7 +48,9 @@ export function initWebIpcClient(): void {
   }
 
   win.isTauri = true;
+  win.__IS_WEB_IPC__ = true;
   win.__TAURI_INTERNALS__ = {
+    __isWebIpc: true,
     callbacks,
     transformCallback(callback: (payload: any) => void, once?: boolean): number {
       const id = nextCallbackId++;

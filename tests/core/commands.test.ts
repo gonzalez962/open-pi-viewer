@@ -14,7 +14,7 @@ import {
 test('commands: registry catalog lists exactly the retained commands with required fields', () => {
   assert.deepEqual(
     COMMANDS.map((c) => c.name).sort(),
-    ['/clear', '/compact', '/help', '/judgment-day', '/new', '/reload'].sort()
+    ['/clear', '/compact', '/export', '/help', '/judgment-day', '/new', '/reload'].sort()
   );
 
   for (const cmd of COMMANDS) {
@@ -49,6 +49,9 @@ test('commands: retained commands keep their origin, execution mode and aliases'
 
   assert.equal(byName('/help')?.origin, 'pi-core');
   assert.equal(byName('/help')?.execution, 'client');
+  assert.equal(byName('/export')?.origin, 'pi-core');
+  assert.equal(byName('/export')?.execution, 'client');
+  assert.equal(byName('/export')?.argumentHint, '[md|json]');
   assert.equal(byName('/clear')?.execution, 'client');
   assert.equal(byName('/new')?.execution, 'client');
   assert.ok(byName('/new')?.aliases?.includes('/reset'));
@@ -128,6 +131,17 @@ test('matchCommands: accepts a query with a leading slash the same as without on
   assert.deepEqual(withSlash.map((c) => c.id), withoutSlash.map((c) => c.id));
 });
 
+test('matchCommands: matches /export by exact name, prefix, and format keywords in description', () => {
+  const exact = matchCommands('export', COMMANDS);
+  assert.equal(exact[0].name, '/export');
+
+  const prefix = matchCommands('/exp', COMMANDS);
+  assert.equal(prefix[0].name, '/export');
+
+  const byFormat = matchCommands('markdown', COMMANDS);
+  assert.ok(byFormat.some((c) => c.name === '/export'));
+});
+
 test('shouldShowPaletteQuery: true while composing the command token, false once args start or text is not a command', () => {
   assert.equal(shouldShowPaletteQuery('/'), true);
   assert.equal(shouldShowPaletteQuery('/cl'), true);
@@ -194,4 +208,31 @@ test('decideCommandDispatch: an unrecognized "/xxx" command is forwarded to the 
   assert.equal(decision.kind, 'agent');
   assert.equal(decision.command, null);
   assert.equal(decision.args, 'foo bar');
+});
+
+test('decideCommandDispatch: /export resolves as client command preserving arguments for handler', () => {
+  const bare = decideCommandDispatch('/export');
+  assert.equal(bare.kind, 'client');
+  assert.equal(bare.command?.name, '/export');
+  assert.equal(bare.args, '');
+
+  const withMd = decideCommandDispatch('/export md');
+  assert.equal(withMd.kind, 'client');
+  assert.equal(withMd.command?.name, '/export');
+  assert.equal(withMd.args, 'md');
+
+  const withJson = decideCommandDispatch('/export json');
+  assert.equal(withJson.kind, 'client');
+  assert.equal(withJson.command?.name, '/export');
+  assert.equal(withJson.args, 'json');
+
+  const withWhitespace = decideCommandDispatch('/export   json   ');
+  assert.equal(withWhitespace.kind, 'client');
+  assert.equal(withWhitespace.command?.name, '/export');
+  assert.equal(withWhitespace.args, 'json');
+
+  const caseInsensitive = decideCommandDispatch('/EXPORT md');
+  assert.equal(caseInsensitive.kind, 'client');
+  assert.equal(caseInsensitive.command?.name, '/export');
+  assert.equal(caseInsensitive.args, 'md');
 });
