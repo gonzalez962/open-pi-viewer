@@ -95,6 +95,7 @@
   "action.dismiss_error": "Dismiss error",
 
   "settings.title": "Settings",
+  "settings.loading": "Loading settings...",
   "settings.close": "Close settings",
   "settings.back_to_chat": "Back to Chat",
   "settings.view_subtitle": "Configure appearance, connection, tool permissions, and file synchronization",

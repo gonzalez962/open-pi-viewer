@@ -42,13 +42,7 @@ import {
 } from '@core/reducer';
 import { hydrateChatMessages } from '@core/session';
 import { SessionSidebar } from '@features/sessions/SessionSidebar';
-import { SettingsView } from '@features/settings/SettingsView';
 import { FileTree } from '@features/workspace/FileTree';
-import { FileViewerModal } from '@features/workspace/FileViewerModal';
-import { ProvidersView } from '@features/providers/ProvidersView';
-import { McpView } from '@features/mcp/McpView';
-import { ExtensionsView } from '@features/extensions/ExtensionsView';
-import { ProfilesView } from '@features/profiles/ProfilesView';
 import {
   applyProfileRuntime,
   PROFILE_ACTIVATED_EVENT,
@@ -56,8 +50,29 @@ import {
   type ProfileSummary,
   type ProfileActivationEventDetail,
 } from '@core/types/profiles';
-import { ProfileModal } from '@features/profiles/components/ProfileModal';
 import { useProfiles } from '@features/profiles/hooks/useProfiles';
+
+const SettingsView = React.lazy(() =>
+  import('@features/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
+const FileViewerModal = React.lazy(() =>
+  import('@features/workspace/FileViewerModal').then((m) => ({ default: m.FileViewerModal }))
+);
+const ProfileModal = React.lazy(() =>
+  import('@features/profiles/components/ProfileModal').then((m) => ({ default: m.ProfileModal }))
+);
+const ProfilesView = React.lazy(() =>
+  import('@features/profiles/ProfilesView').then((m) => ({ default: m.ProfilesView }))
+);
+const ProvidersView = React.lazy(() =>
+  import('@features/providers/ProvidersView').then((m) => ({ default: m.ProvidersView }))
+);
+const McpView = React.lazy(() =>
+  import('@features/mcp/McpView').then((m) => ({ default: m.McpView }))
+);
+const ExtensionsView = React.lazy(() =>
+  import('@features/extensions/ExtensionsView').then((m) => ({ default: m.ExtensionsView }))
+);
 import { STATUS_CONFIG, type AppStatusState } from '@core/icon-status';
 import {
   triggerTauriWindowAttention,
@@ -1107,119 +1122,129 @@ export const App: React.FC = () => {
             </button>
           )}
           {showSettings ? (
-            <SettingsView
-              config={config}
-              settingsDraft={settingsDraft}
-              setSettingsDraft={setSettingsDraft}
-              preferences={preferences}
-              onThemeChange={handleThemeChange}
-              onLanguageChange={handleLanguageChange}
-              onNotificationsChange={setNotifications}
-              onCustomCommandsChange={setCustomCommands}
-              onHiddenCommandIdsChange={setHiddenCommandIds}
-              appearanceController={appearanceController}
-              settingsError={settingsError}
-              settingsStorageNotice={settingsStorageNotice}
-              isBusy={isBusy}
-              onSaveAndApply={handleSaveAndApplySettings}
-              onClose={handleCancelSettings}
-              t={t}
-              activeProfileName={profilesHook.effectiveActiveProfile}
-              activeProfileScope={profilesHook.effectiveScope}
-              loadCustomProviders={async () =>
-                mapProvidersToArray((await getCustomProvidersPi()).providers || {})
-              }
-              renderProfiles={(onBackToSettings) => (
-                <ProfilesView
-                  cwd={config.workingDirectory}
-                  isBusy={isBusy}
-                  onClose={onBackToSettings}
-                />
-              )}
-              renderProviders={() => (
-                <ProvidersView
-                  onRefreshModels={handleProviderModelsChanged}
-                  t={t}
-                  language={preferences.language}
-                  isBusy={isBusy}
-                />
-              )}
-              renderMcp={() => (
-                <McpView
-                  servers={globalMcp.servers}
-                  onToggleServer={async (server, enabled) => {
-                    await globalMcp.handleToggleServer(server, enabled, 'global');
-                    void projectMcp.refreshServers();
-                  }}
-                  onRefresh={async () => {
-                    await globalMcp.refreshServers();
-                    void projectMcp.refreshServers();
-                  }}
-                  onSaveServer={async (payload) => {
-                    const res = await saveMcpServerPi({
-                      ...payload,
-                      scope: 'global',
-                      cwd: undefined,
-                    });
-                    if (res.success) {
-                      await globalMcp.refreshServers();
-                      void projectMcp.refreshServers();
-                      return true;
-                    }
-                    return false;
-                  }}
-                  onDeleteServer={async (server) => {
-                    const res = await deleteMcpServerPi({
-                      name: server.name,
-                      scope: 'global',
-                      cwd: undefined,
-                    });
-                    if (res.success) {
-                      await globalMcp.refreshServers();
-                      void projectMcp.refreshServers();
-                      return true;
-                    }
-                    return false;
-                  }}
-                  t={t}
-                  language={preferences.language}
-                  isBusy={isBusy}
-                />
-              )}
-              renderExtensions={() => (
-                <ExtensionsView
-                  resources={globalPiResources.resources}
-                  onToggleResource={async (resource, enabled) => {
-                    await globalPiResources.handleToggleResource(resource, enabled, 'global');
-                    void projectPiResources.refreshResources();
-                  }}
-                  onRefresh={async () => {
-                    await globalPiResources.refreshResources();
-                    void projectPiResources.refreshResources();
-                  }}
-                  onSaveResource={async (payload, original) => {
-                    const ok = await globalPiResources.handleSaveResource(
-                      { ...payload, scope: 'global', cwd: undefined },
-                      original
-                    );
-                    if (ok) {
-                      void projectPiResources.refreshResources();
-                    }
-                    return ok;
-                  }}
-                  onDeleteResource={async (resource) => {
-                    const ok = await globalPiResources.handleDeleteResource(resource);
-                    if (ok) {
-                      void projectPiResources.refreshResources();
-                    }
-                    return ok;
-                  }}
-                  t={t}
-                  language={preferences.language}
-                  isBusy={isBusy}
-                />
-              )}
-            />
+            <React.Suspense fallback={<div className="settings-loading-pane">{t('settings.loading')}</div>}>
+              <SettingsView
+                config={config}
+                settingsDraft={settingsDraft}
+                setSettingsDraft={setSettingsDraft}
+                preferences={preferences}
+                onThemeChange={handleThemeChange}
+                onLanguageChange={handleLanguageChange}
+                onNotificationsChange={setNotifications}
+                onCustomCommandsChange={setCustomCommands}
+                onHiddenCommandIdsChange={setHiddenCommandIds}
+                appearanceController={appearanceController}
+                settingsError={settingsError}
+                settingsStorageNotice={settingsStorageNotice}
+                isBusy={isBusy}
+                onSaveAndApply={handleSaveAndApplySettings}
+                onClose={handleCancelSettings}
+                t={t}
+                activeProfileName={profilesHook.effectiveActiveProfile}
+                activeProfileScope={profilesHook.effectiveScope}
+                loadCustomProviders={async () =>
+                  mapProvidersToArray((await getCustomProvidersPi()).providers || {})
+                }
+                renderProfiles={(onBackToSettings) => (
+                  <React.Suspense fallback={null}>
+                    <ProfilesView
+                      cwd={config.workingDirectory}
+                      isBusy={isBusy}
+                      onClose={onBackToSettings}
+                    />
+                  </React.Suspense>
+                )}
+                renderProviders={() => (
+                  <React.Suspense fallback={null}>
+                    <ProvidersView
+                      onRefreshModels={handleProviderModelsChanged}
+                      t={t}
+                      language={preferences.language}
+                      isBusy={isBusy}
+                    />
+                  </React.Suspense>
+                )}
+                renderMcp={() => (
+                  <React.Suspense fallback={null}>
+                    <McpView
+                      servers={globalMcp.servers}
+                      onToggleServer={async (server, enabled) => {
+                        await globalMcp.handleToggleServer(server, enabled, 'global');
+                        void projectMcp.refreshServers();
+                      }}
+                      onRefresh={async () => {
+                        await globalMcp.refreshServers();
+                        void projectMcp.refreshServers();
+                      }}
+                      onSaveServer={async (payload) => {
+                        const res = await saveMcpServerPi({
+                          ...payload,
+                          scope: 'global',
+                          cwd: undefined,
+                        });
+                        if (res.success) {
+                          await globalMcp.refreshServers();
+                          void projectMcp.refreshServers();
+                          return true;
+                        }
+                        return false;
+                      }}
+                      onDeleteServer={async (server) => {
+                        const res = await deleteMcpServerPi({
+                          name: server.name,
+                          scope: 'global',
+                          cwd: undefined,
+                        });
+                        if (res.success) {
+                          await globalMcp.refreshServers();
+                          void projectMcp.refreshServers();
+                          return true;
+                        }
+                        return false;
+                      }}
+                      t={t}
+                      language={preferences.language}
+                      isBusy={isBusy}
+                    />
+                  </React.Suspense>
+                )}
+                renderExtensions={() => (
+                  <React.Suspense fallback={null}>
+                    <ExtensionsView
+                      resources={globalPiResources.resources}
+                      onToggleResource={async (resource, enabled) => {
+                        await globalPiResources.handleToggleResource(resource, enabled, 'global');
+                        void projectPiResources.refreshResources();
+                      }}
+                      onRefresh={async () => {
+                        await globalPiResources.refreshResources();
+                        void projectPiResources.refreshResources();
+                      }}
+                      onSaveResource={async (payload, original) => {
+                        const ok = await globalPiResources.handleSaveResource(
+                          { ...payload, scope: 'global', cwd: undefined },
+                          original
+                        );
+                        if (ok) {
+                          void projectPiResources.refreshResources();
+                        }
+                        return ok;
+                      }}
+                      onDeleteResource={async (resource) => {
+                        const ok = await globalPiResources.handleDeleteResource(resource);
+                        if (ok) {
+                          void projectPiResources.refreshResources();
+                        }
+                        return ok;
+                      }}
+                      t={t}
+                      language={preferences.language}
+                      isBusy={isBusy}
+                    />
+                  </React.Suspense>
+                )}
+              />
+            </React.Suspense>
           ) : (
             <>
               {/* Connection Storage Diagnostic Banner */}
@@ -1691,33 +1716,37 @@ export const App: React.FC = () => {
       </div>
 
       {viewingFile && (
-        <FileViewerModal
-          file={viewingFile}
-          workingDirectory={config.workingDirectory}
-          onClose={closeFile}
-          locale={preferences.language}
-        />
+        <React.Suspense fallback={null}>
+          <FileViewerModal
+            file={viewingFile}
+            workingDirectory={config.workingDirectory}
+            onClose={closeFile}
+            locale={preferences.language}
+          />
+        </React.Suspense>
       )}
 
       {profilesHook.isModalOpen && (
-        <ProfileModal
-          isOpen={profilesHook.isModalOpen}
-          isEditing={profilesHook.isEditing}
-          isSaving={profilesHook.isSaving}
-          formData={profilesHook.formData}
-          error={profilesHook.modalError}
-          availableModels={profilesHook.availableModels}
-          categories={profilesHook.categories}
-          agentMeta={profilesHook.agentMeta}
-          cwd={config.workingDirectory}
-          onClose={profilesHook.closeModal}
-          onChangeField={profilesHook.updateFormField}
-          onChangeAgentModel={profilesHook.updateAgentModel}
-          onRemoveAgentOverride={profilesHook.removeAgentOverride}
-          onSave={async (e) => {
-            await profilesHook.handleSaveProfile(e);
-          }}
-        />
+        <React.Suspense fallback={null}>
+          <ProfileModal
+            isOpen={profilesHook.isModalOpen}
+            isEditing={profilesHook.isEditing}
+            isSaving={profilesHook.isSaving}
+            formData={profilesHook.formData}
+            error={profilesHook.modalError}
+            availableModels={profilesHook.availableModels}
+            categories={profilesHook.categories}
+            agentMeta={profilesHook.agentMeta}
+            cwd={config.workingDirectory}
+            onClose={profilesHook.closeModal}
+            onChangeField={profilesHook.updateFormField}
+            onChangeAgentModel={profilesHook.updateAgentModel}
+            onRemoveAgentOverride={profilesHook.removeAgentOverride}
+            onSave={async (e) => {
+              await profilesHook.handleSaveProfile(e);
+            }}
+          />
+        </React.Suspense>
       )}
 
       <ExportToast
