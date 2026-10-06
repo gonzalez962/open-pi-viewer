@@ -6,6 +6,28 @@ import { MarkdownContent } from '@features/chat/MarkdownContent';
 
 const dummyT = (key: string) => key;
 
+test('MarkdownContent: formatted plain URL does not produce duplicate copy buttons', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MarkdownContent, {
+      content: '[https://example.com](https://example.com)',
+      t: dummyT,
+    })
+  );
+
+  // Match all occurrences of copy button class
+  const matches = html.match(/markdown-link-copy-btn/g) || [];
+  assert.equal(matches.length, 1, 'must contain exactly 1 copy button, not duplicated');
+
+  const htmlBare = renderToStaticMarkup(
+    React.createElement(MarkdownContent, {
+      content: 'https://example.com',
+      t: dummyT,
+    })
+  );
+  const bareMatches = htmlBare.match(/markdown-link-copy-btn/g) || [];
+  assert.equal(bareMatches.length, 1, 'bare URL must contain exactly 1 copy button');
+});
+
 test('MarkdownContent: renders GFM table with wrapper, header, alignments, and rows', () => {
   const tableMd = `
 | Feature | Status | Notes |

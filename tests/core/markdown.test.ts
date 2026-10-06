@@ -555,6 +555,26 @@ test('links: autolinks automatically parse bare URLs and bracketed URLs as link 
   );
 });
 
+test('links: link label cannot contain nested links (CommonMark compliance preventing duplicate copy controls)', () => {
+  const formattedUrl = parseInline('[https://example.com](https://example.com)');
+  assert.deepEqual(formattedUrl, [
+    {
+      type: 'link',
+      label: [{ type: 'text', value: 'https://example.com' }],
+      href: 'https://example.com',
+    },
+  ]);
+
+  const nestedMarkdown = parseInline('[Visit [Nested](https://nested.com)](https://example.com)');
+  assert.equal(nestedMarkdown[0].type, 'link');
+  if (nestedMarkdown[0].type === 'link') {
+    assert.equal(
+      nestedMarkdown[0].label.some((n) => n.type === 'link'),
+      false
+    );
+  }
+});
+
 test('links: credentials, mailto queries/percent-encoding/multiple recipients render as inert plain text in parser', () => {
   const rejectedLinks = [
     '[Evil](http://user:pass@example.com)',

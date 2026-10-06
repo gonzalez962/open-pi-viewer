@@ -359,8 +359,10 @@ export function isSafeUrl(rawUrl: string): boolean {
 /**
  * Parses inline formatting with bounded linear recursion.
  * Delimiters without matching closures are kept as literal text.
+ * When allowLinks is false (e.g. inside a link label), link and autolink parsing
+ * is disabled to strictly uphold the CommonMark invariant that links cannot be nested.
  */
-export function parseInline(input: string, depth = 0): InlineNode[] {
+export function parseInline(input: string, depth = 0, allowLinks = true): InlineNode[] {
   if (!input) return [];
   if (depth > 6) {
     return [{ type: 'text', value: input }];
@@ -395,8 +397,8 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
       }
     }
 
-    // 2. Links: [label](url)
-    if (input[i] === '[') {
+    // 2. Links: [label](url) - forbidden if already inside a link label
+    if (allowLinks && input[i] === '[') {
       const closeBracket = input.indexOf(']', i + 1);
       if (closeBracket !== -1 && input[closeBracket + 1] === '(') {
         const closeParen = input.indexOf(')', closeBracket + 2);
@@ -405,7 +407,8 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           if (isSafeUrl(rawUrl)) {
             flushText();
             const labelText = input.slice(i + 1, closeBracket);
-            const labelNodes = parseInline(labelText, depth + 1);
+            // Disable links within link label to prevent nested links and duplicate controls
+            const labelNodes = parseInline(labelText, depth + 1, false);
             nodes.push({
               type: 'link',
               label: labelNodes.length > 0 ? labelNodes : [{ type: 'text', value: rawUrl }],
@@ -423,7 +426,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
     }
 
     // 2b. Bracketed autolinks: <https://...> or <http://...>
-    if (input[i] === '<' && (input.startsWith('<http://', i) || input.startsWith('<https://', i))) {
+    if (allowLinks && input[i] === '<' && (input.startsWith('<http://', i) || input.startsWith('<https://', i))) {
       const closeIdx = input.indexOf('>', i + 1);
       if (closeIdx !== -1) {
         const rawUrl = input.slice(i + 1, closeIdx).trim();
@@ -442,6 +445,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
 
     // 2c. Bare URL autolinks: https://... or http://...
     if (
+      allowLinks &&
       (input.startsWith('https://', i) || input.startsWith('http://', i)) &&
       (i === 0 || /[\s\(\[\{<"']/.test(input[i - 1]))
     ) {
@@ -487,7 +491,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           children: [
             {
               type: 'emphasis',
-              children: parseInline(inner, depth + 1),
+              children: parseInline(inner, depth + 1, allowLinks),
             },
           ],
         });
@@ -509,7 +513,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
           children: [
             {
               type: 'emphasis',
-              children: parseInline(inner, depth + 1),
+              children: parseInline(inner, depth + 1, allowLinks),
             },
           ],
         });
@@ -530,7 +534,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 2, closeIdx);
         nodes.push({
           type: 'strong',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 2;
         continue;
@@ -547,7 +551,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 2, closeIdx);
         nodes.push({
           type: 'strong',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 2;
         continue;
@@ -566,7 +570,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 1, closeIdx);
         nodes.push({
           type: 'emphasis',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 1;
         continue;
@@ -579,7 +583,7 @@ export function parseInline(input: string, depth = 0): InlineNode[] {
         const inner = input.slice(i + 1, closeIdx);
         nodes.push({
           type: 'emphasis',
-          children: parseInline(inner, depth + 1),
+          children: parseInline(inner, depth + 1, allowLinks),
         });
         i = closeIdx + 1;
         continue;

@@ -349,7 +349,8 @@ export const MarkdownLink: React.FC<{
 function renderInline(
   nodes: InlineNode[],
   keyPrefix: string,
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  insideLink = false
 ): React.ReactNode[] {
   return nodes.map((node, index) => {
     const key = `${keyPrefix}-in-${index}`;
@@ -365,19 +366,26 @@ function renderInline(
       case 'strong':
         return (
           <strong key={key}>
-            {renderInline(node.children, key, t)}
+            {renderInline(node.children, key, t, insideLink)}
           </strong>
         );
       case 'emphasis':
         return (
           <em key={key}>
-            {renderInline(node.children, key, t)}
+            {renderInline(node.children, key, t, insideLink)}
           </em>
         );
       case 'link':
+        if (insideLink) {
+          return (
+            <React.Fragment key={key}>
+              {renderInline(node.label, `${key}-lbl`, t, true)}
+            </React.Fragment>
+          );
+        }
         return (
           <MarkdownLink key={key} href={node.href} t={t}>
-            {renderInline(node.label, `${key}-lbl`, t)}
+            {renderInline(node.label, `${key}-lbl`, t, true)}
           </MarkdownLink>
         );
     }
