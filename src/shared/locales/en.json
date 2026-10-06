@@ -227,12 +227,6 @@
   "activity.output": "Output",
   "activity.collapse": "Collapse",
   "activity.expand": "Expand",
-
-  "interactive.question_title": "Agent Question",
-  "interactive.decision_required": "Decision Required",
-  "interactive.answered": "Answered",
-  "interactive.selected": "Selected",
-  "interactive.click_to_select": "Click an option or type your reply below",
   "activity.command": "Command",
   "activity.write_preview": "File content",
   "activity.edit_before": "Before",

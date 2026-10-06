@@ -227,12 +227,6 @@
   "activity.output": "Salida",
   "activity.collapse": "Contraer",
   "activity.expand": "Expandir",
-
-  "interactive.question_title": "Pregunta del Asistente",
-  "interactive.decision_required": "Decisión Requerida",
-  "interactive.answered": "Respondido",
-  "interactive.selected": "Seleccionado",
-  "interactive.click_to_select": "Haz clic en una opción o escribe tu respuesta en el prompt",
   "activity.command": "Comando",
   "activity.write_preview": "Contenido del archivo",
   "activity.edit_before": "Antes",

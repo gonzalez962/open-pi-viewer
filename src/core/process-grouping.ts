@@ -88,27 +88,8 @@ export function categorizeBlock(block: ProcessableBlock): ProcessCategory {
   return categorizeToolName(block.name);
 }
 
-/**
- * Checks if a tool name corresponds to an interactive question, choice, or permission tool
- * that directly converses with the human rather than executing an automated background task.
- */
-export function isInteractiveUserTool(name?: string): boolean {
-  if (!name || typeof name !== 'string') return false;
-  const lower = name.toLowerCase().trim();
-  return (
-    lower === 'ask_user_question' ||
-    lower === 'ask_user_choice' ||
-    lower === 'ask_user_confirmation' ||
-    lower === 'question'
-  );
-}
-
 function isProcessableBlock(block: MessageBlock): block is ProcessableBlock {
-  if (block.type === 'thinking') return true;
-  if (block.type === 'tool_call') {
-    return !isInteractiveUserTool(block.name);
-  }
-  return false;
+  return block.type === 'thinking' || block.type === 'tool_call';
 }
 
 /** A compacted run of consecutive process (thinking/tool_call) blocks. */
