@@ -156,6 +156,9 @@ export async function connectPi(
   if (sessionOptions?.requireSessionFileExists !== undefined) {
     payload.requireSessionFileExists = sessionOptions.requireSessionFileExists;
   }
+  if (sessionOptions?.loadAll !== undefined) {
+    payload.loadAll = sessionOptions.loadAll;
+  }
 
   return await invokeFn<ConnectResult>('connect', { payload });
 }
@@ -368,20 +371,55 @@ export async function listSessionsPi(
   return Array.isArray(result) ? result : [];
 }
 
+export interface SwitchSessionOptions {
+  loadAll?: boolean;
+  limit?: number;
+}
+
 /**
- * Switch active session to a different session file via Tauri IPC.
+ * Switch active session to a different session file via Tauri IPC or Web Bridge.
  */
 export async function switchSessionPi(
   sessionPath: string,
-  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+  optionsOrInvokeFn?:
+    | SwitchSessionOptions
+    | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
+  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<SwitchSessionResult> {
+  let options: SwitchSessionOptions | undefined;
+  let invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke;
+
+  if (typeof optionsOrInvokeFn === 'function') {
+    invokeFn = optionsOrInvokeFn;
+  } else {
+    options = optionsOrInvokeFn;
+    if (invokeFnParam) {
+      invokeFn = invokeFnParam;
+    }
+  }
+
   if (!isTauri() && invokeFn === invoke) {
     throw new Error('Desktop runtime unavailable: cannot switch session outside Tauri');
   }
 
+  const payload: Record<string, unknown> = { sessionPath };
+  if (options?.loadAll !== undefined) payload.loadAll = options.loadAll;
+  if (options?.limit !== undefined) payload.limit = options.limit;
+
   return await invokeFn<SwitchSessionResult>('switch_session', {
-    payload: { sessionPath },
+    payload,
   });
+}
+
+/**
+ * Load older or full messages for a session via Tauri IPC or Web Bridge.
+ */
+export async function loadSessionMessagesPi(
+  sessionPath: string,
+  options?: SwitchSessionOptions,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<SwitchSessionResult> {
+  return await switchSessionPi(sessionPath, options, invokeFn);
 }
 
 /**

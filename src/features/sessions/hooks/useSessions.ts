@@ -55,6 +55,7 @@ export interface UseSessionsResult {
   handleDeleteSession: (session: SessionSummary) => Promise<void>;
   handleRenameSession: (sessionPath: string, name: string) => Promise<void>;
   handleNewConversation: () => Promise<void>;
+  handleLoadOlderMessages: () => Promise<void>;
 }
 
 /**
@@ -176,6 +177,7 @@ export function useSessions({
           sessionId: result.sessionId,
           sessionFile: result.sessionFile,
           messages: hydrated,
+          hasMore: result.hasMore,
         },
       });
 
@@ -326,11 +328,42 @@ export function useSessions({
     }
   };
 
+  // Load all earlier messages when the session was windowed
+  const handleLoadOlderMessages = async () => {
+    if (!sessionFile) return;
+    dispatch({ type: 'LOAD_OLDER_MESSAGES_START' });
+    try {
+      const result = await switchSessionPi(sessionFile, { loadAll: true });
+      if (result.error) {
+        dispatch({
+          type: 'LOAD_OLDER_MESSAGES_ERROR',
+          payload: { error: result.error },
+        });
+        return;
+      }
+      const hydrated = hydrateChatMessages(result.messages || []);
+      dispatch({
+        type: 'LOAD_OLDER_MESSAGES_SUCCESS',
+        payload: {
+          messages: hydrated,
+          hasMore: false,
+        },
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      dispatch({
+        type: 'LOAD_OLDER_MESSAGES_ERROR',
+        payload: { error: msg },
+      });
+    }
+  };
+
   return {
     loadSessions,
     handleSelectSession,
     handleDeleteSession,
     handleRenameSession,
     handleNewConversation,
+    handleLoadOlderMessages,
   };
 }

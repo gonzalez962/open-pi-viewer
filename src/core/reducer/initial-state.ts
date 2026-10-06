@@ -14,6 +14,8 @@ export const INITIAL_STATE: ChatSessionState = {
   sessionStats: null,
   modelStats: {},
   messages: [],
+  hasMoreMessages: false,
+  isLoadingOlderMessages: false,
   activeAssistantMessageId: null,
   pendingPromptId: null,
   lastError: null,

@@ -54,6 +54,21 @@ export function shouldShowScrollToBottom(isAtBottom: boolean, messageCount: numb
 }
 
 /**
+ * Preserves scroll position when prepending older items to a scrollable container.
+ * Adjusts scrollTop by the difference in scrollHeight before and after layout.
+ */
+export function preserveScrollOnPrepend(
+  element: { scrollTop: number; scrollHeight: number } | null | undefined,
+  previousScrollHeight: number
+): void {
+  if (!element) return;
+  const delta = element.scrollHeight - previousScrollHeight;
+  if (delta > 0) {
+    element.scrollTop += delta;
+  }
+}
+
+/**
  * Pure controller managing auto-scroll decisions and user scroll interaction state.
  */
 export class ScrollController {

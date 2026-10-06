@@ -44,6 +44,8 @@ export interface SwitchSessionResult {
   sessionFile?: string;
   messageCount: number;
   messages: unknown[];
+  hasMore?: boolean;
+  status?: SessionRuntimeStatus;
   error?: string;
 }
 

@@ -1868,3 +1868,71 @@ test('Reducer: EVENT_MESSAGE_START image-only echo matches queued message by ima
   assert.strictEqual(queuedMsg.isQueued, false);
   assert.deepEqual(queuedMsg.images, imageB);
 });
+
+test('Reducer: handles LOAD_OLDER_MESSAGES lifecycle, prepends messages without duplicates and manages hasMoreMessages', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'SWITCH_SESSION_SUCCESS',
+    payload: {
+      sessionId: 'sess-windowed',
+      sessionFile: '/sessions/sess-windowed.jsonl',
+      messages: [
+        { id: 'm-3', role: 'user', content: 'Message 3', timestamp: '12:02' },
+        { id: 'm-4', role: 'assistant', content: 'Message 4', timestamp: '12:03' },
+      ],
+      hasMore: true,
+    },
+  });
+
+  assert.strictEqual(state.hasMoreMessages, true);
+  assert.strictEqual(state.isLoadingOlderMessages, false);
+  assert.strictEqual(state.messages.length, 2);
+
+  // 1. Start loading older messages
+  state = chatReducer(state, { type: 'LOAD_OLDER_MESSAGES_START' });
+  assert.strictEqual(state.isLoadingOlderMessages, true);
+
+  // 2. Success prepends older messages without duplicating m-3
+  state = chatReducer(state, {
+    type: 'LOAD_OLDER_MESSAGES_SUCCESS',
+    payload: {
+      messages: [
+        { id: 'm-1', role: 'user', content: 'Message 1', timestamp: '12:00' },
+        { id: 'm-2', role: 'assistant', content: 'Message 2', timestamp: '12:01' },
+        { id: 'm-3', role: 'user', content: 'Message 3', timestamp: '12:02' }, // duplicate id
+      ],
+      hasMore: false,
+    },
+  });
+
+  assert.strictEqual(state.isLoadingOlderMessages, false);
+  assert.strictEqual(state.hasMoreMessages, false);
+  assert.strictEqual(state.messages.length, 4);
+  assert.strictEqual(state.messages[0].id, 'm-1');
+  assert.strictEqual(state.messages[1].id, 'm-2');
+  assert.strictEqual(state.messages[2].id, 'm-3');
+  assert.strictEqual(state.messages[3].id, 'm-4');
+
+  // 3. Error handles gracefully
+  state = chatReducer(state, { type: 'LOAD_OLDER_MESSAGES_START' });
+  state = chatReducer(state, {
+    type: 'LOAD_OLDER_MESSAGES_ERROR',
+    payload: { error: 'Network timeout' },
+  });
+  assert.strictEqual(state.isLoadingOlderMessages, false);
+  assert.ok(state.statusDetail.includes('Network timeout'));
+});
+
+test('Reducer: SESSION_READY sets hasMoreMessages accurately from connect result', () => {
+  let state = chatReducer(INITIAL_STATE, {
+    type: 'SESSION_READY',
+    payload: {
+      sessionId: 'sess-connected',
+      sessionFile: '/sessions/sess-connected.jsonl',
+      messages: [{ id: 'm-recent', role: 'assistant', content: 'Hi', timestamp: '10:00' }],
+      hasMore: true,
+    },
+  });
+
+  assert.strictEqual(state.hasMoreMessages, true);
+  assert.strictEqual(state.isLoadingOlderMessages, false);
+});

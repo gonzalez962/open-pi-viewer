@@ -178,6 +178,8 @@
   "empty.meta_auto_lifecycle": "Automatic Lifecycle",
 
   "chat.scroll_to_bottom": "Ir al final",
+  "chat.load_older_messages": "Cargar mensajes anteriores",
+  "chat.loading_older_messages": "Cargando mensajes anteriores…",
 
   "message.role_user": "usuario",
   "message.role_assistant": "asistente",
