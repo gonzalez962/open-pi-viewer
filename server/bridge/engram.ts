@@ -1,14 +1,54 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { getBridgeConfig, getAgnosticExecEnv } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
+
+export interface EngramCloudStatus {
+  configured: boolean;
+  serverUrl?: string | null;
+  authReady: boolean;
+  enrolled?: boolean | null;
+  daemonRunning: boolean;
+  daemonPort?: number | null;
+  phase?: string | null;
+  lastSyncAt?: string | null;
+  lastError?: string | null;
+  reasonCode?: string | null;
+  rawDetails?: string | null;
+  cloudPermitted?: boolean | null;
+  cloudPermissionMessage?: string | null;
+}
 
 export function getEngramBin(): string {
   return getBridgeConfig().engramBinary;
 }
 
 const engramProjectCache = new Map<string, { project: string | null; expires: number }>();
+
+export function clearEngramCacheForTest(): void {
+  engramProjectCache.clear();
+  cloudStatusCache = null;
+}
+
+export function parseEngramProjectFromStats(stdout: string): string | null {
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    let val: string | null = null;
+    if (trimmed.startsWith('Projects:')) {
+      val = trimmed.slice('Projects:'.length).trim();
+    } else if (trimmed.startsWith('Project:')) {
+      val = trimmed.slice('Project:'.length).trim();
+    }
+    if (val) {
+      if (val.toLowerCase() === 'none yet' || val.length === 0) {
+        return null;
+      }
+      return val;
+    }
+  }
+  return null;
+}
 
 export function getEngramProjectImpl(cwd?: string): string | null {
   const targetDir = cwd || getActiveCwd();
@@ -19,128 +59,276 @@ export function getEngramProjectImpl(cwd?: string): string | null {
   }
 
   let detected: string | null = null;
+
+  // 1. Fast path: check local .engram/config.json
   const configPath = path.join(targetDir, '.engram', 'config.json');
   if (fs.existsSync(configPath)) {
     try {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (cfg.name || cfg.project) {
-        detected = cfg.name || cfg.project;
+        const val = String(cfg.name || cfg.project).trim();
+        if (val && val.toLowerCase() !== 'none yet') {
+          detected = val;
+        }
       }
     } catch {}
   }
 
+  // 2. CLI execution path: `engram stats`
   if (!detected) {
     try {
       const out = execFileSync(getEngramBin(), ['stats'], {
-        cwd: targetDir,
+        cwd: fs.existsSync(targetDir) ? targetDir : undefined,
         encoding: 'utf8',
-        timeout: 1500,
+        timeout: 2500,
         env: getAgnosticExecEnv(),
       });
-      for (const line of out.split('\n')) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('Projects:')) {
-          detected = trimmed.replace('Projects:', '').trim();
-          break;
-        }
-        if (trimmed.startsWith('Project:')) {
-          detected = trimmed.replace('Project:', '').trim();
-          break;
-        }
-      }
+      detected = parseEngramProjectFromStats(out);
     } catch {}
-  }
-
-  if (!detected) {
-    const base = path.basename(targetDir);
-    detected = base || 'open-pi-viewer';
   }
 
   engramProjectCache.set(targetDir, { project: detected, expires: now + 60000 });
   return detected;
 }
 
+export function parseEngramCloudStatus(stdout: string): EngramCloudStatus {
+  let configured = false;
+  let serverUrl: string | null = null;
+  let authReady = false;
+  let enrolled: boolean | null = null;
+  let daemonRunning = false;
+  let daemonPort: number | null = null;
+  let reasonCode: string | null = null;
+  let lastError: string | null = null;
+
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    const lower = trimmed.toLowerCase();
+
+    if (lower.startsWith('cloud status:')) {
+      configured = lower.includes('configured') && !lower.includes('not configured');
+    } else if (trimmed.startsWith('Server:')) {
+      const rest = trimmed.slice('Server:'.length).trim();
+      if (rest) serverUrl = rest;
+    } else if (lower.startsWith('auth status:')) {
+      authReady = lower.includes('ready') && !lower.includes('not ready');
+    } else if (lower.startsWith('project enrollment:')) {
+      if (lower.includes('not enrolled')) {
+        enrolled = false;
+      } else if (lower.includes('enrolled (')) {
+        enrolled = true;
+      }
+    } else if (lower.startsWith('local daemon:')) {
+      daemonRunning = lower.includes('running') && !lower.includes('not running');
+      const portIdx = lower.indexOf('port ');
+      if (portIdx !== -1) {
+        const portDigits = lower.slice(portIdx + 5).match(/^\d+/);
+        if (portDigits) daemonPort = parseInt(portDigits[0], 10);
+      }
+    } else if (lower.startsWith('reason_code:')) {
+      const rest = trimmed.slice('reason_code:'.length).trim();
+      if (rest) reasonCode = rest;
+    } else if (lower.startsWith('reason_message:')) {
+      const rest = trimmed.slice('reason_message:'.length).trim();
+      if (rest) lastError = rest;
+    }
+  }
+
+  return {
+    configured,
+    serverUrl,
+    authReady,
+    enrolled,
+    daemonRunning,
+    daemonPort,
+    phase: null,
+    lastSyncAt: null,
+    lastError,
+    reasonCode,
+    rawDetails: stdout.trim() || null,
+    cloudPermitted: null,
+    cloudPermissionMessage: null,
+  };
+}
+
+export function applyCloudSyncPermissionResult(
+  status: EngramCloudStatus,
+  success: boolean,
+  stdout: string,
+  stderr: string
+): void {
+  const combined = `${stdout}\n${stderr}`.toLowerCase();
+  if (
+    combined.includes('403') ||
+    combined.includes('forbidden') ||
+    combined.includes('not allowed') ||
+    combined.includes('policy_forbidden')
+  ) {
+    status.cloudPermitted = false;
+    status.reasonCode = 'policy_forbidden';
+    status.cloudPermissionMessage =
+      'Acceso denegado por política del servidor (403 Forbidden). Verifique ENGRAM_CLOUD_ALLOWED_PROJECTS en el servidor Cloud.';
+    if (!status.lastError) {
+      const desc = stderr.trim() || stdout.trim();
+      if (desc) status.lastError = desc;
+    }
+  } else if (combined.includes('401') || combined.includes('auth_required')) {
+    status.cloudPermitted = false;
+    status.cloudPermissionMessage = 'Autenticación requerida por el servidor (401)';
+  } else if (success || combined.includes('cloud sync status')) {
+    status.cloudPermitted = true;
+    status.cloudPermissionMessage = 'Sincronización permitida en el servidor';
+  } else {
+    status.cloudPermitted = null;
+    status.cloudPermissionMessage =
+      'No se pudo verificar permisos en el servidor Cloud (tiempo de espera agotado)';
+  }
+}
+
 let cloudStatusCache: { key: string; expires: number; data: any } | null = null;
 
 export async function getEngramCloudStatusImpl(project?: string, cwd?: string) {
-  const p = project || getEngramProjectImpl(cwd);
-  const cacheKey = `${p || ''}_${cwd || ''}`;
+  const targetDir = cwd || getActiveCwd();
+  const p = project || getEngramProjectImpl(targetDir);
+  const cacheKey = `${p || ''}_${targetDir || ''}`;
   const now = Date.now();
   if (cloudStatusCache && cloudStatusCache.key === cacheKey && cloudStatusCache.expires > now) {
     return cloudStatusCache.data;
   }
 
-  const cfg = getBridgeConfig();
-  const defaultUrl = cfg.engramServerUrl || 'https://engram.example.com';
+  const bin = getEngramBin();
+  let status: EngramCloudStatus | null = null;
 
-  // 1. Try local daemon API directly in < 5ms if available
+  // 1. Primary path: query CLI for authoritative cloud status
+  try {
+    const args = ['cloud', 'status'];
+    if (p) {
+      args.push('--project', p);
+    }
+    const out = execFileSync(bin, args, {
+      cwd: fs.existsSync(targetDir) ? targetDir : undefined,
+      encoding: 'utf8',
+      timeout: 3500,
+      env: getAgnosticExecEnv(),
+    });
+
+    if (out && out.trim().length > 0) {
+      status = parseEngramCloudStatus(out);
+    }
+  } catch {}
+
+  // 2. When project is enrolled, check cloud sync permissions
+  if (status && status.configured && status.enrolled === true && p) {
+    try {
+      const syncArgs = ['sync', '--cloud', '--status', '--project', p];
+      const res = spawnSync(bin, syncArgs, {
+        cwd: fs.existsSync(targetDir) ? targetDir : undefined,
+        encoding: 'utf8',
+        timeout: 4000,
+        env: getAgnosticExecEnv(),
+      });
+      applyCloudSyncPermissionResult(
+        status,
+        res.status === 0,
+        res.stdout || '',
+        res.stderr || ''
+      );
+    } catch {
+      status.cloudPermitted = null;
+      status.cloudPermissionMessage =
+        'No se pudo verificar permisos en el servidor Cloud (tiempo de espera agotado)';
+    }
+  }
+
+  // 3. Fallback: inspect ~/.engram/cloud.json directly if CLI execution failed
+  if (!status) {
+    const cloudJsonPath = path.join(HOME_DIR, '.engram', 'cloud.json');
+    if (fs.existsSync(cloudJsonPath)) {
+      try {
+        const cloudData = JSON.parse(fs.readFileSync(cloudJsonPath, 'utf8'));
+        const projOverride = p && cloudData.projects && cloudData.projects[p];
+        const serverUrl = projOverride?.server_url || cloudData.server_url || getBridgeConfig().engramServerUrl;
+        const isAuthReady = Boolean(projOverride?.token || cloudData.token);
+        const isEnrolled = Boolean(projOverride && projOverride.token);
+
+        status = {
+          configured: true,
+          serverUrl,
+          authReady: isAuthReady,
+          enrolled: isEnrolled,
+          daemonRunning: false,
+          daemonPort: null,
+          phase: null,
+          lastSyncAt: null,
+          lastError: null,
+          reasonCode: null,
+          rawDetails: null,
+          cloudPermitted: null,
+          cloudPermissionMessage: null,
+        };
+      } catch {}
+    }
+  }
+
+  // 4. Actively verify local daemon and merge live telemetry
+  const port = status?.daemonPort || 7437;
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 250);
-    const daemonRes = await fetch(
-      `http://127.0.0.1:7437/sync/status${p ? `?project=${encodeURIComponent(p)}` : ''}`,
-      { signal: controller.signal }
-    ).catch(() => null);
+    const timeoutId = setTimeout(() => controller.abort(), 600);
+    const projectParam = p ? `?project=${encodeURIComponent(p)}` : '';
+    const daemonRes = await fetch(`http://127.0.0.1:${port}/sync/status${projectParam}`, {
+      signal: controller.signal,
+    }).catch(() => null);
     clearTimeout(timeoutId);
 
     if (daemonRes && daemonRes.ok) {
       const daemonData: any = await daemonRes.json();
-      const isEnrolled = daemonData?.reason_code !== 'blocked_unenrolled';
-      const result = {
-        configured: true,
-        serverUrl: defaultUrl,
-        authReady: true,
-        enrolled: isEnrolled,
-        daemonRunning: true,
-        daemonPort: 7437,
-        phase: daemonData?.phase || (isEnrolled ? 'synced' : 'idle'),
-        lastSyncAt: daemonData?.last_sync_at || new Date().toLocaleTimeString(),
-      };
-      cloudStatusCache = { key: cacheKey, expires: now + 20000, data: result };
-      return result;
+      if (!status) {
+        status = {
+          configured: false,
+          serverUrl: getBridgeConfig().engramServerUrl,
+          authReady: false,
+          enrolled: null,
+          daemonRunning: true,
+          daemonPort: port,
+          phase: null,
+          lastSyncAt: null,
+          lastError: null,
+          reasonCode: null,
+          rawDetails: null,
+          cloudPermitted: null,
+          cloudPermissionMessage: null,
+        };
+      }
+      status.daemonRunning = true;
+      status.daemonPort = port;
+
+      // Only merge sync phase/telemetry if the project is actually enrolled in cloud sync
+      if (status.enrolled === true && daemonData && typeof daemonData === 'object') {
+        const daemonErr = daemonData.last_error || daemonData.reason_message;
+        // Only attribute daemon error if it specifically names this project
+        const isProjectError = Boolean(p && typeof daemonErr === 'string' && daemonErr.includes(p));
+
+        if (isProjectError) {
+          status.phase = daemonData.phase || status.phase;
+          if (!status.lastError) {
+            status.lastError = daemonErr;
+          }
+          if (!status.reasonCode) {
+            status.reasonCode = daemonData.reason_code || null;
+          }
+        } else {
+          // If daemon error is from other projects, do not contaminate this project
+          status.phase = status.phase || 'synced';
+        }
+        status.lastSyncAt = daemonData.last_sync_at || status.lastSyncAt;
+      }
     }
   } catch {}
 
-  // 2. Fallback to CLI command with cached result (using execFileSync, no shell interpolation)
-  try {
-    const args = p ? ['cloud', 'status', '--project', p] : ['cloud', 'status'];
-    const out = execFileSync(getEngramBin(), args, {
-      encoding: 'utf8',
-      timeout: 1500,
-      env: getAgnosticExecEnv(),
-    });
-
-    const serverMatch = out.match(/Server:\s*(https?:\/\/[^\s]+)/i);
-    const serverUrl = serverMatch ? serverMatch[1] : defaultUrl;
-    const isConfigured = out.includes('Cloud status: configured');
-    const isEnrolled = out.includes('project is enrolled') || out.includes('Project enrollment: enrolled');
-    const isDaemon = out.includes('Local daemon: running');
-
-    const result = {
-      configured: isConfigured,
-      serverUrl,
-      authReady: true,
-      enrolled: isEnrolled,
-      daemonRunning: isDaemon,
-      daemonPort: 7437,
-      phase: isEnrolled ? 'synced' : 'idle',
-      lastSyncAt: new Date().toLocaleTimeString(),
-    };
-    cloudStatusCache = { key: cacheKey, expires: now + 20000, data: result };
-    return result;
-  } catch {
-    const fallback = {
-      configured: true,
-      serverUrl: defaultUrl,
-      authReady: true,
-      enrolled: false,
-      daemonRunning: true,
-      daemonPort: 7437,
-      phase: 'idle',
-    };
-    cloudStatusCache = { key: cacheKey, expires: now + 10000, data: fallback };
-    return fallback;
-  }
+  const ttl = status ? 20000 : 10000;
+  cloudStatusCache = { key: cacheKey, expires: now + ttl, data: status };
+  return status;
 }
 
 export function enrollEngramProjectImpl(project?: string) {
@@ -174,17 +362,23 @@ export function getEngramObservationsImpl(project?: string, limit = 20) {
 }
 
 export function handleGetEngramProject(args: any = {}) {
-  return getEngramProjectImpl(args.cwd);
+  const cwd = args.payload?.cwd ?? args.cwd;
+  return getEngramProjectImpl(cwd);
 }
 
 export async function handleGetEngramCloudStatus(args: any = {}) {
-  return await getEngramCloudStatusImpl(args.project, args.cwd);
+  const project = args.payload?.project ?? args.project;
+  const cwd = args.payload?.cwd ?? args.cwd;
+  return await getEngramCloudStatusImpl(project, cwd);
 }
 
 export function handleEnrollEngramProject(args: any = {}) {
-  return enrollEngramProjectImpl(args.project);
+  const project = args.payload?.project ?? args.project;
+  return enrollEngramProjectImpl(project);
 }
 
 export function handleGetEngramObservations(args: any = {}) {
-  return getEngramObservationsImpl(args.project, args.limit || 20);
+  const project = args.payload?.project ?? args.project;
+  const limit = args.payload?.limit ?? args.limit ?? 20;
+  return getEngramObservationsImpl(project, limit);
 }
