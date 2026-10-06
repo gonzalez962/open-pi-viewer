@@ -463,6 +463,7 @@ export interface ProfilesPayload {
   effectiveScope: 'project' | 'global' | null;
   categories: AgentCategory[];
   allAgents: string[];
+  agentMeta?: Record<string, DiscoveredAgentMeta>;
 }
 
 export interface SaveProfilePayload {

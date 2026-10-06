@@ -10,6 +10,7 @@ import { modelsReducer } from '@core/reducer/models';
 import { generatePromptRequestId } from '@core/protocol';
 import type { ChatMessage, ThinkingBlock, ToolCallBlock } from '@core/types/messages';
 import type { ModelInfo, SessionStats } from '@core/types/models';
+import type { SessionSummary } from '@core/types/sessions';
 
 test('Reducer: initial state has honest disconnected status', () => {
   assert.strictEqual(INITIAL_STATE.connectionStatus, 'disconnected');

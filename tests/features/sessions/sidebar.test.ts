@@ -375,6 +375,8 @@ test('SessionSidebar: renders runtime status badges for working, waiting, comple
       isLoading: false,
       isSwitching: false,
       activeSessionId: null,
+      activeSessionFile: null,
+      error: null,
       onSelectSession: () => {},
       onNewSession: () => {},
       onDeleteSession: () => {},

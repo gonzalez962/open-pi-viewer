@@ -12,6 +12,7 @@ import {
 import {
   sanitizeProfileName,
   type AgentCategory,
+  type DiscoveredAgentMeta,
   type Profile,
   type ProfileScope,
   type ProfileSummary,

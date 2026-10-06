@@ -951,9 +951,9 @@ test('getPiChainsPi: invokes get_pi_chains and returns chains list', async () =>
     },
   ];
 
-  const result = await getPiChainsPi(async (cmd) => {
+  const result = await getPiChainsPi(async <T>(cmd: string): Promise<T> => {
     assert.strictEqual(cmd, 'get_pi_chains');
-    return mockChains;
+    return mockChains as unknown as T;
   });
 
   assert.strictEqual(result.length, 1);
@@ -962,7 +962,7 @@ test('getPiChainsPi: invokes get_pi_chains and returns chains list', async () =>
 });
 
 test('getPiChainsPi: returns empty array when invoke fails', async () => {
-  const result = await getPiChainsPi(async () => {
+  const result = await getPiChainsPi(async <T>(): Promise<T> => {
     throw new Error('IPC failed');
   });
 
@@ -996,11 +996,13 @@ test('ProfileModal: renders profile-agent-desc-hint when agentMeta contains desc
         {
           id: 'test-cat',
           name: 'Testing Category',
+          description: 'Testing Category Description',
           agents: ['test-agent'],
         },
       ],
       agentMeta: {
         'test-agent': {
+          id: 'test-agent',
           name: 'test-agent',
           description: 'Autonomous exploration agent for codebase',
         },

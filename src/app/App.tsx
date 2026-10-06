@@ -409,21 +409,6 @@ export const App: React.FC = () => {
     handleBack,
   } = useExtensionUiDialog();
 
-  const handleSelectInteractiveOption = useCallback(
-    (label: string) => {
-      if (activeDialog) {
-        handleDialogSelect(activeDialog.itemKey, label);
-      } else {
-        setPrompt(label);
-        const textarea = document.querySelector<HTMLTextAreaElement>('#prompt-input');
-        if (textarea) {
-          textarea.focus();
-        }
-      }
-    },
-    [activeDialog, handleDialogSelect, setPrompt]
-  );
-
   const handleDialogBack = useCallback(
     (
       itemKey: string,
@@ -553,6 +538,21 @@ export const App: React.FC = () => {
     commands: commandCatalog,
     helpCommands: visibleCommandCatalog,
   });
+
+  const handleSelectInteractiveOption = useCallback(
+    (label: string) => {
+      if (activeDialog) {
+        handleDialogSelect(activeDialog.itemKey, label);
+      } else {
+        setPrompt(label);
+        const textarea = document.querySelector<HTMLTextAreaElement>('#prompt-input');
+        if (textarea) {
+          textarea.focus();
+        }
+      }
+    },
+    [activeDialog, handleDialogSelect, setPrompt]
+  );
 
   // Pure wrapper handing MarkdownContent's per-code-card "Insert into prompt" button a way
   // to append a fenced snippet to the prompt draft (Issue #7); the actual wrap/append logic
