@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   saveConversationExport,
+  isDesktopTauriEnvironment,
   type SaveExportPayload,
 } from '@infra/conversation-export';
 import type { DownloadOptions, DownloadPayload, DownloadResult } from '@infra/download';
@@ -248,4 +249,100 @@ test('Parameter normalization: supports defaultFilename and format fallback', as
     content: '{"data": true}',
     format: 'json',
   });
+});
+
+test('isDesktopTauriEnvironment: detects genuine native Tauri vs Web IPC shim', () => {
+  const originalWindow = (globalThis as any).window;
+  const originalIsTauri = (globalThis as any).isTauri;
+
+  try {
+    // 1. In browser preview with Web IPC shim installed
+    (globalThis as any).isTauri = true;
+    (globalThis as any).window = {
+      isTauri: true,
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+      },
+    };
+    assert.equal(
+      isDesktopTauriEnvironment(),
+      false,
+      'Web IPC shim must NOT be detected as desktop Tauri'
+    );
+
+    // 2. In browser with no __TAURI_INTERNALS__.ipc function
+    (globalThis as any).window = {
+      isTauri: true,
+      __TAURI_INTERNALS__: {
+        callbacks: new Map(),
+      },
+    };
+    assert.equal(
+      isDesktopTauriEnvironment(),
+      false,
+      'Browser without native ipc function must NOT be detected as desktop Tauri'
+    );
+
+    // 3. In genuine native Tauri v2 webview
+    (globalThis as any).window = {
+      isTauri: true,
+      __TAURI_INTERNALS__: {
+        ipc: () => {},
+      },
+    };
+    assert.equal(
+      isDesktopTauriEnvironment(),
+      true,
+      'Genuine native Tauri with ipc function must be detected as desktop Tauri'
+    );
+  } finally {
+    (globalThis as any).window = originalWindow;
+    (globalThis as any).isTauri = originalIsTauri;
+  }
+});
+
+test('Ambient Web preview: saveConversationExport defaults to triggerDownload when Web IPC shim is active', async () => {
+  const originalWindow = (globalThis as any).window;
+  let downloadedPayload: DownloadPayload | undefined;
+
+  try {
+    (globalThis as any).window = {
+      isTauri: true,
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async () => {
+          throw new Error('Must not call invoke in web preview');
+        },
+      },
+    };
+
+    const mockTriggerDownload = (p: DownloadPayload): DownloadResult => {
+      downloadedPayload = p;
+      return {
+        success: true,
+        initiated: true,
+        filename: p.filename,
+      };
+    };
+
+    const result = await saveConversationExport(
+      {
+        filename: 'web-ambient.md',
+        content: '# Ambient Web Content',
+        format: 'markdown',
+      },
+      {
+        triggerDownloadFn: mockTriggerDownload,
+      }
+    );
+
+    assert.equal(result.outcome, 'initiated');
+    assert.equal(result.filename, 'web-ambient.md');
+    assert.ok(downloadedPayload !== undefined);
+    assert.equal(downloadedPayload?.filename, 'web-ambient.md');
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
 });

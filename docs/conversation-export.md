@@ -225,7 +225,15 @@ const result = await saveConversationExport({
 ### Platform Adapter (`src/infra/conversation-export.ts`)
 - **Isolation & Propagation**: Uses `@tauri-apps/api/core` `invoke` and `isTauri` strictly within `src/infra/`. In Tauri environments, native invocation errors propagate immediately without falling back to browser anchor downloads.
 - **Web Parity**: In non-Tauri browser environments, cleanly delegates to `triggerDownload` and reports honest `initiated` status without claiming persistent disk writes.
-- **Pending UI Integration (T5)**: Feature hook and prompt state integration remain on the synchronous T3 flow pending async save flow and ephemeral toast feedback in T5. Interactive OS dialog display has not been verified in automated headless test runners and remains pending manual desktop runtime verification.
+
+### Ephemeral Accessible Toast Feedback (**T5**)
+- **No Transcript Pollution**: Completely eliminates `ADD_SYSTEM_MESSAGE` dispatches for all export outcomes. The chat transcript messages array is never polluted with ephemeral export notices.
+- **In-Progress Loading State**: When an export is initiated and validation passes, an in-progress toast appears (`Exporting conversation…` / `Exportando conversación…`) with an animated spinner and polite live region (`role="status"`, `aria-live="polite"`).
+- **Five-Second Result Feedback**: Completed export results (saved in Tauri, initiated on web, empty transcript, invalid format, or error) transition to a result toast that auto-dismisses after 5 seconds (`autoDismissMs = 5000`).
+- **Native vs Web Outcome Distinction**: Distinguishes between confirmed disk write in desktop Tauri (`Conversation saved: {filename}`) and browser anchor initiation on web (`Export initiated: {filename}`).
+- **Silent Cancellation**: Native OS Save As dialog dismissal returns `cancelled` and immediately closes the loading toast silently without displaying an error or success banner.
+- **Manual Dismissal**: Accessible dismiss button (`×`) allows immediate closing with keyboard and screen reader accessibility (`aria-label`).
+- **Cleanup**: Auto-dismiss timers are safely cleared on new exports, manual dismissal, and component unmount.
 
 ## Acceptance Checklist
 
@@ -265,3 +273,11 @@ const result = await saveConversationExport({
 - [x] Unified platform adapter (`src/infra/conversation-export.ts`) distinguishing `saved`, `cancelled`, and `initiated`.
 - [x] Native invocation errors propagate honestly in Tauri without falling back to web downloads.
 - [x] Architecture submodule registration in `tests/architecture.test.ts` maintaining clean boundary assertions.
+- [x] Elimination of `ADD_SYSTEM_MESSAGE` dispatches for all export outcomes.
+- [x] Ephemeral accessible toast UI (`ExportToast`) with `role="status"` / `role="alert"` and polite/assertive live regions.
+- [x] In-progress loading state displayed while export preparation and platform save operations execute.
+- [x] Ephemeral 5-second auto-dismiss on export result toasts (`autoDismissMs = 5000`).
+- [x] Native saved (`command_palette.export_saved`) vs web initiated (`command_palette.export_success`) distinction in toast feedback.
+- [x] Silent cancellation when user dismisses native Save As dialog (loading toast dismissed, no error toast).
+- [x] Accessible dismiss button (`×`) with localized `command_palette.toast_close` label.
+- [x] Unmount and re-trigger timer cleanup preventing timer leaks.

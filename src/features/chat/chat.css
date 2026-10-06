@@ -3784,3 +3784,118 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Export Toast Notification (Issue #59 T5) */
+.export-toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1050;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.export-toast {
+  pointer-events: auto;
+  background-color: var(--bg-surface-elevated, var(--bg-elevated, #1c2128));
+  border: 1px solid var(--border-default, #30363d);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--fg-default, #e6edf3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 440px;
+  font-size: 13px;
+  line-height: 1.4;
+  animation: exportToastFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.export-toast-loading {
+  border-color: var(--border-muted, #30363d);
+}
+
+.export-toast-success {
+  border-color: var(--status-green-border, rgba(63, 185, 80, 0.4));
+}
+
+.export-toast-error {
+  border-color: var(--status-red-border, rgba(248, 81, 73, 0.4));
+}
+
+.export-toast-info {
+  border-color: var(--border-active, #58a6ff);
+}
+
+.export-toast-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.export-toast-icon.is-loading {
+  color: var(--accent-primary, #1f6feb);
+}
+
+.export-toast-spinner {
+  animation: exportToastSpin 1s linear infinite;
+}
+
+.export-toast-icon.is-success {
+  color: var(--status-green, #3fb950);
+}
+
+.export-toast-icon.is-error {
+  color: var(--status-red, #f85149);
+}
+
+.export-toast-icon.is-info {
+  color: var(--accent-primary, #58a6ff);
+}
+
+.export-toast-message {
+  flex: 1;
+  word-break: break-word;
+}
+
+.export-toast-dismiss {
+  background: transparent;
+  border: none;
+  color: var(--fg-muted, #8b949e);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.export-toast-dismiss:hover {
+  color: var(--fg-default, #e6edf3);
+  background-color: var(--bg-subtle-hover, #30363d);
+}
+
+@keyframes exportToastFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes exportToastSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

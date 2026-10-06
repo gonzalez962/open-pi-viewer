@@ -10,7 +10,6 @@ import {
 import type { ChatAction } from '@core/reducer';
 import type { ChatMessage } from '@core/types/messages';
 import type { SessionSummary } from '@core/types/sessions';
-import { translate } from '@shared/i18n';
 
 function createSampleMessages(): ChatMessage[] {
   return [
@@ -310,14 +309,7 @@ test('exportConversation: default format exports markdown and initiates download
   assert.ok(payloadMd.content.includes('Can you inspect the logs?'));
   assert.ok(payloadMd.content.includes('read_logs'));
 
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_success', {
-      filename: 'log-inspection-2026-03-30.md',
-    })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: explicit "md" argument initiates markdown export', async () => {
@@ -380,14 +372,7 @@ test('exportConversation: explicit "json" argument exports versioned JSON', asyn
   assert.ok(parsed.metadata.disclosures.scope.includes('currently loaded transcript'));
   assert.equal(parsed.messages.length, 2);
 
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_success', {
-      filename: 'log-inspection-2026-03-30.json',
-    })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: rejects invalid format without triggering download', async () => {
@@ -410,12 +395,7 @@ test('exportConversation: rejects invalid format without triggering download', a
 
   assert.equal(outcome.status, 'invalid_format');
   assert.equal(downloadTriggered, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_invalid_format', { format: 'yaml' })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: rejects extra arguments after valid format', async () => {
@@ -438,12 +418,7 @@ test('exportConversation: rejects extra arguments after valid format', async () 
 
   assert.equal(outcome.status, 'invalid_format');
   assert.equal(downloadTriggered, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('es', 'command_palette.export_invalid_format', { format: 'md extra' })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: reports empty notice and skips download when messages list is empty', async () => {
@@ -465,9 +440,7 @@ test('exportConversation: reports empty notice and skips download when messages 
 
   assert.equal(outcome.status, 'empty');
   assert.equal(downloadTriggered, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(dispatched[0].payload.content, translate('en', 'command_palette.export_empty'));
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: reports empty notice when messages have only whitespace placeholder', async () => {
@@ -498,9 +471,7 @@ test('exportConversation: reports empty notice when messages have only whitespac
 
   assert.equal(outcome.status, 'empty');
   assert.equal(downloadTriggered, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(dispatched[0].payload.content, translate('en', 'command_palette.export_empty'));
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: handles download failure and dispatches visible failure notice', async () => {
@@ -524,14 +495,7 @@ test('exportConversation: handles download failure and dispatches visible failur
 
   assert.equal(outcome.status, 'failed');
   assert.equal(outcome.error, 'Host Blob creation denied');
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_failed', {
-      error: 'Host Blob creation denied',
-    })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: encompasses throwing clock in preparation pipeline with honest failure notice', async () => {
@@ -559,14 +523,7 @@ test('exportConversation: encompasses throwing clock in preparation pipeline wit
   assert.equal(outcome.status, 'failed');
   assert.equal(outcome.error, 'System clock failure');
   assert.equal(downloadCalled, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_failed', {
-      error: 'System clock failure',
-    })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: encompasses throwing serialization field getters with honest failure notice', async () => {
@@ -598,35 +555,21 @@ test('exportConversation: encompasses throwing serialization field getters with 
   assert.equal(outcome.status, 'failed');
   assert.equal(outcome.error, 'Message content getter failed');
   assert.equal(downloadCalled, false);
-  assert.equal(dispatched.length, 1);
-  assert.equal(dispatched[0].type, 'ADD_SYSTEM_MESSAGE');
-  assert.equal(
-    dispatched[0].payload.content,
-    translate('en', 'command_palette.export_failed', {
-      error: 'Message content getter failed',
-    })
-  );
+  assert.equal(dispatched.length, 0, 'Must not dispatch ADD_SYSTEM_MESSAGE in T5');
 });
 
 test('exportConversation: snapshots messages before feedback so feedback notice is not in export', async () => {
   const messages = createSampleMessages();
   const dynamicMessages = [...messages];
   let serializedContent = '';
+  const dispatched: ChatAction[] = [];
 
   const outcome = await exportConversation({
     args: 'md',
     messages: dynamicMessages,
     language: 'en',
     dispatch: (action) => {
-      // Simulate reducer appending system message
-      if (action.type === 'ADD_SYSTEM_MESSAGE') {
-        dynamicMessages.push({
-          id: 'sys-notice',
-          role: 'assistant',
-          content: action.payload.content,
-          timestamp: '10:00:10 AM',
-        });
-      }
+      dispatched.push(action);
     },
     downloadAdapter: {
       triggerDownload: (payload) => {
@@ -639,8 +582,9 @@ test('exportConversation: snapshots messages before feedback so feedback notice 
   assert.equal(outcome.status, 'success');
   // Serialized content must not contain the feedback system message
   assert.ok(!serializedContent.includes('Export initiated'));
-  // But dynamicMessages now has the feedback message appended
-  assert.equal(dynamicMessages.length, 3);
+  // Zero system messages dispatched in T5
+  assert.equal(dispatched.length, 0);
+  assert.equal(dynamicMessages.length, 2);
 });
 
 test('exportConversation: does not mutate original input messages', async () => {

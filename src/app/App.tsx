@@ -89,6 +89,7 @@ import {
 import { useSessions } from '@features/sessions/hooks/useSessions';
 import { usePromptState } from '@features/chat/hooks/usePromptState';
 import { useConversationExport } from '@features/chat/hooks/useConversationExport';
+import { ExportToast } from '@features/chat/components/ExportToast';
 import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
@@ -492,7 +493,11 @@ export const App: React.FC = () => {
   );
   const activeSessionTitle = resolveExportTitle(activeSession);
 
-  const { handleExport } = useConversationExport({
+  const {
+    handleExport,
+    toast: exportToast,
+    dismissToast: dismissExportToast,
+  } = useConversationExport({
     messages: state.messages,
     sessionTitle: activeSessionTitle,
     language: preferences.language,
@@ -1670,6 +1675,12 @@ export const App: React.FC = () => {
           }}
         />
       )}
+
+      <ExportToast
+        toast={exportToast}
+        onDismiss={dismissExportToast}
+        closeAriaLabel={t('command_palette.toast_close')}
+      />
     </div>
   );
 };

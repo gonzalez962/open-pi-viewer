@@ -50,6 +50,36 @@ export interface SaveExportOptions {
 }
 
 /**
+ * Detects whether the runtime is genuine native desktop Tauri,
+ * distinguishing it from the browser preview with the Web IPC client shim.
+ */
+export function isDesktopTauriEnvironment(): boolean {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as {
+    isTauri?: boolean;
+    __IS_WEB_IPC__?: boolean;
+    __TAURI_INTERNALS__?: {
+      __isWebIpc?: boolean;
+      ipc?: unknown;
+    };
+  };
+
+  if (!isTauri()) return false;
+
+  // The Web IPC client shim marks itself explicitly in browser preview
+  if (win.__IS_WEB_IPC__ || win.__TAURI_INTERNALS__?.__isWebIpc) {
+    return false;
+  }
+
+  // Native Tauri v2 webviews always inject the internal ipc function
+  if (win.__TAURI_INTERNALS__ && typeof win.__TAURI_INTERNALS__.ipc !== 'function') {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Platform adapter for conversation export persistence.
  *
  * In Tauri desktop environment:
@@ -76,7 +106,7 @@ export async function saveConversationExport(
     ? options.isTauriFn()
     : options?.invokeFn !== undefined
       ? true
-      : isTauri();
+      : isDesktopTauriEnvironment();
 
   if (inTauri) {
     const invokeFn = options?.invokeFn ?? invoke;
