@@ -938,5 +938,14 @@
     width: 220px;
     max-width: calc(100vw - 60px);
   }
+
+  .folder-picker-overlay {
+    padding: 10px;
+  }
+
+  .folder-picker-card {
+    max-height: 90vh;
+    max-height: 90dvh;
+  }
 }
 

@@ -20,6 +20,7 @@ export interface MobileNavigationProps {
   activeProjectName?: string;
   locale?: SupportedLocale;
   triggerRef?: React.RefObject<HTMLElement | null>;
+  restoreFocusOnClose?: boolean;
   children?: React.ReactNode;
 }
 
@@ -27,9 +28,10 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
   isOpen,
   onClose,
   isMobile: isMobileProp,
-  activeProjectName,
+  activeProjectName: _activeProjectName,
   locale = 'en',
   triggerRef,
+  restoreFocusOnClose = true,
   children,
 }) => {
   const drawerRef = useRef<HTMLElement>(null);
@@ -87,6 +89,7 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
       prevIsMobile,
       isTriggerVisible,
       isPrevElementVisible,
+      shouldRestoreFocus: restoreFocusOnClose,
     });
 
     if (transitionAction === 'open-drawer') {
@@ -156,6 +159,8 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
 
   const closeLabel = translate(locale, 'action.close') || (locale === 'es' ? 'Cerrar' : 'Close');
   const navTitle = locale === 'es' ? 'Navegación' : 'Navigation';
+  const productTitle = translate(locale, 'app.title') || 'Pi Viewer';
+  const productVersion = translate(locale, 'app.version') || 'v0.2.0';
 
   return (
     <>
@@ -178,12 +183,12 @@ export const MobileNavigation: React.FC<MobileNavigationProps> = ({
         {isMobile && (
           <div className="mobile-nav-drawer-header">
             <div className="mobile-nav-drawer-title-group">
-              <span className="mobile-nav-drawer-heading">{navTitle}</span>
-              {activeProjectName && (
-                <span className="mobile-nav-drawer-project" title={activeProjectName}>
-                  {activeProjectName}
-                </span>
-              )}
+              <span className="mobile-nav-drawer-heading mobile-nav-drawer-title">
+                {productTitle}
+              </span>
+              <span className="mobile-nav-drawer-version">
+                {productVersion}
+              </span>
             </div>
             <button
               ref={closeButtonRef}

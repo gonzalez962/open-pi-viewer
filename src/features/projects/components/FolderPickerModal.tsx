@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   browseFilesystemPi,
   pickDirectoryPi,
@@ -34,6 +34,84 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const [shortcuts, setshortcuts] = useState<BrowseShortcutItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>('');
+
+  const cardRef = useRef<HTMLDivElement>(null);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  // Focus management, focus trap, and Escape key handling
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      previousFocusRef.current = document.activeElement;
+    }
+
+    const timer = setTimeout(() => {
+      if (closeBtnRef.current && typeof closeBtnRef.current.focus === 'function') {
+        closeBtnRef.current.focus();
+      }
+    }, 20);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+
+      if (e.key === 'Tab' && cardRef.current) {
+        const focusables = Array.from(
+          cardRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => {
+          if (el.hidden || el.getAttribute('aria-hidden') === 'true') return false;
+          if (el.style && (el.style.display === 'none' || el.style.visibility === 'hidden')) return false;
+          return true;
+        });
+
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+
+        if (e.shiftKey) {
+          if (active === first || !cardRef.current.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (active === last || !cardRef.current.contains(active)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown);
+      const prevEl = previousFocusRef.current;
+      if (
+        prevEl &&
+        typeof prevEl.focus === 'function' &&
+        typeof document !== 'undefined' &&
+        document.contains(prevEl) &&
+        !prevEl.closest?.('[inert], [aria-hidden="true"], .is-closed')
+      ) {
+        prevEl.focus();
+      }
+    };
+  }, [isOpen, onClose]);
 
   const loadDirectory = useCallback(async (dirToLoad: string) => {
     setIsLoading(true);
@@ -104,7 +182,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
 
   return (
     <div className="folder-picker-overlay" onClick={onClose} role="dialog" aria-modal="true">
-      <div className="folder-picker-card" onClick={(e) => e.stopPropagation()}>
+      <div ref={cardRef} className="folder-picker-card" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="folder-picker-header">
           <div className="folder-picker-title-group">
@@ -119,6 +197,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
             </div>
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             className="folder-picker-close-btn"
             onClick={onClose}

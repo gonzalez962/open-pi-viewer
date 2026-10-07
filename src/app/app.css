@@ -129,6 +129,14 @@
   letter-spacing: -0.2px;
 }
 
+.brand-title-desktop {
+  display: inline;
+}
+
+.brand-title-mobile {
+  display: none;
+}
+
 .brand-version {
   font-size: 11px;
   color: var(--fg-muted);
@@ -466,6 +474,17 @@
     white-space: nowrap;
   }
 
+  .brand-title-desktop {
+    display: none;
+  }
+
+  .brand-title-mobile {
+    display: inline;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .brand-version {
     display: none;
   }
@@ -566,13 +585,19 @@
     overflow: hidden;
   }
 
-  .mobile-nav-drawer-heading {
-    font-size: 13px;
+  .mobile-nav-drawer-heading,
+  .mobile-nav-drawer-title {
+    font-size: 14px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: -0.2px;
     color: var(--fg-default);
     flex-shrink: 0;
+  }
+
+  .mobile-nav-drawer-version {
+    font-size: 11px;
+    color: var(--fg-muted);
+    font-family: var(--font-mono);
   }
 
   .mobile-nav-drawer-project {

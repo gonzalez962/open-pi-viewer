@@ -8,6 +8,18 @@ export const BACKDROP_ID = 'mobile-navigation-backdrop';
 export const MOBILE_MENU_TOGGLE_CLASS = 'btn-mobile-menu-toggle';
 export const MOBILE_DRAWER_CLOSE_CLASS = 'btn-mobile-nav-close';
 
+/**
+ * Resolves the mobile brand title: returns active project name when available,
+ * or falls back to the default app title (e.g. 'Pi Viewer').
+ */
+export function resolveMobileBrandTitle(
+  activeProjectName?: string | null,
+  fallbackTitle: string = 'Pi Viewer'
+): string {
+  const trimmed = activeProjectName?.trim();
+  return trimmed ? trimmed : fallbackTitle;
+}
+
 export const FOCUSABLE_SELECTOR = [
   'button:not([disabled])',
   '[href]',
@@ -251,6 +263,7 @@ export function decideFocusTransition(options: {
   prevIsMobile?: boolean;
   isTriggerVisible: boolean;
   isPrevElementVisible?: boolean;
+  shouldRestoreFocus?: boolean;
 }): NavTransitionAction {
   // On first mount, never perform open focus movement or restore focus
   if (options.isFirstMount) {
@@ -264,6 +277,9 @@ export function decideFocusTransition(options: {
 
   // Transition from open mobile to closed or desktop:
   if (options.prevIsOpen && (!options.isOpen || !options.isMobile)) {
+    if (options.shouldRestoreFocus === false) {
+      return 'no-op';
+    }
     if (options.isTriggerVisible) {
       return 'restore-focus-trigger';
     }

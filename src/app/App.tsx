@@ -61,6 +61,11 @@ const FileViewerModal = React.lazy(() =>
 const ProfileModal = React.lazy(() =>
   import('@features/profiles/components/ProfileModal').then((m) => ({ default: m.ProfileModal }))
 );
+const FolderPickerModal = React.lazy(() =>
+  import('@features/projects/components/FolderPickerModal').then((m) => ({
+    default: m.FolderPickerModal,
+  }))
+);
 const ProfilesView = React.lazy(() =>
   import('@features/profiles/ProfilesView').then((m) => ({ default: m.ProfilesView }))
 );
@@ -119,7 +124,12 @@ import {
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
 import { MobileNavigation } from './MobileNavigation';
-import { DRAWER_ID, MOBILE_BREAKPOINT, checkIsMobileViewport } from './mobile-navigation';
+import {
+  DRAWER_ID,
+  MOBILE_BREAKPOINT,
+  checkIsMobileViewport,
+  resolveMobileBrandTitle,
+} from './mobile-navigation';
 
 export const App: React.FC = () => {
   const [multiProjectState, multiDispatch] = useReducer(
@@ -388,6 +398,41 @@ export const App: React.FC = () => {
       handleRemoveProject(projectId);
     },
     [dispatch, handleRemoveProject]
+  );
+
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
+  const addProjectTriggerRef = useRef<HTMLElement | null>(null);
+
+  const handleOpenAddProject = useCallback(() => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      addProjectTriggerRef.current = document.activeElement;
+    }
+    // Close mobile drawer first if open to avoid conflicting modal traps and keep 1 active aria-modal
+    if (isMobileNavOpen) {
+      setIsMobileNavOpen(false);
+    }
+    setIsFolderPickerOpen(true);
+  }, [isMobileNavOpen]);
+
+  const handleCloseFolderPicker = useCallback(() => {
+    setIsFolderPickerOpen(false);
+    const trigger = addProjectTriggerRef.current;
+    if (trigger && typeof trigger.focus === 'function' && typeof document !== 'undefined' && document.contains(trigger)) {
+      if (!trigger.closest?.('[inert], [aria-hidden="true"], .is-closed')) {
+        trigger.focus();
+      } else if (mobileMenuToggleRef.current && typeof mobileMenuToggleRef.current.focus === 'function') {
+        mobileMenuToggleRef.current.focus();
+      }
+    }
+    addProjectTriggerRef.current = null;
+  }, []);
+
+  const handleConfirmAddProject = useCallback(
+    (folderPath: string, customName?: string) => {
+      handleAddProject(folderPath, customName);
+      handleCloseFolderPicker();
+    },
+    [handleAddProject, handleCloseFolderPicker]
   );
 
   const projectStatusMap: Record<string, ProjectStatusInfo> = useMemo(() => {
@@ -836,6 +881,7 @@ export const App: React.FC = () => {
     const hasOpenModal = Boolean(
       viewingFile ||
       profilesHook.isModalOpen ||
+      isFolderPickerOpen ||
       commandPalette.isOpen ||
       activeDialog ||
       hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
@@ -876,6 +922,7 @@ export const App: React.FC = () => {
     const hasOpenModal = Boolean(
       viewingFile ||
       profilesHook.isModalOpen ||
+      isFolderPickerOpen ||
       showSettings ||
       commandPalette.isOpen ||
       activeDialog ||
@@ -912,6 +959,7 @@ export const App: React.FC = () => {
       const hasOpenModal = Boolean(
         viewingFile ||
         profilesHook.isModalOpen ||
+        isFolderPickerOpen ||
         showSettings ||
         commandPalette.isOpen ||
         isMobileNavOpen ||
@@ -1065,7 +1113,15 @@ export const App: React.FC = () => {
             </svg>
           </div>
           <div className="brand-text">
-            <h1 className="brand-title">{t('app.title')}</h1>
+            <h1 className="brand-title">
+              <span className="brand-title-desktop">{t('app.title')}</span>
+              <span
+                className="brand-title-mobile"
+                title={resolveMobileBrandTitle(activeProjectName, t('app.title'))}
+              >
+                {resolveMobileBrandTitle(activeProjectName, t('app.title'))}
+              </span>
+            </h1>
             <span className="brand-version">{t('app.version')}</span>
           </div>
         </div>
@@ -1126,6 +1182,7 @@ export const App: React.FC = () => {
           activeProjectName={activeProjectName}
           locale={preferences.language}
           triggerRef={mobileMenuToggleRef}
+          restoreFocusOnClose={!isFolderPickerOpen}
         >
           <ProjectDock
             projects={projectsRegistry.projects}
@@ -1141,6 +1198,7 @@ export const App: React.FC = () => {
             projectStatusMap={projectStatusMap}
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
+            onOpenAddProject={handleOpenAddProject}
           />
 
           {(state.isSidebarOpen || isMobileNavOpen) && (
@@ -1836,6 +1894,21 @@ export const App: React.FC = () => {
             onSave={async (e) => {
               await profilesHook.handleSaveProfile(e);
             }}
+          />
+        </React.Suspense>
+      )}
+
+      {isFolderPickerOpen && (
+        <React.Suspense fallback={null}>
+          <FolderPickerModal
+            isOpen={isFolderPickerOpen}
+            initialPath={
+              projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
+              config.workingDirectory
+            }
+            onClose={handleCloseFolderPicker}
+            onSelectFolder={handleConfirmAddProject}
+            locale={preferences.language}
           />
         </React.Suspense>
       )}

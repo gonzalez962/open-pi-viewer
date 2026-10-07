@@ -341,6 +341,19 @@ test('mobile-navigation: decideFocusTransition handles all transition permutatio
     }),
     'restore-focus-previous'
   );
+
+  // Case F: Open mobile to closed mobile with shouldRestoreFocus=false -> no-op (prevents stealing modal focus)
+  assert.equal(
+    decideFocusTransition({
+      isFirstMount: false,
+      prevIsOpen: true,
+      isOpen: false,
+      isMobile: true,
+      isTriggerVisible: true,
+      shouldRestoreFocus: false,
+    }),
+    'no-op'
+  );
 });
 
 test('MobileNavigation: closed mobile mode renders inert, aria-hidden, dialog but no aria-modal', () => {
