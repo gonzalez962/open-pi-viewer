@@ -82,6 +82,8 @@
   "file_viewer.tab_diff": "Diff",
   "file_viewer.no_diff": "No changes compared to HEAD",
   "file_viewer.toggle_wrap": "Toggle line wrapping",
+  "file_viewer.media_load_error": "Failed to load media preview.",
+  "file_viewer.video_unsupported": "Your browser does not support the video tag or format.",
 
   "action.retry": "Retry",
   "action.new": "New",

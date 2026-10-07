@@ -82,6 +82,8 @@
   "file_viewer.tab_diff": "Diferencias",
   "file_viewer.no_diff": "Sin diferencias respecto a HEAD",
   "file_viewer.toggle_wrap": "Alternar ajuste de línea",
+  "file_viewer.media_load_error": "Error al cargar la vista previa multimedia.",
+  "file_viewer.video_unsupported": "Tu navegador no admite la etiqueta o formato de video.",
 
   "action.retry": "Reintentar",
   "action.new": "Nuevo",

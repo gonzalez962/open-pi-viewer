@@ -19,8 +19,14 @@ pub const IGNORED_DIR_NAMES: &[&str] = &[
     ".turbo",
 ];
 
-/// Maximum permitted file size for workspace preview (2 MB)
-pub const MAX_WORKSPACE_FILE_READ_BYTES: u64 = 2 * 1024 * 1024;
+/// Maximum permitted file size for workspace text preview (2 MB)
+pub const MAX_WORKSPACE_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum permitted file size for workspace media preview (25 MB)
+pub const MAX_WORKSPACE_MEDIA_BYTES: u64 = 25 * 1024 * 1024;
+
+/// Backward-compatible alias for existing references
+pub const MAX_WORKSPACE_FILE_READ_BYTES: u64 = MAX_WORKSPACE_TEXT_BYTES;
 
 /// Payload for listing workspace directory contents
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -59,6 +65,131 @@ pub struct WorkspaceFileContent {
     pub size: u64,
     pub is_binary: bool,
     pub extension: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media_data_url: Option<String>,
+}
+
+/// Checks if a file name is deterministically binary/non-code
+pub fn is_deterministic_binary_filename(filename: &str) -> bool {
+    let lower = filename.trim().to_lowercase();
+    if lower.ends_with(".so") {
+        return true;
+    }
+    // Handle .so version suffixes, e.g. .so.1, .so.1.2.3, libc.so.6
+    if let Some(pos) = lower.find(".so.") {
+        let suffix = &lower[pos + 4..];
+        if !suffix.is_empty() && suffix.split('.').all(|part| part.chars().all(|c| c.is_ascii_digit())) {
+            return true;
+        }
+    }
+    if lower.ends_with(".db-wal") || lower.ends_with(".db-shm") {
+        return true;
+    }
+
+    if let Some(ext) = Path::new(&lower).extension().and_then(|s| s.to_str()) {
+        matches!(
+            ext,
+            "dll"
+                | "dylib"
+                | "exe"
+                | "bin"
+                | "hex"
+                | "obj"
+                | "o"
+                | "a"
+                | "lib"
+                | "class"
+                | "pyc"
+                | "pyo"
+                | "pyd"
+                | "wasm"
+                | "db"
+                | "sqlite"
+                | "sqlite3"
+                | "rdb"
+                | "zip"
+                | "tar"
+                | "gz"
+                | "tgz"
+                | "bz2"
+                | "xz"
+                | "7z"
+                | "rar"
+                | "zst"
+                | "iso"
+                | "dmg"
+                | "pkg"
+                | "deb"
+                | "rpm"
+                | "mp3"
+                | "wav"
+                | "aac"
+                | "flac"
+                | "m4a"
+                | "ttf"
+                | "otf"
+                | "woff"
+                | "woff2"
+                | "eot"
+                | "pdf"
+                | "doc"
+                | "docx"
+                | "xls"
+                | "xlsx"
+                | "ppt"
+                | "pptx"
+        )
+    } else {
+        false
+    }
+}
+
+/// Returns allowlisted image MIME type if recognized
+pub fn get_image_mime_type(filename: &str) -> Option<&'static str> {
+    let lower = filename.trim().to_lowercase();
+    let ext = Path::new(&lower).extension().and_then(|s| s.to_str())?;
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        _ => None,
+    }
+}
+
+/// Returns allowlisted video MIME type if recognized
+pub fn get_video_mime_type(filename: &str) -> Option<&'static str> {
+    let lower = filename.trim().to_lowercase();
+    let ext = Path::new(&lower).extension().and_then(|s| s.to_str())?;
+    match ext {
+        "mp4" | "m4v" => Some("video/mp4"),
+        "webm" => Some("video/webm"),
+        "ogg" | "ogv" => Some("video/ogg"),
+        "mov" => Some("video/quicktime"),
+        "mkv" => Some("video/x-matroska"),
+        _ => None,
+    }
+}
+
+/// Inspects byte slice for binary content: NUL bytes, binary control chars, or malformed UTF-8
+pub fn is_binary_byte_buffer(bytes: &[u8]) -> bool {
+    for &b in bytes {
+        if b == 0 {
+            return true;
+        }
+        if (b < 0x20 && b != b'\t' && b != b'\n' && b != b'\r' && b != 0x0c && b != 0x1b) || b == 0x7f {
+            return true;
+        }
+    }
+    std::str::from_utf8(bytes).is_err()
 }
 
 /// Resolves and canonicalizes the workspace root path
@@ -247,25 +378,6 @@ pub async fn read_workspace_file(
     }
 
     let file_size = metadata.len();
-    if file_size > MAX_WORKSPACE_FILE_READ_BYTES {
-        return Err(format!(
-            "File is too large to preview (size: {} bytes, maximum allowed: {} bytes)",
-            file_size, MAX_WORKSPACE_FILE_READ_BYTES
-        ));
-    }
-
-    let bytes = std::fs::read(&canonical_file)
-        .map_err(|e| format!("Failed to read file '{}': {e}", canonical_file.display()))?;
-
-    let is_null_byte_present = bytes.iter().take(1024).any(|&b| b == 0);
-    let is_binary = is_null_byte_present || std::str::from_utf8(&bytes).is_err();
-
-    let content = if is_binary {
-        String::new()
-    } else {
-        String::from_utf8(bytes).map_err(|e| format!("Failed to decode UTF-8: {e}"))?
-    };
-
     let name = canonical_file
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -278,13 +390,92 @@ pub async fn read_workspace_file(
 
     let relative_path = compute_relative_posix_path(&canonical_root, &canonical_file)?;
 
+    // 1. Deterministic binary files - return metadata without loading bytes
+    if is_deterministic_binary_filename(&name) {
+        return Ok(WorkspaceFileContent {
+            relative_path,
+            name,
+            content: String::new(),
+            size: file_size,
+            is_binary: true,
+            extension,
+            kind: Some("binary".to_string()),
+            mime_type: None,
+            media_data_url: None,
+        });
+    }
+
+    // 2. Media files (images and videos) with 25 MB limit
+    let image_mime = get_image_mime_type(&name);
+    let video_mime = get_video_mime_type(&name);
+
+    if image_mime.is_some() || video_mime.is_some() {
+        if file_size > MAX_WORKSPACE_MEDIA_BYTES {
+            return Err(format!(
+                "File is too large to preview (size: {} bytes, maximum allowed: {} bytes)",
+                file_size, MAX_WORKSPACE_MEDIA_BYTES
+            ));
+        }
+
+        let bytes = std::fs::read(&canonical_file)
+            .map_err(|e| format!("Failed to read file '{}': {e}", canonical_file.display()))?;
+
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let mime = image_mime.or(video_mime).unwrap();
+        let kind = if image_mime.is_some() { "image" } else { "video" };
+        let media_data_url = format!("data:{mime};base64,{b64}");
+
+        return Ok(WorkspaceFileContent {
+            relative_path,
+            name,
+            content: String::new(),
+            size: file_size,
+            is_binary: true,
+            extension,
+            kind: Some(kind.to_string()),
+            mime_type: Some(mime.to_string()),
+            media_data_url: Some(media_data_url),
+        });
+    }
+
+    // 3. Text and unknown binary files with 2 MB limit
+    if file_size > MAX_WORKSPACE_TEXT_BYTES {
+        return Err(format!(
+            "File is too large to preview (size: {} bytes, maximum allowed: {} bytes)",
+            file_size, MAX_WORKSPACE_TEXT_BYTES
+        ));
+    }
+
+    let bytes = std::fs::read(&canonical_file)
+        .map_err(|e| format!("Failed to read file '{}': {e}", canonical_file.display()))?;
+
+    if is_binary_byte_buffer(&bytes) {
+        return Ok(WorkspaceFileContent {
+            relative_path,
+            name,
+            content: String::new(),
+            size: file_size,
+            is_binary: true,
+            extension,
+            kind: Some("binary".to_string()),
+            mime_type: None,
+            media_data_url: None,
+        });
+    }
+
+    let content = String::from_utf8(bytes).map_err(|e| format!("Failed to decode UTF-8: {e}"))?;
+
     Ok(WorkspaceFileContent {
         relative_path,
         name,
         content,
         size: file_size,
-        is_binary,
+        is_binary: false,
         extension,
+        kind: Some("text".to_string()),
+        mime_type: None,
+        media_data_url: None,
     })
 }
 
@@ -589,12 +780,40 @@ mod tests {
             size: 25,
             is_binary: false,
             extension: Some("md".to_string()),
+            kind: Some("text".to_string()),
+            mime_type: None,
+            media_data_url: None,
         };
         let content_json = serde_json::to_string(&content).unwrap();
         assert!(content_json.contains("\"content\":\"# Test Workspace\\nHello world!\""));
         assert!(content_json.contains("\"isBinary\":false"));
+        assert!(content_json.contains("\"kind\":\"text\""));
         let deserialized_content: WorkspaceFileContent = serde_json::from_str(&content_json).unwrap();
         assert_eq!(deserialized_content, content);
+
+        // 7. Parity tests: deterministic binary identification
+        assert!(is_deterministic_binary_filename("libcrypto.so.1"));
+        assert!(is_deterministic_binary_filename("libc.so.6"));
+        assert!(is_deterministic_binary_filename("app.db-wal"));
+        assert!(is_deterministic_binary_filename("app.db-shm"));
+        assert!(is_deterministic_binary_filename("program.exe"));
+        assert!(is_deterministic_binary_filename("archive.tar.gz"));
+        assert!(!is_deterministic_binary_filename("README.md"));
+        assert!(!is_deterministic_binary_filename("config.toml"));
+        assert!(!is_deterministic_binary_filename("app.log"));
+
+        // 8. Parity tests: media mime classification
+        assert_eq!(get_image_mime_type("photo.png"), Some("image/png"));
+        assert_eq!(get_image_mime_type("vector.svg"), Some("image/svg+xml"));
+        assert_eq!(get_video_mime_type("clip.mp4"), Some("video/mp4"));
+        assert_eq!(get_video_mime_type("movie.webm"), Some("video/webm"));
+        assert_eq!(get_image_mime_type("main.rs"), None);
+
+        // 9. Parity tests: byte inspection
+        assert!(is_binary_byte_buffer(&[0x48, 0x00, 0x49])); // NUL
+        assert!(is_binary_byte_buffer(&[0xff, 0xfe, 0x80])); // invalid utf-8
+        assert!(is_binary_byte_buffer(&[0x48, 0x01, 0x49])); // control char
+        assert!(!is_binary_byte_buffer(b"Hello world!\n\tTabbed\r\n")); // valid text
 
         let git_status = WorkspaceGitStatus {
             is_repo: true,
