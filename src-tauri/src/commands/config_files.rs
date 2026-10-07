@@ -3126,6 +3126,13 @@ pub async fn delete_pi_resource(
 
 /// Resolves canonical path to global Pi agent directory under `$USERPROFILE` / `$HOME` / `.pi/agent`.
 pub fn resolve_global_agent_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("PI_GLOBAL_AGENT_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)?;
@@ -4801,6 +4808,15 @@ pub fn show_native_migration_dialog(
     effective_home: &Path,
     files_to_copy: &[&str],
 ) -> Result<bool, String> {
+    // In headless, test, or CI environments, avoid blocking on native GUI dialogs
+    if cfg!(test)
+        || std::env::var("CI").is_ok()
+        || std::env::var("HEADLESS").is_ok()
+        || std::env::var("PI_HEADLESS_TEST").is_ok()
+    {
+        return Ok(false);
+    }
+
     let files_desc = files_to_copy.join(" and ");
     let description = format!(
         "Gentle Shell is configured to use an isolated home directory:\n{}\n\n\
@@ -8386,6 +8402,10 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("test_sdd_crud_{}_{}", std::process::id(), count));
         let _ = std::fs::remove_dir_all(&temp_dir);
 
+        let global_agent = temp_dir.join("global_agent");
+        std::fs::create_dir_all(&global_agent).unwrap();
+        std::env::set_var("PI_GLOBAL_AGENT_DIR", &global_agent);
+
         let cwd = temp_dir.join("project");
         let cwd_str = cwd.to_string_lossy().to_string();
 
@@ -8494,6 +8514,7 @@ mod tests {
         assert!(post_profiles.iter().all(|p| p["name"] != "project-custom"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+        std::env::remove_var("PI_GLOBAL_AGENT_DIR");
     }
 
     #[tokio::test]
