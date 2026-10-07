@@ -809,3 +809,64 @@
   background-color: rgba(110, 118, 129, 0.08);
 }
 
+/* ==========================================================================
+   Mobile Responsive Workspace & File Viewer (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .file-viewer-overlay {
+    padding: 8px;
+  }
+
+  .file-viewer-container {
+    width: 100%;
+    max-width: 100%;
+    height: calc(100dvh - 16px);
+    height: calc(100vh - 16px);
+    max-height: none;
+  }
+
+  .file-viewer-header {
+    padding: 8px 10px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .file-viewer-info {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .file-viewer-path {
+    max-width: 150px;
+    font-size: 11px;
+  }
+
+  .file-viewer-actions {
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .btn-file-close {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .file-tree-controls {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .file-viewer-body {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .file-viewer-code-container,
+  .file-viewer-diff-container {
+    max-width: 100%;
+  }
+}
+
+

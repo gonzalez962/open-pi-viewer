@@ -3,6 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
   background-color: var(--custom-bg-canvas, var(--bg-canvas));
@@ -280,7 +281,9 @@
 
 .app-container.is-zen-mode .app-header,
 .app-container.is-zen-mode .project-dock-container,
-.app-container.is-zen-mode .session-sidebar {
+.app-container.is-zen-mode .session-sidebar,
+.app-container.is-zen-mode .mobile-nav-drawer,
+.app-container.is-zen-mode .mobile-nav-backdrop {
   display: none !important;
 }
 
@@ -364,5 +367,279 @@
   min-height: 300px;
   color: var(--fg-muted);
   font-size: 14px;
+}
+
+/* ==========================================================================
+   Mobile Responsive Navigation & Shell (MOBILE-1)
+   ========================================================================== */
+
+/* Desktop layout (> 768px): Navigation in-flow, mobile overlays hidden */
+@media (min-width: 769px) {
+  .btn-mobile-menu-toggle {
+    display: none !important;
+  }
+
+  .mobile-nav-backdrop {
+    display: none !important;
+  }
+
+  .mobile-nav-drawer-header {
+    display: none !important;
+  }
+
+  .mobile-nav-drawer {
+    display: flex !important;
+    position: static !important;
+    transform: none !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    height: 100% !important;
+    width: auto !important;
+    flex-shrink: 0 !important;
+    max-width: none !important;
+    z-index: 20 !important;
+    border-right: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+
+  .mobile-nav-drawer-body {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+    min-height: 0;
+    flex-shrink: 0;
+  }
+}
+
+/* Mobile layout (<= 768px): Dismissible off-canvas drawer, compact header */
+@media (max-width: 768px) {
+  .btn-sidebar-toggle {
+    display: none !important;
+  }
+
+  .btn-mobile-menu-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background-color: var(--bg-subtle);
+    color: var(--fg-default);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .btn-mobile-menu-toggle:hover {
+    background-color: var(--bg-subtle-hover);
+    border-color: var(--border-active);
+  }
+
+  .btn-mobile-menu-toggle:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
+  }
+
+  /* Compact header */
+  .app-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .header-brand {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .brand-text {
+    min-width: 0;
+  }
+
+  .brand-title {
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand-version {
+    display: none;
+  }
+
+  .header-controls {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .header-status {
+    padding: 4px 8px;
+    gap: 6px;
+  }
+
+  .header-status .status-label {
+    display: none;
+  }
+
+  .btn-zen-toggle .zen-toggle-text {
+    display: none;
+  }
+
+  .btn-zen-toggle {
+    padding: 0 7px;
+  }
+
+  /* Mobile Backdrop */
+  .mobile-nav-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(2px);
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+
+  .mobile-nav-backdrop.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Mobile Off-canvas Drawer */
+  .mobile-nav-drawer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    height: 100vh;
+    height: 100dvh;
+    width: min(calc(100vw - 44px), 360px);
+    max-width: 360px;
+    background-color: var(--custom-bg-sidebar, var(--bg-surface));
+    border-right: 1px solid var(--border-muted);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.45);
+    z-index: 110;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translateX(-100%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.22s ease;
+  }
+
+  .mobile-nav-drawer.is-open {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+  }
+
+  .mobile-nav-drawer.is-closed {
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-100%);
+  }
+
+  /* Drawer Header */
+  .mobile-nav-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-muted);
+    background-color: var(--bg-surface);
+    flex-shrink: 0;
+  }
+
+  .mobile-nav-drawer-title-group {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .mobile-nav-drawer-heading {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-default);
+    flex-shrink: 0;
+  }
+
+  .mobile-nav-drawer-project {
+    font-size: 11px;
+    color: var(--fg-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .btn-mobile-nav-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-muted);
+    background-color: var(--bg-subtle);
+    color: var(--fg-default);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .btn-mobile-nav-close:hover {
+    background-color: var(--bg-subtle-hover);
+    border-color: var(--border-active);
+  }
+
+  .btn-mobile-nav-close:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
+  }
+
+  /* Drawer Body: houses ProjectDock and SessionSidebar */
+  .mobile-nav-drawer-body {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    min-height: 0;
+    height: calc(100% - 53px);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Reused sidebars inside drawer */
+  .mobile-nav-drawer-body .project-dock-container {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+    height: 100%;
+  }
+
+  .mobile-nav-drawer-body .session-sidebar {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    border-right: none;
+  }
+
+  /* Workspace main takes 100% width on mobile without horizontal squeeze */
+  .workspace-main {
+    width: 100%;
+    min-width: 0;
+    flex: 1;
+  }
 }
 

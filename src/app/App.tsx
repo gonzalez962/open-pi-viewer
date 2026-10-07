@@ -118,6 +118,8 @@ import {
   resolveZenKeyboardAction,
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
+import { MobileNavigation } from './MobileNavigation';
+import { DRAWER_ID, MOBILE_BREAKPOINT, checkIsMobileViewport } from './mobile-navigation';
 
 export const App: React.FC = () => {
   const [multiProjectState, multiDispatch] = useReducer(
@@ -146,6 +148,8 @@ export const App: React.FC = () => {
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [showSettings, setShowSettings] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
   const zenToggleRef = useRef<HTMLButtonElement>(null);
   const floatingExitRef = useRef<HTMLButtonElement>(null);
   const prevZenModeRef = useRef<boolean | undefined>(undefined);
@@ -372,6 +376,7 @@ export const App: React.FC = () => {
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
+      setIsMobileNavOpen(false);
       handleSelectProject(project);
     },
     [handleSelectProject]
@@ -775,6 +780,7 @@ export const App: React.FC = () => {
   };
 
   const handleToggleSettings = () => {
+    setIsMobileNavOpen(false);
     if (showSettings) {
       handleCancelSettings();
     } else {
@@ -788,6 +794,43 @@ export const App: React.FC = () => {
     setSettingsStorageNotice(null);
     setShowSettings(false);
   };
+
+  const handleToggleMobileNav = useCallback(() => {
+    setIsMobileNavOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseMobileNav = useCallback(() => {
+    setIsMobileNavOpen(false);
+  }, []);
+
+  // Viewport tracking: automatically dismiss open mobile navigation on resize to desktop (>768px)
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleResize = () => {
+      if (!checkIsMobileViewport() && isMobileNavOpen) {
+        setIsMobileNavOpen(false);
+      }
+    };
+
+    if (typeof window.matchMedia === 'function') {
+      const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+      const handleMql = (e: MediaQueryListEvent) => {
+        if (!e.matches && isMobileNavOpen) {
+          setIsMobileNavOpen(false);
+        }
+      };
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', handleMql);
+        return () => mql.removeEventListener('change', handleMql);
+      }
+    }
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isMobileNavOpen]);
 
   const handleToggleZenMode = useCallback(() => {
     const hasOpenModal = Boolean(
@@ -871,6 +914,7 @@ export const App: React.FC = () => {
         profilesHook.isModalOpen ||
         showSettings ||
         commandPalette.isOpen ||
+        isMobileNavOpen ||
         activeDialog ||
         hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
       );
@@ -899,6 +943,7 @@ export const App: React.FC = () => {
     profilesHook.isModalOpen,
     showSettings,
     commandPalette.isOpen,
+    isMobileNavOpen,
     activeDialog,
     handleToggleZenMode,
     handleExitZenMode,
@@ -964,6 +1009,32 @@ export const App: React.FC = () => {
       )}
       <header className="app-header" role="banner">
         <div className="header-brand">
+          <button
+            ref={mobileMenuToggleRef}
+            type="button"
+            className="btn-mobile-menu-toggle"
+            onClick={handleToggleMobileNav}
+            title={t('sidebar.toggle')}
+            aria-label={t('sidebar.toggle')}
+            aria-expanded={isMobileNavOpen}
+            aria-controls={DRAWER_ID}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
           <button
             type="button"
             className="btn-sidebar-toggle"
@@ -1047,53 +1118,73 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Workspace Layout: Sidebar + Main Content */}
+      {/* Workspace Layout: Navigation Drawer + Main Content */}
       <div className="app-workspace">
-        <ProjectDock
-          projects={projectsRegistry.projects}
-          activeProjectId={projectsRegistry.activeProjectId}
-          connectionState={state.connectionStatus}
-          agentActivity={state.agentActivity}
-          isBusy={isBusy}
+        <MobileNavigation
+          isOpen={isMobileNavOpen}
+          onClose={handleCloseMobileNav}
+          activeProjectName={activeProjectName}
           locale={preferences.language}
-          onSelectProject={handleSelectProjectAndSync}
-          onAddProject={handleAddProject}
-          onRenameProject={handleRenameProject}
-          onRemoveProject={handleRemoveProjectAndSync}
-          projectStatusMap={projectStatusMap}
-          isSettingsOpen={showSettings}
-          onOpenSettings={handleToggleSettings}
-        />
-
-        {state.isSidebarOpen && (
-          <SessionSidebar
-            projectName={activeProjectName}
-            sessions={state.sessions}
-            isLoading={state.isSessionsLoading}
-            isSwitching={state.isSwitchingSession}
-            error={state.sessionsError}
-            activeSessionId={state.sessionId}
-            activeSessionFile={state.sessionFile}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewConversation}
-            onDeleteSession={handleDeleteSession}
-            onRenameSession={handleRenameSession}
-            onClose={() => dispatch({ type: 'TOGGLE_SIDEBAR', payload: { isOpen: false } })}
+          triggerRef={mobileMenuToggleRef}
+        >
+          <ProjectDock
+            projects={projectsRegistry.projects}
+            activeProjectId={projectsRegistry.activeProjectId}
+            connectionState={state.connectionStatus}
+            agentActivity={state.agentActivity}
+            isBusy={isBusy}
             locale={preferences.language}
-            filesChangesCount={gitChangesCount}
-            filesPanel={
-              <FileTree
-                key={config.workingDirectory ? normalizeWorkspaceKey(config.workingDirectory) : 'empty'}
-                workingDirectory={config.workingDirectory}
-                locale={preferences.language}
-                onOpenFile={openFile}
-                refreshInterval={config.fileTreeRefreshInterval}
-                refreshTrigger={fileTreeRefreshTrigger}
-                onGitStatusChange={handleGitStatusChange}
-              />
-            }
+            onSelectProject={handleSelectProjectAndSync}
+            onAddProject={handleAddProject}
+            onRenameProject={handleRenameProject}
+            onRemoveProject={handleRemoveProjectAndSync}
+            projectStatusMap={projectStatusMap}
+            isSettingsOpen={showSettings}
+            onOpenSettings={handleToggleSettings}
           />
-        )}
+
+          {(state.isSidebarOpen || isMobileNavOpen) && (
+            <SessionSidebar
+              projectName={activeProjectName}
+              sessions={state.sessions}
+              isLoading={state.isSessionsLoading}
+              isSwitching={state.isSwitchingSession}
+              error={state.sessionsError}
+              activeSessionId={state.sessionId}
+              activeSessionFile={state.sessionFile}
+              onSelectSession={(session) => {
+                handleCloseMobileNav();
+                handleSelectSession(session);
+              }}
+              onNewSession={() => {
+                handleCloseMobileNav();
+                handleNewConversation();
+              }}
+              onDeleteSession={handleDeleteSession}
+              onRenameSession={handleRenameSession}
+              onClose={() => {
+                if (isMobileNavOpen) {
+                  handleCloseMobileNav();
+                } else {
+                  dispatch({ type: 'TOGGLE_SIDEBAR', payload: { isOpen: false } });
+                }
+              }}
+              locale={preferences.language}
+              filesChangesCount={gitChangesCount}
+              filesPanel={
+                <FileTree
+                  key={config.workingDirectory ? normalizeWorkspaceKey(config.workingDirectory) : 'empty'}
+                  workingDirectory={config.workingDirectory}
+                  locale={preferences.language}
+                  onOpenFile={openFile}
+                  refreshInterval={config.fileTreeRefreshInterval}
+                  refreshTrigger={fileTreeRefreshTrigger}
+                  onGitStatusChange={handleGitStatusChange}
+                />
+              }
+            />
+          )}
+        </MobileNavigation>
 
         <main className="workspace-main" role="main">
           {isZenMode && (

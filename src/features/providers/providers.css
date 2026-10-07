@@ -1369,3 +1369,65 @@
   flex-shrink: 0;
 }
 
+/* ==========================================================================
+   Mobile Responsive Providers Dialog & Cards (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .modal-container.provider-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .models-draft-list {
+    max-height: 200px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .models-header-row,
+  .model-draft-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .model-draft-info {
+    min-width: 0;
+    word-break: break-all;
+  }
+
+  .provider-card {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .provider-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .providers-header-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .builtin-oauth-card {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .builtin-oauth-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .raw-json-code {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    font-size: 10.5px;
+  }
+}
+
+

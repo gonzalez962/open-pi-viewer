@@ -1891,3 +1891,93 @@
   font-size: 12px;
   color: var(--status-amber);
 }
+
+/* ==========================================================================
+   Mobile Responsive Settings & Modals (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  /* Modal Overlay and Container */
+  .modal-overlay {
+    padding: 8px;
+  }
+
+  .modal-container {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .modal-header {
+    padding: 10px 14px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .modal-title {
+    font-size: 14px;
+  }
+
+  .modal-close-btn {
+    min-width: 36px;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-scrollable-body {
+    padding: 12px 14px;
+    gap: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .modal-footer {
+    padding: 10px 14px;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .modal-footer .btn {
+    min-height: 36px;
+  }
+
+  /* Settings View Chrome */
+  .settings-pane-toolbar {
+    padding: 10px 14px 0 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .settings-view-body {
+    padding: 12px 14px 18px 14px;
+    gap: 12px;
+  }
+
+  .settings-card-section {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .settings-card {
+    padding: 12px 14px;
+  }
+
+  .btn-back-to-chat {
+    min-height: 32px;
+  }
+
+  .btn-close-settings {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .settings-search-box {
+    min-width: 0;
+    width: 100%;
+  }
+}
+

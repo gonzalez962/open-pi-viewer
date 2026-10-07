@@ -920,3 +920,23 @@
   background-color: var(--bg-surface);
   border-top: 1px solid var(--border-muted);
 }
+
+/* Responsive adaptations for narrow drawer <= 768px */
+@media (max-width: 768px) {
+  .project-dock-container {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
+  }
+
+  .project-dock {
+    width: 48px;
+  }
+
+  .project-dock:hover,
+  .project-dock.is-expanded {
+    width: 220px;
+    max-width: calc(100vw - 60px);
+  }
+}
+

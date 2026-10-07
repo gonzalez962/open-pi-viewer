@@ -661,7 +661,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       )}
 
       {/* 1. Profile Selector */}
-      <div className="prompt-control-wrapper" ref={profileRef}>
+      <div className="prompt-control-wrapper profile-control-wrapper" ref={profileRef}>
         <button
           type="button"
           className={`prompt-control-btn profile-btn ${isChangingProfile ? 'loading' : ''}`}
@@ -829,7 +829,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       </div>
 
       {/* 1.5 Model Selector */}
-      <div className="prompt-control-wrapper" ref={modelRef}>
+      <div className="prompt-control-wrapper model-control-wrapper" ref={modelRef}>
         <button
           type="button"
           className={`prompt-control-btn model-btn ${isChangingModel ? 'loading' : ''}`}
@@ -911,7 +911,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
 
       {/* 2. Thinking / Reasoning Level Selector */}
       {supportsReasoning && (
-        <div className="prompt-control-wrapper" ref={thinkingRef}>
+        <div className="prompt-control-wrapper thinking-control-wrapper" ref={thinkingRef}>
           <button
             type="button"
             className="prompt-control-btn thinking-btn"
@@ -977,7 +977,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       )}
 
       {/* 3. Context & Token Usage Meter */}
-      <div className="prompt-control-wrapper" ref={statsRef}>
+      <div className="prompt-control-wrapper stats-control-wrapper" ref={statsRef}>
         <button
           type="button"
           className={`prompt-control-btn stats-btn level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}
@@ -1074,7 +1074,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       </div>
 
       {/* 4. MCP Server Selector */}
-      <div className="prompt-control-wrapper" ref={mcpRef}>
+      <div className="prompt-control-wrapper mcp-control-wrapper" ref={mcpRef}>
         <button
           type="button"
           className="prompt-control-btn mcp-btn"
@@ -1213,7 +1213,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       </div>
 
       {/* 5. Extensions & Packages Selector */}
-      <div className="prompt-control-wrapper" ref={extRef}>
+      <div className="prompt-control-wrapper ext-control-wrapper" ref={extRef}>
         <button
           type="button"
           className="prompt-control-btn ext-btn"
@@ -1384,7 +1384,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
         <div className="prompt-control-wrapper engram-project-wrapper" ref={engramRef}>
           <button
             type="button"
-            className="prompt-control-btn engram-project-badge"
+            className="prompt-control-btn engram-project-badge engram-project-btn"
             onClick={() => {
               const next = !isCloudPopoverOpen;
               setIsCloudPopoverOpen(next);

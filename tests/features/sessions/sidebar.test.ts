@@ -388,4 +388,28 @@ test('SessionSidebar: renders runtime status badges for working, waiting, and co
   assert.ok(!html.includes('session-status-badge status-unloaded'));
 });
 
+test('SessionSidebar: renders close action with accessible title and icon button', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SessionSidebar, {
+      sessions: [],
+      isLoading: false,
+      isSwitching: false,
+      activeSessionId: null,
+      activeSessionFile: null,
+      error: null,
+      onSelectSession: () => {},
+      onNewSession: () => {},
+      onDeleteSession: () => {},
+      onRenameSession: () => {},
+      onClose: () => {},
+      locale: 'en',
+      filesPanel: null,
+    })
+  );
+
+  assert.ok(html.includes('btn-sidebar-icon'));
+  assert.ok(html.includes('Toggle session history'));
+});
+
+
 
