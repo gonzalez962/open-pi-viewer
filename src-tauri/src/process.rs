@@ -272,9 +272,11 @@ pub fn build_pi_args(
 /// Returns true if the entrypoint's basename is exactly gentle-shell.js,
 /// gentle-shell.mjs, or gentle-shell.cjs (case-insensitive).
 pub fn is_gentle_shell_entrypoint(entrypoint: &Path) -> bool {
-    let Some(file_name) = entrypoint.file_name().and_then(|n| n.to_str()) else {
-        return false;
-    };
+    let path_str = entrypoint.to_string_lossy();
+    let file_name = path_str
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("");
     let lower = file_name.to_ascii_lowercase();
     lower == "gentle-shell.js" || lower == "gentle-shell.mjs" || lower == "gentle-shell.cjs"
 }
