@@ -24,6 +24,11 @@ export function canRetryConnection(status: ConnectionState): boolean {
   return status === 'disconnected' || status === 'error';
 }
 
+/** Keep connection feedback visible only while connecting, offline, or in error. */
+export function shouldShowHeaderStatus(status: ConnectionState): boolean {
+  return status !== 'connected';
+}
+
 export interface ConfigApplyOutcome {
   /** Notice to surface in the settings panel; null clears any previous notice. */
   settingsStorageNotice: string | null;

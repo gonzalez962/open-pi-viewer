@@ -43,7 +43,7 @@ export type SessionsAction =
       payload: {
         sessionPath?: string;
         sessionId?: string;
-        status: SessionRuntimeStatus;
+        status: SessionRuntimeStatus | undefined;
       };
     }
   | { type: 'TOGGLE_SIDEBAR'; payload?: { isOpen?: boolean } };
@@ -86,12 +86,12 @@ export function sessionsReducer(
         modelStats: {},
         statusLabel: 'Connected',
         statusDetail: 'New conversation ready',
-        sessions: state.sessions.map((s) => ({
-          ...s,
-          isActive: Boolean(
+        sessions: state.sessions.map((s) => {
+          const isActive = Boolean(
             nextSessionId && (s.id === nextSessionId || s.path === nextSessionFile)
-          ),
-        })),
+          );
+          return { ...s, isActive, status: isActive ? undefined : s.status };
+        }),
       };
     }
 
@@ -130,7 +130,15 @@ export function sessionsReducer(
       return {
         ...state,
         isSessionsLoading: false,
-        sessions: action.payload.sessions,
+        sessions: action.payload.sessions.map((session) => {
+          const previous = state.sessions.find((s) =>
+            (session.id && s.id === session.id) || (session.path && s.path === session.path)
+          );
+          const isActive = session.isActive ||
+            Boolean(state.sessionId && session.id === state.sessionId) ||
+            Boolean(state.sessionFile && session.path === state.sessionFile);
+          return { ...session, status: isActive ? undefined : previous ? previous.status : session.status };
+        }),
         sessionsError: null,
       };
     }
@@ -172,10 +180,10 @@ export function sessionsReducer(
         modelStats: {},
         statusLabel: 'Connected',
         statusDetail: 'Session ready',
-        sessions: state.sessions.map((s) => ({
-          ...s,
-          isActive: s.id === nextSessionId || s.path === nextSessionFile,
-        })),
+        sessions: state.sessions.map((s) => {
+          const isActive = s.id === nextSessionId || s.path === nextSessionFile;
+          return { ...s, isActive, status: isActive ? undefined : s.status };
+        }),
       };
     }
 
@@ -228,7 +236,11 @@ export function sessionsReducer(
         ...state,
         sessions: state.sessions.map((s) => {
           if ((sessionPath && s.path === sessionPath) || (sessionId && s.id === sessionId)) {
-            return { ...s, status };
+            // Runtime badges represent unseen activity, not persistent session state.
+            const isActive = s.isActive ||
+              Boolean(state.sessionId && s.id === state.sessionId) ||
+              Boolean(state.sessionFile && s.path === state.sessionFile);
+            return { ...s, status: isActive ? undefined : status };
           }
           return s;
         }),

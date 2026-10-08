@@ -43,3 +43,5 @@ Thumbs.db
 /odd
 .mcp.json
 server/config.json
+/.playwright-cli
+nul

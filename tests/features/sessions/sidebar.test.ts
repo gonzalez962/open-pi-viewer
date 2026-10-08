@@ -333,7 +333,7 @@ test('App handleNewConversation logic: closes settings when open', () => {
   assert.strictEqual(canStartNewConversation(true, false, false), false);
 });
 
-test('SessionSidebar: renders runtime status badges for working, waiting, and completed sessions', () => {
+test('SessionSidebar: renders working and waiting badges but not completed notifications', () => {
   const sessions: SessionSummary[] = [
     {
       id: 'sess-w',
@@ -383,8 +383,8 @@ test('SessionSidebar: renders runtime status badges for working, waiting, and co
   assert.ok(html.includes('Trabajando'));
   assert.ok(html.includes('session-status-badge status-waiting'));
   assert.ok(html.includes('Pidiendo permiso'));
-  assert.ok(html.includes('session-status-badge status-completed'));
-  assert.ok(html.includes('Terminada'));
+  assert.ok(!html.includes('session-status-badge status-completed'));
+  assert.ok(!html.includes('Terminada'));
   assert.ok(!html.includes('session-status-badge status-unloaded'));
 });
 
