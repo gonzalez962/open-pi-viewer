@@ -156,10 +156,10 @@ export class PiRpcSession {
       this.child = null;
     });
 
-    // Initial get_state handshake with 25s timeout (allows extension loading on cold start)
+    // Initial get_state handshake with 60s timeout (allows extension loading on cold start)
     const reqId = `init-${Date.now()}`;
     try {
-      const stateRes = await this.sendCommand({ id: reqId, type: 'get_state' }, 25000);
+      const stateRes = await this.sendCommand({ id: reqId, type: 'get_state' }, 60000);
       if (stateRes?.data) {
         this.sessionId = stateRes.data.sessionId || null;
         this.sessionFile = stateRes.data.sessionFile || null;

@@ -25,8 +25,8 @@ use crate::framing::JsonlFrameBuffer;
 
 /// Maximum diagnostics buffer size for stderr (64 KB)
 pub const MAX_STDERR_BYTES: usize = 64 * 1024;
-/// Handshake timeout waiting for initial get_state response
-pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Handshake timeout waiting for initial get_state response (60s / 1 minute)
+pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Counter for generating unique internal request IDs (handshake, abort)
 static REQ_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -591,7 +591,10 @@ impl ActiveSession {
                         let mut pend = pending_responses.lock().await;
                         pend.remove(&handshake_id);
                         let _ = abort_kill_tx.send(());
-                        return Err("Connection handshake timed out waiting for get_state response (15s)".to_string());
+                        return Err(format!(
+                            "Connection handshake timed out waiting for get_state response ({}s)",
+                            HANDSHAKE_TIMEOUT.as_secs()
+                        ));
                     }
                 }
             }
@@ -683,7 +686,10 @@ impl ActiveSession {
                             let mut pend = pending_responses.lock().await;
                             pend.remove(&msg_req_id);
                             let _ = abort_kill_tx.send(());
-                            return Err("Timeout waiting for message hydration from Pi RPC (15s)".to_string());
+                            return Err(format!(
+                                "Timeout waiting for message hydration from Pi RPC ({}s)",
+                                HANDSHAKE_TIMEOUT.as_secs()
+                            ));
                         }
                     }
                 }
@@ -1156,6 +1162,11 @@ mod tests {
             .and_then(|m| m.as_array())
             .unwrap();
         assert_eq!(valid_arr.len(), 2);
+    }
+
+    #[test]
+    fn test_handshake_timeout_is_sixty_seconds() {
+        assert_eq!(HANDSHAKE_TIMEOUT, Duration::from_secs(60));
     }
 
     #[tokio::test]
