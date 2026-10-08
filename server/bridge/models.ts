@@ -134,8 +134,8 @@ export function getAvailableModelsImpl() {
                 maxTokens: m.maxTokens || 65536,
                 reasoning: m.reasoning !== false,
                 reasoningEfforts: ['off', 'low', 'medium', 'high'],
-                input: m.input || ['text', 'image'],
-                input_modalities: m.input || ['text', 'image'],
+                input: m.input ?? m.input_modalities ?? ['text', 'image'],
+                input_modalities: m.input_modalities ?? m.input ?? ['text', 'image'],
               });
             }
           }
