@@ -301,14 +301,3 @@ export function handleToggleMcpServer(args: any = {}) {
 export function handleGetPiResources(args: any = {}) {
   return getPiResourcesImpl(args.cwd || getActiveCwd());
 }
-
-export function handleGetBuiltinOAuthProviders() {
-  return [
-    {
-      id: 'openai-codex',
-      name: 'OpenAI Codex',
-      status: 'authenticated',
-      isLoggedIn: true,
-    },
-  ];
-}

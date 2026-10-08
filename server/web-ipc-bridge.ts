@@ -101,14 +101,23 @@ import {
   handleGetMcpServers,
   handleToggleMcpServer,
   handleGetPiResources,
-  handleGetBuiltinOAuthProviders,
 } from './bridge/models';
+
+import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
+import { oauthManager } from './bridge/oauth';
 
 // ---------------------------------------------------------------------------
 // IPC Command Dispatcher
 // ---------------------------------------------------------------------------
 
-export async function handleIpcCommand(cmd: string, args: any = {}) {
+export interface WebIpcContext {
+  oauthOwner?: string;
+}
+
+export async function handleIpcCommand(cmd: string, args: any = {}, context: WebIpcContext = {}) {
+  if (isOAuthCommand(cmd) && !context.oauthOwner) {
+    throw new Error(OAUTH_UNAUTHORIZED_MESSAGE);
+  }
   switch (cmd) {
     case 'discover_environment':
       return handleDiscoverEnvironment();
@@ -169,7 +178,15 @@ export async function handleIpcCommand(cmd: string, args: any = {}) {
     case 'get_pi_resources':
       return handleGetPiResources(args);
     case 'get_builtin_oauth_providers':
-      return handleGetBuiltinOAuthProviders();
+      return oauthManager.list(context.oauthOwner);
+    case 'start_oauth_login':
+      return oauthManager.start(context.oauthOwner!, args.payload);
+    case 'cancel_oauth_login':
+      return oauthManager.cancel(context.oauthOwner!, args.payload);
+    case 'send_oauth_prompt_response':
+      return oauthManager.respond(context.oauthOwner!, args.payload);
+    case 'logout_oauth_provider':
+      return oauthManager.logout(context.oauthOwner!, args.payload);
     case 'get_engram_project':
       return handleGetEngramProject(args);
     case 'get_engram_cloud_status':

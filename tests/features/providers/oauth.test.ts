@@ -24,6 +24,12 @@ import {
   executeOAuthPromptResponse,
   executeUnmountOAuthCleanup,
 } from '@features/providers/hooks/useBuiltinOAuthAccounts';
+import {
+  authorizeWebOAuth,
+  ensureWebOAuthSession,
+  resetWebOAuthSessionForTest,
+  isOAuthUnauthorizedError,
+} from '@infra/web-oauth-access';
 import { BuiltinOAuthAccounts } from '@features/providers/components/BuiltinOAuthAccounts';
 import { ProvidersView } from '@features/providers/ProvidersView';
 import { translate } from '@shared/i18n';
@@ -264,6 +270,15 @@ function createMockOAuthState(overrides: Partial<Parameters<typeof BuiltinOAuthA
     setActiveError: () => {},
     setAccountsError: () => {},
     dismissAccountsError: () => {},
+    isLocked: false,
+    isWebShim: false,
+    isUnlocking: false,
+    unlockError: null,
+    unlockSuccess: false,
+    unlockKeyInput: '',
+    setUnlockKeyInput: () => {},
+    submitUnlock: async () => true,
+    resetUnlock: () => {},
   };
 
   return { ...defaultState, ...overrides };
@@ -890,4 +905,345 @@ test('BuiltinOAuthAccounts markup: disables active cancel button while isStartin
     /<div class="builtin-oauth-active-actions">\s*<button(?![^>]*disabled)[^>]*>.*?Cancel.*?<\/button>\s*<\/div>/s,
     'Cancel button must be enabled once start completes'
   );
+});
+
+// ============================================================================
+// Null Handling Hardening Regression Tests (S2, S3)
+// ============================================================================
+
+test('oauth null hardening: executeOAuthCancel treats null or non-true response as failure and preserves session', async () => {
+  // cancelFn returns null (as unhandled web IPC dispatcher would)
+  const resNull = await executeOAuthCancel({
+    providerId: 'anthropic',
+    cancelFn: async () => null as any,
+  });
+  assert.equal(resNull.cancelled, false);
+  assert.equal(resNull.shouldResetSession, false);
+  assert.ok(resNull.error);
+
+  // cancelFn returns empty object
+  const resEmpty = await executeOAuthCancel({
+    providerId: 'anthropic',
+    cancelFn: async () => ({} as any),
+  });
+  assert.equal(resEmpty.cancelled, false);
+  assert.equal(resEmpty.shouldResetSession, false);
+
+  // cancelFn returns cancelled: null
+  const resNullProp = await executeOAuthCancel({
+    providerId: 'anthropic',
+    cancelFn: async () => ({ cancelled: null } as any),
+  });
+  assert.equal(resNullProp.cancelled, false);
+  assert.equal(resNullProp.shouldResetSession, false);
+
+  // Only explicit cancelled: true is considered successful
+  const resTrue = await executeOAuthCancel({
+    providerId: 'anthropic',
+    cancelFn: async () => ({ cancelled: true }),
+  });
+  assert.equal(resTrue.cancelled, true);
+  assert.equal(resTrue.shouldResetSession, true);
+  assert.equal(resTrue.error, null);
+});
+
+test('oauth null hardening: executeOAuthPromptResponse treats null or non-true response as failure and preserves prompt', async () => {
+  // sendFn returns null
+  const resNull = await executeOAuthPromptResponse({
+    promptId: 'prompt-1',
+    response: 'auth-code-123',
+    sendFn: async () => null as any,
+  });
+  assert.equal(resNull.sent, false);
+  assert.equal(resNull.shouldClearPrompt, false);
+  assert.ok(resNull.error);
+
+  // sendFn returns empty object
+  const resEmpty = await executeOAuthPromptResponse({
+    promptId: 'prompt-1',
+    response: 'auth-code-123',
+    sendFn: async () => ({} as any),
+  });
+  assert.equal(resEmpty.sent, false);
+  assert.equal(resEmpty.shouldClearPrompt, false);
+
+  // sendFn returns sent: null
+  const resNullProp = await executeOAuthPromptResponse({
+    promptId: 'prompt-1',
+    response: 'auth-code-123',
+    sendFn: async () => ({ sent: null } as any),
+  });
+  assert.equal(resNullProp.sent, false);
+  assert.equal(resNullProp.shouldClearPrompt, false);
+
+  // Only explicit sent: true clears prompt
+  const resTrue = await executeOAuthPromptResponse({
+    promptId: 'prompt-1',
+    response: 'auth-code-123',
+    sendFn: async () => ({ sent: true }),
+  });
+  assert.equal(resTrue.sent, true);
+  assert.equal(resTrue.shouldClearPrompt, true);
+  assert.equal(resTrue.error, null);
+});
+
+test('oauth error detection: isOAuthUnauthorizedError identifies remote access unauthorized marker', () => {
+  assert.equal(isOAuthUnauthorizedError('OAUTH_UNAUTHORIZED'), true);
+  assert.equal(isOAuthUnauthorizedError('Error: OAUTH_UNAUTHORIZED: Access key required'), true);
+  assert.equal(isOAuthUnauthorizedError(new Error('OAUTH_UNAUTHORIZED')), true);
+  assert.equal(isOAuthUnauthorizedError('OAUTH_KEY_UNCONFIGURED'), true);
+  assert.equal(isOAuthUnauthorizedError('NetworkError'), false);
+  assert.equal(isOAuthUnauthorizedError(null), false);
+  assert.equal(isOAuthUnauthorizedError(undefined), false);
+});
+
+test('web oauth client: authorizeWebOAuth sends JSON POST to /api/oauth/authorize with credentials same-origin and handles SSE ready event', async () => {
+  let fetchUrl = '';
+  let fetchOptions: RequestInit | undefined;
+
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    fetchUrl = String(input);
+    fetchOptions = init;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, owner: 'owner_test123' }),
+    } as unknown as Response;
+  }) as typeof fetch;
+
+  let eventFired = false;
+  // Mock window and dispatchEvent
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    dispatchEvent: (ev: any) => {
+      if (ev.type === 'pi:oauth-authorized') {
+        eventFired = true;
+        // Parent SSE reconnect callback:
+        if (ev.detail && typeof ev.detail.ready === 'function') {
+          ev.detail.ready();
+        }
+      }
+      return true;
+    },
+  };
+
+  try {
+    const res = await authorizeWebOAuth('my-secret-key-xyz', {
+      fetchFn: mockFetch,
+      timeoutMs: 1000,
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(fetchUrl, '/api/oauth/authorize');
+    assert.equal(fetchOptions?.method, 'POST');
+    assert.equal((fetchOptions?.headers as any)?.['Content-Type'], 'application/json');
+    assert.equal(fetchOptions?.credentials, 'same-origin');
+    assert.equal(fetchOptions?.body, JSON.stringify({ key: 'my-secret-key-xyz' }));
+    assert.equal(eventFired, true);
+
+    // Verify key was NEVER placed in URL query
+    assert.ok(!fetchUrl.includes('my-secret-key-xyz'));
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+});
+
+test('web oauth client: fails with bounded timeout error when SSE ready callback is not invoked', async () => {
+  const mockFetch = (async (): Promise<Response> => {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, owner: 'owner_timeout' }),
+    } as unknown as Response;
+  }) as typeof fetch;
+
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    dispatchEvent: (_ev: any) => {
+      // Intentionally do NOT invoke ev.detail.ready() to simulate dead or hanging SSE stream
+      return true;
+    },
+  };
+
+  try {
+    const res = await authorizeWebOAuth('key-xyz', {
+      fetchFn: mockFetch,
+      timeoutMs: 50,
+    });
+    assert.equal(res.ok, false);
+    assert.ok(res.error?.toLowerCase().includes('timed out'));
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+});
+
+test('web oauth client: returns actionable failure on 401, 403, and 503 server errors', async () => {
+  const mockFetch401 = (async (): Promise<Response> => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ ok: false, error: 'Invalid access key' }),
+  } as unknown as Response)) as unknown as typeof fetch;
+
+  const res401 = await authorizeWebOAuth('wrong-key', { fetchFn: mockFetch401 });
+  assert.equal(res401.ok, false);
+  assert.equal(res401.error, 'Invalid access key');
+
+  const mockFetch503 = (async (): Promise<Response> => ({
+    ok: false,
+    status: 503,
+    json: async () => ({ ok: false, error: 'PI_VIEWER_OAUTH_ACCESS_KEY is not configured on the server' }),
+  } as unknown as Response)) as unknown as typeof fetch;
+
+  const res503 = await authorizeWebOAuth('any-key', { fetchFn: mockFetch503 });
+  assert.equal(res503.ok, false);
+  assert.ok(res503.error?.includes('PI_VIEWER_OAUTH_ACCESS_KEY'));
+});
+
+test('BuiltinOAuthAccounts markup: does NOT render unlock section in desktop mode (isWebShim=false)', () => {
+  const oauthDesktop = createMockOAuthState({
+    isWebShim: false,
+    isLocked: false,
+    accountsError: 'OAUTH_UNAUTHORIZED: Access key required',
+  });
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: oauthDesktop, t }));
+  assert.ok(!html.includes('Remote Access Authorization'));
+  assert.ok(!html.includes('builtin-oauth-unlock-card'));
+});
+
+test('BuiltinOAuthAccounts markup: renders unlock section in web shim mode (isWebShim=true) when unauthorized', () => {
+  const oauthWeb = createMockOAuthState({
+    isWebShim: true,
+    isLocked: true,
+    accountsError: 'OAUTH_UNAUTHORIZED: Remote access key required for built-in OAuth management.',
+  });
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: oauthWeb, t }));
+  assert.ok(html.includes('Remote Access Authorization'));
+  assert.ok(html.includes('builtin-oauth-unlock-card'));
+  assert.ok(html.includes('Unlock Remote OAuth'));
+  assert.ok(html.includes('Enter server access key...'));
+});
+
+test('BuiltinOAuthAccounts markup: renders Spanish localized unlock section without English leaks', () => {
+  function tEs(key: Parameters<typeof translate>[1], params?: Record<string, string | number>): string {
+    return translate('es', key, params);
+  }
+
+  const oauthWebEs = createMockOAuthState({
+    isWebShim: true,
+    isLocked: true,
+    accountsError: 'OAUTH_UNAUTHORIZED: Remote access key required',
+  });
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: oauthWebEs, t: tEs }));
+  assert.ok(html.includes('Autorización de acceso remoto'));
+  assert.ok(html.includes('Desbloquear OAuth remoto'));
+  assert.ok(html.includes('Introduzca la clave de acceso del servidor...'));
+  assert.ok(!html.includes('Remote Access Authorization'));
+  assert.ok(!html.includes('Unlock Remote OAuth'));
+});
+
+// ============================================================================
+// Development Keyless / Anonymous Session Tests (S2, S3 Scope Change)
+// ============================================================================
+
+test('web oauth client: authorizeWebOAuth sends empty JSON body without key in development anonymous mode', async () => {
+  let fetchUrl = '';
+  let fetchOptions: RequestInit | undefined;
+
+  const mockFetch = (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    fetchUrl = String(input);
+    fetchOptions = init;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, owner: 'owner_dev_anon_123' }),
+    } as unknown as Response;
+  }) as typeof fetch;
+
+  let eventFired = false;
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    dispatchEvent: (ev: any) => {
+      if (ev.type === 'pi:oauth-authorized') {
+        eventFired = true;
+        if (ev.detail && typeof ev.detail.ready === 'function') {
+          ev.detail.ready();
+        }
+      }
+      return true;
+    },
+  };
+
+  try {
+    // Calling authorizeWebOAuth with NO key
+    const res = await authorizeWebOAuth(undefined, {
+      fetchFn: mockFetch,
+      timeoutMs: 1000,
+    });
+
+    assert.equal(res.ok, true);
+    assert.equal(res.owner, 'owner_dev_anon_123');
+    assert.equal(fetchUrl, '/api/oauth/authorize');
+    assert.equal(fetchOptions?.method, 'POST');
+    assert.equal((fetchOptions?.headers as any)?.['Content-Type'], 'application/json');
+    assert.equal(fetchOptions?.credentials, 'same-origin');
+    assert.equal(fetchOptions?.body, '{}');
+    assert.equal(eventFired, true);
+  } finally {
+    (globalThis as any).window = originalWindow;
+  }
+});
+
+test('web oauth client: ensureWebOAuthSession automatically initializes session in web shim mode', async () => {
+  resetWebOAuthSessionForTest();
+  let calls = 0;
+  const mockFetch = (async (): Promise<Response> => {
+    calls++;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, owner: 'owner_auto_dev' }),
+    } as unknown as Response;
+  }) as typeof fetch;
+
+  const originalWindow = (globalThis as any).window;
+  (globalThis as any).window = {
+    __IS_WEB_IPC__: true,
+    dispatchEvent: (ev: any) => {
+      if (ev.type === 'pi:oauth-authorized' && ev.detail?.ready) {
+        ev.detail.ready();
+      }
+      return true;
+    },
+  };
+
+  try {
+    const res1 = await ensureWebOAuthSession({ fetchFn: mockFetch });
+    assert.equal(res1.ok, true);
+    assert.equal(res1.owner, 'owner_auto_dev');
+
+    // Repeated call reuses active session initialization
+    const res2 = await ensureWebOAuthSession({ fetchFn: mockFetch });
+    assert.equal(res2.ok, true);
+    assert.equal(calls, 1);
+  } finally {
+    (globalThis as any).window = originalWindow;
+    resetWebOAuthSessionForTest();
+  }
+});
+
+test('BuiltinOAuthAccounts markup: does NOT render unlock section in web shim mode when authorized in dev mode', () => {
+  const oauthDev = createMockOAuthState({
+    isWebShim: true,
+    isLocked: false,
+    accountsError: null,
+    activeError: null,
+  });
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: oauthDev, t }));
+  assert.ok(!html.includes('Remote Access Authorization'));
+  assert.ok(!html.includes('builtin-oauth-unlock-card'));
+  assert.ok(!html.includes('Unlock Remote OAuth'));
 });

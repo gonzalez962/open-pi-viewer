@@ -22,9 +22,12 @@ export function initWebIpcClient(): void {
   const callbacks = new Map<number, (payload: any) => void>();
   const eventListeners = new Map<string, Set<number>>();
 
-  // Connect SSE stream for real-time tokens, thinking blocks, and tool executions
-  try {
-    const sse = new EventSource('/api/events');
+  // Reconnect after authorization so the stream adopts the new HttpOnly session.
+  let sse: EventSource | null = null;
+  const connectEvents = (ready?: () => void): void => {
+    sse?.close();
+    sse = new EventSource('/api/events');
+    if (ready) sse.onopen = () => { ready(); };
     sse.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -43,6 +46,13 @@ export function initWebIpcClient(): void {
     sse.onerror = () => {
       // EventSource automatically retries connection
     };
+  };
+  window.addEventListener('pi:oauth-authorized', (event) => {
+    const ready = (event as CustomEvent<{ ready?: () => void }>).detail?.ready;
+    connectEvents(ready);
+  });
+  try {
+    connectEvents();
   } catch (err) {
     console.warn('[Web IPC SSE] EventSource init failed:', err);
   }
