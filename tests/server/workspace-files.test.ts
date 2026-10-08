@@ -4,7 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { handleReadWorkspaceFile } from '@server/bridge/paths';
+import {
+  handleReadWorkspaceFile,
+  handleListWorkspaceDir,
+  handleGetWorkspaceGitStatus,
+} from '@server/bridge/paths';
+import { execSync } from 'node:child_process';
 import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
@@ -201,6 +206,272 @@ test('server bridge: returns empty binary metadata for deterministic binary file
     assert.strictEqual(walResult.isBinary, true);
     assert.strictEqual(walResult.content, '');
     assert.strictEqual(walResult.mediaDataUrl, null);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+/* ========================================================================= */
+/* Regression tests: Git Status & Directory Enumeration                      */
+/* ========================================================================= */
+
+test('server bridge: handleListWorkspaceDir returns POSIX forward slash relative paths for nested folders', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-enum-'));
+  try {
+    const nestedDir = path.join(tempDir, 'nested', 'deep');
+    fs.mkdirSync(nestedDir, { recursive: true });
+    fs.writeFileSync(path.join(nestedDir, 'file.txt'), 'hello');
+
+    // 1. Listing root
+    const rootEntries = handleListWorkspaceDir({
+      payload: { workingDirectory: tempDir, relativePath: '' },
+    });
+    const nestedEntry = rootEntries.find((e: any) => e.name === 'nested');
+    assert.ok(nestedEntry);
+    assert.strictEqual(nestedEntry.relativePath, 'nested');
+
+    // 2. Listing nested
+    const nestedEntries = handleListWorkspaceDir({
+      payload: { workingDirectory: tempDir, relativePath: 'nested' },
+    });
+    const deepEntry = nestedEntries.find((e: any) => e.name === 'deep');
+    assert.ok(deepEntry);
+    assert.strictEqual(deepEntry.relativePath, 'nested/deep');
+
+    // 3. Listing deep
+    const deepEntries = handleListWorkspaceDir({
+      payload: { workingDirectory: tempDir, relativePath: 'nested/deep' },
+    });
+    const fileEntry = deepEntries.find((e: any) => e.name === 'file.txt');
+    assert.ok(fileEntry);
+    assert.strictEqual(fileEntry.relativePath, 'nested/deep/file.txt');
+
+    // 4. Listing using backslash relativePath on Windows normalizes cleanly
+    if (process.platform === 'win32') {
+      const winEntries = handleListWorkspaceDir({
+        payload: { workingDirectory: tempDir, relativePath: 'nested\\deep' },
+      });
+      const winFileEntry = winEntries.find((e: any) => e.name === 'file.txt');
+      assert.ok(winFileEntry);
+      assert.strictEqual(winFileEntry.relativePath, 'nested/deep/file.txt');
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus handles nested modified, staged, and untracked files', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-status-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    const subDir = path.join(tempDir, 'sub');
+    fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(path.join(subDir, 'initial.txt'), 'version 1');
+    execSync('git add .', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m "init"', { cwd: tempDir, stdio: 'ignore' });
+
+    // 1. Nested modified
+    fs.writeFileSync(path.join(subDir, 'initial.txt'), 'version 2');
+
+    // 2. Nested staged
+    fs.writeFileSync(path.join(subDir, 'staged.txt'), 'staged content');
+    execSync('git add sub/staged.txt', { cwd: tempDir, stdio: 'ignore' });
+
+    // 3. Nested untracked
+    fs.writeFileSync(path.join(subDir, 'untracked.txt'), 'untracked content');
+
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: tempDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    assert.ok(status.modifiedFiles.includes('sub/initial.txt'), 'modifiedFiles should include sub/initial.txt');
+    assert.ok(status.addedFiles.includes('sub/staged.txt'), 'addedFiles should include sub/staged.txt');
+    assert.ok(status.untrackedFiles.includes('sub/untracked.txt'), 'untrackedFiles should include sub/untracked.txt');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus enumerates newly untracked dir grandchildren as individual files', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-grandchild-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(tempDir, 'root.txt'), 'committed');
+    execSync('git add root.txt', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m "init"', { cwd: tempDir, stdio: 'ignore' });
+
+    // Create untracked nested directory with grandchild
+    const deepDir = path.join(tempDir, 'parent', 'child');
+    fs.mkdirSync(deepDir, { recursive: true });
+    fs.writeFileSync(path.join(deepDir, 'grandchild.txt'), 'untracked nested file');
+
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: tempDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    assert.ok(
+      status.untrackedFiles.includes('parent/child/grandchild.txt'),
+      'Should include grandchild file directly rather than parent/ directory'
+    );
+    assert.strictEqual(
+      status.untrackedFiles.includes('parent/'),
+      false,
+      'Should not include parent/ directory token'
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus consumes extra rename token, keeps destination, and parses following entry', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-rename-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(tempDir, 'a_orig.txt'), 'orig a');
+    fs.writeFileSync(path.join(tempDir, 'z_follower.txt'), 'follower z');
+    execSync('git add .', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m "init"', { cwd: tempDir, stdio: 'ignore' });
+
+    // Git rename
+    execSync('git mv a_orig.txt a_renamed.txt', { cwd: tempDir, stdio: 'ignore' });
+    // Modify follower
+    fs.writeFileSync(path.join(tempDir, 'z_follower.txt'), 'follower modified');
+
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: tempDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    // Destination kept in modifiedFiles
+    assert.ok(status.modifiedFiles.includes('a_renamed.txt'), 'modifiedFiles should include rename destination');
+    // Original path consumed and not present
+    assert.strictEqual(status.modifiedFiles.includes('a_orig.txt'), false, 'Source path should not be in modifiedFiles');
+    assert.strictEqual(status.addedFiles.includes('a_orig.txt'), false, 'Source path should not be in addedFiles');
+    assert.strictEqual(status.untrackedFiles.includes('a_orig.txt'), false, 'Source path should not be in untrackedFiles');
+    // Following entry correctly parsed
+    assert.ok(status.modifiedFiles.includes('z_follower.txt'), 'Following entry should be parsed cleanly');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus preserves leading/trailing whitespace and Unicode', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-unicode-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    const spacedName = '  spaced file  .txt';
+    const unicodeName = 'sub/日本語 unicode.txt';
+    fs.mkdirSync(path.join(tempDir, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(tempDir, spacedName), 'spaced');
+    fs.writeFileSync(path.join(tempDir, unicodeName), 'unicode');
+
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: tempDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    assert.ok(
+      status.untrackedFiles.includes(spacedName),
+      `untrackedFiles should include '${spacedName}' with exact whitespace`
+    );
+    assert.ok(
+      status.untrackedFiles.includes('sub/日本語 unicode.txt'),
+      'untrackedFiles should include Unicode path without octal escaping'
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus nested workspace rebases paths and excludes siblings', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-nested-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    const wsDir = path.join(tempDir, 'app_sub');
+    const siblingDir = path.join(tempDir, 'sibling_sub');
+    fs.mkdirSync(wsDir, { recursive: true });
+    fs.mkdirSync(siblingDir, { recursive: true });
+
+    // File in root
+    fs.writeFileSync(path.join(tempDir, 'repo_root.txt'), 'root');
+    // File in sibling
+    fs.writeFileSync(path.join(siblingDir, 'sibling.txt'), 'sibling');
+    // File inside workspace
+    fs.writeFileSync(path.join(wsDir, 'inside.txt'), 'inside');
+    // Nested file inside workspace
+    const nestedInWs = path.join(wsDir, 'nested');
+    fs.mkdirSync(nestedInWs, { recursive: true });
+    fs.writeFileSync(path.join(nestedInWs, 'deep.txt'), 'deep inside');
+
+    // Query status with targetCwd = wsDir
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: wsDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    // Inside workspace paths rebased relative to wsDir
+    assert.ok(status.untrackedFiles.includes('inside.txt'), 'Should include inside.txt relative to wsDir');
+    assert.ok(status.untrackedFiles.includes('nested/deep.txt'), 'Should include nested/deep.txt relative to wsDir');
+    // Outside paths excluded
+    assert.strictEqual(
+      status.untrackedFiles.some((f) => f.includes('sibling') || f.includes('repo_root')),
+      false,
+      'Sibling and root paths outside workspace must be excluded'
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleGetWorkspaceGitStatus classifies merge conflicts in modifiedFiles', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-git-conflict-'));
+  try {
+    execSync('git init', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(tempDir, 'conflict.txt'), 'base\n');
+    execSync('git add conflict.txt', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m "base"', { cwd: tempDir, stdio: 'ignore' });
+
+    execSync('git checkout -b branch1', { cwd: tempDir, stdio: 'ignore' });
+    fs.writeFileSync(path.join(tempDir, 'conflict.txt'), 'branch1 change\n');
+    execSync('git commit -am "b1"', { cwd: tempDir, stdio: 'ignore' });
+
+    execSync('git checkout master || git checkout main', { cwd: tempDir, stdio: 'ignore' });
+    fs.writeFileSync(path.join(tempDir, 'conflict.txt'), 'main change\n');
+    execSync('git commit -am "main"', { cwd: tempDir, stdio: 'ignore' });
+
+    try {
+      execSync('git merge branch1', { cwd: tempDir, stdio: 'ignore' });
+    } catch {}
+
+    const status = handleGetWorkspaceGitStatus({
+      payload: { workingDirectory: tempDir },
+    });
+
+    assert.strictEqual(status.isRepo, true);
+    assert.ok(
+      status.modifiedFiles.includes('conflict.txt'),
+      'Merge conflict (UU) must be classified in modifiedFiles'
+    );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
