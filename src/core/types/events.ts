@@ -128,6 +128,7 @@ export interface ExtensionUiRequest extends RpcEventBase {
 
 export interface ExtensionUiResponsePayload {
   id: string;
+  sessionFile?: string;
   method?: 'select' | 'input' | 'confirm' | string;
   value?: string;
   confirmed?: boolean;

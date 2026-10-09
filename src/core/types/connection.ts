@@ -1,4 +1,5 @@
 import type { ModelInfo } from './models';
+import type { ExtensionUiRequest } from './events';
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -23,6 +24,8 @@ export interface ConnectSessionOptions {
 }
 
 export interface ConnectResult {
+  activity?: 'idle' | 'busy' | 'waiting';
+  pendingExtensionPrompts?: ExtensionUiRequest[];
   connected: boolean;
   model: ModelInfo | null;
   sessionId?: string;

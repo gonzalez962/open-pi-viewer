@@ -79,6 +79,23 @@ Features never import other features directly. When a component in one feature n
 
 ---
 
+## Web bridge session continuity
+
+The browser is a subscriber, not the owner of Pi processes. While the Vite web bridge remains running, closing or reloading a browser leaves active work and pending extension dialogs alive. Reopening the same session reuses its Pi process and loads live messages, activity, and pending requests. EventSource reconnection also refreshes attached sessions to reconcile missed events.
+
+| Web IPC action | Effect |
+|---|---|
+| `disconnect` or closing the SSE stream | Detaches the client without terminating Pi. |
+| `abort` | Cancels the current operation while keeping the session process alive; an optional `payload.sessionFile` targets a specific session. |
+| `stop_session` | Terminates only `payload.sessionFile`; the session file is required. This is web-only IPC, not a new native command or UI button. |
+| `connect` | Returns the existing fields plus `activity` (`idle`, `busy`, `waiting`) and `pendingExtensionPrompts`. Live processes supply messages through Pi RPC. |
+
+Dialog responses preserve the originating session file and must match a pending request on a live process. Repeated, stale, or wrong-session responses fail without creating a process. Pool cleanup never evicts working or waiting sessions; simultaneous attachments share one startup.
+
+**Lifetime limit:** stopping/restarting the web bridge or rebooting the machine does not preserve execution. Session history can still be reopened, but automatic recovery of interrupted operations is not implemented. Native desktop exit behavior is unchanged. This does not add per-browser authorization or tenant isolation to the existing shared bridge.
+
+Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/session-reattach.test.ts`, and `tests/infra/web-session-reattach.test.ts` use isolated fake subprocesses and connection adapters.
+
 ## 4. Backend Modular Rust Architecture
 
 The Rust backend (`src-tauri/src/`) manages the Pi subprocess, JSONL line framing, and IPC commands. All commands are modularized into domain submodules under `src-tauri/src/commands/`:

@@ -88,6 +88,7 @@ Pi Viewer follows a layered hexagonal architecture. Detailed design documentatio
 
 ### Auto-Startup, Settings & Retry
 - **Automatic Connection**: On launch, Pi Viewer attempts to start the Pi RPC bridge using stored configuration.
+- **Web Session Continuity**: Closing or reloading the browser leaves Pi running while the web bridge remains active. Reattachment restores live messages, activity, and pending extension dialogs. Browser disconnect is distinct from aborting work or explicitly stopping a session. Server restart recovery is not included; see [web bridge lifecycle](docs/architecture.md#web-bridge-session-continuity).
 - **Settings Panel**: Accessible via the header or offline screen to configure:
   - `General Preferences`: Interface Theme and Display Language (English, Español).
   - `Theme & Styles`: Full appearance customizer with live preview, presets, area transparency, and wallpaper settings.

@@ -25,12 +25,26 @@ export class PiRpcSession {
   public sessionFile: string | null = null;
   public sessionId: string | null = null;
   public modelInfo: any = null;
+  public pendingExtensionPrompts = new Map<string, any>();
+  public activity: 'idle' | 'busy' | 'waiting' = 'idle';
+
+  public async snapshot() {
+    const response = await this.sendCommand({ type: 'get_messages' });
+    if (response.success === false) throw new Error(response.error || 'Unable to read live messages');
+    return {
+      messages: response.data?.messages || [],
+      activity: this.pendingExtensionPrompts.size ? 'waiting' : this.activity,
+      pendingExtensionPrompts: [...this.pendingExtensionPrompts.values()],
+    };
+  }
 
   public isAlive(): boolean {
     return this.child !== null && this.child.exitCode === null;
   }
 
   public kill() {
+    this.pendingExtensionPrompts.clear();
+    this.activity = 'idle';
     if (this.child) {
       try {
         this.child.kill();
@@ -145,6 +159,9 @@ export class PiRpcSession {
     });
 
     this.child.on('exit', (code, signal) => {
+      if (this.child !== childProc) return;
+      this.pendingExtensionPrompts.clear();
+      this.activity = 'idle';
       console.log(`[Pi CLI exit] code: ${code}, signal: ${signal}`);
       if (this.sessionFile) {
         const norm = path.resolve(this.sessionFile);
@@ -164,6 +181,7 @@ export class PiRpcSession {
         this.sessionId = stateRes.data.sessionId || null;
         this.sessionFile = stateRes.data.sessionFile || null;
         this.modelInfo = stateRes.data.model || null;
+        if (stateRes.data.isStreaming && this.activity === 'idle') this.activity = 'busy';
       }
     } catch (e) {
       console.warn('[Pi CLI get_state handshake warning]:', e);
@@ -219,13 +237,16 @@ export class PiRpcSession {
       data.sessionFile = this.sessionFile;
       data.sessionId = this.sessionId;
 
-      if (data.type === 'message_start') {
+      if (data.type === 'agent_start' || data.type === 'message_start') {
+        this.activity = this.pendingExtensionPrompts.size ? 'waiting' : 'busy';
         if (this.sessionFile) {
           setSessionStatus(this.sessionFile, 'working', this.sessionId);
         }
       } else if (data.type === 'extension_ui_request') {
         const method = data.method;
         if (method === 'select' || method === 'confirm' || method === 'input' || method === 'editor') {
+          this.pendingExtensionPrompts.set(data.id, { ...data });
+          this.activity = 'waiting';
           if (this.sessionFile) {
             setSessionStatus(this.sessionFile, 'waiting', this.sessionId);
           }
@@ -241,6 +262,8 @@ export class PiRpcSession {
       // When Pi CLI finishes a turn (agent_end without willRetry), also emit agent_settled
       // so the frontend reducer transitions agentActivity from 'busy' back to 'idle'.
       if (data.type === 'agent_end' && !data.willRetry) {
+        this.activity = 'idle';
+        this.pendingExtensionPrompts.clear();
         if (this.sessionFile) {
           setSessionStatus(this.sessionFile, 'completed', this.sessionId);
           invalidateSessionParseCache(this.sessionFile);
@@ -257,6 +280,7 @@ export class PiRpcSession {
 }
 
 export const sessionPool = new Map<string, PiRpcSession>();
+const sessionCreations = new Map<string, Promise<PiRpcSession>>();
 
 setSessionAliveChecker((norm) => {
   const rpc = sessionPool.get(norm);
@@ -266,6 +290,8 @@ setSessionAliveChecker((norm) => {
 export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null): Promise<PiRpcSession> {
   const normFile = sessionFile ? path.resolve(sessionFile) : null;
   if (normFile) {
+    const creating = sessionCreations.get(normFile);
+    if (creating) return creating;
     const existing = sessionPool.get(normFile);
     if (existing && existing.isAlive()) {
       return existing;
@@ -275,7 +301,7 @@ export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null)
   // Pool management: prune dead or completed idle processes if pool size >= 4
   if (sessionPool.size >= 4) {
     for (const [sFile, rpc] of sessionPool.entries()) {
-      if (sFile !== normFile && sessionStatusMap.get(sFile) !== 'working') {
+      if (sFile !== normFile && !sessionCreations.has(sFile) && rpc.activity === 'idle' && sessionStatusMap.get(sFile) !== 'working' && sessionStatusMap.get(sFile) !== 'waiting') {
         rpc.kill();
         sessionPool.delete(sFile);
         if (sessionStatusMap.get(sFile) !== 'waiting') {
@@ -287,11 +313,14 @@ export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null)
   }
 
   const rpc = new PiRpcSession();
-  await rpc.ensureRunning(resolveCrossPlatformCwd(cwd), normFile);
-  if (normFile) {
-    sessionPool.set(normFile, rpc);
+  if (normFile) sessionPool.set(normFile, rpc);
+  const creation = rpc.ensureRunning(resolveCrossPlatformCwd(cwd), normFile).then(() => rpc);
+  if (normFile) sessionCreations.set(normFile, creation);
+  try {
+    return await creation;
+  } finally {
+    if (normFile && sessionCreations.get(normFile) === creation) sessionCreations.delete(normFile);
   }
-  return rpc;
 }
 
 export function getActiveRpc(): PiRpcSession | null {
@@ -309,6 +338,7 @@ export function resetPiRpcForTest(): void {
     rpc.kill();
   }
   sessionPool.clear();
+  sessionCreations.clear();
   setActiveSessionFile(null);
   setActiveSessionId(null);
 }
@@ -438,21 +468,25 @@ export async function handleSendExtensionUiResponse(args: any = {}) {
     responseObj.cancelled = true;
   }
 
-  const targetCwd = payload.cwd ? resolveCrossPlatformCwd(payload.cwd) : getActiveCwd();
   const targetSessionFile = payload.sessionFile || getActiveSessionFile();
-  const rpc = await getOrCreatePiRpc(targetCwd, targetSessionFile);
+  const rpc = targetSessionFile ? sessionPool.get(path.resolve(targetSessionFile)) : null;
 
-  if (!rpc || !rpc.isAlive()) {
+  if (!rpc || !rpc.isAlive() || (payload.cwd && path.resolve(rpc.cwd) !== path.resolve(resolveCrossPlatformCwd(payload.cwd)))) {
     throw new Error('Pi RPC session is not active');
   }
 
+  if (!rpc.pendingExtensionPrompts.has(id)) {
+    throw new Error('No pending extension UI request for this session and ID');
+  }
   const written = rpc.sendRaw(responseObj);
   if (!written) {
     throw new Error('Failed to write extension UI response to Pi CLI stdin');
   }
 
+  rpc.pendingExtensionPrompts.delete(id);
+  rpc.activity = rpc.pendingExtensionPrompts.size ? 'waiting' : 'busy';
   if (rpc.sessionFile) {
-    setSessionStatus(rpc.sessionFile, 'working', rpc.sessionId);
+    setSessionStatus(rpc.sessionFile, rpc.activity === 'waiting' ? 'waiting' : 'working', rpc.sessionId);
   }
 
   return {
@@ -461,15 +495,27 @@ export async function handleSendExtensionUiResponse(args: any = {}) {
   };
 }
 
-export async function handleAbort() {
-  if (piRpc.isAlive()) {
-    await piRpc.sendCommand({ id: `abort-${Date.now()}`, type: 'abort' }, 5000);
-  }
+export async function handleAbort(args: any = {}) {
+  const file = args.payload?.sessionFile || getActiveSessionFile();
+  const rpc = file ? sessionPool.get(path.resolve(file)) : null;
+  if (rpc?.isAlive()) await rpc.sendCommand({ type: 'abort' }, 5000);
   return null;
 }
 
+/** Detach the browser; the bridge, not the subscriber, owns Pi processes. */
 export function handleDisconnect() {
-  piRpc.kill();
+  return null;
+}
+
+export function handleStopSession(args: any = {}) {
+  const file = args.payload?.sessionFile;
+  if (!file) throw new Error('Session file is required to stop a session');
+  const key = path.resolve(file);
+  const rpc = sessionPool.get(key);
+  if (sessionCreations.has(key)) throw new Error('Session is still starting');
+  rpc?.kill();
+  sessionPool.delete(key);
+  setSessionStatus(key, 'completed', rpc?.sessionId);
   return null;
 }
 

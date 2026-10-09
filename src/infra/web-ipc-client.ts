@@ -21,13 +21,27 @@ export function initWebIpcClient(): void {
   let nextCallbackId = 1;
   const callbacks = new Map<number, (payload: any) => void>();
   const eventListeners = new Map<string, Set<number>>();
+  const attachedSessions = new Map<string, Record<string, unknown>>();
+  const publish = (event: string, payload: any) => {
+    eventListeners.get(event)?.forEach((id) => callbacks.get(id)?.({ event, id, payload }));
+  };
 
   // Reconnect after authorization so the stream adopts the new HttpOnly session.
   let sse: EventSource | null = null;
   const connectEvents = (ready?: () => void): void => {
     sse?.close();
     sse = new EventSource('/api/events');
-    if (ready) sse.onopen = () => { ready(); };
+    sse.onopen = () => {
+      ready?.();
+      // Reconcile missed output and dialogs whenever EventSource reconnects.
+      for (const args of attachedSessions.values()) {
+        void win.__TAURI_INTERNALS__.invoke('connect', { ...args, __reattach: true }).then((snapshot: any) => {
+          const current = attachedSessions.get(snapshot.canonicalCwd);
+          if ((current?.payload as any)?.sessionFile !== snapshot.sessionFile) return;
+          publish('pi://event', { type: 'runtime_snapshot', cwd: snapshot.canonicalCwd, ...snapshot });
+        }).catch((error: unknown) => console.warn('[Web IPC reattach]', error));
+      }
+    };
     sse.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
@@ -118,6 +132,11 @@ export function initWebIpcClient(): void {
       const data = await res.json();
       if (data.error) {
         throw new Error(data.error);
+      }
+      if (cmd === 'connect' && !(args as any)?.__reattach && data.result?.sessionFile) {
+        attachedSessions.set(data.result.canonicalCwd, {
+          payload: { ...(args as any)?.payload, sessionFile: data.result.sessionFile, workingDirectory: data.result.canonicalCwd },
+        });
       }
       return data.result;
     },

@@ -11,6 +11,7 @@ import { SessionEventController, shouldRefreshWorkspaceOnEvent } from '@features
 import type { ExtensionUiDialogAdapter } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig } from '@core/types/connection';
+import type { ExtensionUiRequest } from '@core/types/events';
 import { isWindowsPath, normalizeWorkingDirectory } from '@core/session';
 
 export interface ProjectItem {
@@ -281,7 +282,7 @@ export function useSessionEvents({
   discoverEnvironmentFn,
   onDiscoverySettled,
   onMissingConfiguration,
-}: UseSessionEventsOptions): void {
+}: UseSessionEventsOptions): (requests: ExtensionUiRequest[]) => void {
   // Dynamic references avoiding stale closures in bridge listeners.
   const configRef = useRef<ConnectConfig>(config);
   configRef.current = config;
@@ -373,9 +374,13 @@ export function useSessionEvents({
       isCancelled = true;
       cancelConnection();
       unlisten();
-      sessionEventControllerRef.current?.cancelPendingDialogRequests();
+      sessionEventControllerRef.current?.cancelPendingDialogRequests(undefined, Boolean((window as any).__IS_WEB_IPC__));
     };
     // Intentionally empty: mount-only registration/startup, matching the pre-extraction
     // effect exactly (this repository has no ESLint step to satisfy or suppress).
   }, []);
+
+  return (requests) => {
+    for (const request of requests) void sessionEventControllerRef.current?.handleExtensionUiRequest(request);
+  };
 }

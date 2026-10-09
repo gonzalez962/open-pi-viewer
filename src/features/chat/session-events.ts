@@ -22,7 +22,7 @@ import {
   type ExtensionUiDialogAdapter,
 } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
-import { normalizeWorkingDirectory, updateSessionHasMessages } from '@core/session';
+import { hydrateChatMessages, normalizeWorkingDirectory, updateSessionHasMessages } from '@core/session';
 import type {
   AssistantMessageDelta,
   AuthoritativeMessage,
@@ -59,6 +59,7 @@ interface PendingDialogRequest {
   id: string;
   cwd?: string;
   method?: string;
+  sessionFile?: string;
 }
 
 /**
@@ -104,6 +105,20 @@ export class SessionEventController {
   public handleEvent(event: RpcEventBase): void {
     const eventType = event.type;
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
+    if (eventType === 'runtime_snapshot') {
+      this.options.dispatch({
+        type: 'SESSION_READY', targetProjectId,
+        payload: {
+          sessionId: event.sessionId as string,
+          sessionFile: event.sessionFile as string,
+          messages: hydrateChatMessages(event.messages as unknown[] ?? []),
+          activity: event.activity as 'idle' | 'busy' | 'waiting',
+          hasMore: Boolean(event.hasMore),
+        },
+      });
+      for (const request of (event.pendingExtensionPrompts as ExtensionUiRequest[] ?? [])) void this.handleExtensionUiRequest(request);
+      return;
+    }
 
     const currentSessionId = this.options.getCurrentSessionId();
     const eventSessionId = (event as any).sessionId;
@@ -342,7 +357,7 @@ export class SessionEventController {
    * If cwd is provided, only pending dialogs matching that working directory are cancelled.
    * If cwd is omitted, all pending dialogs are cancelled.
    */
-  public cancelPendingDialogRequests(cwd?: string): void {
+  public cancelPendingDialogRequests(cwd?: string, detachOnly = false): void {
     const targetNorm = cwd ? normalizeWorkingDirectory(cwd) : undefined;
     const activeCwd = this.options.getCurrentConfig().workingDirectory;
     const activeNorm = activeCwd ? normalizeWorkingDirectory(activeCwd) : undefined;
@@ -363,10 +378,11 @@ export class SessionEventController {
       }
     }
 
-    for (const req of toCancel) {
+    for (const req of detachOnly ? [] : toCancel) {
       void this.sendExtensionUiResponseFn({
         id: req.id,
         cancelled: true,
+        ...(req.sessionFile ? { sessionFile: req.sessionFile } : {}),
         ...(req.cwd ? { cwd: req.cwd } : {}),
       }).catch(() => {});
     }
@@ -395,12 +411,12 @@ export class SessionEventController {
         ? request.cwd.trim()
         : undefined;
     const normCwd = reqCwd ? normalizeWorkingDirectory(reqCwd) : '';
-    const key = `${normCwd}\0${id}`;
+    const key = `${normCwd}\0${request.sessionFile ?? ""}\0${id}`;
 
     if (this.pendingDialogRequests.has(key)) {
       return;
     }
-    this.pendingDialogRequests.set(key, { id, cwd: reqCwd, method: request.method });
+    this.pendingDialogRequests.set(key, { id, cwd: reqCwd, method: request.method, sessionFile: request.sessionFile as string | undefined });
 
     try {
       let responsePayload: ExtensionUiResponsePayload;
@@ -470,7 +486,10 @@ export class SessionEventController {
         return;
       }
       this.pendingDialogRequests.delete(key);
-      await this.sendExtensionUiResponseFn(responsePayload);
+      await this.sendExtensionUiResponseFn({
+        ...responsePayload,
+        ...(typeof request.sessionFile === 'string' ? { sessionFile: request.sessionFile } : {}),
+      });
     } catch {
       // Async failure occurred during dialog interaction or response dispatch:
       // Ensure async failures do not silently leave Pi blocked—attempt cancellation on failure
@@ -481,6 +500,7 @@ export class SessionEventController {
             id,
             method: request.method,
             cancelled: true,
+            ...(typeof request.sessionFile === 'string' ? { sessionFile: request.sessionFile } : {}),
             ...(reqCwd ? { cwd: reqCwd } : {}),
           });
         } catch {
