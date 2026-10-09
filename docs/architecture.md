@@ -90,6 +90,8 @@ The browser is a subscriber, not the owner of Pi processes. While the Vite web b
 | `stop_session` | Terminates only `payload.sessionFile`; the session file is required. This is web-only IPC, not a new native command or UI button. |
 | `connect` | Returns the existing fields plus `activity` (`idle`, `busy`, `waiting`) and `pendingExtensionPrompts`. Live processes supply messages through Pi RPC. |
 
+Agent completion events are matched against the selected session of their destination project, including background projects. Web subprocess exits emit project/session-scoped bridge status changes so the project indicator leaves its busy state; stale exits from replaced sessions are ignored.
+
 Dialog responses preserve the originating session file and must match a pending request on a live process. Repeated, stale, or wrong-session responses fail without creating a process. Pool cleanup never evicts working or waiting sessions; simultaneous attachments share one startup.
 
 **Lifetime limit:** stopping/restarting the web bridge or rebooting the machine does not preserve execution. Session history can still be reopened, but automatic recovery of interrupted operations is not implemented. Native desktop exit behavior is unchanged. This does not add per-browser authorization or tenant isolation to the existing shared bridge.

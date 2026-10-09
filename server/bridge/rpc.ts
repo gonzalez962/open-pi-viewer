@@ -171,6 +171,13 @@ export class PiRpcSession {
         }
       }
       this.child = null;
+      broadcastSse('pi://status-change', {
+        state: code === 0 ? 'disconnected' : 'error',
+        label: code === 0 ? 'Disconnected' : 'Process Error',
+        detail: code === 0 ? 'Pi RPC process exited' : `Pi RPC process exited (${signal || code})`,
+        cwd: this.cwd,
+        sessionId: this.sessionId,
+      });
     });
 
     // Initial get_state handshake with 60s timeout (allows extension loading on cold start)

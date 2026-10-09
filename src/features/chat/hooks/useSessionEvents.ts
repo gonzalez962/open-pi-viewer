@@ -49,6 +49,7 @@ export interface UseSessionEventsOptions {
   config: ConnectConfig;
   /** Fresh every render, same reasoning as `config`. */
   sessionId: string | null;
+  projectSessionIds?: Record<string, string | null>;
   projects?: ProjectItem[];
   activeProjectId?: string | null;
   dispatch: (action: ChatAction & { targetProjectId?: string }) => void;
@@ -270,6 +271,7 @@ export async function executeAutoStart({
 export function useSessionEvents({
   config,
   sessionId,
+  projectSessionIds,
   projects,
   activeProjectId,
   dispatch,
@@ -288,6 +290,8 @@ export function useSessionEvents({
   configRef.current = config;
   const sessionIdRef = useRef<string | null>(sessionId);
   sessionIdRef.current = sessionId;
+  const projectSessionIdsRef = useRef(projectSessionIds);
+  projectSessionIdsRef.current = projectSessionIds;
   const projectsRef = useRef<ProjectItem[]>(projects ?? []);
   projectsRef.current = projects ?? [];
   const activeProjectIdRef = useRef<string | null>(activeProjectId ?? null);
@@ -309,6 +313,9 @@ export function useSessionEvents({
     sessionEventControllerRef.current = new SessionEventController({
       getCurrentConfig: () => configRef.current,
       getCurrentSessionId: () => sessionIdRef.current,
+      getProjectSessionId: (projectId) => projectSessionIdsRef.current
+        ? projectSessionIdsRef.current[projectId] ?? null
+        : sessionIdRef.current,
       dispatch: handleEventDispatch,
       refreshSessionStatsFn: () => getSessionStatsPi(),
       onStorageWarning: (warning) => onStorageWarning(warning),

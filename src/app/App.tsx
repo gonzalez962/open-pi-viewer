@@ -495,6 +495,7 @@ export const App: React.FC = () => {
   const restoreExtensionPrompts = useSessionEvents({
     config,
     sessionId: state.sessionId,
+    projectSessionIds: Object.fromEntries(Object.entries(multiProjectState.projects).map(([id, project]) => [id, project.sessionId])),
     projects: projectsRegistry.projects,
     activeProjectId: projectsRegistry.activeProjectId,
     dispatch,

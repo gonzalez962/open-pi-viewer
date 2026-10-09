@@ -56,6 +56,26 @@ function fixture(t: any) {
   return { root, children, file, connect };
 }
 
+test('web child exit reports project-scoped disconnected/error state to subscribers', async (t) => {
+  const f = fixture(t);
+  const events: any[] = [];
+  const stream = { write: (chunk: string) => { events.push(JSON.parse(chunk.slice(6).trim())); } } as any;
+  addSseClient(stream);
+  t.after(() => removeSseClient(stream));
+  for (const code of [0, 1]) {
+    const file = f.file(`exit-${code}`);
+    await getOrCreatePiRpc(f.root, file);
+    const child = f.children[f.children.length - 1];
+    child.event({ type: 'message_start', message: { role: 'assistant', content: '' } });
+    child.exitCode = code;
+    child.emit('exit', code, null);
+    const status = events.filter((e) => e.event === 'pi://status-change').pop()?.payload;
+    assert.equal(status?.state, code === 0 ? 'disconnected' : 'error');
+    assert.equal(status?.cwd, f.root);
+    assert.equal(status?.sessionId, path.basename(file));
+  }
+});
+
 test('browser disconnect and SSE removal preserve the same working process and live messages', async (t) => {
   const f = fixture(t);
   const file = f.file('active');

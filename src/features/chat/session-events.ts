@@ -38,6 +38,8 @@ import type { SessionStats } from '@core/types/models';
 export interface SessionEventControllerOptions {
   getCurrentConfig: () => ConnectConfig;
   getCurrentSessionId: () => string | null;
+  /** Resolve the selected conversation of the event's project, not the active dock item. */
+  getProjectSessionId?: (projectId: string) => string | null;
   dispatch: (action: ChatAction & { targetProjectId?: string }) => void;
   resolveTargetProjectId?: (cwd?: string) => string | undefined;
   checkPersistenceFn?: () => Promise<SessionPersistenceStatus>;
@@ -120,7 +122,9 @@ export class SessionEventController {
       return;
     }
 
-    const currentSessionId = this.options.getCurrentSessionId();
+    const currentSessionId = targetProjectId && this.options.getProjectSessionId
+      ? this.options.getProjectSessionId(targetProjectId)
+      : this.options.getCurrentSessionId();
     const eventSessionId = (event as any).sessionId;
     const isCurrentSession = !eventSessionId || !currentSessionId || eventSessionId === currentSessionId;
 
@@ -310,6 +314,10 @@ export class SessionEventController {
    */
   public handleStatusChange(status: BridgeStatusPayload): void {
     const targetProjectId = this.resolveTargetProjectId(status.cwd ?? undefined);
+    const expectedSessionId = targetProjectId && this.options.getProjectSessionId
+      ? this.options.getProjectSessionId(targetProjectId)
+      : this.options.getCurrentSessionId();
+    if (status.sessionId && expectedSessionId && status.sessionId !== expectedSessionId) return;
     if (status.state === 'connected') {
       this.options.dispatch({
         type: 'CONNECT_SUCCESS',
