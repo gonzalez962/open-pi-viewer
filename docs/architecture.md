@@ -94,9 +94,15 @@ Agent completion events are matched against the selected session of their destin
 
 Dialog responses preserve the originating session file and must match a pending request on a live process. Repeated, stale, or wrong-session responses fail without creating a process. Pool cleanup never evicts working or waiting sessions; simultaneous attachments share one startup.
 
-**Lifetime limit:** stopping/restarting the web bridge or rebooting the machine does not preserve execution. Session history can still be reopened, but automatic recovery of interrupted operations is not implemented. Native desktop exit behavior is unchanged. This does not add per-browser authorization or tenant isolation to the existing shared bridge.
+**Lifetime limit:** stopping/restarting the web bridge or rebooting the machine does not preserve execution. Session history can still be reopened, but automatic recovery of interrupted operations is not implemented. Native desktop explicit exit still terminates Pi processes; closing its main window hides it to the system tray as described below. This does not add per-browser authorization or tenant isolation to the existing shared bridge.
 
 Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/session-reattach.test.ts`, and `tests/infra/web-session-reattach.test.ts` use isolated fake subprocesses and connection adapters.
+
+## Desktop background lifecycle
+
+Tauri keeps the application process and its webview alive when the main window closes. `src-tauri/src/tray.rs` provides **Open Pi Viewer** and **Exit Pi Viewer**; a left-click on the tray icon also restores, unminimizes, and focuses the existing window. `CloseRequested` prevents window destruction and hides the window only when the tray exists and shutdown has not begun. There is no frontend unmount, session reload, or independent daemon. Native listeners aggregate Pi activity by working directory and use cached green, blue, amber, and red tray icons. While working, a native task switches blue/amber every 800 ms (a 1.6-second cycle); when idle or failed it waits for events without a timer. Errors override working/ready colors and remain red until the affected session starts a new run or reconnects successfully. Process/bridge errors and failed tool executions are included. Colors match the default project indicator palette, not custom themes; `agent_settled` and terminal status changes clear that session's activity.
+
+Explicit tray exit enters the existing `ExitRequested` cleanup, cancelling OAuth work and terminating/reaping Pi sessions before exiting. If tray initialization fails, the ordinary close-and-cleanup path remains available rather than hiding an inaccessible window. Forced termination, logout, and reboot are not execution checkpoints. `src-tauri/src/background.rs` tests the close decision independently from the OS tray.
 
 ## 4. Backend Modular Rust Architecture
 
