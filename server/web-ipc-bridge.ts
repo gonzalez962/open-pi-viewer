@@ -49,6 +49,7 @@ import {
   handleListWorkspaceDir,
   handleReadWorkspaceFile,
   handleGetWorkspaceGitStatus,
+  handleGetWorkspaceFileDiff,
 } from './bridge/paths';
 
 import {
@@ -204,6 +205,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleReadWorkspaceFile(args);
     case 'get_workspace_git_status':
       return handleGetWorkspaceGitStatus(args);
+    case 'get_workspace_file_diff':
+      return handleGetWorkspaceFileDiff(args);
     case 'get_session_stats':
       return await handleGetSessionStats();
     case 'get_session_persistence_status':
