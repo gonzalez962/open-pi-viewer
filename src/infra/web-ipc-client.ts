@@ -28,6 +28,13 @@ export function initWebIpcClient(): void {
 
   // Reconnect after authorization so the stream adopts the new HttpOnly session.
   let sse: EventSource | null = null;
+  const closeEvents = (): void => {
+    if (sse) {
+      sse.close();
+      sse = null;
+    }
+  };
+
   const connectEvents = (ready?: () => void): void => {
     sse?.close();
     sse = new EventSource('/api/events');
@@ -58,18 +65,47 @@ export function initWebIpcClient(): void {
       } catch {}
     };
     sse.onerror = () => {
-      // EventSource automatically retries connection
+      // EventSource automatically retries connection, but if the session
+      // expired on the server, probe /api/auth/status so idle clients
+      // return to the login gate immediately rather than waiting for user IPC.
+      void fetch('/api/auth/status', {
+        method: 'GET',
+        headers: { Accept: 'application/json' },
+      })
+        .then((res) => {
+          if (!res.ok) return null;
+          return res.json();
+        })
+        .then((status) => {
+          if (status && status.required === true && status.authenticated === false) {
+            closeEvents();
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              const event =
+                typeof CustomEvent !== 'undefined'
+                  ? new CustomEvent('pi:web-auth-required')
+                  : new Event('pi:web-auth-required');
+              window.dispatchEvent(event);
+            }
+          }
+        })
+        .catch(() => {
+          // Transient network error; EventSource handles reconnection
+        });
     };
   };
+
+  window.addEventListener('pi:web-auth-ready', () => {
+    connectEvents();
+  });
+
+  window.addEventListener('pi:web-auth-required', () => {
+    closeEvents();
+  });
+
   window.addEventListener('pi:oauth-authorized', (event) => {
     const ready = (event as CustomEvent<{ ready?: () => void }>).detail?.ready;
     connectEvents(ready);
   });
-  try {
-    connectEvents();
-  } catch (err) {
-    console.warn('[Web IPC SSE] EventSource init failed:', err);
-  }
 
   win.isTauri = true;
   win.__IS_WEB_IPC__ = true;
@@ -126,6 +162,16 @@ export function initWebIpcClient(): void {
       });
 
       if (!res.ok) {
+        if (res.status === 401) {
+          closeEvents();
+          if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+            const authRequiredEvent =
+              typeof CustomEvent !== 'undefined'
+                ? new CustomEvent('pi:web-auth-required')
+                : new Event('pi:web-auth-required');
+            window.dispatchEvent(authRequiredEvent);
+          }
+        }
         throw new Error(`Web IPC HTTP error ${res.status}`);
       }
 

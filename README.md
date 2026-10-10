@@ -184,3 +184,80 @@ Tauri IPC does not expose generic command execution or raw RPC pass-through. The
 - [x] 72 native Rust bridge unit tests passing (`cargo test`)
 - [x] Frontend build clean (`npm run build`) and Rust typecheck clean (`cargo check`)
 - [x] Desktop acceptance walkthrough user-confirmed (tool execution cards, thinking blocks, multi-turn isolation, and chat viewport scrolling)
+
+## Web Server Authentication
+
+When exposing Pi Viewer over an external domain or untrusted network (beyond internal networks like Tailscale), activate server-side web authentication via environment variables.
+
+### Environment Configuration
+
+Configure these variables in your server environment or `.env` file (loaded server-only by Vite):
+
+```bash
+# Strict "true" or "false" (default: false). When false, web authentication is disabled.
+PI_VIEWER_AUTH_ENABLED=false
+
+# Server-only shared secret key for web authentication.
+# Required and non-blank when PI_VIEWER_AUTH_ENABLED=true. Startup fails if missing.
+PI_VIEWER_AUTH_KEY=replace-with-a-secure-random-passphrase
+
+# Explicitly set to "true" when serving behind an HTTPS reverse proxy.
+# Emits the "Secure" cookie attribute. Arbitrary forwarded headers (e.g. X-Forwarded-Proto) are NOT trusted.
+PI_VIEWER_AUTH_SECURE_COOKIE=false
+```
+
+### Security Architecture & Limitations
+
+- **Fail-Closed Startup**: If `PI_VIEWER_AUTH_ENABLED=true` is set without a non-blank `PI_VIEWER_AUTH_KEY`, or with an invalid value (anything other than strictly `"true"` or `"false"`), server startup fails immediately with an actionable error.
+- **Strict Perimeter Defense**: All privileged `/api` endpoints (`/api/ipc`, `/api/events`, `/api/oauth/authorize`, `/api/engram-daemon`) require an active session when auth is enabled. Unauthenticated calls return `401 Unauthorized`.
+- **Strict Bootstrap Routes**: Bootstrap endpoints (`GET /api/auth/status`, `POST /api/auth/login`, `POST /api/auth/logout`) use exact path matching on normalized pathnames. Prefix variations such as `/api/auth/login/evil` never bypass authentication and fail closed with 401.
+- **CSRF & Same-Origin Enforcement**: Authenticated API routes and login/logout enforce same-origin validation matching the `Host` header against `Origin`, `Referer`, or `Sec-Fetch-Site: same-origin`. Cross-origin calls receive `403 Forbidden`. Arbitrary `X-Forwarded-Host` headers are never trusted.
+- **Streaming Leases & SSE Termination**: Active `/api/events` EventSource streams are bound to the session lease. When a session expires (after the 24-hour TTL) or the user logs out, active SSE connections are terminated (`res.end()`), and watchdog timers are cleaned up immediately without leaks.
+- **Resource Bounding & Rate Limiting**: Login attempts are rate-limited per client IP (5 failed attempts per 60 seconds return `429 Too Many Requests`). Web login request bodies are capped at 8 KB (`413 Payload Too Large`), and in-memory sessions are bounded (oldest evicted when capacity is reached). Event streams are limited to 8 per session owner and 256 globally; evicted sessions lose their active streams.
+- **No Public Domain Auto-Detection**: Authentication is strictly opt-in via `PI_VIEWER_AUTH_ENABLED`. Pi Viewer never inspects Host headers to automatically guess whether an address is public or internal.
+- **OAuth Isolation**: Built-in provider OAuth (`PI_VIEWER_OAUTH_ACCESS_KEY` / `pi_oauth_session`) remains strictly isolated with its own session state and owner boundaries.
+
+### Transport Security: Authentication Is Not Encryption
+
+The login controls **who can access the API**. It does not encrypt network traffic or enable HTTPS. The current Vite server has no native TLS configuration; browser requests and event streams use the page's protocol. The login key is sent in a JSON request body, so plain HTTP outside an encrypted tunnel can expose the key, session cookie, prompts, and responses to interception or tampering.
+
+| Access path | Transport protection |
+|-------------|----------------------|
+| HTTP through Tailscale | The Tailscale tunnel encrypts traffic only when it actually travels through the tunnel. Access through a separate LAN or public address is not automatically protected. |
+| HTTP over a LAN or public domain | Pi Viewer does not encrypt this traffic. Do not send credentials or sensitive conversations over an untrusted HTTP connection. |
+| HTTPS with a correctly configured reverse proxy | TLS protects traffic between the browser and the proxy. The proxy-to-application connection must also be protected or restricted to local loopback. |
+
+**`PI_VIEWER_AUTH_SECURE_COOKIE=true` does not enable HTTPS.** It adds the cookie's `Secure` attribute so the browser sends the session cookie only over a secure connection. Use `false` for local HTTP testing and `true` for HTTPS access. `HttpOnly` prevents JavaScript from reading the cookie; `SameSite=Strict` restricts cross-site cookie delivery. Neither encrypts packets.
+
+### Domain Access Checklist
+
+A recommended connection layout is:
+
+```text
+Browser -- HTTPS --> Caddy/Nginx -- local HTTP --> Pi Viewer (127.0.0.1)
+```
+
+1. Configure a valid TLS certificate and expose only the HTTPS reverse proxy. Redirect HTTP to HTTPS before users submit credentials.
+2. Enable web login with a long, random, private key:
+
+   ```dotenv
+   PI_VIEWER_AUTH_ENABLED=true
+   PI_VIEWER_AUTH_KEY="replace-with-a-long-random-key"
+   PI_VIEWER_AUTH_SECURE_COOKIE=true
+   ```
+
+3. Restart the server after changing environment variables. Never prefix secrets with `VITE_` or commit a real `.env` key.
+4. Restrict the application listener to loopback (for example, `npm run dev -- --host 127.0.0.1`) and block direct access to its port with firewall rules. The current default is `0.0.0.0`, which listens on all available interfaces.
+5. If the proxy and application run on different machines, protect their connection with TLS or an appropriately restricted encrypted tunnel instead of assuming the second hop is secure.
+6. For login-free internal access, restrict network reachability to the intended Tailscale clients using firewall rules and tailnet access controls. Disabling login grants access to anyone who can reach the web API.
+
+### Remaining Deployment Hardening
+
+These are limitations of the current web server, not features provided by the login:
+
+- The bridge runs in Vite's development server. A login and an HTTPS proxy do not turn it into a production server; the authentication middleware protects the API, not every Vite development endpoint or development WebSocket.
+- The general `/api/ipc` handler currently buffers request bodies without a transport-level size cap. The 8 KB cap above applies to web login, not all IPC requests. A proxy request-size limit is a useful additional defense, not a replacement for an application-side limit.
+- The Engram proxy still emits permissive `Access-Control-Allow-Origin: *` headers. With web authentication enabled, the same-origin guard runs first; these headers should nevertheless be tightened as part of deployment hardening.
+- Shared-key login is not per-user authorization or isolation. A person holding the key can access the privileged viewer API, including operations that act on the host through Pi.
+
+The login's approved code review is **not an audit of the deployed network, reverse proxy, or entire development server**. Verify those boundaries separately before public exposure.

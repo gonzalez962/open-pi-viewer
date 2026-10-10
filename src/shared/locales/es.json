@@ -882,5 +882,18 @@
   "settings.commands_error_alias_required": "El alias \"{alias}\" está vacío.",
   "settings.commands_error_alias_whitespace": "El alias \"{alias}\" no puede contener espacios.",
   "settings.commands_error_alias_too_long": "El alias \"{alias}\" puede tener como máximo {max} caracteres.",
-  "settings.commands_error_alias_duplicate": "El alias \"{alias}\" ya lo usa otro comando o alias."
+  "settings.commands_error_alias_duplicate": "El alias \"{alias}\" ya lo usa otro comando o alias.",
+  "web_auth.title": "Clave de acceso requerida",
+  "web_auth.description": "Introduce la clave de acceso configurada en el servidor para desbloquear el visor web.",
+  "web_auth.key_label": "Clave de acceso",
+  "web_auth.key_placeholder": "Introduce la clave de acceso...",
+  "web_auth.login_button": "Desbloquear",
+  "web_auth.logging_in": "Verificando...",
+  "web_auth.invalid_key": "Clave de acceso no válida. Inténtalo de nuevo.",
+  "web_auth.status_error": "No se pudo verificar el estado de autenticación con el servidor.",
+  "web_auth.checking_status": "Comprobando estado de autenticación...",
+  "web_auth.retry": "Reintentar",
+  "web_auth.logout": "Cerrar sesión",
+  "web_auth.logging_out": "Cerrando sesión...",
+  "web_auth.logout_failed": "No se pudo cerrar la sesión. Inténtalo de nuevo."
 }

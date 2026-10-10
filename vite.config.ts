@@ -1,19 +1,29 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { handleIpcCommand, addSseClient, removeSseClient } from "./server/web-ipc-bridge";
 import { createOAuthAccess } from "./server/bridge/oauth-access";
 import { oauthManager } from "./server/bridge/oauth";
+import { createWebAuth, resolveWebAuthConfig, type WebAuthConfig } from "./server/bridge/web-auth";
 
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
-function piWebIpcPlugin(): Plugin {
+function piWebIpcPlugin(authConfig: WebAuthConfig): Plugin {
   return {
     name: "pi-web-ipc-bridge",
     configureServer(server) {
+      const webAuth = createWebAuth(authConfig);
       const oauthAccess = createOAuthAccess();
-      server.httpServer?.once("close", () => { void oauthManager.dispose(); });
+
+      server.httpServer?.once("close", () => {
+        webAuth.dispose();
+        void oauthManager.dispose();
+      });
+
+      // Web authentication middleware must be wired BEFORE all API routes
+      server.middlewares.use(webAuth.middleware);
+
       server.middlewares.use("/api/oauth/authorize", (req, res) => {
         if (req.method !== "POST" || !req.headers["content-type"]?.startsWith("application/json")) {
           res.statusCode = 405;
@@ -115,36 +125,43 @@ function piWebIpcPlugin(): Plugin {
 }
 
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), piWebIpcPlugin()],
-  clearScreen: false,
-  resolve: {
-    alias: {
-      "@core": path.join(srcDir, "core"),
-      "@shared": path.join(srcDir, "shared"),
-      "@infra": path.join(srcDir, "infra"),
-      "@features": path.join(srcDir, "features"),
-      "@app": path.join(srcDir, "app"),
+export default defineConfig(({ mode = "development" }) => {
+  // Load non-VITE variables server-only in defineConfig callback
+  const env = loadEnv(mode, process.cwd(), "");
+  const mergedEnv = { ...env, ...process.env };
+  const authConfig = resolveWebAuthConfig(mergedEnv);
+
+  return {
+    plugins: [react(), piWebIpcPlugin(authConfig)],
+    clearScreen: false,
+    resolve: {
+      alias: {
+        "@core": path.join(srcDir, "core"),
+        "@shared": path.join(srcDir, "shared"),
+        "@infra": path.join(srcDir, "infra"),
+        "@features": path.join(srcDir, "features"),
+        "@app": path.join(srcDir, "app"),
+      },
     },
-  },
-  build: {
-    chunkSizeWarningLimit: 600,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
-            return "vendor-react";
-          }
-          if (/[\\/]node_modules[\\/](highlight\.js|lowlight)[\\/]/.test(id)) {
-            return "vendor-highlight";
-          }
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
+              return "vendor-react";
+            }
+            if (/[\\/]node_modules[\\/](highlight\.js|lowlight)[\\/]/.test(id)) {
+              return "vendor-highlight";
+            }
+          },
         },
       },
     },
-  },
-  server: {
-    host: "0.0.0.0",
-    port: Number(process.env.PORT) || 5173,
-    strictPort: true,
-  },
+    server: {
+      host: "0.0.0.0",
+      port: Number(mergedEnv.PORT || process.env.PORT) || 5173,
+      strictPort: true,
+    },
+  };
 });

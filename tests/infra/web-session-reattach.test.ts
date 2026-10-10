@@ -12,7 +12,17 @@ test('EventSource reconnect requests an identity-pinned snapshot and delivers mi
     constructor(_url: string) { sources.push(this); }
     close() {}
   }
-  const win: any = { addEventListener() {} };
+  const listeners = new Map<string, Set<EventListener>>();
+  const win: any = {
+    addEventListener(name: string, callback: EventListener) {
+      if (!listeners.has(name)) listeners.set(name, new Set());
+      listeners.get(name)!.add(callback);
+    },
+    dispatchEvent(event: Event) {
+      listeners.get(event.type)?.forEach((cb) => cb(event));
+      return true;
+    },
+  };
   const snapshot = { canonicalCwd: '/work', sessionFile: '/work/a.jsonl', activity: 'waiting', messages: [], pendingExtensionPrompts: [{ id: 'approval' }] };
   Object.assign(globalThis, { window: win, EventSource: FakeSource, fetch: async (_url: string, options: any) => {
     calls.push(JSON.parse(options.body));
@@ -20,6 +30,7 @@ test('EventSource reconnect requests an identity-pinned snapshot and delivers mi
   } });
   try {
     initWebIpcClient();
+    win.dispatchEvent(new Event('pi:web-auth-ready'));
     const events: any[] = [];
     const ipc = win.__TAURI_INTERNALS__;
     const callback = ipc.transformCallback((event: any) => events.push(event.payload));
