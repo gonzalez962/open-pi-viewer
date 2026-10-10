@@ -204,7 +204,30 @@ PI_VIEWER_AUTH_KEY=replace-with-a-secure-random-passphrase
 # Explicitly set to "true" when serving behind an HTTPS reverse proxy.
 # Emits the "Secure" cookie attribute. Arbitrary forwarded headers (e.g. X-Forwarded-Proto) are NOT trusted.
 PI_VIEWER_AUTH_SECURE_COOKIE=false
+
+# Optional paired Cloudflare Turnstile bot protection for the web login gate.
+# Requires PI_VIEWER_AUTH_ENABLED=true. Startup fails if enabled without web auth or if keys are unpaired.
+# The site key is public and delivered via GET /api/auth/status to render the widget.
+# PI_VIEWER_TURNSTILE_SITE_KEY=0x4AAAAAAAbcdef123456789
+
+# Server-only Turnstile secret key for Cloudflare siteverify validation.
+# NEVER prefix with VITE_ or expose to the client.
+# PI_VIEWER_TURNSTILE_SECRET_KEY=0x4AAAAAAAbcdef123456789secret
 ```
+
+### Cloudflare Turnstile Bot Protection
+
+When exposing the web viewer to the internet, you can optionally configure Cloudflare Turnstile to defend the login gate against automated credential attacks:
+
+- **Paired Keys & Auth Prerequisite**: `PI_VIEWER_TURNSTILE_SITE_KEY` and `PI_VIEWER_TURNSTILE_SECRET_KEY` must be configured together. Both require `PI_VIEWER_AUTH_ENABLED=true`. Setting only one or enabling Turnstile without web auth fails server startup immediately.
+- **Local Test Keys**: Cloudflare's published dummy site key `1x00000000000000000000AA` and secret `1x0000000000000000000000000000000AA` can be used on `localhost`, `127.0.0.1`, or `::1`. Dummy responses omit production action/hostname bindings; only these exact public test secrets and the official dummy token receive local test compatibility. Upstream success, access-key validation, and attempt limits still apply. Never use dummy keys for a deployed service; use real keys with the configured domain. Restart the server after changing keys.
+- **Server-Only Secret**: `PI_VIEWER_TURNSTILE_SECRET_KEY` is consumed exclusively by the server worker during siteverify. Never prefix it with `VITE_` or expose it in client code or build outputs.
+- **Cloudflare Hostname & Reverse Proxy Preservation**: Configure your domain in the Cloudflare Turnstile dashboard. Reverse proxies (e.g. Nginx, Caddy) must preserve the original `Host` header including non-default ports (e.g. `proxy_set_header Host $http_host;`), as existing same-origin checks validate `Host` against `Origin`/`Referer`, and server siteverify strictly validates that Cloudflare's verified `hostname` matches the request's parsed `Host` hostname (port ignored).
+- **Transport Security & HTTPS**: Turnstile does not encrypt traffic. Always deploy behind HTTPS and set `PI_VIEWER_AUTH_SECURE_COOKIE=true` in production so session cookies include the `Secure` flag.
+- **Siteverify Validation & Fail-Closed Errors**: The server worker validates submitted tokens via `https://challenges.cloudflare.com/turnstile/v0/siteverify` with a 10-second timeout. Validation strictly requires `action === 'login'` and matching hostname. Missing token returns `400 Bad Request`; rejected token returns `403 Forbidden`; unreachable upstream or timeout fails closed with `503 Service Unavailable`.
+- **Limiter & Proxy Socket IP Aggregation**: Turnstile admission limits all login attempts (counting both successes and failures without reset) to 5 attempts per 60 seconds by socket IP (bounded up to 4,096 distinct entries without eviction). Because client IP is derived from the direct socket to prevent header spoofing, multiple users behind a reverse proxy share the proxy socket IP bucket.
+- **External Script Access**: Client browsers must have network access to `https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`. Ensure ad blockers or restrictive CSP headers permit Cloudflare challenge scripts.
+- **Manual Browser Acceptance**: Automated unit tests exercise client lifecycle helpers and validation logic; browser test walkthroughs use mocked interfaces without live Cloudflare credentials. Production walkthrough against live Cloudflare servers requires manual browser acceptance on a real domain with valid Cloudflare keys.
 
 ### Security Architecture & Limitations
 
@@ -212,6 +235,7 @@ PI_VIEWER_AUTH_SECURE_COOKIE=false
 - **Strict Perimeter Defense**: All privileged `/api` endpoints (`/api/ipc`, `/api/events`, `/api/oauth/authorize`, `/api/engram-daemon`) require an active session when auth is enabled. Unauthenticated calls return `401 Unauthorized`.
 - **Strict Bootstrap Routes**: Bootstrap endpoints (`GET /api/auth/status`, `POST /api/auth/login`, `POST /api/auth/logout`) use exact path matching on normalized pathnames. Prefix variations such as `/api/auth/login/evil` never bypass authentication and fail closed with 401.
 - **CSRF & Same-Origin Enforcement**: Authenticated API routes and login/logout enforce same-origin validation matching the `Host` header against `Origin`, `Referer`, or `Sec-Fetch-Site: same-origin`. Cross-origin calls receive `403 Forbidden`. Arbitrary `X-Forwarded-Host` headers are never trusted.
+- **Web Logout**: The logout control appears directly below Settings in the navigation footer when web authentication is enabled. A reusable in-app confirmation dialog (`src/app/components/ConfirmationModal.tsx`) explains that Pi processes and ongoing work keep running. It accepts custom title, message, action labels and callbacks; focuses Cancel initially, contains keyboard focus, restores focus on dismissal, and disables dismissal/actions while pending. Escape, Cancel, or clicking the backdrop dismiss it without logging out. Cancelling makes no logout request; confirming revokes only browser access and closes its event streams. Desktop and auth-disabled viewers do not show the control.
 - **Streaming Leases & SSE Termination**: Active `/api/events` EventSource streams are bound to the session lease. When a session expires (after the 24-hour TTL) or the user logs out, active SSE connections are terminated (`res.end()`), and watchdog timers are cleaned up immediately without leaks.
 - **Resource Bounding & Rate Limiting**: Login attempts are rate-limited per client IP (5 failed attempts per 60 seconds return `429 Too Many Requests`). Web login request bodies are capped at 8 KB (`413 Payload Too Large`), and in-memory sessions are bounded (oldest evicted when capacity is reached). Event streams are limited to 8 per session owner and 256 globally; evicted sessions lose their active streams.
 - **No Public Domain Auto-Detection**: Authentication is strictly opt-in via `PI_VIEWER_AUTH_ENABLED`. Pi Viewer never inspects Host headers to automatically guess whether an address is public or internal.

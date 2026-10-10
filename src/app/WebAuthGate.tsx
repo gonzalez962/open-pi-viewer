@@ -7,9 +7,12 @@ import {
   emitWebAuthRequired,
   WEB_AUTH_REQUIRED_EVENT,
 } from '@infra/web-auth';
+import { TurnstileWidget } from './TurnstileWidget';
 import { loadUiPreferences } from '@infra/preferences';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import './web-auth.css';
+import { WebLogoutContext } from './WebLogoutContext';
+import { ConfirmationModal } from './components/ConfirmationModal';
 
 export interface WebAuthGateProps {
   children: React.ReactNode;
@@ -42,11 +45,15 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
 
   const [status, setStatus] = useState<GateStatus>('checking');
   const [authRequired, setAuthRequired] = useState(false);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileAttempt, setTurnstileAttempt] = useState(0);
   const [key, setKey] = useState('');
   const [loginPending, setLoginPending] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [logoutPending, setLogoutPending] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
 
   // Sequence and cancellation refs to prevent async status races and StrictMode re-entry issues
@@ -69,6 +76,7 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
       const res = await checkAuthStatus();
       if (seq !== activeCheckSeq.current || isAuthRequiredRef.current) return;
       setAuthRequired(res.required);
+      setTurnstileSiteKey(res.turnstileSiteKey ?? null);
       if (!res.required || res.authenticated) {
         emitWebAuthReady();
         setStatus('authenticated');
@@ -91,6 +99,8 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
       activeCheckSeq.current++;
       isAuthRequiredRef.current = true;
       setKey('');
+      setTurnstileToken(null);
+      setTurnstileAttempt((prev) => prev + 1);
       setLoginError(null);
       setStatus('unauthenticated');
     };
@@ -104,19 +114,27 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    const isTurnstileRequired = Boolean(turnstileSiteKey);
     // Trim only to decide blankness; preserve exact raw input bytes for server validation
-    if (!key.trim() || loginPending) return;
+    if (!key.trim() || loginPending || (isTurnstileRequired && !turnstileToken)) {
+      return;
+    }
 
     const rawKey = key;
+    const currentToken = turnstileToken;
     const seq = ++activeCheckSeq.current;
     setLoginPending(true);
     setLoginError(null);
-    // Ephemeral credential input cleared immediately after attempt
+    // Ephemeral credential and single-use token cleared immediately after attempt
     setKey('');
+    setTurnstileToken(null);
+    setTurnstileAttempt((prev) => prev + 1);
     isAuthRequiredRef.current = false;
 
     try {
-      const result = await loginWithKey(rawKey);
+      const result = await loginWithKey(rawKey, {
+        turnstileToken: currentToken ?? undefined,
+      });
       if (seq !== activeCheckSeq.current) return;
       if (result.ok) {
         setAuthRequired(true);
@@ -139,11 +157,14 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
     setLogoutError(null);
     try {
       await logout();
+      setLogoutConfirmOpen(false);
       // Only signal auth-required and unmount when server revoke succeeded (or was already invalid)
       activeCheckSeq.current++;
       isAuthRequiredRef.current = true;
       emitWebAuthRequired();
       setKey('');
+      setTurnstileToken(null);
+      setTurnstileAttempt((prev) => prev + 1);
       setLoginError(null);
       setStatus('unauthenticated');
     } catch (err: unknown) {
@@ -157,8 +178,8 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
   if (status === 'authenticated') {
     return (
       <div className="web-auth-gate-wrapper">
-        {authRequired && (
-          <div className="web-auth-logout-bar">
+        <WebLogoutContext.Provider value={authRequired ? (
+          <div className="web-auth-logout-control">
             {logoutError && (
               <div className="web-auth-logout-error" role="alert">
                 <span>{logoutError}</span>
@@ -174,13 +195,13 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
             )}
             <button
               type="button"
-              className="web-auth-logout-btn"
-              onClick={handleLogout}
+              className="project-footer-row web-auth-logout-btn"
+              onClick={() => { setLogoutError(null); setLogoutConfirmOpen(true); }}
               disabled={logoutPending}
               title={translate(locale, 'web_auth.logout')}
               aria-label={translate(locale, 'web_auth.logout')}
             >
-              <svg
+              <div className="project-tile project-tile-settings" aria-hidden="true"><svg
                 width="14"
                 height="14"
                 viewBox="0 0 24 24"
@@ -194,16 +215,30 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                 <polyline points="16 17 21 12 16 7" />
                 <line x1="21" y1="12" x2="9" y2="12" />
-              </svg>
-              <span>
+              </svg></div>
+              <span className="project-settings-label">
                 {logoutPending
                   ? translate(locale, 'web_auth.logging_out')
                   : translate(locale, 'web_auth.logout')}
               </span>
             </button>
           </div>
-        )}
-        {children}
+        ) : null}>
+          {children}
+          <ConfirmationModal
+            isOpen={logoutConfirmOpen}
+            title={translate(locale, 'web_auth.logout')}
+            message={<>
+              {translate(locale, 'web_auth.logout_confirm')}
+              {logoutError && <p className="web-auth-error" role="alert">{logoutError}</p>}
+            </>}
+            confirmLabel={translate(locale, logoutPending ? 'web_auth.logging_out' : 'web_auth.logout')}
+            cancelLabel={translate(locale, 'action.cancel')}
+            pending={logoutPending}
+            onConfirm={() => { void handleLogout(); }}
+            onCancel={() => setLogoutConfirmOpen(false)}
+          />
+        </WebLogoutContext.Provider>
       </div>
     );
   }
@@ -339,10 +374,25 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
               autoFocus
             />
           </div>
+          {turnstileSiteKey && (
+            <div className="web-auth-turnstile-wrapper">
+              <TurnstileWidget
+                key={turnstileAttempt}
+                siteKey={turnstileSiteKey}
+                action="login"
+                locale={locale}
+                onTokenChange={setTurnstileToken}
+              />
+            </div>
+          )}
           <button
             type="submit"
             className="web-auth-submit-btn"
-            disabled={loginPending || !key.trim()}
+            disabled={
+              loginPending ||
+              !key.trim() ||
+              (Boolean(turnstileSiteKey) && !turnstileToken)
+            }
             aria-busy={loginPending}
           >
             {loginPending

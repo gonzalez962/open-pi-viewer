@@ -151,3 +151,108 @@ test('emitWebAuthReady and emitWebAuthRequired dispatch custom events on target'
   emitWebAuthRequired({ eventTarget: target });
   assert.equal(requiredDispatched, true);
 });
+
+test('checkAuthStatus: preserves absent property shape when turnstileSiteKey is omitted', async () => {
+  const fakeFetch: typeof fetch = async () => {
+    return new Response(JSON.stringify({ required: true, authenticated: false }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  const status = await checkAuthStatus({ fetchFn: fakeFetch });
+  assert.deepEqual(status, { required: true, authenticated: false });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(status, 'turnstileSiteKey'),
+    false,
+    'turnstileSiteKey must not be present on returned object when omitted'
+  );
+});
+
+test('checkAuthStatus: returns turnstileSiteKey when present and valid non-empty string', async () => {
+  const fakeFetch: typeof fetch = async () => {
+    return new Response(
+      JSON.stringify({
+        required: true,
+        authenticated: false,
+        turnstileSiteKey: '0x4AAAAAAAbcdef123456789',
+      }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  };
+
+  const status = await checkAuthStatus({ fetchFn: fakeFetch });
+  assert.equal(status.turnstileSiteKey, '0x4AAAAAAAbcdef123456789');
+  assert.equal(status.required, true);
+  assert.equal(status.authenticated, false);
+});
+
+test('checkAuthStatus: fails closed when turnstileSiteKey is present but malformed', async () => {
+  const malformedValues = [
+    12345,
+    true,
+    false,
+    null,
+    '',
+    '   ',
+    {},
+    [],
+  ];
+
+  for (const badValue of malformedValues) {
+    const fakeFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          required: true,
+          authenticated: false,
+          turnstileSiteKey: badValue,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    };
+
+    await assert.rejects(
+      async () => checkAuthStatus({ fetchFn: fakeFetch }),
+      /Malformed auth status response/,
+      `Should reject malformed turnstileSiteKey: ${JSON.stringify(badValue)}`
+    );
+  }
+});
+
+test('loginWithKey: includes turnstileToken in request body when provided', async () => {
+  let capturedBody: any = null;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    capturedBody = JSON.parse(init?.body as string);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  const result = await loginWithKey('my-secret-key', {
+    fetchFn: fakeFetch,
+    turnstileToken: 'cf-turnstile-token-xyz',
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(capturedBody, {
+    key: 'my-secret-key',
+    turnstileToken: 'cf-turnstile-token-xyz',
+  });
+});
+
+test('loginWithKey: omits turnstileToken when not provided in options', async () => {
+  let capturedBody: any = null;
+  const fakeFetch: typeof fetch = async (_input, init) => {
+    capturedBody = JSON.parse(init?.body as string);
+    return new Response(JSON.stringify({ ok: true }), { status: 200 });
+  };
+
+  const result = await loginWithKey('my-secret-key', { fetchFn: fakeFetch });
+  assert.equal(result.ok, true);
+  assert.equal('turnstileToken' in capturedBody, false);
+  assert.deepEqual(capturedBody, { key: 'my-secret-key' });
+});

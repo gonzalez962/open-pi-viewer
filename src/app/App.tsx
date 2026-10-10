@@ -123,6 +123,7 @@ import {
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
 import { MobileNavigation } from './MobileNavigation';
+import { useWebLogoutControl } from './WebLogoutContext';
 import {
   DRAWER_ID,
   MOBILE_BREAKPOINT,
@@ -146,6 +147,7 @@ export const App: React.FC = () => {
   const isConnected = state.connectionStatus === 'connected';
   const isConnecting = state.connectionStatus === 'connecting';
   const isBusy = state.agentActivity === 'busy';
+  const webLogoutControl = useWebLogoutControl();
   const isReadyToSend = isConnected && state.isHydrated && !isBusy && !state.isResetting;
   // Separate readiness for queuing a follow-up while the agent is busy: same connection/
   // hydration/reset guards as isReadyToSend, but requires isBusy instead of excluding it.
@@ -1200,6 +1202,7 @@ export const App: React.FC = () => {
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
             onOpenAddProject={handleOpenAddProject}
+            footerControl={webLogoutControl}
           />
 
           {(state.isSidebarOpen || isMobileNavOpen) && (

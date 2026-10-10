@@ -893,7 +893,15 @@
   "web_auth.status_error": "No se pudo verificar el estado de autenticación con el servidor.",
   "web_auth.checking_status": "Comprobando estado de autenticación...",
   "web_auth.retry": "Reintentar",
+  "web_auth.logout_confirm": "¿Cerrar la sesión web? Los procesos de Pi y el trabajo en curso seguirán ejecutándose.",
   "web_auth.logout": "Cerrar sesión",
   "web_auth.logging_out": "Cerrando sesión...",
-  "web_auth.logout_failed": "No se pudo cerrar la sesión. Inténtalo de nuevo."
+  "web_auth.logout_failed": "No se pudo cerrar la sesión. Inténtalo de nuevo.",
+  "web_auth.turnstile_label": "Verificación de seguridad",
+  "web_auth.turnstile_loading": "Cargando verificación de seguridad...",
+  "web_auth.turnstile_load_error": "No se pudo cargar la verificación de seguridad. Comprueba tu conexión o bloqueador de anuncios.",
+  "web_auth.turnstile_retry": "Reintentar verificación",
+  "web_auth.turnstile_error": "Error en la verificación de seguridad. Inténtalo de nuevo.",
+  "web_auth.turnstile_expired": "La verificación de seguridad ha caducado. Vuelve a verificar.",
+  "web_auth.turnstile_timeout": "Se agotó el tiempo de verificación de seguridad. Inténtalo de nuevo."
 }

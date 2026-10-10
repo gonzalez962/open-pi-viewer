@@ -893,7 +893,15 @@
   "web_auth.status_error": "Unable to verify authentication status with server.",
   "web_auth.checking_status": "Checking authentication status...",
   "web_auth.retry": "Retry",
+  "web_auth.logout_confirm": "Log out of the web viewer? Pi processes and ongoing work will keep running.",
   "web_auth.logout": "Log Out",
   "web_auth.logging_out": "Logging out...",
-  "web_auth.logout_failed": "Logout failed. Please try again."
+  "web_auth.logout_failed": "Logout failed. Please try again.",
+  "web_auth.turnstile_label": "Security verification",
+  "web_auth.turnstile_loading": "Loading security check...",
+  "web_auth.turnstile_load_error": "Unable to load security verification. Check your connection or ad blocker.",
+  "web_auth.turnstile_retry": "Retry verification",
+  "web_auth.turnstile_error": "Security verification failed. Please try again.",
+  "web_auth.turnstile_expired": "Security verification expired. Please verify again.",
+  "web_auth.turnstile_timeout": "Security verification timed out. Please try again."
 }

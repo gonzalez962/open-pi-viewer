@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createOAuthAccess, type OAuthAccessInstance } from './oauth-access';
+import { createOAuthAccess, DEFAULT_RATE_LIMIT_ATTEMPTS, DEFAULT_RATE_LIMIT_WINDOW_MS, type OAuthAccessInstance } from './oauth-access';
+import { verifyTurnstile } from './turnstile';
 
 // ---------------------------------------------------------------------------
 // Constants & Types
@@ -14,6 +15,8 @@ export interface WebAuthConfig {
   enabled: boolean;
   key?: string;
   secureCookie?: boolean;
+  turnstileSiteKey?: string;
+  turnstileSecretKey?: string;
 }
 
 export interface WebAuthOptions {
@@ -26,6 +29,9 @@ export interface WebAuthOptions {
   rateLimitMaxAttempts?: number;
   rateLimitWindowMs?: number;
   now?: () => number;
+  turnstileSiteKey?: string;
+  turnstileSecretKey?: string;
+  turnstileFetch?: typeof fetch;
 }
 
 export interface WebAuthSession {
@@ -102,11 +108,24 @@ export function resolveWebAuthConfig(
     secureCookie = rawSecure.trim() === 'true';
   }
 
+  const turnstileSiteKey = env.PI_VIEWER_TURNSTILE_SITE_KEY?.trim() || undefined;
+  const turnstileSecretKey = env.PI_VIEWER_TURNSTILE_SECRET_KEY?.trim() || undefined;
+  validateTurnstileConfig(enabled, turnstileSiteKey, turnstileSecretKey);
   return {
     enabled,
     key: enabled ? rawKey : undefined,
     secureCookie,
+    ...(turnstileSiteKey ? { turnstileSiteKey, turnstileSecretKey } : {}),
   };
+}
+
+function validateTurnstileConfig(enabled: boolean, siteKey?: string, secretKey?: string): void {
+  if (Boolean(siteKey) !== Boolean(secretKey)) {
+    throw new Error('Turnstile requires both PI_VIEWER_TURNSTILE_SITE_KEY and PI_VIEWER_TURNSTILE_SECRET_KEY.');
+  }
+  if (siteKey && !enabled) {
+    throw new Error('Turnstile requires PI_VIEWER_AUTH_ENABLED="true".');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +233,30 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
   const cookieName = options.cookieName || DEFAULT_WEB_AUTH_COOKIE_NAME;
   const sessionTtlMs = options.sessionTtlMs || DEFAULT_WEB_AUTH_SESSION_TTL_MS;
   const nowFn = options.now || (() => Date.now());
+  const turnstileSiteKey = options.turnstileSiteKey?.trim() || undefined;
+  const turnstileSecretKey = options.turnstileSecretKey?.trim() || undefined;
+  validateTurnstileConfig(isEnabled, turnstileSiteKey, turnstileSecretKey);
+  const attemptLimit = options.rateLimitMaxAttempts || DEFAULT_RATE_LIMIT_ATTEMPTS;
+  const attemptWindow = options.rateLimitWindowMs || DEFAULT_RATE_LIMIT_WINDOW_MS;
+  const attempts = new Map<string, { count: number; resetAt: number }>();
+  let disposed = false;
+
+  // Reserve before awaiting Siteverify: concurrent requests cannot race admission.
+  const admitTurnstileAttempt = (req: any): boolean => {
+    const now = nowFn();
+    for (const [ip, entry] of attempts) if (now >= entry.resetAt) attempts.delete(ip);
+    const ip = req.socket?.remoteAddress || 'unknown';
+    const entry = attempts.get(ip);
+    if (entry) {
+      if (entry.count >= attemptLimit) return false;
+      entry.count++;
+    } else {
+      // Never clear active counters on pressure: reject new addresses fail-closed.
+      if (attempts.size >= 4096) return false;
+      attempts.set(ip, { count: 1, resetAt: now + attemptWindow });
+    }
+    return true;
+  };
 
   if (isEnabled && (!configuredKey || configuredKey.trim().length === 0)) {
     throw new Error(
@@ -354,7 +397,7 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
 
     const owner = authenticate(req);
     const authenticated = owner !== null;
-    sendJsonResponse(res, 200, { required: true, authenticated });
+    sendJsonResponse(res, 200, { required: true, authenticated, ...(turnstileSiteKey ? { turnstileSiteKey } : {}) });
   };
 
   const handleLogin = async (req: any, res: any, directBody?: any): Promise<void> => {
@@ -400,6 +443,34 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
     if (!isEnabled) {
       sendJsonResponse(res, 200, { ok: true });
       return;
+    }
+
+    if (turnstileSecretKey) {
+      if (!validateSameOrigin(req)) {
+        sendJsonResponse(res, 403, { error: 'Origin validation failed: access denied' });
+        return;
+      }
+      if (disposed) {
+        sendJsonResponse(res, 503, { error: 'Web authentication unavailable' });
+        return;
+      }
+      if (!admitTurnstileAttempt(req)) {
+        sendJsonResponse(res, 429, { error: 'Too many login attempts. Please try again later.' });
+        return;
+      }
+      const token = parsed?.turnstileToken;
+      if (typeof token !== 'string' || !token.trim() || token.length > 2048) {
+        sendJsonResponse(res, 400, { error: 'Missing or invalid Turnstile token' });
+        return;
+      }
+      const verification = await verifyTurnstile(turnstileSecretKey, token, req.headers.host, options.turnstileFetch);
+      if (verification !== 'valid' || disposed) {
+        const unavailable = verification === 'unavailable' || disposed;
+        sendJsonResponse(res, unavailable ? 503 : 403, {
+          error: unavailable ? 'Turnstile verification unavailable. Please try again.' : 'Turnstile verification failed. Please try again.',
+        });
+        return;
+      }
     }
 
     const candidateKey = parsed?.key;
@@ -514,6 +585,8 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
   };
 
   const dispose = (): void => {
+    disposed = true;
+    attempts.clear();
     for (const [, set] of activeSseClients) {
       for (const record of set) {
         terminateStreamRecord(record);

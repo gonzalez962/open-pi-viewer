@@ -169,15 +169,19 @@
   height: 100%;
 }
 
-.web-auth-logout-bar {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  z-index: 1000;
-  pointer-events: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.web-auth-logout-control {
+  width: 100%;
+  padding: 4px 6px;
+}
+
+.web-auth-logout-control .web-auth-logout-btn {
+  width: 100%;
+  padding: 0;
+  gap: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .web-auth-logout-error {
@@ -237,13 +241,74 @@
   cursor: not-allowed;
 }
 
+/* Turnstile CAPTCHA widget */
+.web-auth-turnstile-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.web-auth-turnstile-container {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.web-auth-turnstile-slot {
+  display: flex;
+  justify-content: center;
+  min-height: 65px;
+  width: 100%;
+}
+
+.web-auth-turnstile-status {
+  font-size: 0.8125rem;
+  color: var(--fg-muted, #8b949e);
+  text-align: center;
+  padding: 0.25rem 0;
+}
+
+.web-auth-turnstile-error {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--status-red, #f85149);
+  background-color: var(--status-red-bg, rgba(248, 81, 73, 0.12));
+  border: 1px solid var(--status-red-border, rgba(248, 81, 73, 0.3));
+  border-radius: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  word-break: break-word;
+}
+
+.web-auth-turnstile-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--fg-default, #e6edf3);
+  background-color: var(--bg-subtle, #21262d);
+  border: 1px solid var(--border-muted, #30363d);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.web-auth-turnstile-retry-btn:hover {
+  background-color: var(--bg-subtle-hover, #30363d);
+  border-color: var(--border-active, #58a6ff);
+}
+
 @media (max-width: 640px) {
   .web-auth-card {
     padding: 1.5rem;
   }
 
-  .web-auth-logout-bar {
-    bottom: 12px;
-    left: 12px;
-  }
 }

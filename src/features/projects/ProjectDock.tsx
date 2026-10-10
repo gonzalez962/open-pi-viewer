@@ -24,6 +24,7 @@ export interface ProjectDockProps {
   isSettingsOpen?: boolean;
   onOpenSettings?: () => void;
   onOpenAddProject?: () => void;
+  footerControl?: React.ReactNode;
 }
 
 /**
@@ -97,6 +98,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   isSettingsOpen,
   onOpenSettings,
   onOpenAddProject,
+  footerControl,
 }) => {
   const isSettingsActive = Boolean(isSettingsOpen);
   const [isHovered, setIsHovered] = useState(false);
@@ -475,6 +477,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
               {translate(locale, 'settings.title')}
             </span>
           </button>
+          {footerControl}
         </div>
       </aside>
     </div>
