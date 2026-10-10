@@ -6,6 +6,7 @@ import {
   type BrowseShortcutItem,
 } from '@infra/bridge';
 import { isTauri } from '@tauri-apps/api/core';
+import { isWebShim } from '@infra/web-oauth-access';
 import { deriveProjectBasename } from '../projects';
 import { translate, type SupportedLocale } from '@shared/i18n';
 
@@ -27,9 +28,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const [currentPath, setCurrentPath] = useState<string>(initialPath || '');
   const [pathInput, setPathInput] = useState<string>(initialPath || '');
   const [selectedFolder, setSelectedFolder] = useState<string>(initialPath || '');
-  const [projectName, setProjectName] = useState<string>('');
   const [parentPath, setParentPath] = useState<string | null>(null);
-  const [windowsPath, setWindowsPath] = useState<string | null>(null);
   const [folders, setFolders] = useState<BrowseFolderItem[]>([]);
   const [shortcuts, setshortcuts] = useState<BrowseShortcutItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -121,7 +120,6 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       setPathInput(res.windowsPath || res.currentPath);
       setSelectedFolder(res.windowsPath || res.currentPath);
       setParentPath(res.parentPath);
-      setWindowsPath(res.windowsPath);
       setFolders(res.folders || []);
       if (res.shortcuts && res.shortcuts.length > 0) {
         setshortcuts(res.shortcuts);
@@ -171,7 +169,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const handleConfirm = () => {
     const finalPath = selectedFolder || pathInput || currentPath;
     if (!finalPath) return;
-    const finalName = projectName.trim() || deriveProjectBasename(finalPath) || undefined;
+    const finalName = deriveProjectBasename(finalPath) || undefined;
     onSelectFolder(finalPath, finalName);
     onClose();
   };
@@ -254,7 +252,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
           >
             {translate(locale, 'projects.folder_picker_go')}
           </button>
-          {isTauri() && (
+          {isTauri() && !isWebShim() && (
             <button
               type="button"
               className="btn btn-secondary folder-picker-btn-native"
@@ -277,7 +275,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
           />
         </div>
 
-        {/* Folders List View */}
+        {/* Folder icon grid */}
         <div className="folder-picker-list-area">
           {isLoading ? (
             <div className="folder-picker-loading">
@@ -305,56 +303,13 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
                     role="button"
                     tabIndex={0}
                   >
-                    <div className="folder-item-icon">📁</div>
-                    <div className="folder-item-info">
-                      <span className="folder-item-name">{folder.name}</span>
-                      {folder.windowsPath && (
-                        <span className="folder-item-winpath">{folder.windowsPath}</span>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      className="folder-item-enter-btn"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleFolderClick(folder);
-                      }}
-                      title="Entrar a esta carpeta"
-                    >
-                      ➔
-                    </button>
+                    <div className="folder-item-icon" aria-hidden="true">📁</div>
+                    <span className="folder-item-name" title={folder.name}>{folder.name}</span>
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
-
-        {/* Selected Summary & Project Name */}
-        <div className="folder-picker-selection-footer">
-          <div className="folder-picker-selected-row">
-            <span className="folder-picker-label">
-              {translate(locale, 'projects.folder_picker_selected')}:
-            </span>
-            <code className="folder-picker-selected-path">
-              {selectedFolder}
-              {windowsPath && selectedFolder !== windowsPath ? ` (${windowsPath})` : ''}
-            </code>
-          </div>
-
-          <div className="folder-picker-name-row">
-            <label htmlFor="folder-picker-custom-name" className="folder-picker-label">
-              {translate(locale, 'projects.folder_picker_name')}:
-            </label>
-            <input
-              id="folder-picker-custom-name"
-              type="text"
-              className="folder-picker-name-input"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder={deriveProjectBasename(selectedFolder) || 'Mi Proyecto'}
-            />
-          </div>
         </div>
 
         {/* Action Buttons */}
