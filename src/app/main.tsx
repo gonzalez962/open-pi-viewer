@@ -6,7 +6,7 @@ import '@infra/web-ipc-client';
 import '@shared/styles/tokens.css';
 import '@shared/styles/base.css';
 import './app.css';
-import './components/confirmation-modal.css';
+import '@app/components/confirmation-modal.css';
 import '@features/projects/projects.css';
 import '@features/sessions/sessions.css';
 import '@features/workspace/workspace.css';

@@ -12,7 +12,7 @@ import { loadUiPreferences } from '@infra/preferences';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import './web-auth.css';
 import { WebLogoutContext } from './WebLogoutContext';
-import { ConfirmationModal } from './components/ConfirmationModal';
+import { ConfirmationModal } from '@app/components/ConfirmationModal';
 
 export interface WebAuthGateProps {
   children: React.ReactNode;
