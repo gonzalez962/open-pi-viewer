@@ -98,6 +98,14 @@ Dialog responses preserve the originating session file and must match a pending 
 
 Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/session-reattach.test.ts`, and `tests/infra/web-session-reattach.test.ts` use isolated fake subprocesses and connection adapters.
 
+## Web resource deletion
+
+The web bridge supports `delete_mcp_server` and `delete_pi_resource` (extensions and packages). Deletion removes the selected definition from its configuration file, not extension source files or installed packages. Autoload-only extensions without a settings entry cannot be deleted this way; use activation controls to disable them. Removing a settings entry does not stop filesystem auto-discovery. Other definitions and configuration fields are preserved, and writes replace the file atomically.
+
+An explicit `global` scope never modifies project configuration; `project` requires a working directory and never falls back to global configuration. Without a scope, a matching project definition takes precedence over the global definition. MCP supports both `mcpServers` and legacy `servers` maps in the supported project config locations. Invalid requests, missing definitions, and malformed target files fail without changing configuration. Activation policy files are unchanged. Already-running sessions must be restarted or reloaded for configuration changes to take effect.
+
+Regression coverage: `tests/server/resource-deletion.test.ts` exercises the web IPC dispatcher using isolated configuration files.
+
 ## Desktop background lifecycle
 
 Tauri keeps the application process and its webview alive when the main window closes. `src-tauri/src/tray.rs` provides **Open Pi Viewer** and **Exit Pi Viewer**; a left-click on the tray icon also restores, unminimizes, and focuses the existing window. `CloseRequested` prevents window destruction and hides the window only when the tray exists and shutdown has not begun. There is no frontend unmount, session reload, or independent daemon. Native listeners aggregate Pi activity by working directory and use cached green, blue, amber, and red tray icons. While working, a native task switches blue/amber every 800 ms (a 1.6-second cycle); when idle or failed it waits for events without a timer. Errors override working/ready colors and remain red until the affected session starts a new run or reconnects successfully. Process/bridge errors and failed tool executions are included. Colors match the default project indicator palette, not custom themes; `agent_settled` and terminal status changes clear that session's activity.

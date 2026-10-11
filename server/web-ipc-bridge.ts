@@ -65,6 +65,8 @@ export {
   handleTogglePiResource,
 } from './bridge/models';
 
+import { handleDeleteMcpServer, handleDeletePiResource } from './bridge/resource-deletion';
+
 import {
   handlePickDirectory,
   handleBrowseFilesystem,
@@ -206,10 +208,14 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetMcpServers(args);
     case 'toggle_mcp_server':
       return await handleToggleMcpServer(args.payload || args);
+    case 'delete_mcp_server':
+      return handleDeleteMcpServer(args.payload || args);
     case 'get_pi_resources':
       return handleGetPiResources(args);
     case 'toggle_pi_resource':
       return await handleTogglePiResource(args.payload || args);
+    case 'delete_pi_resource':
+      return handleDeletePiResource(args.payload || args);
     case 'set_resource_activation':
       return await setResourceActivation(args.payload || args);
     case 'get_builtin_oauth_providers':
