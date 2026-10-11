@@ -2,7 +2,11 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { ModelInfo, ThinkingLevel, SessionStats } from '@core/types/models';
 import type { ProfileSummary } from '@core/types/profiles';
 import type { McpServerConfig } from '@core/types/mcp';
-import type { PiResourceEntry } from '@core/types/extensions';
+import {
+  type PiResourceEntry,
+  getResourceDisplayName,
+  getExtensionHoverPath,
+} from '@core/types/extensions';
 import type { TranslationKey } from '@shared/i18n';
 import type { EngramCloudStatus } from '@infra/bridge';
 import type { AttachedFile, FileAttachmentType } from './types';
@@ -77,6 +81,7 @@ export interface PromptControlsProps {
   onEnrollProject?: () => Promise<boolean> | boolean;
   defaultCloudPopoverOpen?: boolean;
   defaultEnrollConfirmOpen?: boolean;
+  defaultExtPopoverOpen?: boolean;
   attachedFiles?: AttachedFile[];
   onAttachFiles?: (files: AttachedFile[]) => void;
   supportsFiles?: boolean;
@@ -122,6 +127,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   onEnrollProject,
   defaultCloudPopoverOpen = false,
   defaultEnrollConfirmOpen = false,
+  defaultExtPopoverOpen = false,
   attachedFiles: _attachedFiles,
   onAttachFiles,
   supportsFiles: supportsFilesProp,
@@ -132,7 +138,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isFileAttachOpen, setIsFileAttachOpen] = useState(defaultFileAttachOpen);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
-  const [isExtOpen, setIsExtOpen] = useState(false);
+  const [isExtOpen, setIsExtOpen] = useState(defaultExtPopoverOpen);
   const [isThinkingOpen, setIsThinkingOpen] = useState(false);
   const [isStatsOpen, setIsStatsOpen] = useState(false);
   const [isCloudPopoverOpen, setIsCloudPopoverOpen] = useState(defaultCloudPopoverOpen);
@@ -1287,9 +1293,13 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                 const q = extFilter.trim().toLowerCase();
                 const filtered = (piResources || []).filter((r) => {
                   if (!q) return true;
+                  const displayName = getResourceDisplayName(r).toLowerCase();
                   return (
                     r.name.toLowerCase().includes(q) ||
-                    r.source.toLowerCase().includes(q)
+                    displayName.includes(q) ||
+                    r.source.toLowerCase().includes(q) ||
+                    (r.extensionDir && r.extensionDir.toLowerCase().includes(q)) ||
+                    (r.extensionPath && r.extensionPath.toLowerCase().includes(q))
                   );
                 });
                 if (filtered.length === 0) {
@@ -1303,6 +1313,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                     : resource.scope === 'project'
                       ? 'Project'
                       : 'Global';
+                  const displayName = getResourceDisplayName(resource);
+                  const hoverTitle = getExtensionHoverPath(resource);
 
                   return (
                     <div key={resource.id} className="ext-popover-item">
@@ -1311,8 +1323,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                           className={`ext-status-dot ${resource.enabled ? 'active' : 'inactive'}`}
                           aria-hidden="true"
                         />
-                        <span className="ext-popover-name" title={resource.name}>
-                          {resource.name}
+                        <span className="ext-popover-name" title={hoverTitle}>
+                          {displayName}
                         </span>
                         <div className="ext-popover-badges">
                           <span className={`ext-popover-badge ext-popover-badge-${resource.kind}`}>

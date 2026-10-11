@@ -205,6 +205,7 @@ test('server/bridge: connect to empty project creates and persists a new session
 });
 
 test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1 in environment', async (t) => {
+  const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-spawner-test-'));
   let capturedEnv: any = null;
   setSubprocessSpawnerForTest((_cmd, _args, options) => {
     capturedEnv = options.env;
@@ -213,10 +214,13 @@ test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1
   t.after(() => {
     setSubprocessSpawnerForTest(null);
     resetPiRpcForTest();
+    try {
+      fs.rmSync(tmpProject, { recursive: true, force: true });
+    } catch {}
   });
 
   await handleIpcCommand('connect', {
-    payload: { workingDirectory: process.cwd() },
+    payload: { workingDirectory: tmpProject },
   });
 
   assert.ok(capturedEnv, 'Spawner must be called');

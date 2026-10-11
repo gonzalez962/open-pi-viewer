@@ -8,6 +8,15 @@ export const PI_AGENT_DIR = path.join(HOME_DIR, '.pi', 'agent');
 export const DEFAULT_SESSIONS_ROOT = path.join(PI_AGENT_DIR, 'sessions');
 
 let customSessionsRoot: string | null = null;
+let customPiAgentDir: string | null = null;
+
+export function setPiAgentDirForTest(dir: string | null): void {
+  customPiAgentDir = dir;
+}
+
+export function getPiAgentDir(): string {
+  return customPiAgentDir || PI_AGENT_DIR;
+}
 
 export function setSessionsRootDirForTest(dir: string | null): void {
   customSessionsRoot = dir;

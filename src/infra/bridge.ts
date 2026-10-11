@@ -33,6 +33,8 @@ import type {
   McpServersPayload,
   SaveMcpServerPayload,
   SaveMcpServerResult,
+  SetResourceActivationPayload,
+  SetResourceActivationResult,
   ToggleMcpServerPayload,
   ToggleMcpServerResult,
 } from '@core/types/mcp';
@@ -49,6 +51,7 @@ import type {
 } from '@core/types/extensions';
 import {
   deriveResourceName,
+  extensionSourcesMatch,
   normalizeResourceId,
   normalizeTargetSource,
   resourceIdentitiesMatch,
@@ -945,6 +948,299 @@ export async function browseFilesystemPi(
 }
 
 export const MOCK_MCP_SERVERS_STORAGE_KEY = 'pi_viewer_mcp_servers_mock';
+export const MOCK_RESOURCE_ACTIVATION_STORAGE_KEY = 'pi_viewer_resource_activation_mock';
+export const MOCK_PROJECT_ACTIVATION_STORAGE_PREFIX = 'pi_viewer_project_activation_mock:';
+
+export interface ProjectResourceActivationFile {
+  version: 1;
+  extensions: Record<string, boolean>;
+  mcpServers: Record<string, boolean>;
+}
+
+export interface ResourceActivationPolicy {
+  version: 1;
+  alwaysExtensions: string[];
+  alwaysMcpServers: string[];
+  projects: Record<
+    string,
+    {
+      extensions: Record<string, boolean>;
+      mcpServers: Record<string, boolean>;
+    }
+  >;
+}
+
+/**
+ * Normalizes project filesystem path key (slashes and Windows drive letter).
+ */
+export function normalizeProjectKey(cwd: string): string {
+  let norm = cwd.trim().replace(/\\/g, '/');
+  if (norm.length > 1 && norm.endsWith('/')) {
+    norm = norm.slice(0, -1);
+  }
+  if (/^[a-zA-Z]:/.test(norm)) {
+    norm = norm[0].toLowerCase() + norm.slice(1);
+  }
+  return norm;
+}
+
+/**
+ * Computes storage key for a project's directory-owned resource activation mock file.
+ */
+export function getMockProjectActivationStorageKey(cwd: string): string {
+  return `${MOCK_PROJECT_ACTIVATION_STORAGE_PREFIX}${normalizeProjectKey(cwd)}`;
+}
+
+/**
+ * Reads project-local resource activation file from mock storage.
+ * Returns null if the project file is absent.
+ * If present but malformed, fails closed by returning an empty activation record.
+ */
+export function getMockProjectActivation(
+  storage: Storage | null,
+  cwd: string
+): ProjectResourceActivationFile | null {
+  if (!storage) return null;
+  const key = getMockProjectActivationStorageKey(cwd);
+  const raw = storage.getItem(key);
+  if (raw === null) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        version: 1,
+        extensions:
+          parsed.extensions && typeof parsed.extensions === 'object'
+            ? parsed.extensions
+            : {},
+        mcpServers:
+          parsed.mcpServers && typeof parsed.mcpServers === 'object'
+            ? parsed.mcpServers
+            : {},
+      };
+    }
+  } catch {
+    // Malformed local file fails closed
+  }
+  return { version: 1, extensions: {}, mcpServers: {} };
+}
+
+/**
+ * Persists project-local resource activation file to mock storage.
+ */
+export function saveMockProjectActivation(
+  storage: Storage | null,
+  cwd: string,
+  data: ProjectResourceActivationFile
+): void {
+  if (!storage) return;
+  const key = getMockProjectActivationStorageKey(cwd);
+  storage.setItem(key, JSON.stringify(data));
+}
+
+function applyMockProjectToggle(
+  storage: Storage | null,
+  cwd: string,
+  kind: 'extension' | 'mcp',
+  identity: string,
+  enabled: boolean,
+  policy: ResourceActivationPolicy
+): void {
+  if (!storage) return;
+  const projectKey = normalizeProjectKey(cwd);
+  const localKey = getMockProjectActivationStorageKey(cwd);
+  const existingRaw = storage.getItem(localKey);
+
+  let projectData: ProjectResourceActivationFile;
+  if (existingRaw !== null) {
+    projectData = getMockProjectActivation(storage, cwd) || {
+      version: 1,
+      extensions: {},
+      mcpServers: {},
+    };
+  } else {
+    // First explicit project toggle seeds local file with legacy choices
+    const legacyProj = policy.projects?.[projectKey];
+    projectData = {
+      version: 1,
+      extensions: { ...(legacyProj?.extensions || {}) },
+      mcpServers: { ...(legacyProj?.mcpServers || {}) },
+    };
+  }
+
+  if (kind === 'mcp') {
+    projectData.mcpServers[identity] = enabled;
+  } else {
+    for (const k of Object.keys(projectData.extensions)) {
+      if (k === identity || extensionSourcesMatch(k, identity)) {
+        delete projectData.extensions[k];
+      }
+    }
+    projectData.extensions[identity] = enabled;
+  }
+
+  saveMockProjectActivation(storage, cwd, projectData);
+}
+
+function removeMockProjectResource(
+  storage: Storage | null,
+  cwd: string,
+  kind: 'extension' | 'mcp',
+  identity: string
+): void {
+  if (!storage) return;
+  const projectData = getMockProjectActivation(storage, cwd);
+  if (!projectData) return;
+  if (kind === 'mcp') {
+    delete projectData.mcpServers[identity];
+  } else {
+    for (const k of Object.keys(projectData.extensions)) {
+      if (k === identity || extensionSourcesMatch(k, identity)) {
+        delete projectData.extensions[k];
+      }
+    }
+  }
+  saveMockProjectActivation(storage, cwd, projectData);
+}
+
+function ensureExtensionMetadata(
+  entry: PiResourceEntry,
+  cwd?: string
+): PiResourceEntry {
+  if (entry.kind !== 'extension') {
+    return entry;
+  }
+  let extensionPath = entry.extensionPath;
+  let extensionDir = entry.extensionDir;
+
+  if (!extensionPath) {
+    const cleanSource = entry.source.replace(/^[!+-]/, '').trim();
+    if (cleanSource.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(cleanSource)) {
+      extensionPath = cleanSource.replace(/\\/g, '/');
+    } else if (entry.scope === 'project' && cwd) {
+      const base = cwd.replace(/\\/g, '/').replace(/\/+$/, '');
+      const rel = cleanSource.replace(/\\/g, '/').replace(/^\.\//, '');
+      extensionPath = `${base}/${rel}`;
+    } else {
+      const rel = cleanSource.replace(/\\/g, '/').replace(/^\.\//, '');
+      extensionPath = `/home/.pi/agent/${rel}`;
+    }
+  }
+
+  if (!extensionDir) {
+    const norm = extensionPath.replace(/\\/g, '/');
+    const lastSlash = norm.lastIndexOf('/');
+    if (lastSlash > 0) {
+      extensionDir = norm.substring(0, lastSlash);
+    } else {
+      extensionDir = norm;
+    }
+  }
+
+  return {
+    ...entry,
+    extensionPath,
+    extensionDir,
+  };
+}
+
+/**
+ * Reads resource activation policy from mock storage.
+ */
+export function getMockActivationPolicy(storage: Storage | null): ResourceActivationPolicy {
+  if (!storage) {
+    return { version: 1, alwaysExtensions: [], alwaysMcpServers: [], projects: {} };
+  }
+  try {
+    const raw = storage.getItem(MOCK_RESOURCE_ACTIVATION_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          version: 1,
+          alwaysExtensions: Array.isArray(parsed.alwaysExtensions) ? parsed.alwaysExtensions : [],
+          alwaysMcpServers: Array.isArray(parsed.alwaysMcpServers) ? parsed.alwaysMcpServers : [],
+          projects: parsed.projects && typeof parsed.projects === 'object' ? parsed.projects : {},
+        };
+      }
+    }
+  } catch {}
+  return { version: 1, alwaysExtensions: [], alwaysMcpServers: [], projects: {} };
+}
+
+/**
+ * Persists resource activation policy to mock storage.
+ */
+export function saveMockActivationPolicy(
+  storage: Storage | null,
+  policy: ResourceActivationPolicy
+): void {
+  if (!storage) return;
+  storage.setItem(MOCK_RESOURCE_ACTIVATION_STORAGE_KEY, JSON.stringify(policy));
+}
+
+/**
+ * Set resource activation policy: global exception (when cwd is absent) or project override (when cwd is present).
+ * Fixed IPC command contract: set_resource_activation with payload { kind, identity, enabled, cwd? }.
+ * In preview fallback, persists faithfully to mock storage.
+ */
+export async function setResourceActivationPi(
+  payload: SetResourceActivationPayload,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<SetResourceActivationResult> {
+  if (!isTauri() && invokeFn === invoke) {
+    const storage =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage
+        : typeof localStorage !== 'undefined'
+          ? localStorage
+          : null;
+
+    const policy = getMockActivationPolicy(storage);
+
+    if (payload.cwd) {
+      applyMockProjectToggle(
+        storage,
+        payload.cwd,
+        payload.kind,
+        payload.identity,
+        payload.enabled,
+        policy
+      );
+      return { success: true };
+    } else {
+      if (payload.kind === 'mcp') {
+        const set = new Set(policy.alwaysMcpServers);
+        if (payload.enabled) {
+          set.add(payload.identity);
+        } else {
+          set.delete(payload.identity);
+        }
+        policy.alwaysMcpServers = Array.from(set);
+      } else {
+        const list = policy.alwaysExtensions.filter(
+          (s) => !extensionSourcesMatch(s, payload.identity) && s !== payload.identity
+        );
+        if (payload.enabled) {
+          list.push(payload.identity);
+        }
+        policy.alwaysExtensions = list;
+      }
+      saveMockActivationPolicy(storage, policy);
+      return { success: true };
+    }
+  }
+
+  return await invokeFn<SetResourceActivationResult>('set_resource_activation', {
+    payload,
+    kind: payload.kind,
+    identity: payload.identity,
+    enabled: payload.enabled,
+    cwd: payload.cwd,
+  });
+}
 
 /**
  * Fetch configured MCP servers from global (~/.pi/agent/mcp.json) and/or project configs via Tauri IPC.
@@ -955,29 +1251,87 @@ export async function getMcpServersPi(
   invokeFn = invoke
 ): Promise<McpServersPayload> {
   if (!isTauri() && invokeFn === invoke) {
-    try {
-      const storage =
-        typeof window !== 'undefined' && window.localStorage
-          ? window.localStorage
-          : typeof localStorage !== 'undefined'
-            ? localStorage
-            : null;
-      if (storage) {
-        const stored = storage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY);
-        if (stored) {
+    let servers: McpServerConfig[] = [];
+    const storage =
+      typeof window !== 'undefined' && window.localStorage
+        ? window.localStorage
+        : typeof localStorage !== 'undefined'
+          ? localStorage
+          : null;
+    if (storage) {
+      const stored = storage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+      if (stored) {
+        try {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) {
-            return { servers: parsed };
+            servers = parsed;
+          } else if (parsed && Array.isArray(parsed.servers)) {
+            servers = parsed.servers;
           }
-          if (parsed && Array.isArray(parsed.servers)) {
-            return parsed as McpServersPayload;
+        } catch {}
+      }
+    }
+
+    const policy = getMockActivationPolicy(storage);
+
+    if (cwd) {
+      const localProject = getMockProjectActivation(storage, cwd);
+      const projectKey = normalizeProjectKey(cwd);
+      const legacyProj = policy.projects[projectKey];
+
+      const mapped = servers.map((s) => {
+        const alwaysActive = policy.alwaysMcpServers.includes(s.name);
+        let enabled: boolean;
+        let hasProjectOverride = false;
+
+        if (localProject !== null) {
+          // Authoritative local store! Absence of keys masks stale legacy keys
+          const override = localProject.mcpServers?.[s.name];
+          if (typeof override === 'boolean') {
+            enabled = override;
+            hasProjectOverride = true;
+          } else if (alwaysActive) {
+            enabled = true;
+            hasProjectOverride = false;
+          } else {
+            enabled = false;
+            hasProjectOverride = false;
+          }
+        } else {
+          // Absent local store: fallback to legacy projects entry read-only
+          const override = legacyProj?.mcpServers?.[s.name];
+          if (typeof override === 'boolean') {
+            enabled = override;
+            hasProjectOverride = true;
+          } else if (alwaysActive) {
+            enabled = true;
+            hasProjectOverride = false;
+          } else {
+            // Defaults off per project!
+            enabled = false;
+            hasProjectOverride = false;
           }
         }
-      }
-    } catch {
-      // Fallback to empty mock
+
+        return {
+          ...s,
+          enabled,
+          disabled: !enabled,
+          hasProjectOverride,
+          alwaysActive,
+        };
+      });
+
+      return { servers: mapped };
     }
-    return { servers: [] };
+
+    return {
+      servers: servers.map((s) => ({
+        ...s,
+        alwaysActive: policy.alwaysMcpServers.includes(s.name),
+        hasProjectOverride: false,
+      })),
+    };
   }
 
   return await invokeFn<McpServersPayload>('get_mcp_servers', { cwd });
@@ -1033,6 +1387,17 @@ export async function toggleMcpServerPi(
             : null;
       if (storage) {
         storage.setItem(MOCK_MCP_SERVERS_STORAGE_KEY, JSON.stringify(current));
+        if (payload.cwd) {
+          const policy = getMockActivationPolicy(storage);
+          applyMockProjectToggle(
+            storage,
+            payload.cwd,
+            'mcp',
+            payload.name,
+            payload.enabled,
+            policy
+          );
+        }
       }
 
       return {
@@ -1178,6 +1543,20 @@ export async function saveMcpServerPi(
             : null;
       if (storage) {
         storage.setItem(MOCK_MCP_SERVERS_STORAGE_KEY, JSON.stringify(current));
+        if (payload.cwd) {
+          const policy = getMockActivationPolicy(storage);
+          applyMockProjectToggle(
+            storage,
+            payload.cwd,
+            'mcp',
+            targetName,
+            isEnabled,
+            policy
+          );
+          if (oldName && oldName !== targetName) {
+            removeMockProjectResource(storage, payload.cwd, 'mcp', oldName);
+          }
+        }
       }
 
       return {
@@ -1251,6 +1630,9 @@ export async function deleteMcpServerPi(
             : null;
       if (storage) {
         storage.setItem(MOCK_MCP_SERVERS_STORAGE_KEY, JSON.stringify(current));
+        if (payload.cwd) {
+          removeMockProjectResource(storage, payload.cwd, 'mcp', targetName);
+        }
       }
 
       return {
@@ -1312,18 +1694,51 @@ export async function getPiResources(
             : null;
       if (storage) {
         const raw = getRawMockPiResources(storage);
+        const policy = getMockActivationPolicy(storage);
         const globalResources = raw.filter((r) => r.scope !== 'project');
         const projectResources = raw.filter((r) => r.scope === 'project');
 
         if (cwd) {
+          const localProject = getMockProjectActivation(storage, cwd);
+          const projectKey = normalizeProjectKey(cwd);
+          const legacyProj = policy.projects[projectKey];
           const merged: PiResourceEntry[] = [];
           const matchedProjectIndices = new Set<number>();
 
           for (const g of globalResources) {
+            const isExt = g.kind === 'extension';
+            const alwaysActive = isExt
+              ? policy.alwaysExtensions.some(
+                  (s) => s === g.source || extensionSourcesMatch(s, g.source)
+                )
+              : false;
+
+            let policyOverride: boolean | undefined = undefined;
+            if (isExt) {
+              if (localProject !== null) {
+                // Authoritative local store! Absence of keys masks stale legacy keys
+                for (const [srcKey, val] of Object.entries(localProject.extensions)) {
+                  if (srcKey === g.source || extensionSourcesMatch(srcKey, g.source)) {
+                    policyOverride = val;
+                    break;
+                  }
+                }
+              } else if (legacyProj?.extensions) {
+                // Absent local store: legacy fallback read-only
+                for (const [srcKey, val] of Object.entries(legacyProj.extensions)) {
+                  if (srcKey === g.source || extensionSourcesMatch(srcKey, g.source)) {
+                    policyOverride = val;
+                    break;
+                  }
+                }
+              }
+            }
+
             const gCopy: PiResourceEntry = {
-              ...g,
+              ...ensureExtensionMetadata(g, cwd),
               globalEnabled: g.enabled,
               sourceScope: 'global',
+              alwaysActive,
             };
 
             const pIdx = projectResources.findIndex((p, idx) => {
@@ -1336,32 +1751,84 @@ export async function getPiResources(
 
             if (pIdx >= 0) {
               matchedProjectIndices.add(pIdx);
-              const p = projectResources[pIdx];
+              const p = ensureExtensionMetadata(projectResources[pIdx], cwd);
               gCopy.hasProjectOverride = true;
-              gCopy.enabled = p.enabled;
+              gCopy.enabled = typeof policyOverride === 'boolean' ? policyOverride : p.enabled;
               const gIsFile =
                 gCopy.configPath.endsWith('.ts') || gCopy.configPath.endsWith('.js');
               if (p.configPath && !gIsFile) {
                 gCopy.configPath = p.configPath;
               }
+              if (p.extensionDir) gCopy.extensionDir = p.extensionDir;
+              if (p.extensionPath) gCopy.extensionPath = p.extensionPath;
               if (p.autoload !== undefined) gCopy.autoload = p.autoload;
               if (p.filters !== undefined) gCopy.filters = p.filters;
               merged.push(gCopy);
             } else {
-              gCopy.hasProjectOverride = false;
-              gCopy.enabled = g.enabled;
+              if (isExt) {
+                if (typeof policyOverride === 'boolean') {
+                  gCopy.hasProjectOverride = true;
+                  gCopy.enabled = policyOverride;
+                } else if (alwaysActive) {
+                  gCopy.hasProjectOverride = false;
+                  gCopy.enabled = true;
+                } else {
+                  // Defaults off per project!
+                  gCopy.hasProjectOverride = false;
+                  gCopy.enabled = false;
+                }
+              } else {
+                // Packages retain existing behavior
+                gCopy.hasProjectOverride = false;
+                gCopy.enabled = g.enabled;
+              }
               merged.push(gCopy);
             }
           }
 
           for (let idx = 0; idx < projectResources.length; idx++) {
             if (!matchedProjectIndices.has(idx)) {
-              const p = projectResources[idx];
+              const p = ensureExtensionMetadata(projectResources[idx], cwd);
+              const isExt = p.kind === 'extension';
+              const alwaysActive = isExt
+                ? policy.alwaysExtensions.some(
+                    (s) => s === p.source || extensionSourcesMatch(s, p.source)
+                  )
+                : false;
+
+              let policyOverride: boolean | undefined = undefined;
+              if (isExt) {
+                if (localProject !== null) {
+                  for (const [srcKey, val] of Object.entries(localProject.extensions)) {
+                    if (srcKey === p.source || extensionSourcesMatch(srcKey, p.source)) {
+                      policyOverride = val;
+                      break;
+                    }
+                  }
+                } else if (legacyProj?.extensions) {
+                  for (const [srcKey, val] of Object.entries(legacyProj.extensions)) {
+                    if (srcKey === p.source || extensionSourcesMatch(srcKey, p.source)) {
+                      policyOverride = val;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              const effectiveEnabled =
+                typeof policyOverride === 'boolean'
+                  ? policyOverride
+                  : isExt
+                    ? (p.hasProjectOverride ? p.enabled : (alwaysActive ? true : false))
+                    : p.enabled;
+
               merged.push({
                 ...p,
                 scope: 'project',
                 sourceScope: 'project',
-                hasProjectOverride: false,
+                enabled: effectiveEnabled,
+                hasProjectOverride: typeof policyOverride === 'boolean' ? true : Boolean(p.hasProjectOverride),
+                alwaysActive,
               });
             }
           }
@@ -1371,10 +1838,16 @@ export async function getPiResources(
 
         return {
           resources: globalResources.map((g) => ({
-            ...g,
+            ...ensureExtensionMetadata(g),
             globalEnabled: g.enabled,
             sourceScope: 'global',
             hasProjectOverride: false,
+            alwaysActive:
+              g.kind === 'extension'
+                ? policy.alwaysExtensions.some(
+                    (s) => s === g.source || extensionSourcesMatch(s, g.source)
+                  )
+                : false,
           })),
         };
       }
@@ -1452,15 +1925,22 @@ export async function savePiResource(
 
     const id = normalizeResourceId(targetScope, payload.kind, cleanSource);
     const updatedEntry: PiResourceEntry = {
-      id,
-      name: deriveResourceName(payload.kind, cleanSource),
-      kind: payload.kind,
-      source: cleanSource,
-      scope: targetScope,
-      enabled,
-      configPath: targetPath,
-      raw: payload.raw,
-      autoload: payload.kind === 'package' ? enabled : undefined,
+      ...ensureExtensionMetadata(
+        {
+          id,
+          name: deriveResourceName(payload.kind, cleanSource),
+          kind: payload.kind,
+          source: cleanSource,
+          scope: targetScope,
+          enabled,
+          configPath: targetPath,
+          raw: payload.raw,
+          autoload: payload.kind === 'package' ? enabled : undefined,
+          extensionPath: payload.extensionPath,
+          extensionDir: payload.extensionDir,
+        },
+        payload.cwd
+      ),
     };
 
     if (existingIndex >= 0) {
@@ -1474,6 +1954,17 @@ export async function savePiResource(
         MOCK_PI_RESOURCES_STORAGE_KEY,
         JSON.stringify({ resources: raw })
       );
+      if (payload.cwd && targetScope === 'project' && payload.kind === 'extension') {
+        const policy = getMockActivationPolicy(storage);
+        applyMockProjectToggle(
+          storage,
+          payload.cwd,
+          'extension',
+          cleanSource,
+          enabled,
+          policy
+        );
+      }
     }
 
     return {
@@ -1537,6 +2028,7 @@ export async function togglePiResource(
       let resultId: string;
       let resultConfigPath: string;
 
+      let isRemovedExclusion = false;
       if (existingProjectIndex >= 0) {
         const existingProject = raw[existingProjectIndex];
         const isAutoOrGlobal =
@@ -1556,6 +2048,7 @@ export async function togglePiResource(
           resultId = existingProject.id;
           resultConfigPath = existingProject.configPath;
           raw.splice(existingProjectIndex, 1);
+          isRemovedExclusion = true;
         } else {
           existingProject.enabled = payload.enabled;
           if (payload.kind === 'package') {
@@ -1570,14 +2063,19 @@ export async function togglePiResource(
         const id = normalizeResourceId('project', payload.kind, cleanTarget);
         const configPath = `${payload.cwd}/.pi/settings.json`;
         const newProjectEntry: PiResourceEntry = {
-          id,
-          name: deriveResourceName(payload.kind, cleanTarget),
-          kind: payload.kind,
-          source: cleanTarget,
-          scope: 'project',
-          enabled: payload.enabled,
-          configPath,
-          autoload: payload.kind === 'package' ? payload.enabled : undefined,
+          ...ensureExtensionMetadata(
+            {
+              id,
+              name: deriveResourceName(payload.kind, cleanTarget),
+              kind: payload.kind,
+              source: cleanTarget,
+              scope: 'project',
+              enabled: payload.enabled,
+              configPath,
+              autoload: payload.kind === 'package' ? payload.enabled : undefined,
+            },
+            payload.cwd
+          ),
           hasProjectOverride: true,
         };
         raw.push(newProjectEntry);
@@ -1590,6 +2088,21 @@ export async function togglePiResource(
           MOCK_PI_RESOURCES_STORAGE_KEY,
           JSON.stringify({ resources: raw })
         );
+        if (payload.kind === 'extension' && payload.cwd) {
+          const policy = getMockActivationPolicy(storage);
+          if (isRemovedExclusion) {
+            removeMockProjectResource(storage, payload.cwd, 'extension', cleanTarget);
+          } else {
+            applyMockProjectToggle(
+              storage,
+              payload.cwd,
+              'extension',
+              cleanTarget,
+              payload.enabled,
+              policy
+            );
+          }
+        }
       }
 
       return {
@@ -1697,6 +2210,9 @@ export async function deletePiResource(
         MOCK_PI_RESOURCES_STORAGE_KEY,
         JSON.stringify({ resources: raw })
       );
+      if (payload.cwd && payload.kind === 'extension') {
+        removeMockProjectResource(storage, payload.cwd, 'extension', cleanTarget);
+      }
     }
 
     return {

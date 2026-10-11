@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   McpServerConfig,
   McpServerScope,
+  SetResourceActivationPayload,
+  SetResourceActivationResult,
   ToggleMcpServerPayload,
   ToggleMcpServerResult,
 } from '@core/types/mcp';
-import { getMcpServersPi, toggleMcpServerPi } from '@infra/bridge';
+import { getMcpServersPi, setResourceActivationPi, toggleMcpServerPi } from '@infra/bridge';
 import { calculateToggledServerState, computeMcpServerCounts } from '../mcp-utils';
 
 export interface UseMcpServersOptions {
@@ -19,6 +21,7 @@ export interface UseMcpServersResult {
   totalCount: number;
   handleToggleServer: (server: McpServerConfig, enabled: boolean, scope?: McpServerScope) => Promise<void>;
   handleToggleProjectServer: (server: McpServerConfig, enabled: boolean) => Promise<void>;
+  handleToggleAlwaysActive: (server: McpServerConfig, alwaysActive: boolean) => Promise<void>;
   refreshServers: () => Promise<void>;
 }
 
@@ -57,6 +60,62 @@ export interface ExecuteMcpToggleResult {
   nextServers: McpServerConfig[];
   success: boolean;
   error?: string;
+}
+
+export interface ExecuteMcpAlwaysActiveToggleOptions {
+  servers: McpServerConfig[];
+  server: McpServerConfig;
+  alwaysActive: boolean;
+  activationFn?: (payload: SetResourceActivationPayload) => Promise<SetResourceActivationResult>;
+}
+
+export interface ExecuteMcpAlwaysActiveToggleResult {
+  nextServers: McpServerConfig[];
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Optimistically toggles always-active global exception and calls bridge activation.
+ */
+export async function executeMcpAlwaysActiveToggle({
+  servers,
+  server,
+  alwaysActive,
+  activationFn = setResourceActivationPi,
+}: ExecuteMcpAlwaysActiveToggleOptions): Promise<ExecuteMcpAlwaysActiveToggleResult> {
+  const optimisticServers = servers.map((s) =>
+    s.name === server.name ? { ...s, alwaysActive } : s
+  );
+
+  try {
+    const res = await activationFn({
+      kind: 'mcp',
+      identity: server.name,
+      enabled: alwaysActive,
+      cwd: undefined,
+    });
+
+    if (!res.success) {
+      return {
+        nextServers: servers,
+        success: false,
+        error: `Failed to update always-active exception for MCP server "${server.name}"`,
+      };
+    }
+
+    return {
+      nextServers: optimisticServers,
+      success: true,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      nextServers: servers,
+      success: false,
+      error: message,
+    };
+  }
 }
 
 /**
@@ -159,9 +218,94 @@ export function useMcpServers({ cwd }: UseMcpServersOptions = {}): UseMcpServers
 
   const handleToggleProjectServer = useCallback(
     async (server: McpServerConfig, enabled: boolean) => {
-      return handleToggleServer(server, enabled, cwd ? 'project' : server.scope);
+      if (cwd) {
+        setServers((prev) =>
+          prev.map((s) =>
+            s.name === server.name
+              ? { ...s, enabled, disabled: !enabled, hasProjectOverride: true }
+              : s
+          )
+        );
+
+        try {
+          const res = await setResourceActivationPi({
+            kind: 'mcp',
+            identity: server.name,
+            enabled,
+            cwd,
+          });
+
+          if (!res.success) {
+            setServers((prev) =>
+              prev.map((s) =>
+                s.name === server.name
+                  ? {
+                      ...s,
+                      enabled: server.enabled,
+                      disabled: server.disabled,
+                      hasProjectOverride: server.hasProjectOverride,
+                    }
+                  : s
+              )
+            );
+            throw new Error(`Failed to update project activation for MCP server "${server.name}"`);
+          }
+        } catch (err) {
+          setServers((prev) =>
+            prev.map((s) =>
+              s.name === server.name
+                ? {
+                    ...s,
+                    enabled: server.enabled,
+                    disabled: server.disabled,
+                    hasProjectOverride: server.hasProjectOverride,
+                  }
+                : s
+            )
+          );
+          throw err;
+        }
+      } else {
+        await handleToggleServer(server, enabled, 'global');
+      }
     },
     [handleToggleServer, cwd]
+  );
+
+  const handleToggleAlwaysActive = useCallback(
+    async (server: McpServerConfig, alwaysActive: boolean) => {
+      setServers((prev) =>
+        prev.map((s) => (s.name === server.name ? { ...s, alwaysActive } : s))
+      );
+
+      try {
+        const res = await setResourceActivationPi({
+          kind: 'mcp',
+          identity: server.name,
+          enabled: alwaysActive,
+          cwd: undefined,
+        });
+
+        if (!res.success) {
+          setServers((prev) =>
+            prev.map((s) =>
+              s.name === server.name ? { ...s, alwaysActive: server.alwaysActive } : s
+            )
+          );
+          throw new Error(
+            `Failed to update always-active exception for MCP server "${server.name}"`
+          );
+        }
+      } catch (err) {
+        setServers((prev) =>
+          prev.map((s) =>
+            s.name === server.name ? { ...s, alwaysActive: server.alwaysActive } : s
+          )
+        );
+        throw err;
+      }
+    },
+    []
   );
 
   const { total: totalCount, active: activeCount } = useMemo(
@@ -176,6 +320,7 @@ export function useMcpServers({ cwd }: UseMcpServersOptions = {}): UseMcpServers
     totalCount,
     handleToggleServer,
     handleToggleProjectServer,
+    handleToggleAlwaysActive,
     refreshServers,
   };
 }

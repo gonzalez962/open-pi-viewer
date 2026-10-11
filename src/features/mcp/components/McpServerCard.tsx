@@ -6,6 +6,8 @@ export interface McpServerCardProps {
   server: McpServerConfig;
   onToggle: (server: McpServerConfig, nextEnabled: boolean) => void;
   isToggling?: boolean;
+  onToggleAlwaysActive?: (server: McpServerConfig, nextAlwaysActive: boolean) => void;
+  isTogglingAlwaysActive?: boolean;
   onEdit?: (server: McpServerConfig) => void;
   onDelete?: (server: McpServerConfig) => void;
   isDeleting?: boolean;
@@ -18,6 +20,8 @@ export const McpServerCard: React.FC<McpServerCardProps> = ({
   server,
   onToggle,
   isToggling = false,
+  onToggleAlwaysActive,
+  isTogglingAlwaysActive = false,
   onEdit,
   onDelete,
   isDeleting = false,
@@ -67,6 +71,11 @@ export const McpServerCard: React.FC<McpServerCardProps> = ({
             >
               {typeLabel}
             </span>
+            {server.alwaysActive && (
+              <span className="mcp-badge mcp-badge-always-active">
+                {t('mcp.badge_always_active')}
+              </span>
+            )}
           </div>
         </div>
 
@@ -93,6 +102,29 @@ export const McpServerCard: React.FC<McpServerCardProps> = ({
               <span className="mcp-toggle-slider" aria-hidden="true" />
             </label>
           </div>
+
+          {onToggleAlwaysActive && (
+            <div className="mcp-always-active-area">
+              <label
+                className={`mcp-always-active-label ${isTogglingAlwaysActive ? 'mcp-toggling' : ''}`}
+                htmlFor={`mcp-always-${server.scope}-${server.name}`}
+              >
+                <span className="mcp-always-active-text">
+                  {t('mcp.always_activate_label')}
+                </span>
+                <input
+                  id={`mcp-always-${server.scope}-${server.name}`}
+                  type="checkbox"
+                  className="mcp-toggle-checkbox mcp-always-checkbox"
+                  checked={Boolean(server.alwaysActive)}
+                  disabled={isToggling || isDeleting || isTogglingAlwaysActive}
+                  aria-label={`${server.name}: ${t('mcp.always_activate_label')}`}
+                  onChange={() => onToggleAlwaysActive(server, !server.alwaysActive)}
+                />
+                <span className="mcp-toggle-slider" aria-hidden="true" />
+              </label>
+            </div>
+          )}
 
           {onEdit && (
             <button

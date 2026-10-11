@@ -967,8 +967,24 @@ pub async fn save_model_thinking_levels(levels: Value) -> Result<Value, String> 
     save_model_thinking_levels_impl(&path, &levels)
 }
 
+#[cfg(test)]
+static GLOBAL_MCP_FILE_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+#[cfg(test)]
+pub fn set_global_mcp_config_path_override_for_test(path: Option<PathBuf>) {
+    let mut guard = GLOBAL_MCP_FILE_OVERRIDE.write().unwrap();
+    *guard = path;
+}
+
 /// Resolves canonical path to `mcp.json` under `$USERPROFILE` / `$HOME` / `.pi/agent/mcp.json`.
 pub fn resolve_global_mcp_config_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(guard) = GLOBAL_MCP_FILE_OVERRIDE.read() {
+        if let Some(ref p) = *guard {
+            return Some(p.clone());
+        }
+    }
+
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)?;
@@ -979,7 +995,8 @@ pub fn resolve_global_mcp_config_path() -> Option<PathBuf> {
 /// Resolves project-level MCP config path checking in order:
 /// 1. `cwd.join(".pi").join("mcp.json")` if exists
 /// 2. `cwd.join(".mcp.json")` if exists
-/// 3. `cwd.join(".agents").join("mcp.json")` if exists
+/// 3. `cwd.join("mcp-adapter.json")` if exists
+/// 4. `cwd.join(".agents").join("mcp.json")` if exists
 /// Defaults to `cwd.join(".pi").join("mcp.json")` if `cwd.join(".pi").is_dir()`, else `cwd.join(".mcp.json")`.
 pub fn resolve_project_mcp_config_path(cwd: &Path) -> Option<PathBuf> {
     let pi_mcp = cwd.join(".pi").join("mcp.json");
@@ -990,6 +1007,11 @@ pub fn resolve_project_mcp_config_path(cwd: &Path) -> Option<PathBuf> {
     let root_mcp = cwd.join(".mcp.json");
     if root_mcp.exists() {
         return Some(root_mcp);
+    }
+
+    let adapter_mcp = cwd.join("mcp-adapter.json");
+    if adapter_mcp.exists() {
+        return Some(adapter_mcp);
     }
 
     let agents_mcp = cwd.join(".agents").join("mcp.json");
@@ -1004,8 +1026,22 @@ pub fn resolve_project_mcp_config_path(cwd: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Parses MCP server definitions from a configuration file.
-fn parse_mcp_servers_from_file(path: &Path, scope: &str) -> Result<Vec<Value>, String> {
+/// Resolves recognized project MCP config candidates in priority order:
+/// 1. `<cwd>/.pi/mcp.json`
+/// 2. `<cwd>/.mcp.json`
+/// 3. `<cwd>/mcp-adapter.json`
+/// 4. `<cwd>/.agents/mcp.json`
+pub fn resolve_project_mcp_candidates(cwd: &Path) -> Vec<PathBuf> {
+    vec![
+        cwd.join(".pi").join("mcp.json"),
+        cwd.join(".mcp.json"),
+        cwd.join("mcp-adapter.json"),
+        cwd.join(".agents").join("mcp.json"),
+    ]
+}
+
+/// Parses MCP server definitions from a configuration file, preserving complete raw definition fields.
+pub fn parse_mcp_servers_from_file(path: &Path, scope: &str) -> Result<Vec<Value>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
@@ -1037,6 +1073,13 @@ fn parse_mcp_servers_from_file(path: &Path, scope: &str) -> Result<Vec<Value>, S
             }
         }
     }
+    if let Some(obj) = root_obj.get("servers").and_then(|v| v.as_object()) {
+        for (name, def) in obj {
+            if !raw_servers.iter().any(|(n, _)| n == name) {
+                raw_servers.push((name.clone(), def.clone()));
+            }
+        }
+    }
 
     let config_path_str = path.to_string_lossy().to_string();
     let mut servers = Vec::new();
@@ -1051,14 +1094,6 @@ fn parse_mcp_servers_from_file(path: &Path, scope: &str) -> Result<Vec<Value>, S
             .get("command")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-
-        let args: Option<Vec<String>> = def_obj.get("args").and_then(|v| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-        });
 
         let url = def_obj
             .get("url")
@@ -1087,54 +1122,103 @@ fn parse_mcp_servers_from_file(path: &Path, scope: &str) -> Result<Vec<Value>, S
         };
         env_keys.sort();
 
-        let env_obj: Option<serde_json::Map<String, Value>> = def_obj
-            .get("env")
-            .and_then(|v| v.as_object())
-            .cloned();
-
-        let headers_obj: Option<serde_json::Map<String, Value>> = def_obj
-            .get("headers")
-            .and_then(|v| v.as_object())
-            .cloned();
-
         let is_disabled = def_obj.get("disabled") == Some(&Value::Bool(true))
             || def_obj.get("enabled") == Some(&Value::Bool(false));
         let is_enabled = !is_disabled;
 
-        servers.push(serde_json::json!({
-            "name": name,
-            "command": command,
-            "args": args,
-            "url": url,
-            "serverType": server_type,
-            "envKeys": env_keys,
-            "env": env_obj,
-            "headers": headers_obj,
-            "disabled": is_disabled,
-            "enabled": is_enabled,
-            "scope": scope,
-            "configPath": config_path_str,
-        }));
+        // Preserve COMPLETE raw values (cwd, timeouts, metadata, etc.)
+        let mut server_val = def.clone();
+        if let Some(obj) = server_val.as_object_mut() {
+            obj.insert("name".to_string(), Value::String(name));
+            if !obj.contains_key("serverType") {
+                obj.insert("serverType".to_string(), Value::String(server_type));
+            }
+            if !obj.contains_key("envKeys") {
+                obj.insert("envKeys".to_string(), Value::Array(env_keys.into_iter().map(Value::String).collect()));
+            }
+            obj.insert("disabled".to_string(), Value::Bool(is_disabled));
+            obj.insert("enabled".to_string(), Value::Bool(is_enabled));
+            obj.insert("scope".to_string(), Value::String(scope.to_string()));
+            obj.insert("configPath".to_string(), Value::String(config_path_str.clone()));
+            servers.push(server_val);
+        }
     }
 
     Ok(servers)
 }
 
-/// Reads global and project MCP configs if they exist, merges them with project precedence.
-pub fn get_mcp_servers_impl(
-    global_path: Option<&Path>,
-    project_path: Option<&Path>,
-) -> Result<Value, String> {
-    let global_servers = match global_path {
-        Some(p) => parse_mcp_servers_from_file(p, "global")?,
-        None => Vec::new(),
-    };
+/// Parses and merges project MCP servers from all recognized candidates in priority order,
+/// preserving complete raw definitions (cwd, timeouts, metadata, etc.) and alternate root metadata.
+pub fn parse_project_mcp_servers_from_candidates(
+    cwd: &Path,
+) -> Result<(Vec<Value>, serde_json::Map<String, Value>), String> {
+    let candidates = resolve_project_mcp_candidates(cwd);
+    let mut merged_servers: Vec<Value> = Vec::new();
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut alternate_metadata = serde_json::Map::new();
 
-    let project_servers = match project_path {
-        Some(p) => parse_mcp_servers_from_file(p, "project")?,
-        None => Vec::new(),
-    };
+    let target_mcp_file = cwd.join(".pi").join("mcp.json");
 
+    for candidate in candidates {
+        if candidate.exists() {
+            let content = std::fs::read_to_string(&candidate)
+                .map_err(|e| format!("Failed to read MCP config at {:?}: {}", candidate, e))?;
+            if content.trim().is_empty() {
+                continue;
+            }
+            let parsed: Value = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse MCP config at {:?}: {}", candidate, e))?;
+            let root_obj = parsed
+                .as_object()
+                .ok_or_else(|| format!("MCP config root at {:?} must be a JSON object", candidate))?;
+
+            if candidate != target_mcp_file {
+                for (k, v) in root_obj {
+                    if k != "mcpServers" && k != "mcp-servers" && k != "servers" && !alternate_metadata.contains_key(k) {
+                        alternate_metadata.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            let servers = parse_mcp_servers_from_file(&candidate, "project")?;
+            for s in servers {
+                let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let norm_name = name.to_lowercase().replace('_', "-");
+                if !seen_names.contains(&norm_name) {
+                    seen_names.insert(norm_name);
+                    merged_servers.push(s);
+                } else {
+                    // Precedence: higher precedence candidate wins, but if higher precedence
+                    // is only a partial override (no command and no url), merge fields
+                    if let Some(existing) = merged_servers.iter_mut().find(|e| {
+                        let n = e.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        n.to_lowercase().replace('_', "-") == norm_name
+                    }) {
+                        let has_cmd = existing.get("command").and_then(|v| v.as_str()).map_or(false, |s| !s.trim().is_empty());
+                        let has_url = existing.get("url").and_then(|v| v.as_str()).map_or(false, |s| !s.trim().is_empty());
+                        if !has_cmd && !has_url {
+                            if let (Some(dest_obj), Some(src_obj)) = (existing.as_object_mut(), s.as_object()) {
+                                for (k, v) in src_obj {
+                                    if !dest_obj.contains_key(k) {
+                                        dest_obj.insert(k.clone(), v.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((merged_servers, alternate_metadata))
+}
+
+/// Merges global and project MCP server lists respecting project overrides and preserving complete definitions.
+pub fn merge_mcp_servers_lists(
+    global_servers: Vec<Value>,
+    project_servers: Vec<Value>,
+) -> Vec<Value> {
     let mut merged: Vec<Value> = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
@@ -1159,43 +1243,28 @@ pub fn get_mcp_servers_impl(
                 .map(|m| !m.is_empty())
                 .unwrap_or(false);
 
-            let mut merged_server = g.clone();
+            let mut merged_server = p.clone();
 
-            if p_has_command {
-                merged_server["command"] = p.get("command").cloned().unwrap_or(Value::Null);
-                merged_server["args"] = p.get("args").cloned().unwrap_or(Value::Null);
-                if !p_has_url {
-                    merged_server["url"] = Value::Null;
-                    merged_server["headers"] = Value::Null;
-                }
-            }
-
-            if p_has_url {
-                merged_server["url"] = p.get("url").cloned().unwrap_or(Value::Null);
-                merged_server["headers"] = p.get("headers").cloned().unwrap_or(Value::Null);
-                if !p_has_command {
-                    merged_server["command"] = Value::Null;
-                    merged_server["args"] = Value::Null;
-                }
-            }
-
-            if p_has_env {
-                merged_server["env"] = p.get("env").cloned().unwrap_or(Value::Null);
-                merged_server["envKeys"] = p.get("envKeys").cloned().unwrap_or(Value::Array(Vec::new()));
-            }
-
-            if p_has_command || p_has_url {
-                merged_server["serverType"] = p.get("serverType").cloned().unwrap_or(Value::String("stdio".to_string()));
-                merged_server["scope"] = Value::String("project".to_string());
-                if let Some(cp) = p.get("configPath") {
-                    merged_server["configPath"] = cp.clone();
-                }
-            } else {
+            if !p_has_command && !p_has_url {
+                merged_server["command"] = g.get("command").cloned().unwrap_or(Value::Null);
+                merged_server["args"] = g.get("args").cloned().unwrap_or(Value::Null);
+                merged_server["url"] = g.get("url").cloned().unwrap_or(Value::Null);
+                merged_server["headers"] = g.get("headers").cloned().unwrap_or(Value::Null);
                 merged_server["scope"] = Value::String("global".to_string());
                 merged_server["hasProjectOverride"] = Value::Bool(true);
                 if let Some(cp) = g.get("configPath") {
                     merged_server["configPath"] = cp.clone();
                 }
+            } else {
+                merged_server["scope"] = Value::String("project".to_string());
+                if let Some(cp) = p.get("configPath") {
+                    merged_server["configPath"] = cp.clone();
+                }
+            }
+
+            if !p_has_env {
+                merged_server["env"] = g.get("env").cloned().unwrap_or(Value::Null);
+                merged_server["envKeys"] = g.get("envKeys").cloned().unwrap_or(Value::Array(Vec::new()));
             }
 
             merged_server["disabled"] = p.get("disabled").cloned().unwrap_or(Value::Bool(false));
@@ -1215,6 +1284,25 @@ pub fn get_mcp_servers_impl(
         }
     }
 
+    merged
+}
+
+/// Reads global and project MCP configs if they exist, merges them with project precedence.
+pub fn get_mcp_servers_impl(
+    global_path: Option<&Path>,
+    project_path: Option<&Path>,
+) -> Result<Value, String> {
+    let global_servers = match global_path {
+        Some(p) => parse_mcp_servers_from_file(p, "global")?,
+        None => Vec::new(),
+    };
+
+    let project_servers = match project_path {
+        Some(p) => parse_mcp_servers_from_file(p, "project")?,
+        None => Vec::new(),
+    };
+
+    let merged = merge_mcp_servers_lists(global_servers, project_servers);
     Ok(serde_json::json!({ "servers": merged }))
 }
 
@@ -1337,23 +1425,62 @@ fn server_exists_in_file(path: &Path, server_name: &str) -> bool {
             .map(|obj| obj.contains_key(server_name))
             .unwrap_or(false)
     };
-    has_in("mcpServers") || has_in("mcp-servers")
+    has_in("mcpServers") || has_in("mcp-servers") || has_in("servers")
 }
 
 /// Tauri command to get MCP servers from global and/or project configs.
 #[tauri::command]
 pub async fn get_mcp_servers(cwd: Option<String>) -> Result<Value, String> {
     let global_path = resolve_global_mcp_config_path();
-    let project_path = cwd.as_deref().and_then(|c| {
-        let trimmed = c.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            resolve_project_mcp_config_path(Path::new(trimmed))
-        }
-    });
+    let cwd_path = cwd.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(Path::new);
 
-    get_mcp_servers_impl(global_path.as_deref(), project_path.as_deref())
+    let global_servers = match global_path.as_deref() {
+        Some(p) => parse_mcp_servers_from_file(p, "global")?,
+        None => Vec::new(),
+    };
+
+    let project_servers = match cwd_path {
+        Some(dir) => parse_project_mcp_servers_from_candidates(dir)?.0,
+        None => Vec::new(),
+    };
+
+    let merged = merge_mcp_servers_lists(global_servers, project_servers);
+    let mut res = serde_json::json!({ "servers": merged });
+
+    // Decorate with resource activation policy
+    let activation_state = crate::resource_activation::load_resource_activation_state()?;
+
+    if let Some(servers) = res.get_mut("servers").and_then(|v| v.as_array_mut()) {
+        if let Some(dir) = cwd_path {
+            let scoped = crate::resource_activation::ScopedResourceActivationPolicy::from_global(
+                dir,
+                activation_state,
+            )?;
+            for server in servers {
+                let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let is_always = scoped.is_mcp_server_always_active(&name);
+                server["alwaysActive"] = Value::Bool(is_always);
+
+                let eff_enabled = scoped.is_mcp_effective_enabled(&name);
+                server["enabled"] = Value::Bool(eff_enabled);
+                server["disabled"] = Value::Bool(!eff_enabled);
+
+                if scoped.has_mcp_project_override(&name) {
+                    server["hasProjectOverride"] = Value::Bool(true);
+                } else if scoped.local.is_some() {
+                    server["hasProjectOverride"] = Value::Bool(false);
+                }
+            }
+        } else {
+            for server in servers {
+                let name = server.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let is_always = activation_state.is_mcp_server_always_active(&name);
+                server["alwaysActive"] = Value::Bool(is_always);
+            }
+        }
+    }
+
+    Ok(res)
 }
 
 /// Tauri command to toggle an MCP server on or off.
@@ -1369,6 +1496,13 @@ pub async fn toggle_mcp_server(
         return Err("Server name must not be empty".to_string());
     }
 
+    let is_global_scope = scope.as_deref().map(|s| s.trim().to_lowercase()) == Some("global".to_string());
+    let is_project_scope = scope.as_deref().map(|s| s.trim().to_lowercase()) == Some("project".to_string());
+
+    if is_project_scope && cwd.as_deref().map(str::trim).unwrap_or("").is_empty() {
+        return Err("Project scope requested, but no valid cwd provided".to_string());
+    }
+
     let global_path = resolve_global_mcp_config_path();
     let project_path = cwd.as_deref().and_then(|c| {
         let trimmed = c.trim();
@@ -1379,31 +1513,40 @@ pub async fn toggle_mcp_server(
         }
     });
 
-    let target_path = match scope.as_deref().map(|s| s.trim().to_lowercase()).as_deref() {
-        Some("project") => project_path
-            .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?,
-        Some("global") => global_path
-            .ok_or_else(|| "Could not resolve global MCP config path".to_string())?,
-        _ => {
+    if let Some(ref cwd_str) = cwd.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if !is_global_scope {
+            // Update resource activation policy
+            crate::resource_activation::atomic_update_activation(
+                "mcp",
+                server_name,
+                enabled,
+                Some(Path::new(cwd_str)),
+            )?;
+
+            // If explicit project scope requested or server exists in project config,
+            // also update project config file
             if let Some(ref p) = project_path {
-                if server_exists_in_file(p, server_name) {
-                    p.clone()
-                } else if let Some(ref g) = global_path {
-                    if server_exists_in_file(g, server_name) {
-                        g.clone()
-                    } else {
-                        g.clone()
-                    }
-                } else {
-                    p.clone()
+                if is_project_scope || server_exists_in_file(p, server_name) {
+                    let mut res = toggle_mcp_server_impl(p, server_name, enabled)?;
+                    res["enabled"] = Value::Bool(enabled);
+                    return Ok(res);
                 }
-            } else if let Some(ref g) = global_path {
-                g.clone()
-            } else {
-                return Err("Could not resolve any MCP config path".to_string());
             }
+
+            // Inherited global server or non-existing server in project scope:
+            // return policy early without writing to global file!
+            return Ok(serde_json::json!({
+                "success": true,
+                "name": server_name,
+                "enabled": enabled,
+                "path": project_path.map(|p| p.to_string_lossy().to_string()),
+            }));
         }
-    };
+    }
+
+    // Global toggle:
+    let target_path = global_path
+        .ok_or_else(|| "Could not resolve global MCP config path".to_string())?;
 
     toggle_mcp_server_impl(&target_path, server_name, enabled)
 }
@@ -1729,9 +1872,56 @@ pub async fn delete_mcp_server(
     delete_mcp_server_impl(&target_path, server_name)
 }
 
-/// Resolves project-level settings.json config path strictly as `<cwd>/.pi/settings.json`.
+/// Resolves project-level settings config path honoring `.pi/settings.json` precedence over root `.pi.json`.
 pub fn resolve_project_settings_config_path(cwd: &Path) -> PathBuf {
-    cwd.join(".pi").join("settings.json")
+    let pi_settings = cwd.join(".pi").join("settings.json");
+    if pi_settings.exists() {
+        return pi_settings;
+    }
+    let root_pi = cwd.join(".pi.json");
+    if root_pi.exists() {
+        return root_pi;
+    }
+    if cwd.join(".pi").is_dir() {
+        pi_settings
+    } else {
+        pi_settings
+    }
+}
+
+/// Resolves recognized project settings candidates in priority order:
+/// 1. `<cwd>/.pi/settings.json`
+/// 2. `<cwd>/.pi.json`
+pub fn resolve_project_settings_candidates(cwd: &Path) -> Vec<PathBuf> {
+    vec![
+        cwd.join(".pi").join("settings.json"),
+        cwd.join(".pi.json"),
+    ]
+}
+
+/// Parses and merges project extension and package resources from all recognized project settings candidates,
+/// honoring `.pi/settings.json` precedence over root `.pi.json`.
+pub fn parse_project_resources_from_candidates(cwd: &Path) -> Result<Vec<Value>, String> {
+    let candidates = resolve_project_settings_candidates(cwd);
+    let mut merged: Vec<Value> = Vec::new();
+    let mut seen_keys = std::collections::HashSet::new();
+
+    for candidate in candidates {
+        if candidate.exists() {
+            let res = parse_pi_resources_from_file(&candidate, "project")?;
+            for item in res {
+                let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                let source = item.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                let key = format!("{}:{}", kind.to_lowercase(), normalize_ext_for_matching(source));
+                if !seen_keys.contains(&key) {
+                    seen_keys.insert(key);
+                    merged.push(item);
+                }
+            }
+        }
+    }
+
+    Ok(merged)
 }
 
 /// Writes JSON atomically using a temporary file and platform-safe rename/replace semantics.
@@ -1962,7 +2152,7 @@ pub fn derive_resource_name(kind: &str, source: &str) -> String {
         let segs: Vec<&str> = clean.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
         if segs.len() >= 2 {
             let last = segs.last().copied().unwrap_or("");
-            if last == "index.ts" || last == "index.js" {
+            if last == "index.ts" || last == "index.js" || last == "index.mjs" {
                 let parent = segs[segs.len() - 2];
                 if parent != "extensions" && parent != "." {
                     return parent.to_string();
@@ -2108,8 +2298,38 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                     if clean_source.is_empty() {
                         continue;
                     }
-                    let name = derive_resource_name("extension", &clean_source);
+                    let mut name = derive_resource_name("extension", &clean_source);
+                    if name == "index.ts" || name == "index.js" || name == "index.mjs" {
+                        let parent_dir = if path.file_name().map_or(false, |f| f == "settings.json" || f == ".pi.json") {
+                            if let Some(p) = path.parent() {
+                                if p.file_name().map_or(false, |f| f == ".pi") {
+                                    p.parent().and_then(|pp| pp.file_name())
+                                } else {
+                                    p.file_name()
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            path.parent().and_then(|p| p.file_name())
+                        };
+                        if let Some(pname) = parent_dir.and_then(|f| f.to_str()).filter(|s| !s.is_empty()) {
+                            name = pname.to_string();
+                        }
+                    }
                     let id = normalize_resource_id(scope, "extension", &clean_source);
+                    let ext_path = crate::resource_activation::resolve_extension_runtime_path(
+                        path.parent().unwrap_or(path),
+                        path,
+                        &clean_source,
+                    );
+                    let ext_dir = if ext_path.is_file() {
+                        ext_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ext_path.clone())
+                    } else if ext_path.is_dir() {
+                        ext_path.clone()
+                    } else {
+                        ext_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ext_path.clone())
+                    };
                     resources.push(serde_json::json!({
                         "id": id,
                         "name": name,
@@ -2118,6 +2338,8 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                         "scope": scope,
                         "enabled": enabled,
                         "configPath": config_path_str,
+                        "extensionPath": ext_path.to_string_lossy().to_string(),
+                        "extensionDir": ext_dir.to_string_lossy().to_string(),
                         "raw": item.clone(),
                     }));
                 }
@@ -2139,8 +2361,43 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                             || obj.get("enabled") == Some(&Value::Bool(false))
                             || obj.get("autoload") == Some(&Value::Bool(false));
                         let enabled = !is_disabled;
-                        let name = derive_resource_name("extension", &clean_source);
+                        let declared_name = obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
+                        let mut name = declared_name.unwrap_or_else(|| derive_resource_name("extension", &clean_source));
+                        if name == "index.ts" || name == "index.js" || name == "index.mjs" {
+                            let parent_dir = if path.file_name().map_or(false, |f| f == "settings.json" || f == ".pi.json") {
+                                if let Some(p) = path.parent() {
+                                    if p.file_name().map_or(false, |f| f == ".pi") {
+                                        p.parent().and_then(|pp| pp.file_name())
+                                    } else {
+                                        p.file_name()
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                path.parent().and_then(|p| p.file_name())
+                            };
+                            if let Some(pname) = parent_dir.and_then(|f| f.to_str()).filter(|s| !s.is_empty()) {
+                                name = pname.to_string();
+                            }
+                        }
                         let id = normalize_resource_id(scope, "extension", &clean_source);
+                        let ext_path = crate::resource_activation::resolve_extension_runtime_path(
+                            path.parent().unwrap_or(path),
+                            path,
+                            &clean_source,
+                        );
+                        let ext_dir = if ext_path.is_file() {
+                            ext_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ext_path.clone())
+                        } else if ext_path.is_dir() {
+                            ext_path.clone()
+                        } else {
+                            ext_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ext_path.clone())
+                        };
                         resources.push(serde_json::json!({
                             "id": id,
                             "name": name,
@@ -2149,6 +2406,8 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                             "scope": scope,
                             "enabled": enabled,
                             "configPath": config_path_str,
+                            "extensionPath": ext_path.to_string_lossy().to_string(),
+                            "extensionDir": ext_dir.to_string_lossy().to_string(),
                             "raw": item.clone(),
                         }));
                     }
@@ -2194,7 +2453,12 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                             || obj.get("disabled") == Some(&Value::Bool(true))
                             || obj.get("enabled") == Some(&Value::Bool(false));
                         let enabled = !is_disabled;
-                        let name = derive_resource_name("package", clean_source);
+                        let declared_name = obj.get("name")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
+                        let name = declared_name.unwrap_or_else(|| derive_resource_name("package", clean_source));
                         let id = normalize_resource_id(scope, "package", clean_source);
 
                         let mut filters_map = serde_json::Map::new();
@@ -2270,11 +2534,13 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
         let entry_path = entry.path();
         if entry_path.is_file() {
             let fname = file_name.as_str();
-            if (fname.ends_with(".ts") || fname.ends_with(".js")) && !fname.ends_with(".d.ts") {
+            if (fname.ends_with(".ts") || fname.ends_with(".js") || fname.ends_with(".mjs")) && !fname.ends_with(".d.ts") {
                 let source = format!("extensions/{}", fname);
                 let name = derive_resource_name("extension", &source);
                 let id = normalize_resource_id(scope, "extension", &source);
                 let config_path = entry_path.to_string_lossy().to_string();
+                let ext_path = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
+                let ext_dir = dunce::canonicalize(extensions_dir).unwrap_or_else(|_| extensions_dir.to_path_buf());
                 resources.push(serde_json::json!({
                     "id": id,
                     "name": name,
@@ -2283,6 +2549,8 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
                     "scope": scope,
                     "enabled": true,
                     "configPath": config_path,
+                    "extensionPath": ext_path.to_string_lossy().to_string(),
+                    "extensionDir": ext_dir.to_string_lossy().to_string(),
                 }));
             }
         } else if entry_path.is_dir() {
@@ -2315,6 +2583,8 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
                                         let source = format!("extensions/{}/{}", dir_name, rel_norm);
                                         let id = normalize_resource_id(scope, "extension", &source);
                                         let file_path = entry_path.join(&rel_norm);
+                                        let ext_path = dunce::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
+                                        let ext_dir = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
                                         resources.push(serde_json::json!({
                                             "id": id,
                                             "name": pkg_name,
@@ -2323,6 +2593,8 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
                                             "scope": scope,
                                             "enabled": true,
                                             "configPath": file_path.to_string_lossy().to_string(),
+                                            "extensionPath": ext_path.to_string_lossy().to_string(),
+                                            "extensionDir": ext_dir.to_string_lossy().to_string(),
                                         }));
                                     }
                                 }
@@ -2335,10 +2607,13 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
             if !found_manifest_ext {
                 let index_ts = entry_path.join("index.ts");
                 let index_js = entry_path.join("index.js");
+                let index_mjs = entry_path.join("index.mjs");
                 let index_filename = if index_ts.is_file() {
                     Some("index.ts")
                 } else if index_js.is_file() {
                     Some("index.js")
+                } else if index_mjs.is_file() {
+                    Some("index.mjs")
                 } else {
                     None
                 };
@@ -2347,6 +2622,8 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
                     let source = format!("extensions/{}/{}", dir_name, idx_name);
                     let id = normalize_resource_id(scope, "extension", &source);
                     let file_path = entry_path.join(idx_name);
+                    let ext_path = dunce::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
+                    let ext_dir = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
                     let name = dir_name;
                     resources.push(serde_json::json!({
                         "id": id,
@@ -2356,6 +2633,8 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
                         "scope": scope,
                         "enabled": true,
                         "configPath": file_path.to_string_lossy().to_string(),
+                        "extensionPath": ext_path.to_string_lossy().to_string(),
+                        "extensionDir": ext_dir.to_string_lossy().to_string(),
                     }));
                 }
             }
@@ -2396,6 +2675,12 @@ pub fn merge_scope_resources(
             auto_ext["enabled"] = Value::Bool(exp_enabled);
             if let Some(raw) = exp.get("raw") {
                 auto_ext["raw"] = raw.clone();
+            }
+            if let Some(ep) = exp.get("extensionPath") {
+                auto_ext["extensionPath"] = ep.clone();
+            }
+            if let Some(ed) = exp.get("extensionDir") {
+                auto_ext["extensionDir"] = ed.clone();
             }
         }
 
@@ -2449,6 +2734,76 @@ pub fn is_autodiscovered_extension(target_path: &Path, source: &str) -> bool {
     false
 }
 
+/// Merges global resources and project resources into a unified list.
+pub fn merge_resources_sets(
+    global_resources: Vec<Value>,
+    project_resources: Vec<Value>,
+) -> Vec<Value> {
+    let mut merged: Vec<Value> = Vec::new();
+    let mut matched_project_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    for mut g in global_resources {
+        let kind = g.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let g_source = g.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let g_enabled = g.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        g["globalEnabled"] = Value::Bool(g_enabled);
+        g["sourceScope"] = Value::String("global".to_string());
+
+        // Find matching project resource if present
+        let match_pos = project_resources.iter().enumerate().find(|(idx, p)| {
+            if matched_project_indices.contains(idx) {
+                return false;
+            }
+            let p_kind = p.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let p_source = p.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            p_kind == kind && resource_identities_match(&kind, &g_source, p_source)
+        });
+
+        if let Some((p_idx, p)) = match_pos {
+            matched_project_indices.insert(p_idx);
+            let p_enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+            g["hasProjectOverride"] = Value::Bool(true);
+            g["enabled"] = Value::Bool(p_enabled);
+
+            let g_config_path = g.get("configPath").and_then(|v| v.as_str()).unwrap_or("");
+            let g_is_file = g_config_path.ends_with(".ts") || g_config_path.ends_with(".js") || g_config_path.ends_with(".mjs");
+            if !g_is_file {
+                if let Some(cp) = p.get("configPath") {
+                    g["configPath"] = cp.clone();
+                }
+            }
+            if let Some(ep) = p.get("extensionPath") {
+                g["extensionPath"] = ep.clone();
+            }
+            if let Some(ed) = p.get("extensionDir") {
+                g["extensionDir"] = ed.clone();
+            }
+            if let Some(al) = p.get("autoload") {
+                g["autoload"] = al.clone();
+            }
+            if let Some(filters) = p.get("filters") {
+                g["filters"] = filters.clone();
+            }
+            merged.push(g);
+        } else {
+            g["hasProjectOverride"] = Value::Bool(false);
+            merged.push(g);
+        }
+    }
+
+    for (p_idx, mut p) in project_resources.into_iter().enumerate() {
+        if !matched_project_indices.contains(&p_idx) {
+            p["hasProjectOverride"] = Value::Bool(false);
+            p["sourceScope"] = Value::String("project".to_string());
+            merged.push(p);
+        }
+    }
+
+    merged
+}
+
 /// Reads global and/or project settings and returns all configured extension and package resources.
 /// Merges global entries with project overrides (MCP pattern) so no duplicate cards are created.
 pub fn get_pi_resources_impl(
@@ -2490,62 +2845,49 @@ pub fn get_pi_resources_impl(
     let global_resources = merge_scope_resources(auto_global_extensions, explicit_global);
     let project_resources = merge_scope_resources(auto_project_extensions, explicit_project);
 
-    let mut merged: Vec<Value> = Vec::new();
-    let mut matched_project_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let merged = merge_resources_sets(global_resources, project_resources);
+    Ok(serde_json::json!({
+        "resources": merged
+    }))
+}
 
-    for mut g in global_resources {
-        let kind = g.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let g_source = g.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let g_enabled = g.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-
-        g["globalEnabled"] = Value::Bool(g_enabled);
-        g["sourceScope"] = Value::String("global".to_string());
-
-        // Find matching project resource if present
-        let match_pos = project_resources.iter().enumerate().find(|(idx, p)| {
-            if matched_project_indices.contains(idx) {
-                return false;
-            }
-            let p_kind = p.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            let p_source = p.get("source").and_then(|v| v.as_str()).unwrap_or("");
-            p_kind == kind && resource_identities_match(&kind, &g_source, p_source)
-        });
-
-        if let Some((p_idx, p)) = match_pos {
-            matched_project_indices.insert(p_idx);
-            let p_enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
-
-            g["hasProjectOverride"] = Value::Bool(true);
-            g["enabled"] = Value::Bool(p_enabled);
-
-            let g_config_path = g.get("configPath").and_then(|v| v.as_str()).unwrap_or("");
-            let g_is_file = g_config_path.ends_with(".ts") || g_config_path.ends_with(".js");
-            if !g_is_file {
-                if let Some(cp) = p.get("configPath") {
-                    g["configPath"] = cp.clone();
-                }
-            }
-            if let Some(al) = p.get("autoload") {
-                g["autoload"] = al.clone();
-            }
-            if let Some(filters) = p.get("filters") {
-                g["filters"] = filters.clone();
-            }
-            merged.push(g);
+/// Reads global and project settings candidates for a workspace directory, merging them with project precedence.
+pub fn get_pi_resources_for_workspace(
+    global_path: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Result<Value, String> {
+    let auto_global_extensions = if let Some(gp) = global_path {
+        if let Some(parent) = gp.parent() {
+            discover_extensions_in_dir(&parent.join("extensions"), "global")
         } else {
-            g["hasProjectOverride"] = Value::Bool(false);
-            merged.push(g);
+            Vec::new()
         }
-    }
+    } else if let Some(global_dir) = resolve_global_extensions_dir() {
+        discover_extensions_in_dir(&global_dir, "global")
+    } else {
+        Vec::new()
+    };
 
-    for (p_idx, mut p) in project_resources.into_iter().enumerate() {
-        if !matched_project_indices.contains(&p_idx) {
-            p["hasProjectOverride"] = Value::Bool(false);
-            p["sourceScope"] = Value::String("project".to_string());
-            merged.push(p);
-        }
-    }
+    let auto_project_extensions = if let Some(dir) = cwd {
+        discover_extensions_in_dir(&dir.join(".pi").join("extensions"), "project")
+    } else {
+        Vec::new()
+    };
 
+    let explicit_global = match global_path {
+        Some(p) => parse_pi_resources_from_file(p, "global")?,
+        None => Vec::new(),
+    };
+
+    let explicit_project = match cwd {
+        Some(dir) => parse_project_resources_from_candidates(dir)?,
+        None => Vec::new(),
+    };
+
+    let global_resources = merge_scope_resources(auto_global_extensions, explicit_global);
+    let project_resources = merge_scope_resources(auto_project_extensions, explicit_project);
+
+    let merged = merge_resources_sets(global_resources, project_resources);
     Ok(serde_json::json!({
         "resources": merged
     }))
@@ -2978,16 +3320,80 @@ pub fn delete_pi_resource_impl(
 #[tauri::command]
 pub async fn get_pi_resources(cwd: Option<String>) -> Result<Value, String> {
     let global_path = resolve_settings_config_path();
-    let project_path = cwd.as_deref().and_then(|c| {
-        let trimmed = c.trim();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(resolve_project_settings_config_path(Path::new(trimmed)))
-        }
-    });
+    let cwd_path = cwd.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(Path::new);
 
-    get_pi_resources_impl(global_path.as_deref(), project_path.as_deref())
+    let mut res = get_pi_resources_for_workspace(global_path.as_deref(), cwd_path)?;
+
+    // Decorate with resource activation policy
+    let activation_state = crate::resource_activation::load_resource_activation_state()?;
+
+    if let Some(resources) = res.get_mut("resources").and_then(|v| v.as_array_mut()) {
+        if let Some(dir) = cwd_path {
+            let scoped = crate::resource_activation::ScopedResourceActivationPolicy::from_global(
+                dir,
+                activation_state,
+            )?;
+            for resource in resources.iter_mut() {
+                let kind = resource.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                if kind == "extension" {
+                    let source = resource.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let is_always = scoped.is_extension_always_active(&source);
+                    resource["alwaysActive"] = Value::Bool(is_always);
+
+                    let eff_enabled = scoped.is_extension_effective_enabled(&source);
+                    resource["enabled"] = Value::Bool(eff_enabled);
+
+                    if scoped.has_extension_project_override(&source) {
+                        resource["hasProjectOverride"] = Value::Bool(true);
+                    } else if scoped.local.is_some() {
+                        resource["hasProjectOverride"] = Value::Bool(false);
+                    }
+                } else {
+                    resource["alwaysActive"] = Value::Bool(false);
+                }
+            }
+        } else {
+            for resource in resources.iter_mut() {
+                let kind = resource.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                if kind == "extension" {
+                    let source = resource.get("source").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let is_always = activation_state.is_extension_always_active(&source);
+                    resource["alwaysActive"] = Value::Bool(is_always);
+                } else {
+                    resource["alwaysActive"] = Value::Bool(false);
+                }
+            }
+        }
+
+        // Ensure extensionPath and extensionDir are populated on all extensions
+        for resource in resources.iter_mut() {
+            let kind = resource.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            if kind == "extension" {
+                if resource.get("extensionPath").is_none() || resource.get("extensionDir").is_none() {
+                    let source = resource.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                    let config_path_str = resource.get("configPath").and_then(|v| v.as_str()).unwrap_or("");
+                    let config_path = Path::new(config_path_str);
+                    let fallback_cwd = cwd_path.unwrap_or(config_path);
+                    let resolved = crate::resource_activation::resolve_extension_runtime_path(
+                        fallback_cwd,
+                        config_path,
+                        source,
+                    );
+                    let dir = if resolved.is_file() {
+                        resolved.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| resolved.clone())
+                    } else if resolved.is_dir() {
+                        resolved.clone()
+                    } else {
+                        resolved.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| resolved.clone())
+                    };
+                    resource["extensionPath"] = Value::String(resolved.to_string_lossy().to_string());
+                    resource["extensionDir"] = Value::String(dir.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Ok(res)
 }
 
 /// Tauri command to add or edit a Pi extension or package.
@@ -3024,7 +3430,7 @@ pub async fn save_pi_resource(
         }
     };
 
-    save_pi_resource_impl(
+    let res = save_pi_resource_impl(
         &target_path,
         &kind,
         &source,
@@ -3032,7 +3438,23 @@ pub async fn save_pi_resource(
         enabled,
         raw.as_ref(),
         final_scope,
-    )
+    )?;
+
+    if kind.trim().eq_ignore_ascii_case("extension") && enabled == Some(true) {
+        if let Some(ref cwd_str) = cwd {
+            let trimmed_cwd = cwd_str.trim();
+            if !trimmed_cwd.is_empty() && final_scope == "project" {
+                crate::resource_activation::atomic_update_activation(
+                    "extension",
+                    &source,
+                    true,
+                    Some(Path::new(trimmed_cwd)),
+                )?;
+            }
+        }
+    }
+
+    Ok(res)
 }
 
 /// Tauri command to toggle a Pi extension or package enabled/disabled state.
@@ -3077,7 +3499,58 @@ pub async fn toggle_pi_resource(
         }
     };
 
-    toggle_pi_resource_impl(&target_path, &kind, &source, enabled, final_scope)
+    let res = toggle_pi_resource_impl(&target_path, &kind, &source, enabled, final_scope)?;
+
+    if kind.trim().eq_ignore_ascii_case("extension") {
+        if let Some(ref cwd_str) = cwd {
+            let trimmed_cwd = cwd_str.trim();
+            let is_proj = final_scope == "project";
+            if !trimmed_cwd.is_empty() && is_proj {
+                crate::resource_activation::atomic_update_activation(
+                    "extension",
+                    &source,
+                    enabled,
+                    Some(Path::new(trimmed_cwd)),
+                )?;
+            }
+        }
+    }
+
+    Ok(res)
+}
+
+/// Tauri command to set resource activation (global exception or project override).
+/// Contract: { kind: 'extension' | 'mcp', identity: string, enabled: boolean, cwd?: string } -> { success: true }
+#[tauri::command]
+pub async fn set_resource_activation(
+    kind: String,
+    identity: String,
+    enabled: bool,
+    cwd: Option<String>,
+) -> Result<Value, String> {
+    let clean_kind = kind.trim().to_lowercase();
+    if clean_kind != "extension" && clean_kind != "mcp" {
+        return Err(format!("Invalid kind '{}'. Expected 'extension' or 'mcp'", kind));
+    }
+    let trimmed_id = identity.trim();
+    if trimmed_id.is_empty() {
+        return Err("Identity must not be empty".to_string());
+    }
+
+    let cwd_path = cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(Path::new);
+
+    crate::resource_activation::atomic_update_activation(
+        &clean_kind,
+        trimmed_id,
+        enabled,
+        cwd_path,
+    )?;
+
+    Ok(serde_json::json!({ "success": true }))
 }
 
 /// Tauri command to delete a Pi extension or package from settings.

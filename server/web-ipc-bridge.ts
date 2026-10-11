@@ -41,7 +41,29 @@ export {
   clearEngramCacheForTest,
 } from './bridge/engram';
 
-export { getMcpServersImpl, getPiResourcesImpl, getAvailableModelsImpl } from './bridge/models';
+export {
+  loadResourceActivationPolicy,
+  saveResourceActivationPolicy,
+  loadProjectResourceActivation,
+  saveProjectResourceActivation,
+  getProjectResourceActivationPath,
+  setResourceActivation,
+  normalizeProjectCwd,
+  getEffectiveExtensionActivation,
+  getEffectiveMcpActivation,
+  materializeProjectMcpEnforcement,
+  computeRpcStartupArgs,
+  setPiAgentDirForTest,
+  getPiAgentDir,
+} from './bridge/resource-activation';
+
+export {
+  getMcpServersImpl,
+  getPiResourcesImpl,
+  getAvailableModelsImpl,
+  handleToggleMcpServer,
+  handleTogglePiResource,
+} from './bridge/models';
 
 import {
   handlePickDirectory,
@@ -103,7 +125,12 @@ import {
   handleGetMcpServers,
   handleToggleMcpServer,
   handleGetPiResources,
+  handleTogglePiResource,
 } from './bridge/models';
+
+import {
+  setResourceActivation,
+} from './bridge/resource-activation';
 
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
@@ -178,9 +205,13 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'get_mcp_servers':
       return handleGetMcpServers(args);
     case 'toggle_mcp_server':
-      return handleToggleMcpServer(args);
+      return await handleToggleMcpServer(args.payload || args);
     case 'get_pi_resources':
       return handleGetPiResources(args);
+    case 'toggle_pi_resource':
+      return await handleTogglePiResource(args.payload || args);
+    case 'set_resource_activation':
+      return await setResourceActivation(args.payload || args);
     case 'get_builtin_oauth_providers':
       return oauthManager.list(context.oauthOwner);
     case 'start_oauth_login':

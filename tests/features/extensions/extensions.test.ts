@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   getPiResources,
   savePiResource,
+  setResourceActivationPi,
   togglePiResource,
   deletePiResource,
   MOCK_PI_RESOURCES_STORAGE_KEY,
@@ -126,6 +127,8 @@ test('extensions domain: deriveResourceName extracts human-readable labels', () 
   assert.equal(deriveResourceName('extension', 'extensions/cpamc-auto-switcher/index.ts'), 'cpamc-auto-switcher');
   assert.equal(deriveResourceName('extension', 'cpamc-auto-switcher/index.ts'), 'cpamc-auto-switcher');
   assert.equal(deriveResourceName('extension', 'extensions/cpamc-auto-switcher/index.js'), 'cpamc-auto-switcher');
+  assert.equal(deriveResourceName('extension', 'extensions/cpamc-auto-switcher/index.mjs'), 'cpamc-auto-switcher');
+  assert.equal(deriveResourceName('extension', 'cpamc-auto-switcher/index.mjs'), 'cpamc-auto-switcher');
   assert.equal(deriveResourceName('extension', 'extensions/my-tool.ts'), 'my-tool.ts');
   assert.equal(deriveResourceName('extension', 'my-tool.ts'), 'my-tool.ts');
   assert.equal(deriveResourceName('extension', 'extensions/index.ts'), 'index.ts');
@@ -476,6 +479,12 @@ test('extensions bridge: preview fallback mock storage granular per-project over
       scope: 'global',
       enabled: true,
     });
+    // Set global always-active exception so extension is active by default across projects
+    await setResourceActivationPi({
+      kind: 'extension',
+      identity: './tools/linter.ts',
+      enabled: true,
+    });
 
     // 2. Query with cwd: both are returned as global with hasProjectOverride: false
     const initialProjectList = await getPiResources('/my-workspace');
@@ -572,6 +581,12 @@ test('extensions bridge: preview fallback mock storage auto-discovered extension
       MOCK_PI_RESOURCES_STORAGE_KEY,
       JSON.stringify({ resources: [autoExt] })
     );
+    // Set global always-active exception for auto-discovered extension
+    await setResourceActivationPi({
+      kind: 'extension',
+      identity: 'extensions/cpamc-auto-switcher/index.ts',
+      enabled: true,
+    });
 
     // 1. Initial query: auto-discovered extension is enabled, no project override
     const initialList = await getPiResources('/project-workspace');

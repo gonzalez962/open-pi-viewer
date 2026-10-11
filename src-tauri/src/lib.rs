@@ -4,6 +4,7 @@ mod tray_activity;
 pub mod commands;
 pub mod framing;
 pub mod process;
+pub mod resource_activation;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -85,6 +86,7 @@ pub fn run() {
             commands::save_pi_resource,
             commands::toggle_pi_resource,
             commands::delete_pi_resource,
+            commands::set_resource_activation,
             commands::pick_directory,
             commands::browse_filesystem,
             commands::get_sdd_profiles,
