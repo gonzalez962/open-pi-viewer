@@ -31,7 +31,14 @@ test('web MCP deletion removes only the requested global definition and preserve
     assert.deepEqual(result, { success: true, name: 'selected', path: global });
     assert.deepEqual(f.read(global), { metadata: 'keep', mcpServers: { other: { command: 'other' } } });
     assert.equal(fs.readFileSync(project, 'utf8'), projectBefore);
-    assert.deepEqual((await handleIpcCommand('get_mcp_servers', {})).servers.map((s: any) => s.name), ['other']);
+    // Use the isolated agent directory as a project with no project MCP configuration.
+    const globalListing = await handleIpcCommand('get_mcp_servers', { cwd: f.agent });
+    assert.deepEqual(globalListing.servers.map((s: any) => s.name), ['other']);
+    const projectListing = await handleIpcCommand('get_mcp_servers', { cwd: f.project });
+    assert.deepEqual(projectListing.servers.map((s: any) => s.name).sort(), ['other', 'selected']);
+    const preserved = projectListing.servers.find((s: any) => s.name === 'selected');
+    assert.equal(preserved.scope, 'project');
+    assert.equal(preserved.configPath, project);
   } finally { f.cleanup(); }
 });
 
