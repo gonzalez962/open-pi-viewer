@@ -108,8 +108,8 @@ export function resolveWebAuthConfig(
     secureCookie = rawSecure.trim() === 'true';
   }
 
-  const turnstileSiteKey = env.PI_VIEWER_TURNSTILE_SITE_KEY?.trim() || undefined;
-  const turnstileSecretKey = env.PI_VIEWER_TURNSTILE_SECRET_KEY?.trim() || undefined;
+  const turnstileSiteKey = enabled ? env.PI_VIEWER_TURNSTILE_SITE_KEY?.trim() || undefined : undefined;
+  const turnstileSecretKey = enabled ? env.PI_VIEWER_TURNSTILE_SECRET_KEY?.trim() || undefined : undefined;
   validateTurnstileConfig(enabled, turnstileSiteKey, turnstileSecretKey);
   return {
     enabled,
@@ -233,8 +233,8 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
   const cookieName = options.cookieName || DEFAULT_WEB_AUTH_COOKIE_NAME;
   const sessionTtlMs = options.sessionTtlMs || DEFAULT_WEB_AUTH_SESSION_TTL_MS;
   const nowFn = options.now || (() => Date.now());
-  const turnstileSiteKey = options.turnstileSiteKey?.trim() || undefined;
-  const turnstileSecretKey = options.turnstileSecretKey?.trim() || undefined;
+  const turnstileSiteKey = isEnabled ? options.turnstileSiteKey?.trim() || undefined : undefined;
+  const turnstileSecretKey = isEnabled ? options.turnstileSecretKey?.trim() || undefined : undefined;
   validateTurnstileConfig(isEnabled, turnstileSiteKey, turnstileSecretKey);
   const attemptLimit = options.rateLimitMaxAttempts || DEFAULT_RATE_LIMIT_ATTEMPTS;
   const attemptWindow = options.rateLimitWindowMs || DEFAULT_RATE_LIMIT_WINDOW_MS;

@@ -206,7 +206,7 @@ PI_VIEWER_AUTH_KEY=replace-with-a-secure-random-passphrase
 PI_VIEWER_AUTH_SECURE_COOKIE=false
 
 # Optional paired Cloudflare Turnstile bot protection for the web login gate.
-# Requires PI_VIEWER_AUTH_ENABLED=true. Startup fails if enabled without web auth or if keys are unpaired.
+# Ignored when PI_VIEWER_AUTH_ENABLED=false. With auth enabled, both keys must be paired.
 # The site key is public and delivered via GET /api/auth/status to render the widget.
 # PI_VIEWER_TURNSTILE_SITE_KEY=0x4AAAAAAAbcdef123456789
 
@@ -219,7 +219,7 @@ PI_VIEWER_AUTH_SECURE_COOKIE=false
 
 When exposing the web viewer to the internet, you can optionally configure Cloudflare Turnstile to defend the login gate against automated credential attacks:
 
-- **Paired Keys & Auth Prerequisite**: `PI_VIEWER_TURNSTILE_SITE_KEY` and `PI_VIEWER_TURNSTILE_SECRET_KEY` must be configured together. Both require `PI_VIEWER_AUTH_ENABLED=true`. Setting only one or enabling Turnstile without web auth fails server startup immediately.
+- **Paired Keys & Auth Prerequisite**: With `PI_VIEWER_AUTH_ENABLED=true`, `PI_VIEWER_TURNSTILE_SITE_KEY` and `PI_VIEWER_TURNSTILE_SECRET_KEY` must be configured together; an unpaired key fails startup. When web authentication is disabled, Turnstile settings are ignored (including unpaired keys), no challenge is required, and no Siteverify request is made.
 - **Local Test Keys**: Cloudflare's published dummy site key `1x00000000000000000000AA` and secret `1x0000000000000000000000000000000AA` can be used on `localhost`, `127.0.0.1`, or `::1`. Dummy responses omit production action/hostname bindings; only these exact public test secrets and the official dummy token receive local test compatibility. Upstream success, access-key validation, and attempt limits still apply. Never use dummy keys for a deployed service; use real keys with the configured domain. Restart the server after changing keys.
 - **Server-Only Secret**: `PI_VIEWER_TURNSTILE_SECRET_KEY` is consumed exclusively by the server worker during siteverify. Never prefix it with `VITE_` or expose it in client code or build outputs.
 - **Cloudflare Hostname & Reverse Proxy Preservation**: Configure your domain in the Cloudflare Turnstile dashboard. Reverse proxies (e.g. Nginx, Caddy) must preserve the original `Host` header including non-default ports (e.g. `proxy_set_header Host $http_host;`), as existing same-origin checks validate `Host` against `Origin`/`Referer`, and server siteverify strictly validates that Cloudflare's verified `hostname` matches the request's parsed `Host` hostname (port ignored).
