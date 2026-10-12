@@ -46,6 +46,21 @@ npm run tauri dev
 
 > **Note on Portable Environment Discovery**: Pi Viewer discovers your Pi CLI entrypoint and project directory across platforms without assuming workstation-specific hardcoded paths. On initial launch, the application awaits host discovery before connecting; if configuration is unconfigured or ambiguous, actionable diagnostics prompt you to review settings. Valid saved settings are preserved in `localStorage`, and the **Settings** panel includes environment detection and directory browsing.
 
+## Run the web service from a production build
+
+Requires Node.js 22.9 or newer. You manage the Pi CLI, MCP tools, credentials, and other external dependencies separately.
+
+```bash
+npm run build
+npm run start
+```
+
+`build` produces the frontend in `dist/` and the compiled Node backend in `dist-server/`. `start` runs that backend directly with Node, without Vite's development server, HMR, or a TypeScript runtime. Keep both build directories together. The default address is `0.0.0.0:5173`; use `HOST` and `PORT` environment variables to change it.
+
+The existing authentication, IPC, OAuth, and SSE routes are shared with development mode. `start` loads `.env` from the project root before initializing the backend. Variables already defined in the process environment take precedence. The file is optional; Vite-specific `.env.local` and mode files are not loaded by `start`. For a public VPS, enable the existing web authentication and use HTTPS. See [web authentication](docs/web-oauth.md). Pi and its tools run as the service's OS user and retain that user's filesystem permissions. Restarting the service interrupts running Pi sessions.
+
+`npm run preview` remains a frontend-only preview, not the service startup command.
+
 ## Architecture & Verification Status
 
 | Area | Implementation | Verified Status |
@@ -191,7 +206,7 @@ When exposing Pi Viewer over an external domain or untrusted network (beyond int
 
 ### Environment Configuration
 
-Configure these variables in your server environment or `.env` file (loaded server-only by Vite):
+Configure these variables in your server environment or project-root `.env` file (loaded server-only by both `dev` and `start`):
 
 ```bash
 # Strict "true" or "false" (default: false). When false, web authentication is disabled.
