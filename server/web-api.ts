@@ -4,6 +4,8 @@ import { handleIpcCommand, addSseClient, removeSseClient } from './web-ipc-bridg
 import { createOAuthAccess } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
 import { createWebAuth, type WebAuthConfig } from './bridge/web-auth';
+import { createWebPush, resolveWebPushConfig, type WebPushConfig } from './bridge/web-push';
+import { addPushNotificationHook } from './bridge/rpc';
 
 export type Middleware = (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void) => void | Promise<void>;
 export interface MiddlewareApp {
@@ -11,17 +13,59 @@ export interface MiddlewareApp {
   use(route: string, handler: Middleware): void;
 }
 
-export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, authConfig: WebAuthConfig) {
+export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, authConfig: WebAuthConfig, pushConfig: WebPushConfig = resolveWebPushConfig()) {
   const webAuth = createWebAuth(authConfig);
   const oauthAccess = createOAuthAccess();
+  const activeWebAuthSseClients = new Map<string, Set<ServerResponse>>();
+
+  const isOwnerConnected = (owner: string): boolean => {
+    if (!owner || !webAuth.isEnabled()) return false;
+    if (!webAuth.validateOwnerLease(owner)) {
+      activeWebAuthSseClients.delete(owner);
+      return false;
+    }
+    const clients = activeWebAuthSseClients.get(owner);
+    if (!clients || clients.size === 0) return false;
+    for (const clientRes of [...clients]) {
+      if (clientRes.writableEnded || clientRes.destroyed) {
+        clients.delete(clientRes);
+      }
+    }
+    if (clients.size === 0) {
+      activeWebAuthSseClients.delete(owner);
+      return false;
+    }
+    return true;
+  };
+
+  const webPush = createWebPush({
+    webAuth,
+    config: pushConfig,
+    isOwnerConnected,
+  });
+
+  const unsubscribePush = addPushNotificationHook((event) => {
+    void webPush.dispatchPushEvent(event);
+  });
 
   server?.once("close", () => {
+    unsubscribePush();
+    activeWebAuthSseClients.clear();
+    webPush.dispose();
     webAuth.dispose();
     void oauthManager.dispose();
   });
 
   // Web authentication middleware must be wired BEFORE all API routes
   app.use(webAuth.middleware);
+
+  app.use("/api/push/config", (req, res) => {
+    void webPush.handleConfig(req, res);
+  });
+
+  app.use("/api/push/subscriptions", (req, res) => {
+    void webPush.handleSubscriptions(req, res);
+  });
 
   app.use("/api/oauth/authorize", (req, res) => {
     if (req.method !== "POST" || !req.headers["content-type"]?.startsWith("application/json")) {
@@ -58,9 +102,35 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     res.write("data: {}\n\n");
     const owner = oauthAccess.authenticate(req) ?? undefined;
     addSseClient(res, owner, () => Boolean(owner && oauthAccess.validateOwnerLease(owner)));
-    req.on("close", () => {
+
+    const webAuthOwner = webAuth.isEnabled() ? webAuth.authenticate(req) : null;
+    if (webAuthOwner) {
+      let clients = activeWebAuthSseClients.get(webAuthOwner);
+      if (!clients) {
+        clients = new Set<ServerResponse>();
+        activeWebAuthSseClients.set(webAuthOwner, clients);
+      }
+      clients.add(res);
+    }
+
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       removeSseClient(res);
-    });
+      if (webAuthOwner) {
+        const clients = activeWebAuthSseClients.get(webAuthOwner);
+        if (clients) {
+          clients.delete(res);
+          if (clients.size === 0) {
+            activeWebAuthSseClients.delete(webAuthOwner);
+          }
+        }
+      }
+    };
+
+    req.on("close", cleanup);
+    res.on("close", cleanup);
   });
 
   app.use("/api/engram-daemon", async (req, res) => {

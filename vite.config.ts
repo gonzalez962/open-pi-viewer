@@ -4,14 +4,15 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { installWebApi } from "./server/web-api";
 import { resolveWebAuthConfig, type WebAuthConfig } from "./server/bridge/web-auth";
+import { resolveWebPushConfig, type WebPushConfig } from "./server/bridge/web-push";
 
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
-function piWebIpcPlugin(authConfig: WebAuthConfig): Plugin {
+function piWebIpcPlugin(authConfig: WebAuthConfig, pushConfig: WebPushConfig): Plugin {
   return {
     name: "pi-web-ipc-bridge",
     configureServer(server) {
-      installWebApi(server.middlewares, server.httpServer, authConfig);
+      installWebApi(server.middlewares, server.httpServer, authConfig, pushConfig);
     },
   };
 }
@@ -21,9 +22,10 @@ export default defineConfig(({ mode = "development" }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const mergedEnv = { ...env, ...process.env };
   const authConfig = resolveWebAuthConfig(mergedEnv);
+  const pushConfig = resolveWebPushConfig(mergedEnv);
 
   return {
-    plugins: [react(), piWebIpcPlugin(authConfig)],
+    plugins: [react(), piWebIpcPlugin(authConfig, pushConfig)],
     clearScreen: false,
     resolve: {
       alias: {

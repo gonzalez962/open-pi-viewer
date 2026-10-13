@@ -96,6 +96,8 @@ import {
 } from '@features/chat/hooks/useExtensionUiDialog';
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 import { usePreferences } from '@features/settings/hooks/usePreferences';
+import { useWebPush } from '@features/settings/hooks/useWebPush';
+import { DEFAULT_NOTIFICATION_PREFERENCES } from '@core/notifications';
 import { useConnection } from '@features/settings/hooks/useConnection';
 import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
@@ -382,6 +384,25 @@ export const App: React.FC = () => {
     applyWorkingDirectory,
     onActivateProject: handleActivateProject,
   });
+
+  const webPush = useWebPush({
+    preferences: preferences.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES,
+    language: preferences.language,
+    projects: projectsRegistry.projects,
+  });
+  const handleSystemNotificationsToggle = async (enabled: boolean) => {
+    const result = await (enabled ? webPush.enable() : webPush.disable());
+    if (!result.ok && result.status !== 'unsupported' && result.status !== 'unavailable') {
+      throw new Error(result.error || t('settings.web_push_error'));
+    }
+  };
+
+  const handleEnrollBrowser = async () => {
+    const result = await webPush.enable();
+    if (!result.ok || result.status !== 'subscribed') {
+      throw new Error(result.error || t(`settings.web_push_${result.status}`));
+    }
+  };
 
   const projectsRegistryRef = useRef(projectsRegistry);
   projectsRegistryRef.current = projectsRegistry;
@@ -1284,6 +1305,9 @@ export const App: React.FC = () => {
                 onThemeChange={handleThemeChange}
                 onLanguageChange={handleLanguageChange}
                 onNotificationsChange={setNotifications}
+                onSystemNotificationsToggle={handleSystemNotificationsToggle}
+                onEnrollBrowser={handleEnrollBrowser}
+                webPushStatus={webPush.isSupported ? webPush.status : undefined}
                 onCustomCommandsChange={setCustomCommands}
                 onHiddenCommandIdsChange={setHiddenCommandIds}
                 appearanceController={appearanceController}

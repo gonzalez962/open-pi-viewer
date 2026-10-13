@@ -48,6 +48,7 @@ export interface SseClientRecord {
 export interface WebAuthInstance {
   isEnabled: () => boolean;
   authenticate: (req: IncomingMessage | any) => string | null;
+  validateOwnerLease: (owner: string) => boolean;
   handleStatus: (req: IncomingMessage | any, res: ServerResponse | any) => void;
   handleLogin: (req: IncomingMessage | any, res: ServerResponse | any, directBody?: any) => Promise<void>;
   handleLogout: (req: IncomingMessage | any, res: ServerResponse | any) => void;
@@ -608,9 +609,14 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
     return oauthAccess.getSessionsCount();
   };
 
+  const validateOwnerLease = (owner: string): boolean => {
+    return oauthAccess.validateOwnerLease(owner);
+  };
+
   return {
     isEnabled: isEnabledFn,
     authenticate,
+    validateOwnerLease,
     handleStatus,
     handleLogin,
     handleLogout,

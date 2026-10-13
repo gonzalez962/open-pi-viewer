@@ -17,6 +17,7 @@ import type { CustomProviderConfig } from '@core/types/providers';
 import { detectGentleShellPi, pickDirectoryPi, type DetectGentleShellPayload, type DetectGentleShellResult } from '@infra/bridge';
 import type { AppearanceLifecycleController } from '@features/settings/appearance';
 import { SettingsSelect } from './components/SettingsSelect';
+import { WebPushEnrollmentModal } from './components/WebPushEnrollmentModal';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
 import { ThemeCustomizer } from './components/ThemeCustomizer';
 import { COMMANDS, type CustomCommand } from '@core/commands';
@@ -31,6 +32,9 @@ export interface SettingsViewProps {
   onThemeChange: (theme: AppTheme) => void;
   onLanguageChange: (lang: SupportedLocale) => void;
   onNotificationsChange?: (partial: Partial<NotificationPreferences>) => void;
+  onSystemNotificationsToggle?: (enabled: boolean) => Promise<void>;
+  onEnrollBrowser?: () => Promise<void>;
+  webPushStatus?: 'unsupported' | 'unavailable' | 'denied' | 'subscribed' | 'unsubscribed' | 'error';
   /** Persists the user's custom slash commands (Issue #9 T7). Section hidden when absent. */
   onCustomCommandsChange?: (commands: CustomCommand[]) => void;
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
@@ -61,6 +65,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onThemeChange,
   onLanguageChange,
   onNotificationsChange,
+  onSystemNotificationsToggle,
+  onEnrollBrowser,
+  webPushStatus,
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
   settingsError,
@@ -114,6 +121,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionStatus>('default');
   const [notificationBusy, setNotificationBusy] = useState(false);
   const [notificationNotice, setNotificationNotice] = useState<string | null>(null);
+  const [enrollmentOpen, setEnrollmentOpen] = useState(false);
+  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
+  const canEnrollBrowser = Boolean(onSystemNotificationsToggle && webPushStatus &&
+    webPushStatus !== 'unsupported' && webPushStatus !== 'subscribed');
+  const openEnrollment = () => { setEnrollmentError(null); setEnrollmentOpen(true); };
 
   useEffect(() => {
     let active = true;
@@ -124,12 +136,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, []);
 
   const handleNotificationsToggle = async (enabled: boolean) => {
+    if (enabled && canEnrollBrowser) { openEnrollment(); return; }
     onNotificationsChange?.({ enabled });
-    if (!enabled) return;
     setNotificationBusy(true);
     setNotificationNotice(null);
-    try { setNotificationPermission(await requestNotificationPermission()); }
-    finally { setNotificationBusy(false); }
+    try {
+      if (enabled) setNotificationPermission(await requestNotificationPermission());
+      await onSystemNotificationsToggle?.(enabled);
+    } catch (error) {
+      setNotificationNotice(error instanceof Error ? error.message : String(error));
+    } finally { setNotificationBusy(false); }
+  };
+
+  const handleEnrollBrowser = async () => {
+    setNotificationBusy(true);
+    setEnrollmentError(null);
+    try {
+      // Confirmation is the explicit permission/enrollment gesture.
+      setNotificationPermission(await requestNotificationPermission());
+      if (onEnrollBrowser) await onEnrollBrowser();
+      else await onSystemNotificationsToggle?.(true);
+      onNotificationsChange?.({ enabled: true });
+      setEnrollmentOpen(false);
+    } catch (error) {
+      setEnrollmentError(error instanceof Error ? error.message : String(error));
+    } finally { setNotificationBusy(false); }
   };
 
   const handleDetectGentleShell = async () => {
@@ -438,6 +469,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {t('settings.notifications_permission_label')}: {t(`settings.notifications_permission_${notificationPermission}`)}
           </p>
           <p className="field-subtext">{t('settings.notifications_permission_help')}</p>
+          {webPushStatus && <p role="status" aria-live="polite">{t(`settings.web_push_${webPushStatus}`)}</p>}
+          {onSystemNotificationsToggle && webPushStatus && webPushStatus !== 'unsupported' && (
+            <button type="button" className="btn btn-secondary btn-sm" data-testid="web-push-enroll"
+              disabled={notificationBusy || webPushStatus === 'subscribed'} onClick={openEnrollment}>
+              {t(webPushStatus === 'subscribed' ? 'settings.web_push_registered' : 'settings.web_push_enroll_button')}
+            </button>
+          )}
           {notificationNotice && <p role="status" aria-live="polite">{notificationNotice}</p>}
 
           <div className="notifications-grid">
@@ -908,6 +946,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {renderMcp(() => setActiveTab('general'))}
         </div>
       )}
+
+      <WebPushEnrollmentModal isOpen={enrollmentOpen} pending={notificationBusy} error={enrollmentError}
+        t={t} onConfirm={() => { void handleEnrollBrowser(); }} onCancel={() => setEnrollmentOpen(false)} />
 
       {activeTab === 'extensions' && renderExtensions && (
         <div className="settings-tab-pane" role="tabpanel" aria-label={t('settings.tab_extensions')}>

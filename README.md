@@ -69,7 +69,7 @@ In **Settings → Notifications**, use the **Enable system notifications** switc
 - **Tauri:** uses the official native notification plugin while the app is running, including when hidden in the tray. Desktop popup sound is controlled by OS notification settings, not the app's sound toggle; the app avoids adding a second audio tone. On Windows, verify notification behavior with the installed application, not only development mode.
 - **Blocked permissions:** change browser or system permissions and return to Settings to refresh status. Permission requests occur only after turning on the switch or clicking **Test notification**. A successful test means submission, not proof that the system displayed it.
 
-Closing the browser or quitting the desktop app stops this notification path. Web Push, service workers, and notifications after shutdown are not included. Native desktop notification clicks are not guaranteed to reopen a specific session; use the tray to reopen the app.
+These in-page alerts require the viewer to be open. For browser/mobile delivery with the page closed while the server keeps Pi running, see [Web Push setup](docs/web-push.md). Web Push uses the same notification switch and project naming, with per-device subscriptions and authorization expiry. Native desktop notification clicks are not guaranteed to reopen a specific session; use the tray to reopen the app.
 
 ## Architecture & Verification Status
 

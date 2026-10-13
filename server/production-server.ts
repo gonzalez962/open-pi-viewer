@@ -89,7 +89,7 @@ export function createProductionServer(options: { staticDir: string; authConfig:
     res.writeHead(200, {
       'Content-Type': contentTypes[path.extname(file).toLowerCase()] || 'application/octet-stream',
       'Content-Length': fs.statSync(file).size,
-      'Cache-Control': file === indexFile ? 'no-cache' : 'public, max-age=3600',
+      'Cache-Control': file === indexFile || pathname === '/push-sw.js' ? 'no-cache' : 'public, max-age=3600',
       'X-Content-Type-Options': 'nosniff',
     });
     if (req.method === 'HEAD') { res.end(); return; }
