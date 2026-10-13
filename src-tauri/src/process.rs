@@ -254,8 +254,8 @@ pub struct StatusChangePayload {
 pub fn build_pi_args(
     entrypoint: &Path,
     session_file: Option<&Path>,
-    authorized_extensions: &[PathBuf],
-    has_authorized_mcp: bool,
+    _authorized_extensions: &[PathBuf],
+    _has_authorized_mcp: bool,
 ) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> = Vec::new();
     args.push(entrypoint.as_os_str().to_os_string());
@@ -263,22 +263,8 @@ pub fn build_pi_args(
     args.push("rpc".into());
     args.push("--approve".into());
 
-    // Scoped activation invariant: disable automatic extension discovery
-    args.push("--no-extensions".into());
-
-    // Explicitly load authorized extensions
-    for ext in authorized_extensions {
-        args.push("-e".into());
-        args.push(ext.as_os_str().to_os_string());
-    }
-
-    // Load builtin:mcp only when an MCP server is authorized; --no-mcp when none
-    if has_authorized_mcp {
-        args.push("-e".into());
-        args.push("builtin:mcp".into());
-    } else {
-        args.push("--no-mcp".into());
-    }
+    // Native shallow activation: built-in extensions and MCP adapters load naturally.
+    // Stop hardcoded --no-extensions, synthetic -e whitelist, --no-mcp and forced builtin:mcp.
 
     if let Some(sf) = session_file {
         args.push("--session".into());
@@ -1239,9 +1225,9 @@ mod tests {
         assert!(args_str.contains(&"rpc".to_string()));
         assert!(args_str.contains(&"--approve".to_string()));
 
-        // Scoped invariant: disable extension discovery and disable mcp by default
-        assert!(args_str.contains(&"--no-extensions".to_string()));
-        assert!(args_str.contains(&"--no-mcp".to_string()));
+        // Scoped shallow invariant: stop hardcoded --no-extensions, --no-mcp, synthetic -e and builtin:mcp
+        assert!(!args_str.contains(&"--no-extensions".to_string()));
+        assert!(!args_str.contains(&"--no-mcp".to_string()));
         assert!(!args_str.contains(&"--no-skills".to_string()));
         assert!(!args_str.contains(&"--no-prompt-templates".to_string()));
         assert!(!args_str.contains(&"--no-context-files".to_string()));
@@ -1272,20 +1258,10 @@ mod tests {
             .expect("--session must be present");
         assert_eq!(args_session_str[s_idx + 1], "/home/user/.pi/session.json");
 
-        assert!(args_session_str.contains(&"--no-extensions".to_string()));
+        assert!(!args_session_str.contains(&"--no-extensions".to_string()));
         assert!(!args_session_str.contains(&"--no-mcp".to_string()));
-
-        // Verify authorized extensions and builtin:mcp loaded via -e
-        let e_indices: Vec<usize> = args_session_str
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| *s == "-e")
-            .map(|(i, _)| i)
-            .collect();
-        assert_eq!(e_indices.len(), 3);
-        assert_eq!(args_session_str[e_indices[0] + 1], "/mock/ext/a.ts");
-        assert_eq!(args_session_str[e_indices[1] + 1], "/mock/ext/b.ts");
-        assert_eq!(args_session_str[e_indices[2] + 1], "builtin:mcp");
+        assert!(!args_session_str.contains(&"-e".to_string()));
+        assert!(!args_session_str.contains(&"builtin:mcp".to_string()));
     }
 
     #[test]

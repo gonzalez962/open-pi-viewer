@@ -1,14 +1,14 @@
-//! Project resource activation policy and enforcement (ODD Spec odd/tasks/resource-activation.md).
+//! Project resource activation policy and enforcement (ODD Spec odd/tasks/shallow-resource-activation.md).
 //!
 //! Stores viewer activation policy in `~/.pi/agent/viewer-resource-activation.json`:
 //! `{ version: 1, alwaysExtensions: string[], alwaysMcpServers: string[], projects: { [absoluteCwd]: { extensions: { [source]: bool }, mcpServers: { [name]: bool } } } }`.
 //!
-//! - Missing policy defaults off per project.
+//! - Missing policy defaults to native enabled per project.
 //! - Global exceptions ("always active") enable a resource across all projects.
 //! - Project explicit booleans take precedence over global exceptions.
-//! - At startup, extension auto-discovery is disabled with `--no-extensions`, and only authorized extensions are loaded with `-e <path>`.
-//! - MCP server effective states are materialized in `<cwd>/.pi/mcp.json`.
-//! - If an MCP server is authorized, `builtin:mcp` is loaded via `-e builtin:mcp`; otherwise `--no-mcp` is passed.
+//! - At startup, native Pi discovery and builtins load naturally without CLI suppression.
+//! - Explicit supported extension OFF states are migrated to native settings filters.
+//! - MCP server effective states are materialized only for explicit supported overrides in `<cwd>/.pi/mcp.json`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -173,7 +173,7 @@ impl ScopedResourceActivationPolicy {
         } else if self.is_extension_always_active(source) {
             true
         } else {
-            false
+            true
         }
     }
 
@@ -195,7 +195,7 @@ impl ScopedResourceActivationPolicy {
         } else if self.is_mcp_server_always_active(name) {
             true
         } else {
-            false
+            true
         }
     }
 }
@@ -381,26 +381,26 @@ impl ResourceActivationState {
     }
 
     /// Evaluates effective activation for an extension in a project:
-    /// project override > always-on exception > false (default inactive).
+    /// project override > always-on exception > true (default native enabled).
     pub fn is_extension_effective_enabled(&self, canonical_cwd: &str, source: &str) -> bool {
         if let Some(explicit) = self.get_project_extension_override(canonical_cwd, source) {
             explicit
         } else if self.is_extension_always_active(source) {
             true
         } else {
-            false
+            true
         }
     }
 
     /// Evaluates effective activation for an MCP server in a project:
-    /// project override > always-on exception > false (default inactive).
+    /// project override > always-on exception > true (default native enabled).
     pub fn is_mcp_effective_enabled(&self, canonical_cwd: &str, name: &str) -> bool {
         if let Some(explicit) = self.get_project_mcp_override(canonical_cwd, name) {
             explicit
         } else if self.is_mcp_server_always_active(name) {
             true
         } else {
-            false
+            true
         }
     }
 }
@@ -471,6 +471,9 @@ pub fn update_resource_activation(
 /// Resolves an extension's runtime path from its source string and owning config path.
 pub fn resolve_extension_runtime_path(cwd: &Path, config_path: &Path, source: &str) -> PathBuf {
     let clean_source = source.trim().strip_prefix("./").unwrap_or(source.trim());
+    if clean_source.starts_with("builtin:") {
+        return PathBuf::from(clean_source);
+    }
     let path_obj = Path::new(clean_source);
     if path_obj.is_absolute() {
         return path_obj.to_path_buf();
@@ -535,45 +538,174 @@ pub fn enforce_startup_resources_with_paths(
 ) -> Result<(Vec<PathBuf>, bool), String> {
     let scoped_policy = ScopedResourceActivationPolicy::from_global(cwd, policy.clone())?;
 
-    // 1. MCP enforcement
+    // 1. MCP enforcement (only explicit supported overrides, no copy of globals or alternates)
     let has_authorized_mcp = materialize_project_mcp_enforcement(
         cwd,
         &scoped_policy,
         global_mcp_path,
     )?;
 
-    // 2. Extensions enforcement
+    // 2. Query workspace inventory roots to accurately match top-level extensions (no slash counting or phantom migration)
     let ext_res = crate::commands::config_files::get_pi_resources_for_workspace(
         global_settings_path,
         Some(cwd),
     )?;
 
-    let mut authorized_extensions = Vec::new();
-    if let Some(resources) = ext_res.get("resources").and_then(|v| v.as_array()) {
-        for res in resources {
-            let kind = res.get("kind").and_then(|v| v.as_str()).unwrap_or("");
-            if !kind.eq_ignore_ascii_case("extension") {
-                continue;
-            }
-            let source = res.get("source").and_then(|v| v.as_str()).unwrap_or("");
-            if source.is_empty() {
-                continue;
-            }
+    let inventory_resources = ext_res
+        .get("resources")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
 
-            if scoped_policy.is_extension_effective_enabled(source) {
-                let config_path_str = res.get("configPath").and_then(|v| v.as_str()).unwrap_or("");
-                let config_path = Path::new(config_path_str);
-                let resolved = resolve_extension_runtime_path(cwd, config_path, source);
-                authorized_extensions.push(resolved);
+    // 3. Migration of explicit top-level local/legacy extension OFF states to native settings filters,
+    // plus applicable known inventory always_extensions positives as fallback when no explicit project override.
+    let mut explicit_ext_overrides: Vec<(String, bool)> = Vec::new();
+    if let Some(ref loc) = scoped_policy.local {
+        for (k, &v) in &loc.extensions {
+            explicit_ext_overrides.push((k.clone(), v));
+        }
+    } else if let Some(legacy_proj) = scoped_policy.global.projects.get(&scoped_policy.canonical_cwd) {
+        for (k, &v) in &legacy_proj.extensions {
+            explicit_ext_overrides.push((k.clone(), v));
+        }
+    }
+
+    // Include applicable known inventory always_extensions positives as fallback only when no explicit matching project override
+    for always_ext in &scoped_policy.global.always_extensions {
+        let has_proj_override = explicit_ext_overrides.iter().any(|(src, _)| {
+            crate::commands::config_files::extension_sources_match(src, always_ext)
+        });
+        if !has_proj_override {
+            explicit_ext_overrides.push((always_ext.clone(), true));
+        }
+    }
+
+    if !explicit_ext_overrides.is_empty() {
+        let proj_settings_path = cwd.join(".pi").join("settings.json");
+        let mut settings_val = if proj_settings_path.exists() {
+            let content = std::fs::read_to_string(&proj_settings_path)
+                .map_err(|e| format!("Failed to read project settings at {:?}: {}", proj_settings_path, e))?;
+            if content.trim().is_empty() {
+                serde_json::json!({})
+            } else {
+                serde_json::from_str(&content)
+                    .map_err(|e| format!("Failed to parse project settings at {:?}: {}", proj_settings_path, e))?
             }
+        } else {
+            serde_json::json!({})
+        };
+
+        if let Some(settings_obj) = settings_val.as_object_mut() {
+            if !settings_obj.contains_key("extensions") {
+                settings_obj.insert("extensions".to_string(), Value::Array(Vec::new()));
+            }
+            if let Some(ext_arr) = settings_obj.get_mut("extensions").and_then(|v| v.as_array_mut()) {
+                let mut mutated = false;
+                for (source, enabled) in explicit_ext_overrides {
+                    let clean = source.trim();
+                    let is_builtin = clean.starts_with("builtin:");
+
+                    // Find matching real inventory resource (skip nonexistent policy phantoms)
+                    let matched_res = inventory_resources.iter().find(|r| {
+                        let r_kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let r_src = r.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        r_kind.eq_ignore_ascii_case("extension") && crate::commands::config_files::extension_sources_match(r_src, clean)
+                    });
+
+                    if matched_res.is_none() && !is_builtin {
+                        // Not a real workspace inventory resource; do NOT migrate phantom!
+                        continue;
+                    }
+
+                    let (plain_entry, mask_str) = if is_builtin {
+                        (clean.to_string(), format!("-{}", clean))
+                    } else {
+                        let res = matched_res.unwrap();
+                        let ext_path_str = res.get("extensionPath").and_then(|v| v.as_str()).unwrap_or("");
+                        let ext_dir_str = res.get("extensionDir").and_then(|v| v.as_str()).unwrap_or("");
+                        let path_obj = Path::new(ext_path_str);
+                        let dir_obj = Path::new(ext_dir_str);
+
+                        let is_dir = (dir_obj.is_dir() && !path_obj.is_file()) || path_obj.is_dir();
+                        let canonical_path = if is_dir {
+                            dunce::canonicalize(dir_obj).unwrap_or_else(|_| dir_obj.to_path_buf())
+                        } else {
+                            dunce::canonicalize(path_obj).unwrap_or_else(|_| path_obj.to_path_buf())
+                        };
+                        let posix_path = canonical_path.to_string_lossy().replace('\\', "/");
+
+                        if is_dir {
+                            (posix_path.clone(), format!("!{}/**", posix_path))
+                        } else {
+                            (posix_path.clone(), format!("-{}", posix_path))
+                        }
+                    };
+
+                    if !enabled {
+                        // Native project [plain abs, mask] essential
+                        let has_plain = ext_arr.iter().any(|item| item.as_str() == Some(&plain_entry));
+                        if !has_plain {
+                            ext_arr.push(Value::String(plain_entry));
+                            mutated = true;
+                        }
+                        let has_mask = ext_arr.iter().any(|item| item.as_str() == Some(&mask_str));
+                        if !has_mask {
+                            ext_arr.push(Value::String(mask_str));
+                            mutated = true;
+                        }
+                    } else {
+                        // Enable: remove exact managed mask only, keep plain declaration!
+                        let before_len = ext_arr.len();
+                        ext_arr.retain(|item| {
+                            if let Some(s) = item.as_str() {
+                                s != mask_str && s != format!("-{}", plain_entry)
+                            } else {
+                                true
+                            }
+                        });
+                        if ext_arr.len() != before_len {
+                            mutated = true;
+                        }
+                    }
+                }
+
+                if mutated {
+                    let pi_dir = cwd.join(".pi");
+                    if !pi_dir.exists() {
+                        let _ = std::fs::create_dir_all(&pi_dir);
+                    }
+                    crate::commands::config_files::atomic_write_json(&proj_settings_path, &settings_val)?;
+                }
+            }
+        }
+    }
+
+    let mut authorized_extensions = Vec::new();
+    for res in &inventory_resources {
+        let kind = res.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        if !kind.eq_ignore_ascii_case("extension") {
+            continue;
+        }
+        let source = res.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        if source.is_empty() {
+            continue;
+        }
+
+        if scoped_policy.is_extension_effective_enabled(source) {
+            let config_path_str = res.get("configPath").and_then(|v| v.as_str()).unwrap_or("");
+            let config_path = Path::new(config_path_str);
+            let resolved = resolve_extension_runtime_path(cwd, config_path, source);
+            authorized_extensions.push(resolved);
         }
     }
 
     Ok((authorized_extensions, has_authorized_mcp))
 }
 
-/// Materializes effective server enabled values in `<cwd>/.pi/mcp.json` preserving complete local definitions,
-/// raw fields (cwd, timeouts, metadata, etc.), and unrelated keys across all recognized candidates.
+/// Materializes effective server enabled values in `<cwd>/.pi/mcp.json` only for explicit supported overrides.
+/// Unselected defs remain raw (no enabled: true synthesis, no disabled removal).
+/// Never imports or merges alternative candidate files (.mcp.json, mcp-adapter.json, .agents/mcp.json).
+/// Avoids gratuitous project writes when no overrides exist.
 fn materialize_project_mcp_enforcement(
     cwd: &Path,
     scoped_policy: &ScopedResourceActivationPolicy,
@@ -587,24 +719,44 @@ fn materialize_project_mcp_enforcement(
         None => Vec::new(),
     };
 
-    let (merged_project_servers, alternate_metadata) =
-        crate::commands::config_files::parse_project_mcp_servers_from_candidates(cwd)?;
-
-    let has_authorized_mcp = merged_project_servers.iter().any(|s| {
-        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        scoped_policy.is_mcp_effective_enabled(name)
-    }) || global_servers.iter().any(|g| {
-        let name = g.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        scoped_policy.is_mcp_effective_enabled(name)
-    });
-
-    if merged_project_servers.is_empty() && global_servers.is_empty() && !target_path.exists() {
-        // Avoid gratuitous project writes when no servers are configured
-        return Ok(false);
+    let mut explicit_overrides: HashMap<String, bool> = HashMap::new();
+    if let Some(ref loc) = scoped_policy.local {
+        for (k, &v) in &loc.mcp_servers {
+            explicit_overrides.insert(k.clone(), v);
+        }
+    } else if let Some(legacy_proj) = scoped_policy.global.projects.get(&scoped_policy.canonical_cwd) {
+        for (k, &v) in &legacy_proj.mcp_servers {
+            explicit_overrides.insert(k.clone(), v);
+        }
     }
 
-    let mut base_obj = alternate_metadata;
+    // Include global always_mcp_servers positives where not explicit local, only matching known definitions
+    for always_mcp in &scoped_policy.global.always_mcp_servers {
+        if !explicit_overrides.contains_key(always_mcp) {
+            let is_known = global_servers.iter().any(|g| {
+                g.get("name").and_then(|v| v.as_str()) == Some(always_mcp.as_str())
+            });
+            if is_known {
+                explicit_overrides.insert(always_mcp.clone(), true);
+            }
+        }
+    }
 
+    // Determine if any authorized MCP exists
+    let has_authorized_mcp = global_servers.iter().any(|g| {
+        let name = g.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        scoped_policy.is_mcp_effective_enabled(name)
+    }) || explicit_overrides.iter().any(|(_, &eff)| eff);
+
+    // If no overrides to materialize and no native file, avoid gratuitous writes
+    if explicit_overrides.is_empty() && !target_path.exists() {
+        return Ok(has_authorized_mcp);
+    }
+    if explicit_overrides.is_empty() {
+        return Ok(has_authorized_mcp);
+    }
+
+    let mut base_obj = serde_json::Map::new();
     let had_native_file = target_path.exists();
     if had_native_file {
         let content = std::fs::read_to_string(&target_path)
@@ -613,9 +765,7 @@ fn materialize_project_mcp_enforcement(
             let native_val: Value = serde_json::from_str(&content)
                 .map_err(|e| format!("Failed to parse project MCP config at {:?}: {}", target_path, e))?;
             if let Some(native_obj) = native_val.as_object() {
-                for (k, v) in native_obj {
-                    base_obj.insert(k.clone(), v.clone());
-                }
+                base_obj = native_obj.clone();
             }
         }
     }
@@ -633,71 +783,27 @@ fn materialize_project_mcp_enforcement(
         _ => serde_json::Map::new(),
     };
 
-    // 1. Process project servers from candidates
-    for s in merged_project_servers {
-        let name = s.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if name.is_empty() {
-            continue;
-        }
-
-        let eff_enabled = scoped_policy.is_mcp_effective_enabled(&name);
-
-        if let Some(existing_def) = servers_map.get_mut(&name).and_then(|v| v.as_object_mut()) {
-            existing_def.insert("enabled".to_string(), Value::Bool(eff_enabled));
+    // Materialize ONLY explicit supported overrides, leaving all unselected defs raw!
+    for (name, eff_enabled) in &explicit_overrides {
+        if let Some(existing_def) = servers_map.get_mut(name).and_then(|v| v.as_object_mut()) {
+            existing_def.insert("enabled".to_string(), Value::Bool(*eff_enabled));
             existing_def.insert("disabled".to_string(), Value::Bool(!eff_enabled));
-            // Preserve any raw fields from candidate that might be missing in native file
-            if let Some(s_obj) = s.as_object() {
-                for (k, v) in s_obj {
-                    if k != "name"
-                        && k != "scope"
-                        && k != "configPath"
-                        && k != "hasProjectOverride"
-                        && k != "alwaysActive"
-                        && k != "envKeys"
-                    {
-                        if !existing_def.contains_key(k) {
-                            existing_def.insert(k.clone(), v.clone());
-                        }
-                    }
-                }
-            }
         } else {
-            let mut def = s.clone();
-            if let Some(obj) = def.as_object_mut() {
-                obj.remove("name");
-                obj.remove("scope");
-                obj.remove("configPath");
-                obj.remove("hasProjectOverride");
-                obj.remove("alwaysActive");
-                obj.remove("envKeys");
-                obj.insert("enabled".to_string(), Value::Bool(eff_enabled));
-                obj.insert("disabled".to_string(), Value::Bool(!eff_enabled));
+            // Check if known global server: write partial override only (no credential copying)
+            let is_global = global_servers.iter().any(|g| {
+                g.get("name").and_then(|v| v.as_str()) == Some(name.as_str())
+            });
+            if is_global {
+                let mut partial = serde_json::Map::new();
+                partial.insert("enabled".to_string(), Value::Bool(*eff_enabled));
+                partial.insert("disabled".to_string(), Value::Bool(!eff_enabled));
+                servers_map.insert(name.clone(), Value::Object(partial));
             }
-            servers_map.insert(name, def);
         }
     }
 
-    // 2. Global servers
-    for g in global_servers {
-        let name = g.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if name.is_empty() {
-            continue;
-        }
-        if !servers_map.contains_key(&name) {
-            let eff_enabled = scoped_policy.is_mcp_effective_enabled(&name);
-            let mut def = g.clone();
-            if let Some(obj) = def.as_object_mut() {
-                obj.remove("name");
-                obj.remove("scope");
-                obj.remove("configPath");
-                obj.remove("hasProjectOverride");
-                obj.remove("alwaysActive");
-                obj.remove("envKeys");
-                obj.insert("enabled".to_string(), Value::Bool(eff_enabled));
-                obj.insert("disabled".to_string(), Value::Bool(!eff_enabled));
-            }
-            servers_map.insert(name, def);
-        }
+    if servers_map.is_empty() && !had_native_file {
+        return Ok(has_authorized_mcp);
     }
 
     base_obj.insert(servers_key.to_string(), Value::Object(servers_map));
@@ -717,13 +823,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_off_policy() {
+    fn test_default_native_enabled_policy() {
         let state = ResourceActivationState::default();
         let cwd = "/test/workspace";
 
-        // Without exceptions or overrides, resources default to inactive
-        assert!(!state.is_extension_effective_enabled(cwd, "./my-tool.ts"));
-        assert!(!state.is_mcp_effective_enabled(cwd, "my-server"));
+        // Without exceptions or overrides, resources default to native enabled
+        assert!(state.is_extension_effective_enabled(cwd, "./my-tool.ts"));
+        assert!(state.is_mcp_effective_enabled(cwd, "my-server"));
         assert!(!state.is_extension_always_active("./my-tool.ts"));
         assert!(!state.is_mcp_server_always_active("my-server"));
     }
@@ -747,14 +853,14 @@ mod tests {
         assert!(state.is_mcp_effective_enabled(proj_a, "db-service"));
         assert!(state.is_mcp_effective_enabled(proj_b, "db-service"));
 
-        // Toggling off global exception reverts to default off
+        // Toggling off global exception reverts to native default enabled
         update_resource_activation(&mut state, "extension", "./my-tool.ts", false, None).unwrap();
         update_resource_activation(&mut state, "mcp", "db-service", false, None).unwrap();
 
         assert!(!state.is_extension_always_active("./my-tool.ts"));
         assert!(!state.is_mcp_server_always_active("db-service"));
-        assert!(!state.is_extension_effective_enabled(proj_a, "./my-tool.ts"));
-        assert!(!state.is_mcp_effective_enabled(proj_a, "db-service"));
+        assert!(state.is_extension_effective_enabled(proj_a, "./my-tool.ts"));
+        assert!(state.is_mcp_effective_enabled(proj_a, "db-service"));
     }
 
     #[test]
@@ -810,19 +916,19 @@ mod tests {
         let canon_a = canonicalize_project_cwd(&temp_dir_a);
         let canon_b = canonicalize_project_cwd(&temp_dir_b);
 
-        // Enable in project A
+        // Disable in project A
         update_resource_activation(
             &mut state,
             "extension",
             "./special.ts",
-            true,
+            false,
             Some(&temp_dir_a),
         )
         .unwrap();
 
-        // Project A is enabled, Project B remains inactive
-        assert!(state.is_extension_effective_enabled(&canon_a, "./special.ts"));
-        assert!(!state.is_extension_effective_enabled(&canon_b, "./special.ts"));
+        // Project A is disabled, Project B remains default enabled
+        assert!(!state.is_extension_effective_enabled(&canon_a, "./special.ts"));
+        assert!(state.is_extension_effective_enabled(&canon_b, "./special.ts"));
 
         let _ = std::fs::remove_dir_all(&temp_dir_a);
         let _ = std::fs::remove_dir_all(&temp_dir_b);
@@ -881,15 +987,14 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("test_act_gratuitous_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
+        let dummy_settings = temp_dir.join("empty_settings.json");
+        std::fs::write(&dummy_settings, "{}").unwrap();
 
         let policy = ResourceActivationState::default();
-        let (authorized_exts, has_mcp) =
-            enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
+        let (_authorized_exts, has_mcp) =
+            enforce_startup_resources_with_paths(&temp_dir, &policy, None, Some(&dummy_settings)).unwrap();
 
         assert!(!has_mcp);
-        assert!(authorized_exts.is_empty());
-
-        // Crucial invariant: .pi/mcp.json must NOT be created when no MCP servers are configured
         assert!(!temp_dir.join(".pi").join("mcp.json").exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -994,10 +1099,20 @@ mod tests {
         .await
         .is_err());
 
-        // Global exception add
+        // Unknown resource rejected without writes
+        assert!(crate::commands::config_files::set_resource_activation(
+            "extension".to_string(),
+            "unknown-ext.ts".to_string(),
+            true,
+            None,
+        )
+        .await
+        .is_err());
+
+        // Global exception add on known builtin
         let res_global = crate::commands::config_files::set_resource_activation(
             "extension".to_string(),
-            "./global-tool.ts".to_string(),
+            "builtin:mcp".to_string(),
             true,
             None,
         )
@@ -1005,7 +1120,13 @@ mod tests {
         .unwrap();
         assert_eq!(res_global["success"], true);
 
-        // Project override add
+        // Project override add: setup project MCP
+        let proj_mcp = temp_dir.join(".pi").join("mcp.json");
+        std::fs::create_dir_all(proj_mcp.parent().unwrap()).unwrap();
+        std::fs::write(&proj_mcp, serde_json::to_string(&serde_json::json!({
+            "mcpServers": { "proj-server": { "command": "echo" } }
+        })).unwrap()).unwrap();
+
         let temp_str = temp_dir.to_string_lossy().to_string();
         let res_proj = crate::commands::config_files::set_resource_activation(
             "mcp".to_string(),
@@ -1019,7 +1140,7 @@ mod tests {
 
         // Verify loaded state: global file does not store project overrides
         let loaded = load_resource_activation_state().unwrap();
-        assert!(loaded.is_extension_always_active("./global-tool.ts"));
+        assert!(loaded.is_extension_always_active("builtin:mcp"));
         let canon = canonicalize_project_cwd(&temp_dir);
         assert_eq!(loaded.get_project_mcp_override(&canon, "proj-server"), None);
 
@@ -1031,14 +1152,14 @@ mod tests {
         // Global exception remove
         crate::commands::config_files::set_resource_activation(
             "extension".to_string(),
-            "./global-tool.ts".to_string(),
+            "builtin:mcp".to_string(),
             false,
             None,
         )
         .await
         .unwrap();
         let loaded_2 = load_resource_activation_state().unwrap();
-        assert!(!loaded_2.is_extension_always_active("./global-tool.ts"));
+        assert!(!loaded_2.is_extension_always_active("builtin:mcp"));
 
         set_activation_file_override_for_test(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1102,11 +1223,11 @@ mod tests {
         assert_eq!(pkg["alwaysActive"], false);
         assert_eq!(pkg["enabled"], true);
 
-        // Extension defaults off according to policy
+        // Extension defaults enabled according to native settings without policy override
         let ext = res_arr.iter().find(|r| r["source"] == "./my-ext.ts").unwrap();
         assert_eq!(ext["kind"], "extension");
         assert_eq!(ext["alwaysActive"], false);
-        assert_eq!(ext["enabled"], false);
+        assert_eq!(ext["enabled"], true);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1204,11 +1325,7 @@ mod tests {
         update_resource_activation(&mut policy, "extension", "./my-root-ext.ts", true, Some(&temp_dir)).unwrap();
 
         let (authorized, _) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
-        assert_eq!(authorized.len(), 1);
-        assert_eq!(
-            authorized[0],
-            dunce::canonicalize(&script_file).unwrap_or(script_file)
-        );
+        assert!(authorized.iter().any(|p| *p == dunce::canonicalize(&script_file).unwrap_or(script_file.clone())));
 
         set_activation_file_override_for_test(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -1245,27 +1362,12 @@ mod tests {
         let mut policy = ResourceActivationState::default();
         update_resource_activation(&mut policy, "mcp", "tool-rich", true, Some(&temp_dir)).unwrap();
 
-        let (_, has_mcp) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
-        assert!(has_mcp);
+        let (_, _) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
 
-        let native_file = temp_dir.join(".pi").join("mcp.json");
-        assert!(native_file.exists());
-
-        let content = std::fs::read_to_string(&native_file).unwrap();
-        let parsed: Value = serde_json::from_str(&content).unwrap();
-
-        // Root metadata preserved
-        assert_eq!(parsed["customRootMeta"], 12345);
-
-        // Server raw keys preserved
-        let srv = &parsed["mcpServers"]["tool-rich"];
-        assert_eq!(srv["command"], "node");
-        assert_eq!(srv["cwd"], "/some/custom/cwd");
-        assert_eq!(srv["timeouts"]["init"], 3000);
-        assert_eq!(srv["metadata"]["author"], "gentle");
-        assert_eq!(srv["customField"], "must-preserve-this");
-        assert_eq!(srv["enabled"], true);
-        assert_eq!(srv["disabled"], false);
+        // Shallow activation: alternate .mcp.json is NOT imported into .pi/mcp.json
+        assert!(!temp_dir.join(".pi").join("mcp.json").exists());
+        // Alternate .mcp.json remains untouched
+        assert!(root_mcp.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1276,40 +1378,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        // 1. .mcp.json (candidate 2)
+        let dot_mcp = temp_dir.join(".mcp.json");
         std::fs::write(
-            temp_dir.join(".mcp.json"),
+            &dot_mcp,
             serde_json::to_string_pretty(&serde_json::json!({
                 "mcpServers": {
-                    "srv-common": { "command": "cmd-from-dot-mcp" },
-                    "srv-dot-mcp": { "command": "cmd-dot-mcp" }
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        // 2. mcp-adapter.json (candidate 3)
-        std::fs::write(
-            temp_dir.join("mcp-adapter.json"),
-            serde_json::to_string_pretty(&serde_json::json!({
-                "mcpServers": {
-                    "srv-common": { "command": "cmd-from-adapter" },
-                    "srv-adapter": { "command": "cmd-adapter" }
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        // 3. .agents/mcp.json (candidate 4)
-        let agents_dir = temp_dir.join(".agents");
-        std::fs::create_dir_all(&agents_dir).unwrap();
-        std::fs::write(
-            agents_dir.join("mcp.json"),
-            serde_json::to_string_pretty(&serde_json::json!({
-                "mcpServers": {
-                    "srv-agents": { "command": "cmd-agents" }
+                    "srv-common": { "command": "cmd-from-dot-mcp" }
                 }
             }))
             .unwrap(),
@@ -1317,28 +1391,11 @@ mod tests {
         .unwrap();
 
         let policy = ResourceActivationState::default();
-        let (_, has_mcp) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
-        assert!(!has_mcp); // default off
+        let (_, _) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
 
-        let native_file = temp_dir.join(".pi").join("mcp.json");
-        assert!(native_file.exists());
-
-        let content = std::fs::read_to_string(&native_file).unwrap();
-        let parsed: Value = serde_json::from_str(&content).unwrap();
-        let map = parsed["mcpServers"].as_object().unwrap();
-
-        // All non-overlapping servers merged
-        assert!(map.contains_key("srv-dot-mcp"));
-        assert!(map.contains_key("srv-adapter"));
-        assert!(map.contains_key("srv-agents"));
-        assert!(map.contains_key("srv-common"));
-
-        // Precedence: .mcp.json wins over mcp-adapter.json for srv-common
-        assert_eq!(map["srv-common"]["command"], "cmd-from-dot-mcp");
-
-        // Unauthorized servers materialized with enabled: false
-        assert_eq!(map["srv-common"]["enabled"], false);
-        assert_eq!(map["srv-common"]["disabled"], true);
+        // Alternates are not imported in shallow activation
+        assert!(!temp_dir.join(".pi").join("mcp.json").exists());
+        assert!(dot_mcp.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1361,39 +1418,12 @@ mod tests {
         )
         .unwrap();
 
-        let mut policy = ResourceActivationState::default();
-        update_resource_activation(&mut policy, "mcp", "srv-initial", true, Some(&temp_dir)).unwrap();
-
-        // --- STARTUP 1 ---
-        let (_, has_mcp_1) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
-        assert!(has_mcp_1);
-        let native_file = temp_dir.join(".pi").join("mcp.json");
-        assert!(native_file.exists());
-
-        // Now user adds a NEW server to .mcp.json while .pi/mcp.json already exists!
-        std::fs::write(
-            &dot_mcp,
-            serde_json::to_string_pretty(&serde_json::json!({
-                "mcpServers": {
-                    "srv-initial": { "command": "cmd-1", "cwd": "/init" },
-                    "srv-second": { "command": "cmd-2", "timeouts": { "call": 1000 } }
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        // --- STARTUP 2 ---
+        let policy = ResourceActivationState::default();
         let (_, _) = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None).unwrap();
 
-        let content = std::fs::read_to_string(&native_file).unwrap();
-        let parsed: Value = serde_json::from_str(&content).unwrap();
-        let map = parsed["mcpServers"].as_object().unwrap();
-
-        assert!(map.contains_key("srv-initial"), "srv-initial must be preserved");
-        assert!(map.contains_key("srv-second"), "srv-second must be discovered on second startup");
-        assert_eq!(map["srv-second"]["command"], "cmd-2");
-        assert_eq!(map["srv-second"]["timeouts"]["call"], 1000);
+        // In shallow activation, alternate files are ignored, not imported
+        assert!(!temp_dir.join(".pi").join("mcp.json").exists());
+        assert!(dot_mcp.exists());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1404,28 +1434,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
 
-        let dot_mcp = temp_dir.join(".mcp.json");
-        std::fs::write(&dot_mcp, "{ INVALID JSON MCP").unwrap();
+        let pi_dir = temp_dir.join(".pi");
+        std::fs::create_dir_all(&pi_dir).unwrap();
+        let native_mcp = pi_dir.join("mcp.json");
+        std::fs::write(&native_mcp, "{ INVALID JSON MCP").unwrap();
 
-        let policy = ResourceActivationState::default();
+        let mut policy = ResourceActivationState::default();
+        update_resource_activation(&mut policy, "mcp", "srv", true, Some(&temp_dir)).unwrap();
+
         let res = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None);
-        assert!(res.is_err(), "Malformed supported .mcp.json must fail closed");
-
-        std::fs::remove_file(&dot_mcp).unwrap();
-
-        // Malformed mcp-adapter.json
-        let adapter_mcp = temp_dir.join("mcp-adapter.json");
-        std::fs::write(&adapter_mcp, "{ INVALID JSON ADAPTER").unwrap();
-        let res2 = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None);
-        assert!(res2.is_err(), "Malformed supported mcp-adapter.json must fail closed");
-
-        std::fs::remove_file(&adapter_mcp).unwrap();
-
-        // Malformed .pi.json
-        let root_pi = temp_dir.join(".pi.json");
-        std::fs::write(&root_pi, "{ INVALID JSON PI").unwrap();
-        let res3 = enforce_startup_resources_with_paths(&temp_dir, &policy, None, None);
-        assert!(res3.is_err(), "Malformed supported .pi.json must fail closed");
+        assert!(res.is_err(), "Malformed native .pi/mcp.json must fail closed");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -1454,6 +1472,11 @@ mod tests {
 
         let proj_dir = temp_dir.join("my-project");
         std::fs::create_dir_all(&proj_dir).unwrap();
+        let proj_mcp = proj_dir.join(".pi").join("mcp.json");
+        std::fs::create_dir_all(proj_mcp.parent().unwrap()).unwrap();
+        std::fs::write(&proj_mcp, serde_json::to_string(&serde_json::json!({
+            "mcpServers": { "local-server": { "command": "node" } }
+        })).unwrap()).unwrap();
 
         // Perform explicit project toggle
         let res = crate::commands::config_files::set_resource_activation(
@@ -1488,6 +1511,12 @@ mod tests {
         let proj_dir = temp_dir.join("seeded-project");
         std::fs::create_dir_all(&proj_dir).unwrap();
         let canon = canonicalize_project_cwd(&proj_dir);
+
+        let proj_mcp = proj_dir.join(".pi").join("mcp.json");
+        std::fs::create_dir_all(proj_mcp.parent().unwrap()).unwrap();
+        std::fs::write(&proj_mcp, serde_json::to_string(&serde_json::json!({
+            "mcpServers": { "new-mcp": { "command": "node" } }
+        })).unwrap()).unwrap();
 
         let act_file = temp_dir.join("viewer-resource-activation.json");
         let initial_global = serde_json::json!({
@@ -1597,9 +1626,7 @@ mod tests {
 
         let scoped_empty = load_scoped_policy(&proj_empty).unwrap();
         // Must NOT fall back to legacy entries!
-        assert!(!scoped_empty.is_extension_effective_enabled("./legacy-ext.ts"));
         assert!(!scoped_empty.has_extension_project_override("./legacy-ext.ts"));
-        assert!(!scoped_empty.is_mcp_effective_enabled("legacy-mcp"));
         assert!(!scoped_empty.has_mcp_project_override("legacy-mcp"));
 
         // Global exceptions still apply
@@ -1623,6 +1650,16 @@ mod tests {
 
         let origin_dir = temp_dir.join("project-origin");
         std::fs::create_dir_all(&origin_dir).unwrap();
+        let origin_settings = origin_dir.join(".pi").join("settings.json");
+        std::fs::create_dir_all(origin_settings.parent().unwrap()).unwrap();
+        std::fs::write(&origin_settings, serde_json::to_string(&serde_json::json!({
+            "extensions": ["./local-tool.ts"]
+        })).unwrap()).unwrap();
+        std::fs::write(origin_dir.join(".pi").join("local-tool.ts"), "//").unwrap();
+        let origin_mcp = origin_dir.join(".pi").join("mcp.json");
+        std::fs::write(&origin_mcp, serde_json::to_string(&serde_json::json!({
+            "mcpServers": { "local-server": { "command": "node" } }
+        })).unwrap()).unwrap();
 
         // Enable in origin_dir
         crate::commands::config_files::set_resource_activation(
