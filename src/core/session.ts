@@ -342,6 +342,9 @@ export function convertRpcMessageToChatMessage(
   }
 
   const text = extractTextFromContent(msg.content);
+  const errorText = role === 'assistant' && typeof msg.errorMessage === 'string'
+    ? msg.errorMessage.trim() : '';
+  const visibleText = errorText ? [text, errorText].filter(Boolean).join('\n\n') : text;
   const timestamp =
     typeof msg.timestamp === 'number'
       ? new Date(msg.timestamp).toLocaleTimeString()
@@ -353,12 +356,13 @@ export function convertRpcMessageToChatMessage(
       : `hydrated-${role}-${index}-${msg.timestamp ?? Date.now()}`;
 
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
+  if (errorText && blocks) blocks.push({ type: 'text', text: errorText });
   const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
 
   return {
     id,
     role,
-    content: text,
+    content: visibleText,
     timestamp,
     isStreaming: false,
     blocks: blocks && blocks.length > 0 ? blocks : undefined,

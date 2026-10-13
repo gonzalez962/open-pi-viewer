@@ -358,8 +358,11 @@ export function messagingReducer(
         return state;
       }
 
-      const authoritativeText = extractTextFromContent(msg.content);
+      const text = extractTextFromContent(msg.content);
+      const errorText = typeof msg.errorMessage === 'string' ? msg.errorMessage.trim() : '';
+      const authoritativeText = errorText ? [text, errorText].filter(Boolean).join('\n\n') : text;
       const parsedBlocks = parseMessageBlocks(msg.content);
+      if (errorText) parsedBlocks.push({ type: 'text', text: errorText });
 
       // Reconcile authoritative text and blocks without duplicate tokens
       let found = false;
