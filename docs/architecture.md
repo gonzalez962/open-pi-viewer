@@ -62,7 +62,7 @@ The temporary legacy alias `@/*` has been completely retired. Deep relative impo
 
 Features live under `src/features/<feature-name>/`:
 
-- **`chat`**: Activity blocks, message stream, prompt controls, chat scrolling, copy feedback, session event listener.
+- **`chat`**: Activity blocks, message stream, prompt controls, chat scrolling, copy feedback, session event listener, dynamic agent working status derivation (`agent-working-status.ts`).
 - **`projects`**: Project dock sidebar, project registry persistence, monogram calculation, hover expansion.
 - **`providers`**: Providers management view, provider modal form, custom models draft builder, API model classification & enrichment.
 - **`sessions`**: Session history sidebar, session item chips, delete confirmation dialog, session action decision logic.

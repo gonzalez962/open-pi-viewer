@@ -286,6 +286,18 @@
   "odd_agents.delegation_aria_label": "Delegación de agentes",
   "odd_agents.indicator_title": "{role} ({status})",
 
+  "agent_working_status.fallback": "Trabajando",
+  "agent_working_status.thinking": "Pensando",
+  "agent_working_status.generating": "Generando",
+  "agent_working_status.phase_authorizing": "Autorizando",
+  "agent_working_status.phase_exploring": "Explorando",
+  "agent_working_status.phase_researching": "Investigando",
+  "agent_working_status.phase_deciding": "Decidiendo",
+  "agent_working_status.phase_planning": "Planificando",
+  "agent_working_status.phase_implementing": "Implementando",
+  "agent_working_status.phase_checking": "Verificando",
+  "agent_working_status.phase_closing": "Cerrando",
+
   "prompt.label": "Mensaje",
   "prompt.hint_busy": "El agente está generando una respuesta (Detener disponible)",
   "prompt.hint_resetting": "Restableciendo contexto de la conversación...",

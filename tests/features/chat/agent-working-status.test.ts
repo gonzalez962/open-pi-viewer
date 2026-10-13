@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { chatReducer, INITIAL_STATE, type ChatSessionState } from '@core/reducer';
-import type { ChatMessage } from '@core/types/messages';
 
 async function loadStatusModule() {
   return await import('@features/chat/agent-working-status');
@@ -10,8 +9,8 @@ async function loadStatusModule() {
 
 function createConnectedState(): ChatSessionState {
   return chatReducer(INITIAL_STATE, {
-    type: 'CONNECTION_SUCCESS',
-    payload: { models: [] },
+    type: 'CONNECT_SUCCESS',
+    payload: { model: null },
   });
 }
 
