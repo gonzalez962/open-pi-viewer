@@ -34,6 +34,8 @@ export interface MessageContentBlock {
 }
 
 export interface AuthoritativeMessage {
+  stopReason?: string;
+  errorMessage?: string;
   id?: string;
   role: string;
   content: string | MessageContentBlock[];

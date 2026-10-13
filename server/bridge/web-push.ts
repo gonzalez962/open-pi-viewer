@@ -3,6 +3,9 @@ import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import webpush from 'web-push';
+import { AgentOutcomeTracker } from '../../src/core/agent-outcome';
+import en from '../../src/shared/locales/en.json';
+import es from '../../src/shared/locales/es.json';
 import { validateSameOrigin, type WebAuthInstance } from './web-auth';
 
 // ---------------------------------------------------------------------------
@@ -630,18 +633,18 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
   // -------------------------------------------------------------------------
   // Push Dispatcher: Handles RPC Waiting and Settled Events
   // -------------------------------------------------------------------------
+  const outcomeTracker = new AgentOutcomeTracker();
   const dispatchPushEvent = async (event: {
     type: string;
     cwd?: string;
     [key: string]: any;
   }): Promise<void> => {
-    const isSettled = event.type === 'agent_settled';
-    const isWaiting = event.type === 'extension_ui_request';
-
-    if (!isSettled && !isWaiting) return;
-    if (subscriptions.size === 0) return;
-
-    const eventType = isSettled ? 'task_complete' : 'waiting_input';
+    const outcome = outcomeTracker.observe(event);
+    const isWaiting = event.type === 'extension_ui_request'
+      && ['select', 'confirm', 'input', 'editor'].includes(event.method);
+    if (event.type !== 'agent_settled' && !isWaiting) return;
+    if (subscriptions.size === 0 || outcome === null) return;
+    const eventType = isWaiting ? 'waiting_input' : outcome ?? 'task_complete';
 
     const sendFn = options.sendNotification || (async (subData, payloadStr, sendOpts) => {
       const vapidDetails =
@@ -679,8 +682,8 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
 
         // 1. Check device preference
         if (!record.preferences.enabled) continue;
-        if (isSettled && record.preferences.onTaskComplete === false) continue;
-        if (isWaiting && record.preferences.onWaitingInput === false) continue;
+        if (eventType === 'task_complete' && record.preferences.onTaskComplete === false) continue;
+        if (eventType === 'waiting_input' && record.preferences.onWaitingInput === false) continue;
 
         // 2. Lease check for authenticated owner
         if (!isOwnerAuthorized(record.owner)) continue;
@@ -689,21 +692,9 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
         const origin = resolveOriginName(event.cwd, record.projects, options.gitResolver);
 
         // 4. Construct title and body based on language and origin
-        const isEs = record.language === 'es';
-        let baseTitle: string;
-        let body: string;
-
-        if (isSettled) {
-          baseTitle = isEs ? 'Tarea finalizada' : 'Task finished';
-          body = isEs
-            ? 'La tarea ha finalizado'
-            : 'The task has finished';
-        } else {
-          baseTitle = isEs ? 'Esperando tu respuesta' : 'Waiting for your answer';
-          body = isEs
-            ? 'Pi requiere tu aprobación o respuesta para continuar'
-            : 'Pi is blocked waiting for your input or approval';
-        }
+        const strings = record.language === 'es' ? es : en;
+        const baseTitle = strings[`notifications.${eventType}_title`];
+        const body = strings[`notifications.${eventType}_body`];
 
         const title = origin ? `${baseTitle} — ${origin}` : baseTitle;
 

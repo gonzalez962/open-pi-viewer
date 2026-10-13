@@ -582,3 +582,37 @@ test('installWebApi: server close of A does not suppress B with public event inj
     resetPiRpcForTest();
   }
 });
+
+
+test('WebPush classifies final outcomes without leaking response content and honors waiting preferences', async () => {
+  const payloads: any[] = [];
+  const push = createWebPush({
+    webAuth: { isEnabled: () => true, authenticate: () => 'owner', validateOwnerLease: () => true } as any,
+    config: VALID_VAPID_CONFIG,
+    sendNotification: async (_sub, payload) => { payloads.push(JSON.parse(payload)); },
+  });
+  await push.handleSubscriptions(new MockRequest({
+    url: '/api/push/subscriptions', method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: { subscription: SUB_A, language: 'es' },
+  }), new MockResponse());
+  for (const [text, stopReason, expected] of [
+    ['Necesito que confirmes: secret-value', 'stop', 'waiting_input'],
+    ['secret-value', 'error', 'error'],
+    ['Completed: secret-value', 'stop', 'task_complete'],
+  ]) {
+    await push.dispatchPushEvent({ type: 'message_end', sessionId: 'one', message: { role: 'assistant', content: text, stopReason } });
+    await push.dispatchPushEvent({ type: 'agent_settled', sessionId: 'one' });
+    assert.equal(payloads[payloads.length - 1].eventType, expected);
+    assert.ok(!JSON.stringify(payloads[payloads.length - 1]).includes('secret-value'));
+  }
+  await push.dispatchPushEvent({ type: 'agent_settled', messages: [{ role: 'assistant', content: '', stopReason: 'aborted' }] });
+  assert.equal(payloads.length, 3);
+  await push.handleSubscriptions(new MockRequest({
+    url: '/api/push/subscriptions', method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: { subscription: SUB_A, preferences: { enabled: true, onTaskComplete: true, onWaitingInput: false } },
+  }), new MockResponse());
+  await push.dispatchPushEvent({ type: 'agent_settled', messages: [{ role: 'assistant', content: 'Waiting for your confirmation' }] });
+  assert.equal(payloads.length, 3);
+});

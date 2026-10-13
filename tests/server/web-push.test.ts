@@ -564,7 +564,7 @@ test('origin naming: prefers customName > Git root basename > folder basename; n
   const esPayload = sentPayloads.find((p) => p.sub.endpoint === subEs.endpoint && p.data.eventType === 'waiting_input');
   assert.ok(esPayload);
   assert.equal(esPayload.data.title, 'Esperando tu respuesta — plain-folder');
-  assert.equal(esPayload.data.body, 'Pi requiere tu aprobación o respuesta para continuar');
+  assert.equal(esPayload.data.body, 'Pi necesita tu aprobación, respuesta o una acción para continuar');
 });
 
 // ---------------------------------------------------------------------------

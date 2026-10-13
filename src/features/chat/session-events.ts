@@ -8,6 +8,7 @@ import {
   notifyAppEvent,
   type NotifyAppEventParams,
 } from '@infra/notifications';
+import { AgentOutcomeTracker } from '@core/agent-outcome';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
 } from '@core/notifications';
@@ -86,6 +87,7 @@ export class SessionEventController {
   ) => Promise<SendExtensionUiResponseResult>;
   private readonly notifyAppEventFn: (params: NotifyAppEventParams) => void;
   private readonly pendingDialogRequests = new Map<string, PendingDialogRequest>();
+  private readonly outcomeTracker = new AgentOutcomeTracker();
 
   constructor(options: SessionEventControllerOptions) {
     this.options = options;
@@ -126,6 +128,7 @@ export class SessionEventController {
           .then(name => deliver(name || folderName), () => deliver(folderName));
       } catch { deliver(folderName); }
     };
+    const outcome = this.outcomeTracker.observe({ ...event, cwd: notificationCwd });
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
     if (eventType === 'runtime_snapshot') {
       this.options.dispatch({
@@ -301,12 +304,14 @@ export class SessionEventController {
         prefs?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
       const locale = prefs?.language ?? DEFAULT_LOCALE;
 
+      if (outcome === null) return; // Explicit user cancellation is not a failure.
+      const notificationType = outcome ?? 'task_complete';
       notifyWithOrigin({
-        eventType: 'task_complete',
+        eventType: notificationType,
         sessionId: currentSessionId ?? undefined,
         projectId: targetProjectId ?? undefined,
-        title: translate(locale, 'notifications.task_complete_title'),
-        body: translate(locale, 'notifications.task_complete_body'),
+        title: translate(locale, `notifications.${notificationType}_title`),
+        body: translate(locale, `notifications.${notificationType}_body`),
         preferences: notificationPrefs,
       });
     } else if (eventType === 'extension_ui_request') {

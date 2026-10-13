@@ -153,8 +153,10 @@
 
   "notifications.task_complete_title": "Task finished",
   "notifications.task_complete_body": "The task has finished",
+  "notifications.error_title": "Task could not be completed",
+  "notifications.error_body": "Pi encountered an error or could not finish. Check the conversation for details",
   "notifications.waiting_input_title": "Waiting for your answer",
-  "notifications.waiting_input_body": "Pi is blocked waiting for your input or approval",
+  "notifications.waiting_input_body": "Pi needs your approval, answer, or an action to continue",
 
   "settings.connection_heading": "Connection Settings",
   "settings.connection_hint": "Persisted configuration for direct Node argv execution",
