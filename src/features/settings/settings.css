@@ -464,6 +464,63 @@
 }
 
 /* Notifications section styling */
+.notifications-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.notification-switch-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.notification-switch {
+  appearance: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  flex-shrink: 0;
+  margin: 0;
+  border: 1px solid var(--fg-subtle);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.notification-switch::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fg-subtle);
+  transition: transform 0.15s ease;
+}
+
+.notification-switch:checked {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+}
+
+.notification-switch:checked::before {
+  transform: translateX(16px);
+  background: white;
+}
+
+.notification-switch:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 3px;
+}
+
 .notifications-grid {
   display: flex;
   flex-direction: column;

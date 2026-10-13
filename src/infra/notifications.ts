@@ -4,8 +4,10 @@ import {
   type NotificationPreferences,
 } from '@core/notifications';
 
+import { getNotificationDelivery, type NotificationPermissionStatus } from './notification-delivery';
+
 let sharedAudioContext: AudioContext | null = null;
-const lastDeliveredTimestamps: Partial<Record<NotificationEventType, number>> = {};
+const lastDeliveredTimestamps = new Map<string, number>();
 
 function getAudioContext(): AudioContext | null {
   try {
@@ -94,23 +96,13 @@ export function playNotificationSound(
   }
 }
 
-/**
- * Requests desktop notification permissions from the host browser / webview.
- */
-export async function requestNotificationPermission(): Promise<NotificationPermission> {
-  if (typeof window === 'undefined' || typeof Notification === 'undefined') {
-    return 'denied';
-  }
+export async function getNotificationPermission(): Promise<NotificationPermissionStatus> {
+  return getNotificationDelivery().permission();
+}
 
-  if (Notification.permission === 'granted') {
-    return 'granted';
-  }
-
-  try {
-    return await Notification.requestPermission();
-  } catch {
-    return 'denied';
-  }
+/** Called only from an explicit user action, never from incoming Pi events. */
+export async function requestNotificationPermission(): Promise<NotificationPermissionStatus> {
+  return getNotificationDelivery().requestPermission();
 }
 
 export interface DesktopNotificationOptions {
@@ -119,36 +111,9 @@ export interface DesktopNotificationOptions {
   onClick?: () => void;
 }
 
-/**
- * Dispatches a native desktop notification when granted permission.
- * Clicking the notification focuses the window.
- */
-export function showDesktopNotification(options: DesktopNotificationOptions): boolean {
-  if (typeof window === 'undefined' || typeof Notification === 'undefined') {
-    return false;
-  }
-
-  if (Notification.permission !== 'granted') {
-    return false;
-  }
-
-  try {
-    const notification = new Notification(options.title, {
-      body: options.body,
-    });
-
-    notification.onclick = () => {
-      try {
-        window.focus();
-      } catch {}
-      options.onClick?.();
-      notification.close();
-    };
-
-    return true;
-  } catch {
-    return false;
-  }
+/** Returns delivery submission success, not proof that the OS displayed a popup. */
+export async function showDesktopNotification(options: DesktopNotificationOptions): Promise<boolean> {
+  return getNotificationDelivery().send(options);
 }
 
 export interface NotifyAppEventParams {
@@ -157,6 +122,8 @@ export interface NotifyAppEventParams {
   body: string;
   preferences: NotificationPreferences;
   isWindowFocused?: boolean;
+  sessionId?: string;
+  projectId?: string;
 }
 
 /**
@@ -169,7 +136,8 @@ export function notifyAppEvent(params: NotifyAppEventParams): void {
     (typeof document !== 'undefined' ? document.hasFocus() : false);
 
   const now = Date.now();
-  const lastDeliveredAt = lastDeliveredTimestamps[params.eventType];
+  const deliveryKey = JSON.stringify([params.projectId ?? '', params.sessionId ?? '', params.eventType]);
+  const lastDeliveredAt = lastDeliveredTimestamps.get(deliveryKey);
 
   const decision = shouldDeliverNotification({
     eventType: params.eventType,
@@ -183,9 +151,14 @@ export function notifyAppEvent(params: NotifyAppEventParams): void {
     return;
   }
 
-  lastDeliveredTimestamps[params.eventType] = now;
+  lastDeliveredTimestamps.set(deliveryKey, now);
+  // Keep session-scoped debounce bounded even after many projects have been visited.
+  if (lastDeliveredTimestamps.size > 256) {
+    lastDeliveredTimestamps.delete(lastDeliveredTimestamps.keys().next().value!);
+  }
 
-  if (decision.shouldPlaySound) {
+  // Native OS controls desktop popup sounds; do not layer WebAudio over them.
+  if (decision.shouldPlaySound && !(decision.shouldShowPopup && getNotificationDelivery().platform === 'tauri')) {
     const soundType =
       params.eventType === 'waiting_input'
         ? 'question'
@@ -196,7 +169,7 @@ export function notifyAppEvent(params: NotifyAppEventParams): void {
   }
 
   if (decision.shouldShowPopup) {
-    showDesktopNotification({
+    void showDesktopNotification({
       title: params.title,
       body: params.body,
     });

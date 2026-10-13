@@ -120,6 +120,8 @@
   "settings.notifications_heading": "Notificaciones",
   "settings.notifications_hint": "Alertas de escritorio, efectos de sonido y supresión cuando está en uso",
   "settings.notifications_enable": "Activar notificaciones",
+  "settings.notifications_active": "Activas",
+  "settings.notifications_paused": "Pausadas",
   "settings.notifications_sound": "Sonido de notificación",
   "settings.notifications_suppress_focused": "Suprimir cuando la ventana está enfocada",
   "settings.notifications_suppress_focused_hint": "Solo mostrar alertas emergentes cuando Pi Viewer esté en segundo plano",
@@ -911,5 +913,14 @@
   "web_auth.turnstile_retry": "Reintentar verificación",
   "web_auth.turnstile_error": "Error en la verificación de seguridad. Inténtalo de nuevo.",
   "web_auth.turnstile_expired": "La verificación de seguridad ha caducado. Vuelve a verificar.",
-  "web_auth.turnstile_timeout": "Se agotó el tiempo de verificación de seguridad. Inténtalo de nuevo."
+  "web_auth.turnstile_timeout": "Se agotó el tiempo de verificación de seguridad. Inténtalo de nuevo.",
+  "settings.notifications_permission_label": "Permiso de notificaciones",
+  "settings.notifications_permission_granted": "Permitidas",
+  "settings.notifications_permission_denied": "Bloqueadas",
+  "settings.notifications_permission_default": "Sin solicitar",
+  "settings.notifications_permission_unavailable": "No disponibles",
+  "settings.notifications_request_permission": "Activar notificaciones del sistema",
+  "settings.notifications_permission_help": "Los avisos web requieren HTTPS o localhost y una página abierta. Si están bloqueados, cambia los permisos del navegador o del sistema y vuelve aquí. El sonido nativo de escritorio lo controla el sistema operativo.",
+  "settings.notifications_test_sent": "Notificación de prueba enviada. Los ajustes del sistema podrían ocultarla.",
+  "settings.notifications_test_failed": "No se pudo enviar la notificación. Revisa los permisos y la compatibilidad de la plataforma."
 }
