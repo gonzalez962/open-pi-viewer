@@ -15,6 +15,7 @@ import {
   handleIpcCommand,
   resolveSessionsDir,
   setSessionsRootDirForTest,
+  setPiAgentDirForTest,
   setSubprocessSpawnerForTest,
   resetPiRpcForTest,
   getSessionStatus,
@@ -204,18 +205,32 @@ test('server/bridge: connect to empty project creates and persists a new session
   assert.strictEqual(list[0].id, res.sessionId);
 });
 
-test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1 in environment', async (t) => {
+test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1 in environment', { timeout: 5000 }, async (t) => {
   const tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-spawner-test-'));
-  let capturedEnv: any = null;
-  setSubprocessSpawnerForTest((_cmd, _args, options) => {
-    capturedEnv = options.env;
+  const tmpAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-spawner-agent-'));
+  const tmpSessionsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-spawner-sessions-'));
+  setPiAgentDirForTest(tmpAgentDir);
+  setSessionsRootDirForTest(tmpSessionsRoot);
+
+  let notifySpawner!: (info: { cmd: string; args: string[]; env: any }) => void;
+  const spawnerPromise = new Promise<{ cmd: string; args: string[]; env: any }>((resolve) => {
+    notifySpawner = resolve;
+  });
+
+  setSubprocessSpawnerForTest((cmd, args, options) => {
+    notifySpawner({ cmd, args, env: options.env });
     return null;
   });
+
   t.after(() => {
     setSubprocessSpawnerForTest(null);
+    setPiAgentDirForTest(null);
+    setSessionsRootDirForTest(null);
     resetPiRpcForTest();
     try {
       fs.rmSync(tmpProject, { recursive: true, force: true });
+      fs.rmSync(tmpAgentDir, { recursive: true, force: true });
+      fs.rmSync(tmpSessionsRoot, { recursive: true, force: true });
     } catch {}
   });
 
@@ -223,8 +238,19 @@ test('server/bridge: subprocess spawner receives GENTLE_SHELL_INTERACTIVE_HOST=1
     payload: { workingDirectory: tmpProject },
   });
 
-  assert.ok(capturedEnv, 'Spawner must be called');
-  assert.strictEqual(capturedEnv.GENTLE_SHELL_INTERACTIVE_HOST, '1');
+  const spawned = await spawnerPromise;
+  assert.ok(spawned, 'Spawner must be called');
+  assert.strictEqual(spawned.env.GENTLE_SHELL_INTERACTIVE_HOST, '1');
+  assert.ok(spawned.args.includes('--mode'), 'Args must include --mode');
+  assert.ok(spawned.args.includes('rpc'), 'Args must include rpc');
+  assert.ok(spawned.args.includes('--approve'), 'Args must include --approve');
+  assert.strictEqual(spawned.args.includes('--no-extensions'), false, 'Spawner must not inject blanket --no-extensions');
+  assert.strictEqual(spawned.args.includes('--no-mcp'), false, 'Spawner must not inject blanket --no-mcp');
+  assert.strictEqual(
+    fs.existsSync(path.join(tmpAgentDir, 'settings.json')),
+    false,
+    'Startup config must not perform unintended writes'
+  );
 });
 
 test('server/bridge: getSessionStatus automatically drops zombie sessions from working/waiting to completed', (t) => {
