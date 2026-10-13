@@ -20,6 +20,7 @@ import { SettingsSelect } from './components/SettingsSelect';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
 import { ThemeCustomizer } from './components/ThemeCustomizer';
 import { COMMANDS, type CustomCommand } from '@core/commands';
+import { discoverBaseBinaryPaths } from './reset-binary-paths';
 import type { NotificationPermissionStatus } from '@infra/notification-delivery';
 
 export interface SettingsViewProps {
@@ -87,6 +88,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     type: 'success' | 'error';
     message: string;
   } | null>(null);
+
+  const [isResettingPaths, setIsResettingPaths] = useState(false);
+  const [binaryPathsNotice, setBinaryPathsNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const binaryDiscoveryBusy = isBusy || isDetectingShell || isResettingPaths;
+
+  const handleResetBinaryPaths = async () => {
+    setIsResettingPaths(true);
+    setBinaryPathsNotice(null);
+    try {
+      const paths = await discoverBaseBinaryPaths(settingsDraft.workingDirectory);
+      setSettingsDraft(prev => ({ ...prev, ...paths }));
+      setGentleShellNotice(null);
+      setBinaryPathsNotice({ type: 'success', message: t('settings.reset_binary_paths_success') });
+    } catch (error) {
+      setBinaryPathsNotice({ type: 'error', message: t('settings.reset_binary_paths_error', {
+        error: error instanceof Error ? error.message : String(error),
+      }) });
+    } finally {
+      setIsResettingPaths(false);
+    }
+  };
 
   const notifications = preferences.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionStatus>('default');
@@ -632,6 +654,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </span>
           </div>
 
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={handleResetBinaryPaths}
+            disabled={binaryDiscoveryBusy}
+            title={t('settings.reset_binary_paths_title')}
+          >
+            {isResettingPaths ? t('settings.reset_binary_paths_detecting') : t('settings.reset_binary_paths')}
+          </button>
+          {binaryPathsNotice && (
+            <p
+              className={binaryPathsNotice.type === 'error' ? 'field-subtext field-subtext-error' : 'field-subtext field-subtext-success'}
+              role={binaryPathsNotice.type === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              {binaryPathsNotice.message}
+            </p>
+          )}
+
           <form
             className="connection-form"
             onSubmit={onSaveAndApply}
@@ -646,6 +687,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   type="text"
                   className="field-input"
                   value={settingsDraft.nodePath}
+                  disabled={isResettingPaths}
                   onChange={(e) =>
                     setSettingsDraft((prev) => ({
                       ...prev,
@@ -669,6 +711,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="field-input"
                     style={{ flex: 1 }}
                     value={settingsDraft.piEntrypoint}
+                    disabled={isResettingPaths}
                     onChange={(e) => {
                       setSettingsDraft((prev) => ({
                         ...prev,
@@ -686,7 +729,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     type="button"
                     className="btn btn-secondary btn-sm"
                     onClick={handleDetectGentleShell}
-                    disabled={isDetectingShell || isBusy}
+                    disabled={binaryDiscoveryBusy}
                     title={t('settings.btn_detect_gentle_shell_title')}
                   >
                     {isDetectingShell
@@ -754,8 +797,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={isBusy}
-                aria-disabled={isBusy}
+                disabled={binaryDiscoveryBusy}
+                aria-disabled={binaryDiscoveryBusy}
                 title={
                   isBusy
                     ? t('settings.save_apply_busy_title')
