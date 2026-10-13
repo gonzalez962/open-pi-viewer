@@ -92,7 +92,7 @@ test('mcp bridge: setResourceActivationPi invokes set_resource_activation with p
 // 2. Preview Fallback & Policy Calculation Tests
 // ---------------------------------------------------------------------------
 
-test('mcp bridge: preview fallback persists policy and defaults inactive per project without exception', async () => {
+test('mcp bridge: preview fallback persists policy and inherits native state without exception', async () => {
   const fakeStorage = new MemoryStorage();
   (globalThis as any).window = { localStorage: fakeStorage };
   (globalThis as any).localStorage = fakeStorage;
@@ -121,11 +121,11 @@ test('mcp bridge: preview fallback persists policy and defaults inactive per pro
     assert.strictEqual(globalList.servers[0].enabled, true);
     assert.strictEqual(globalList.servers[0].alwaysActive, false);
 
-    // 3. Project listing with cwd: defaults INACTIVE per project (enabled = false, disabled = true)
+    // 3. Project listing with cwd inherits native enabled state.
     const projectList = await getMcpServersPi('/workspace/my-app');
     assert.strictEqual(projectList.servers.length, 1);
-    assert.strictEqual(projectList.servers[0].enabled, false);
-    assert.strictEqual(projectList.servers[0].disabled, true);
+    assert.strictEqual(projectList.servers[0].enabled, true);
+    assert.strictEqual(projectList.servers[0].disabled, false);
     assert.strictEqual(projectList.servers[0].alwaysActive, false);
     assert.strictEqual(projectList.servers[0].hasProjectOverride, false);
 

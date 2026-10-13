@@ -106,6 +106,22 @@ An explicit `global` scope never modifies project configuration; `project` requi
 
 Regression coverage: `tests/server/resource-deletion.test.ts` exercises the web IPC dispatcher using isolated configuration files.
 
+## Shallow Pi resource activation
+
+Resource switches control top-level Pi configuration entries, not the internal extensions of installed tools. Sessions retain Pi's native extension, package, and built-in loading instead of disabling all extensions and rebuilding a viewer-owned allowlist.
+
+| Resource | Control boundary |
+|---|---|
+| Extension | An explicitly configured entry or a top-level autoload file/directory; package manifests are not expanded into individual switches. |
+| MCP server | A named entry in the agent `mcp.json` or workspace `.pi/mcp.json`; adapter-owned alternate files are not imported. |
+| Package-owned resources | Loaded by Pi according to the package configuration; the viewer does not rewrite internal resource filters. |
+
+Resources without an explicit viewer override inherit their native configuration. Existing explicit overrides apply only to resources still present in the top-level inventory; stale internal paths must not become new resources. Extension exclusions use Pi's native settings filters. A project override for a global MCP server contains only its selected enabled state, without copying commands, environment variables, authentication, or headers into the project. Unselected definitions and unrelated configuration fields are preserved.
+
+Changes require a session restart or Pi reload to affect an already-running process. Removing an **Always active** exception is not a request to globally disable the resource: it returns to native configuration and any explicit project override. Package disabling is not implemented by changing internal filters; unsupported package toggle requests fail explicitly instead of reporting a successful no-op. Manage package installation and resource selection through Pi.
+
+The optional installed-runtime regression probe uses `PI_VIEWER_NATIVE_PROBE_MODULE` to select Pi's `dist/core/package-manager.js`. It runs the viewer's persisted project toggle through the native resource resolver using isolated fixtures and an isolated home directory. Without that explicit module path, the probe is skipped; ordinary configuration tests remain runnable without a Pi installation.
+
 ## Desktop background lifecycle
 
 Tauri keeps the application process and its webview alive when the main window closes. `src-tauri/src/tray.rs` provides **Open Pi Viewer** and **Exit Pi Viewer**; a left-click on the tray icon also restores, unminimizes, and focuses the existing window. `CloseRequested` prevents window destruction and hides the window only when the tray exists and shutdown has not begun. There is no frontend unmount, session reload, or independent daemon. Native listeners aggregate Pi activity by working directory and use cached green, blue, amber, and red tray icons. While working, a native task switches blue/amber every 800 ms (a 1.6-second cycle); when idle or failed it waits for events without a timer. Errors override working/ready colors and remain red until the affected session starts a new run or reconnects successfully. Process/bridge errors and failed tool executions are included. Colors match the default project indicator palette, not custom themes; `agent_settled` and terminal status changes clear that session's activity.

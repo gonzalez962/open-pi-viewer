@@ -111,7 +111,7 @@ export function normalizeTargetSource(
     );
   }
   const clean =
-    kind === 'extension' && (trimmed.startsWith('!') || trimmed.startsWith('+'))
+    kind === 'extension' && (trimmed.startsWith('!') || trimmed.startsWith('+') || trimmed.startsWith('-'))
       ? trimmed.slice(1).trim()
       : trimmed;
   if (!clean) {
@@ -281,7 +281,10 @@ export function validateResourceSource(
   }
 
   if (kind === 'extension') {
-    const base = trimmed.startsWith('!') || trimmed.startsWith('+') ? trimmed.slice(1).trim() : trimmed;
+    const base =
+      trimmed.startsWith('!') || trimmed.startsWith('+') || trimmed.startsWith('-')
+        ? trimmed.slice(1).trim()
+        : trimmed;
     if (!base) {
       return { valid: false, error: 'Extension source must not be empty' };
     }

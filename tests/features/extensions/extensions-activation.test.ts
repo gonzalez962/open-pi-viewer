@@ -92,7 +92,7 @@ test('extensions bridge: setResourceActivationPi invokes set_resource_activation
 // 2. Preview Fallback & Policy Calculation Tests
 // ---------------------------------------------------------------------------
 
-test('extensions bridge: preview fallback persists policy, defaults extensions inactive per project, packages unaffected', async () => {
+test('extensions bridge: preview fallback persists policy, inherits native extension state, packages unaffected', async () => {
   const fakeStorage = new MemoryStorage();
   (globalThis as any).window = { localStorage: fakeStorage };
   (globalThis as any).localStorage = fakeStorage;
@@ -122,13 +122,13 @@ test('extensions bridge: preview fallback persists policy, defaults extensions i
     assert.strictEqual(globalPkg.enabled, true);
 
     // 3. Project listing with cwd:
-    // Extensions default INACTIVE per project (enabled = false)!
+    // Extensions inherit native state unless explicitly overridden.
     // Packages are unaffected and retain existing behavior (enabled = true)!
     const projectList = await getPiResources('/workspace/app-1');
     assert.strictEqual(projectList.resources.length, 2);
     const projExt = projectList.resources.find((r) => r.kind === 'extension')!;
     const projPkg = projectList.resources.find((r) => r.kind === 'package')!;
-    assert.strictEqual(projExt.enabled, false);
+    assert.strictEqual(projExt.enabled, true);
     assert.strictEqual(projExt.alwaysActive, false);
     assert.strictEqual(projExt.hasProjectOverride, false);
     assert.strictEqual(projPkg.enabled, true); // Package unaffected!
@@ -539,8 +539,8 @@ test('S6 bridge: preview simulates directory-owned project policy in separate pe
 
     const resAuthoritative = await getPiResources(cwd1);
     const staleExt = resAuthoritative.resources.find((r) => r.source === './tools/stale-ext.ts');
-    // Because local file exists, absence of key falls back to global exceptions (defaults off), NOT legacy true!
-    assert.strictEqual(staleExt?.enabled, false, 'Local authoritative emptiness must mask stale legacy keys');
+    // Local absence masks legacy keys while inheriting native enabled state.
+    assert.strictEqual(staleExt?.enabled, true, 'Local authoritative emptiness must inherit native state');
     assert.strictEqual(staleExt?.hasProjectOverride, false);
 
     // Global always-on extension remains enabled via global exception:
@@ -558,7 +558,7 @@ test('S6 bridge: preview simulates directory-owned project policy in separate pe
     // 5. Project isolation: cwd2 has no local store and is unaffected by cwd1's local writes
     const resCwd2 = await getPiResources(cwd2);
     const cwd2Legacy = resCwd2.resources.find((r) => r.source === './tools/legacy-ext.ts');
-    assert.strictEqual(cwd2Legacy?.enabled, false, 'cwd2 defaults inactive and is isolated from cwd1');
+    assert.strictEqual(cwd2Legacy?.enabled, true, 'cwd2 inherits native state and is isolated from cwd1');
     const localKeyCwd2 = `pi_viewer_project_activation_mock:${cwd2.toLowerCase()}`;
     assert.strictEqual(fakeStorage.getItem(localKeyCwd2), null, 'cwd2 should not have local storage created');
   } finally {

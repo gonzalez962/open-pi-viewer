@@ -14,12 +14,12 @@ import {
   isAlwaysActiveMcp,
   isAlwaysActiveExtension,
   getEffectiveMcpActivation,
-  getEffectiveExtensionActivation,
   setResourceActivation,
   normalizeProjectCwd,
   extensionIdentitiesMatch,
-  getSupportedProjectMcpPaths,
+  getNativeProjectMcpPath,
   resolveExtensionRuntimePath,
+  KNOWN_BUILTIN_EXTENSIONS,
 } from './resource-activation';
 
 export function readMcpServersFromFile(filePath: string, scope: 'global' | 'project'): any[] {
@@ -59,9 +59,9 @@ export function getMcpServersImpl(cwd?: string) {
   }
 
   if (cwd) {
-    const projectCandidates = getSupportedProjectMcpPaths(cwd);
-    for (const pFile of projectCandidates) {
-      const pServers = readMcpServersFromFile(pFile, 'project');
+    const projectMcpFile = getNativeProjectMcpPath(cwd);
+    if (fs.existsSync(projectMcpFile)) {
+      const pServers = readMcpServersFromFile(projectMcpFile, 'project');
       for (const p of pServers) {
         if (serverMap.has(p.name)) {
           const existing = serverMap.get(p.name)!;
@@ -79,7 +79,7 @@ export function getMcpServersImpl(cwd?: string) {
             enabled: p.enabled,
             scope: isPartial ? 'global' : 'project',
             hasProjectOverride: true,
-            configPath: pFile,
+            configPath: projectMcpFile,
           });
         } else {
           serverMap.set(p.name, {
@@ -98,14 +98,15 @@ export function getMcpServersImpl(cwd?: string) {
 
   const servers = Array.from(serverMap.values()).map((s) => {
     const alwaysActive = isAlwaysActiveMcp(policy, s.name);
+    const nativeDefault = s.enabled !== false;
     if (cwd) {
-      const effective = getEffectiveMcpActivation(policy, cwd, s.name);
       let hasPolicyOverride = false;
       if (local !== null) {
         hasPolicyOverride = typeof local.mcpServers?.[s.name] === 'boolean';
       } else if (normCwd) {
         hasPolicyOverride = typeof policy.projects?.[normCwd]?.mcpServers?.[s.name] === 'boolean';
       }
+      const effective = getEffectiveMcpActivation(policy, cwd, s.name, nativeDefault);
       return {
         ...s,
         alwaysActive,
@@ -114,9 +115,12 @@ export function getMcpServersImpl(cwd?: string) {
         hasProjectOverride: Boolean(s.hasProjectOverride || hasPolicyOverride),
       };
     } else {
+      const effective = alwaysActive ? true : nativeDefault;
       return {
         ...s,
         alwaysActive,
+        enabled: effective,
+        disabled: !effective,
       };
     }
   });
@@ -217,11 +221,32 @@ export function getPiResourcesImpl(cwd?: string) {
         for (const item of settings.extensions) {
           const raw = typeof item === 'string' ? item : item?.source || item?.path || '';
           if (!raw) continue;
-          const cleanSource = raw.replace(/^[!+]/, '').trim();
+          const trimmed = raw.trim();
+          if (trimmed.includes('*')) continue;
+          const cleanSource = trimmed.replace(/^[!+-]/, '').trim();
+          if (!cleanSource) continue;
+
+          if (cleanSource.startsWith('builtin:')) {
+            const enabled = typeof item === 'object'
+              ? !item.disabled && item.enabled !== false
+              : !trimmed.startsWith('!') && !trimmed.startsWith('-');
+            addOrMergeResource({
+              id: `ext-${cleanSource.replace(/[\/@:]/g, '-')}`,
+              name: cleanSource,
+              kind: 'extension',
+              source: cleanSource,
+              scope: 'global',
+              enabled,
+              configPath: globalSettingsFile,
+              raw: item,
+            });
+            continue;
+          }
+
           const meta = resolveExtensionMeta(item, cleanSource, getPiAgentDir(), globalSettingsFile);
           const enabled = typeof item === 'object'
             ? !item.disabled && item.enabled !== false
-            : !raw.startsWith('!');
+            : !trimmed.startsWith('!') && !trimmed.startsWith('-');
           addOrMergeResource({
             id: `ext-${meta.name.replace(/[\/@:]/g, '-')}`,
             name: meta.name,
@@ -239,7 +264,7 @@ export function getPiResourcesImpl(cwd?: string) {
     } catch {}
   }
 
-  // 2. Global extensions directory
+  // 2. Global extensions directory: top-level files and folders as ONE root without manifest traversal
   const globalExtensionsDir = path.join(getPiAgentDir(), 'extensions');
   if (fs.existsSync(globalExtensionsDir)) {
     try {
@@ -263,51 +288,19 @@ export function getPiResourcesImpl(cwd?: string) {
             autoload: true,
           });
         } else if (e.isDirectory()) {
-          const subPkg = path.join(globalExtensionsDir, e.name, 'package.json');
-          let handled = false;
-          if (fs.existsSync(subPkg)) {
-            try {
-              const pData = JSON.parse(fs.readFileSync(subPkg, 'utf8'));
-              if (Array.isArray(pData.pi?.extensions)) {
-                for (const rel of pData.pi.extensions) {
-                  const relNorm = rel.replace(/^[./\\]+/, '').replace(/\\/g, '/');
-                  const fullExt = path.resolve(globalExtensionsDir, e.name, relNorm);
-                  addOrMergeResource({
-                    id: `ext-${e.name}-${relNorm.replace(/[\/@:]/g, '-')}`,
-                    name: pData.name || e.name,
-                    kind: 'extension',
-                    source: `extensions/${e.name}/${relNorm}`,
-                    scope: 'global',
-                    enabled: true,
-                    configPath: fullExt,
-                    extensionPath: fullExt,
-                    extensionDir: path.resolve(globalExtensionsDir, e.name),
-                  });
-                  handled = true;
-                }
-              }
-            } catch {}
-          }
-          if (!handled) {
-            for (const idx of ['index.ts', 'index.js', 'index.mjs']) {
-              const fullIdx = path.join(globalExtensionsDir, e.name, idx);
-              if (fs.existsSync(fullIdx)) {
-                const resolvedIdx = path.resolve(fullIdx);
-                addOrMergeResource({
-                  id: `ext-${e.name}`,
-                  name: e.name,
-                  kind: 'extension',
-                  source: `extensions/${e.name}/${idx}`,
-                  scope: 'global',
-                  enabled: true,
-                  configPath: resolvedIdx,
-                  extensionPath: resolvedIdx,
-                  extensionDir: path.resolve(globalExtensionsDir, e.name),
-                });
-                break;
-              }
-            }
-          }
+          const fullPath = path.resolve(globalExtensionsDir, e.name);
+          addOrMergeResource({
+            id: `ext-${e.name}`,
+            name: e.name,
+            kind: 'extension',
+            source: `extensions/${e.name}`,
+            scope: 'global',
+            enabled: true,
+            configPath: fullPath,
+            extensionPath: fullPath,
+            extensionDir: fullPath,
+            autoload: true,
+          });
         }
       }
     } catch {}
@@ -315,58 +308,75 @@ export function getPiResourcesImpl(cwd?: string) {
 
   // 3. Project settings and extensions directory
   if (cwd) {
-    const projectCandidates = [
-      path.join(cwd, '.pi', 'settings.json'),
-      path.join(cwd, '.pi.json'),
-    ];
-    for (const pFile of projectCandidates) {
-      if (fs.existsSync(pFile)) {
-        try {
-          const pSettings = JSON.parse(fs.readFileSync(pFile, 'utf8'));
-          if (Array.isArray(pSettings.packages)) {
-            for (const pkg of pSettings.packages) {
-              const pkgStr = typeof pkg === 'string' ? pkg : pkg.source || String(pkg);
-              let cleanName = pkgStr.replace(/^(npm:|https:\/\/github\.com\/)/, '');
-              const lastAt = cleanName.lastIndexOf('@');
-              if (lastAt > 0) cleanName = cleanName.slice(0, lastAt);
-              addOrMergeResource({
-                id: `pkg-${cleanName.replace(/[\/@:]/g, '-')}`,
-                name: cleanName,
-                kind: 'package',
-                source: pkgStr,
-                scope: 'project',
-                enabled: true,
-                alwaysActive: false,
-                configPath: pFile,
-              });
-            }
+    const pSettingsFile = path.join(cwd, '.pi', 'settings.json');
+    if (fs.existsSync(pSettingsFile)) {
+      try {
+        const pSettings = JSON.parse(fs.readFileSync(pSettingsFile, 'utf8'));
+        if (Array.isArray(pSettings.packages)) {
+          for (const pkg of pSettings.packages) {
+            const pkgStr = typeof pkg === 'string' ? pkg : pkg.source || String(pkg);
+            let cleanName = pkgStr.replace(/^(npm:|https:\/\/github\.com\/)/, '');
+            const lastAt = cleanName.lastIndexOf('@');
+            if (lastAt > 0) cleanName = cleanName.slice(0, lastAt);
+            addOrMergeResource({
+              id: `pkg-${cleanName.replace(/[\/@:]/g, '-')}`,
+              name: cleanName,
+              kind: 'package',
+              source: pkgStr,
+              scope: 'project',
+              enabled: true,
+              alwaysActive: false,
+              configPath: pSettingsFile,
+            });
           }
-          if (Array.isArray(pSettings.extensions)) {
-            for (const item of pSettings.extensions) {
-              const raw = typeof item === 'string' ? item : item?.source || item?.path || '';
-              if (!raw) continue;
-              const cleanSource = raw.replace(/^[!+]/, '').trim();
-              const meta = resolveExtensionMeta(item, cleanSource, path.dirname(pFile), pFile);
+        }
+        if (Array.isArray(pSettings.extensions)) {
+          for (const item of pSettings.extensions) {
+            const raw = typeof item === 'string' ? item : item?.source || item?.path || '';
+            if (!raw) continue;
+            const trimmed = raw.trim();
+            if (trimmed.includes('*')) continue;
+            const cleanSource = trimmed.replace(/^[!+-]/, '').trim();
+            if (!cleanSource) continue;
+
+            if (cleanSource.startsWith('builtin:')) {
               const enabled = typeof item === 'object'
                 ? !item.disabled && item.enabled !== false
-                : !raw.startsWith('!');
+                : !trimmed.startsWith('!') && !trimmed.startsWith('-');
               addOrMergeResource({
-                id: `ext-${meta.name.replace(/[\/@:]/g, '-')}`,
-                name: meta.name,
+                id: `ext-${cleanSource.replace(/[\/@:]/g, '-')}`,
+                name: cleanSource,
                 kind: 'extension',
                 source: cleanSource,
                 scope: 'project',
                 enabled,
-                configPath: pFile,
-                extensionPath: meta.extensionPath,
-                extensionDir: meta.extensionDir,
+                configPath: pSettingsFile,
                 raw: item,
                 hasProjectOverride: true,
               });
+              continue;
             }
+
+            const meta = resolveExtensionMeta(item, cleanSource, path.dirname(pSettingsFile), pSettingsFile);
+            const enabled = typeof item === 'object'
+              ? !item.disabled && item.enabled !== false
+              : !trimmed.startsWith('!') && !trimmed.startsWith('-');
+            addOrMergeResource({
+              id: `ext-${meta.name.replace(/[\/@:]/g, '-')}`,
+              name: meta.name,
+              kind: 'extension',
+              source: cleanSource,
+              scope: 'project',
+              enabled,
+              configPath: pSettingsFile,
+              extensionPath: meta.extensionPath,
+              extensionDir: meta.extensionDir,
+              raw: item,
+              hasProjectOverride: true,
+            });
           }
-        } catch {}
-      }
+        }
+      } catch {}
     }
 
     const projectExtDir = path.join(cwd, '.pi', 'extensions');
@@ -392,66 +402,55 @@ export function getPiResourcesImpl(cwd?: string) {
               hasProjectOverride: true,
             });
           } else if (e.isDirectory()) {
-            const subPkg = path.join(projectExtDir, e.name, 'package.json');
-            let handled = false;
-            if (fs.existsSync(subPkg)) {
-              try {
-                const pData = JSON.parse(fs.readFileSync(subPkg, 'utf8'));
-                if (Array.isArray(pData.pi?.extensions)) {
-                  for (const rel of pData.pi.extensions) {
-                    const relNorm = rel.replace(/^[./\\]+/, '').replace(/\\/g, '/');
-                    const fullExt = path.resolve(projectExtDir, e.name, relNorm);
-                    addOrMergeResource({
-                      id: `ext-${e.name}-${relNorm.replace(/[\/@:]/g, '-')}`,
-                      name: pData.name || e.name,
-                      kind: 'extension',
-                      source: `extensions/${e.name}/${relNorm}`,
-                      scope: 'project',
-                      enabled: true,
-                      configPath: fullExt,
-                      extensionPath: fullExt,
-                      extensionDir: path.resolve(projectExtDir, e.name),
-                      hasProjectOverride: true,
-                    });
-                    handled = true;
-                  }
-                }
-              } catch {}
-            }
-            if (!handled) {
-              for (const idx of ['index.ts', 'index.js', 'index.mjs']) {
-                const fullIdx = path.join(projectExtDir, e.name, idx);
-                if (fs.existsSync(fullIdx)) {
-                  const resolvedIdx = path.resolve(fullIdx);
-                  addOrMergeResource({
-                    id: `ext-${e.name}`,
-                    name: e.name,
-                    kind: 'extension',
-                    source: `extensions/${e.name}/${idx}`,
-                    scope: 'project',
-                    enabled: true,
-                    configPath: resolvedIdx,
-                    extensionPath: resolvedIdx,
-                    extensionDir: path.resolve(projectExtDir, e.name),
-                    hasProjectOverride: true,
-                  });
-                  break;
-                }
-              }
-            }
+            const fullPath = path.resolve(projectExtDir, e.name);
+            addOrMergeResource({
+              id: `ext-${e.name}`,
+              name: e.name,
+              kind: 'extension',
+              source: `extensions/${e.name}`,
+              scope: 'project',
+              enabled: true,
+              configPath: fullPath,
+              extensionPath: fullPath,
+              extensionDir: fullPath,
+              hasProjectOverride: true,
+            });
           }
         }
       } catch {}
     }
   }
 
-  // 4. Apply viewer resource activation policy
+  // 4. Apply viewer resource activation policy and native settings exclusions
   const policy = loadResourceActivationPolicy();
   const normCwd = cwd ? normalizeProjectCwd(cwd) : null;
 
+  let globalExtList: string[] = [];
+  if (fs.existsSync(globalSettingsFile)) {
+    try {
+      const s = JSON.parse(fs.readFileSync(globalSettingsFile, 'utf8'));
+      if (Array.isArray(s.extensions)) {
+        globalExtList = s.extensions.map((x: any) => (typeof x === 'string' ? x : x?.source || x?.path || ''));
+      }
+    } catch {}
+  }
+
+  let projectExtList: string[] = [];
+  if (cwd) {
+    const pSettingsFile = path.join(cwd, '.pi', 'settings.json');
+    if (fs.existsSync(pSettingsFile)) {
+      try {
+        const s = JSON.parse(fs.readFileSync(pSettingsFile, 'utf8'));
+        if (Array.isArray(s.extensions)) {
+          projectExtList = s.extensions.map((x: any) => (typeof x === 'string' ? x : x?.source || x?.path || ''));
+        }
+      } catch {}
+    }
+  }
+
   for (const r of resources) {
     if (r.kind === 'extension') {
-      if (!r.extensionPath) {
+      if (!r.extensionPath && !r.source.startsWith('builtin:')) {
         const owning = r.configPath ? path.dirname(r.configPath) : (cwd || getPiAgentDir());
         r.extensionPath = resolveExtensionRuntimePath(r.source, owning);
       }
@@ -459,16 +458,49 @@ export function getPiResourcesImpl(cwd?: string) {
         r.extensionDir = path.dirname(r.extensionPath);
       }
 
+      const applyPatternsToExtension = (initialEnabled: boolean, patterns: string[]): boolean => {
+        let state = initialEnabled;
+        const clean = r.source.replace(/^[!+-]/, '').trim();
+        const posixPath = r.extensionPath ? r.extensionPath.replace(/\\/g, '/') : '';
+        const posixDir = r.extensionDir ? r.extensionDir.replace(/\\/g, '/') : '';
+        for (const p of patterns) {
+          const pTrimmed = p.trim();
+          if (pTrimmed.startsWith('-')) {
+            const target = pTrimmed.slice(1).trim();
+            if (target === clean || (posixPath && (target === posixPath || posixPath.endsWith(`/${target}`)))) {
+              state = false;
+            }
+          } else if (pTrimmed.startsWith('+')) {
+            const target = pTrimmed.slice(1).trim();
+            if (target === clean || (posixPath && (target === posixPath || posixPath.endsWith(`/${target}`)))) {
+              state = true;
+            }
+          } else if (pTrimmed.startsWith('!') && pTrimmed.endsWith('/**')) {
+            const folderMask = pTrimmed.slice(1, -3);
+            if (posixDir && (posixDir === folderMask || posixDir.startsWith(`${folderMask}/`))) {
+              state = false;
+            }
+          }
+        }
+        return state;
+      };
+
+      let nativeEnabled = r.enabled !== false;
+      nativeEnabled = applyPatternsToExtension(nativeEnabled, globalExtList);
+      if (cwd) {
+        nativeEnabled = applyPatternsToExtension(nativeEnabled, projectExtList);
+      }
+
       const alwaysActive = isAlwaysActiveExtension(policy, r.source);
       r.alwaysActive = alwaysActive;
       if (cwd) {
-        r.enabled = getEffectiveExtensionActivation(policy, cwd, r.source);
         let hasPolicyOverride = false;
         if (local !== null) {
           if (local.extensions) {
             for (const [key, val] of Object.entries(local.extensions)) {
               if (typeof val === 'boolean' && extensionIdentitiesMatch(key, r.source)) {
                 hasPolicyOverride = true;
+                r.enabled = val;
                 break;
               }
             }
@@ -479,14 +511,21 @@ export function getPiResourcesImpl(cwd?: string) {
             for (const [key, val] of Object.entries(projectExts)) {
               if (typeof val === 'boolean' && extensionIdentitiesMatch(key, r.source)) {
                 hasPolicyOverride = true;
+                r.enabled = val;
                 break;
               }
             }
           }
         }
-        if (hasPolicyOverride) {
+        if (!hasPolicyOverride) {
+          r.enabled = alwaysActive ? true : nativeEnabled;
+          r.hasProjectOverride = Boolean(r.hasProjectOverride);
+        } else {
           r.hasProjectOverride = true;
         }
+      } else {
+        r.enabled = alwaysActive ? true : nativeEnabled;
+        r.hasProjectOverride = false;
       }
     } else {
       r.alwaysActive = false;
@@ -643,39 +682,96 @@ export function handleGetMcpServers(args: any = {}) {
 }
 
 export async function handleToggleMcpServer(args: any = {}) {
-  const { name, enabled, cwd, configPath } = args;
-  if (!name) throw new Error('Server name is required');
+  const { name, enabled, cwd, scope } = args;
+  if (!name || typeof name !== 'string') throw new Error('Server name is required');
+  if (typeof enabled !== 'boolean') throw new Error('Enabled must be a boolean');
 
-  if (cwd) {
+  const targetScope =
+    scope === 'global' ? 'global' : scope === 'project' ? 'project' : cwd ? 'project' : 'global';
+
+  // Pre-validate schemas before making any writes
+  loadResourceActivationPolicy();
+  if (targetScope === 'project' && cwd) {
+    loadProjectResourceActivation(cwd);
+  }
+
+  const currentServers = getMcpServersImpl(cwd);
+  const exists = currentServers.servers.some((s) => s.name === name);
+  if (!exists) {
+    throw new Error(`Unknown MCP server '${name}'`);
+  }
+
+  if (targetScope === 'project' && cwd) {
+    const projectMcpFile = getNativeProjectMcpPath(cwd);
+    let data: any = {};
+    if (fs.existsSync(projectMcpFile)) {
+      try {
+        data = JSON.parse(fs.readFileSync(projectMcpFile, 'utf8'));
+      } catch (e: any) {
+        throw new Error(`Failed to parse MCP configuration file at ${projectMcpFile}: ${e.message}`);
+      }
+    }
+    if (!data.mcpServers && !data.servers) {
+      data.mcpServers = {};
+    }
+    const targetMap = data.mcpServers || data.servers;
+    if (targetMap[name]) {
+      targetMap[name] = { ...targetMap[name], enabled: Boolean(enabled) };
+      delete targetMap[name].disabled;
+    } else {
+      targetMap[name] = { enabled: Boolean(enabled) };
+    }
+
+    // Set resource activation first (validates local/policy and updates activation)
     await setResourceActivation({
       kind: 'mcp',
       identity: name,
       enabled: Boolean(enabled),
       cwd,
     });
+
+    const piDir = path.dirname(projectMcpFile);
+    if (!fs.existsSync(piDir)) {
+      fs.mkdirSync(piDir, { recursive: true });
+    }
+    const tmpPath = `${projectMcpFile}.tmp.${Date.now()}.${process.pid}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpPath, projectMcpFile);
+
     return {
       success: true,
       name,
       enabled: Boolean(enabled),
-      path: configPath || path.join(cwd, '.pi', 'mcp.json'),
+      path: projectMcpFile,
     };
   }
 
-  let mcpFile = configPath;
-  if (!mcpFile || !fs.existsSync(mcpFile)) {
-    mcpFile = path.join(getPiAgentDir(), 'mcp.json');
-  }
-  if (mcpFile && fs.existsSync(mcpFile)) {
+  // Global scope
+  const mcpFile = path.join(getPiAgentDir(), 'mcp.json');
+  let data: any = {};
+  if (fs.existsSync(mcpFile)) {
     try {
-      const data = JSON.parse(fs.readFileSync(mcpFile, 'utf8'));
-      const targetMap = data.mcpServers || data.servers;
-      if (targetMap && targetMap[name]) {
-        targetMap[name].enabled = Boolean(enabled);
-        delete targetMap[name].disabled;
-        fs.writeFileSync(mcpFile, JSON.stringify(data, null, 2) + '\n', 'utf8');
-      }
-    } catch {}
+      data = JSON.parse(fs.readFileSync(mcpFile, 'utf8'));
+    } catch (e: any) {
+      throw new Error(`Failed to parse MCP configuration file at ${mcpFile}: ${e.message}`);
+    }
   }
+  if (!data.mcpServers && !data.servers) {
+    data.mcpServers = {};
+  }
+  const targetMap = data.mcpServers || data.servers;
+  if (targetMap[name]) {
+    targetMap[name] = { ...targetMap[name], enabled: Boolean(enabled) };
+    delete targetMap[name].disabled;
+  } else {
+    targetMap[name] = { enabled: Boolean(enabled) };
+  }
+
+  fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
+  const tmpPath = `${mcpFile}.tmp.${Date.now()}.${process.pid}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmpPath, mcpFile);
+
   return { success: true, name, enabled: Boolean(enabled), path: mcpFile };
 }
 
@@ -687,70 +783,237 @@ export async function handleTogglePiResource(args: any = {}) {
   if (!source || typeof source !== 'string') {
     throw new Error('Source is required');
   }
+  if (typeof enabled !== 'boolean') {
+    throw new Error('Enabled must be a boolean');
+  }
 
-  const targetScope = scope || (cwd ? 'project' : 'global');
-  if (kind === 'extension' && (targetScope === 'project' || cwd)) {
+  const targetScope =
+    scope === 'global' ? 'global' : scope === 'project' ? 'project' : cwd ? 'project' : 'global';
+
+  // Pre-validate schemas before making any writes
+  loadResourceActivationPolicy();
+  if (targetScope === 'project' && cwd) {
+    loadProjectResourceActivation(cwd);
+  }
+
+  const settingsFile =
+    targetScope === 'project' && cwd
+      ? path.join(cwd, '.pi', 'settings.json')
+      : path.join(getPiAgentDir(), 'settings.json');
+
+  let settings: any = {};
+  if (fs.existsSync(settingsFile)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    } catch (e: any) {
+      throw new Error(`Failed to parse settings file at ${settingsFile}: ${e.message}`);
+    }
+  }
+
+  if (kind === 'package') {
+    if (!enabled) {
+      throw new Error(
+        'Disabling individual packages is not supported. Remove the package or configure package filters directly.'
+      );
+    }
+    if (!Array.isArray(settings.packages)) settings.packages = [];
+    const idx = settings.packages.findIndex((p: any) => {
+      const pSrc = typeof p === 'string' ? p : p?.source || '';
+      return pSrc === source;
+    });
+    if (idx < 0) {
+      settings.packages.push(source);
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+      fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+    }
+    return {
+      success: true,
+      kind,
+      source,
+      scope: targetScope,
+      enabled: true,
+      configPath: settingsFile,
+    };
+  }
+
+  // kind === 'extension'
+  const currentResources = getPiResourcesImpl(cwd);
+  const matched = currentResources.resources.find(
+    (r) => r.kind === 'extension' && extensionIdentitiesMatch(r.source, source)
+  );
+  const cleanSource = source.replace(/^[!+-]/, '').trim();
+  const isBuiltin = KNOWN_BUILTIN_EXTENSIONS.has(cleanSource);
+
+  if (!matched && !isBuiltin) {
+    throw new Error(`Unknown extension identity '${source}'`);
+  }
+
+  if (!Array.isArray(settings.extensions)) settings.extensions = [];
+
+  if (isBuiltin) {
+    const minusEntry = `-${cleanSource}`;
+    const plusEntry = `+${cleanSource}`;
+    if (targetScope === 'project' && cwd) {
+      await setResourceActivation({
+        kind: 'extension',
+        identity: source,
+        enabled: Boolean(enabled),
+        cwd,
+      });
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== plusEntry && str !== cleanSource;
+        });
+        if (!settings.extensions.includes(minusEntry)) {
+          settings.extensions.push(minusEntry);
+        }
+      } else {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== minusEntry;
+        });
+        if (!settings.extensions.includes(plusEntry) && !settings.extensions.includes(cleanSource)) {
+          settings.extensions.push(plusEntry);
+        }
+      }
+    } else {
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== plusEntry && str !== cleanSource;
+        });
+        if (!settings.extensions.includes(minusEntry)) {
+          settings.extensions.push(minusEntry);
+        }
+      } else {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== minusEntry && str !== plusEntry;
+        });
+        if (!settings.extensions.includes(cleanSource)) {
+          settings.extensions.push(cleanSource);
+        }
+      }
+    }
+
+    fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+    const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
+    fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpPath, settingsFile);
+
+    return {
+      success: true,
+      kind,
+      source,
+      scope: targetScope,
+      enabled: Boolean(enabled),
+      configPath: settingsFile,
+    };
+  }
+
+  const runtimePath =
+    matched?.extensionPath || (cwd ? path.resolve(cwd, source) : path.resolve(getPiAgentDir(), source));
+  let isFolder = false;
+  try {
+    isFolder =
+      fs.existsSync(runtimePath) &&
+      fs.statSync(runtimePath).isDirectory() &&
+      !runtimePath.endsWith('.ts') &&
+      !runtimePath.endsWith('.js') &&
+      !runtimePath.endsWith('.mjs');
+  } catch {}
+
+  const posixPath = runtimePath.replace(/\\/g, '/');
+
+  if (targetScope === 'project' && cwd) {
+    // Validate and update project activation first
     await setResourceActivation({
       kind: 'extension',
       identity: source,
       enabled: Boolean(enabled),
       cwd,
     });
-    return {
-      success: true,
-      kind,
-      source,
-      scope: 'project',
-      enabled: Boolean(enabled),
-    };
-  }
 
-  const settingsFile = targetScope === 'project' && cwd
-    ? path.join(cwd, '.pi', 'settings.json')
-    : path.join(getPiAgentDir(), 'settings.json');
-
-  let settings: any = {};
-  if (fs.existsSync(settingsFile)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-    } catch {}
-  }
-
-  if (kind === 'extension') {
-    if (!Array.isArray(settings.extensions)) settings.extensions = [];
-    const idx = settings.extensions.findIndex((e: any) => {
-      const eSrc = typeof e === 'string' ? e : e?.source || e?.path || '';
-      return extensionIdentitiesMatch(eSrc, source);
-    });
-    const cleanSource = source.replace(/^[!+]/, '').trim();
-    const entryStr = enabled ? cleanSource : `!${cleanSource}`;
-    if (idx >= 0) {
-      if (typeof settings.extensions[idx] === 'object') {
-        settings.extensions[idx].enabled = Boolean(enabled);
-        settings.extensions[idx].disabled = !enabled;
+    if (isFolder) {
+      const folderGlob = `!${posixPath}/**`;
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => e !== posixPath && e !== folderGlob);
+        settings.extensions.push(posixPath, folderGlob);
       } else {
-        settings.extensions[idx] = entryStr;
+        settings.extensions = settings.extensions.filter((e: any) => e !== folderGlob && e !== posixPath);
       }
     } else {
-      settings.extensions.push(entryStr);
-    }
-  } else if (kind === 'package') {
-    if (!Array.isArray(settings.packages)) settings.packages = [];
-    const idx = settings.packages.findIndex((p: any) => {
-      const pSrc = typeof p === 'string' ? p : p?.source || '';
-      return pSrc === source;
-    });
-    if (idx >= 0) {
-      if (typeof settings.packages[idx] === 'object') {
-        settings.packages[idx].enabled = Boolean(enabled);
+      const minusEntry = `-${posixPath}`;
+      const plusEntry = `+${posixPath}`;
+      const isGlobalDisabled =
+        matched?.globalEnabled === false || (matched && matched.scope === 'global' && !matched.enabled);
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter(
+          (e: any) => e !== plusEntry && e !== `+${cleanSource}` && e !== posixPath && e !== cleanSource
+        );
+        settings.extensions.push(posixPath, minusEntry);
+      } else {
+        settings.extensions = settings.extensions.filter(
+          (e: any) => e !== minusEntry && e !== `-${cleanSource}`
+        );
+        if (isGlobalDisabled && !settings.extensions.includes(plusEntry)) {
+          settings.extensions.push(plusEntry);
+        }
       }
-    } else if (enabled) {
-      settings.packages.push(source);
+    }
+  } else {
+    // Global scope
+    if (isFolder) {
+      const folderGlob = `!${posixPath}/**`;
+      if (!enabled) {
+        if (!settings.extensions.includes(folderGlob)) {
+          settings.extensions.push(folderGlob);
+        }
+      } else {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== folderGlob;
+        });
+      }
+    } else {
+      const minusEntry = `-${cleanSource}`;
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== `+${cleanSource}`;
+        });
+        if (!settings.extensions.some((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return extensionIdentitiesMatch(str, cleanSource) && !str.startsWith('-') && !str.startsWith('!');
+        })) {
+          settings.extensions.push(cleanSource);
+        }
+        if (!settings.extensions.includes(minusEntry)) {
+          settings.extensions.push(minusEntry);
+        }
+      } else {
+        settings.extensions = settings.extensions.filter((e: any) => {
+          const str = typeof e === 'string' ? e : e?.source || '';
+          return str !== minusEntry && str !== `!${cleanSource}`;
+        });
+        if (
+          matched &&
+          matched.configPath === settingsFile &&
+          !settings.extensions.some((e: any) =>
+            extensionIdentitiesMatch(typeof e === 'string' ? e : e?.source || '', cleanSource)
+          )
+        ) {
+          settings.extensions.push(cleanSource);
+        }
+      }
     }
   }
 
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
-  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmpPath, settingsFile);
 
   return {
     success: true,
