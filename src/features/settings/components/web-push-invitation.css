@@ -1,0 +1,103 @@
+.web-push-invitation {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 24px;
+  background: var(--bg-surface-elevated, #1c2128);
+  color: var(--fg-default, #e6edf3);
+  border-top: 1px solid var(--border-muted, #30363d);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+
+.web-push-invitation-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.web-push-invitation-title {
+  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.web-push-invitation-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg-muted, #8b949e);
+}
+
+.web-push-invitation-error {
+  margin: 6px 0 0 0;
+  font-size: 13px;
+  color: var(--danger-fg, #f85149);
+  font-weight: 500;
+}
+
+.web-push-invitation-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.web-push-invitation-actions button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.web-push-invitation-decline {
+  border: 1px solid var(--border-muted, #30363d);
+  background: var(--bg-subtle-hover, #30363d);
+  color: var(--fg-default, #e6edf3);
+}
+
+.web-push-invitation-decline:hover:not(:disabled) {
+  background: var(--bg-surface-hover, #3c444d);
+}
+
+.web-push-invitation-accept {
+  border: 1px solid var(--accent-primary, #58a6ff);
+  background: var(--accent-primary, #58a6ff);
+  color: #ffffff;
+}
+
+.web-push-invitation-accept:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.web-push-invitation-actions button:focus-visible {
+  outline: 2px solid var(--accent-primary, #58a6ff);
+  outline-offset: 2px;
+}
+
+.web-push-invitation-actions button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+@media (max-width: 640px) {
+  .web-push-invitation {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px;
+  }
+
+  .web-push-invitation-actions {
+    justify-content: flex-end;
+  }
+}

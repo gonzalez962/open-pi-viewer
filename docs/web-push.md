@@ -21,10 +21,20 @@ When Web Push is unconfigured or unsupported, existing notifications while the p
 ## Device setup
 
 1. Open Pi Viewer and sign in if authentication is enabled.
-2. In **Settings → Notifications**, select **Register this browser**, review the device-enrollment modal, and confirm. Allow browser notifications when prompted. The button works even if **Enable system notifications** is already on; turning the switch on for an unregistered browser also opens the modal.
+2. In **Settings → Notifications**, select **Register this browser** beside the notification switch, review the device-enrollment modal, and confirm. Allow browser notifications when prompted. The registration button is visible only while **Enable system notifications** is on and this browser is not registered; turning the switch on for an unregistered browser also opens the modal.
 3. Keep a Pi task running, close the viewer page, and verify a notification arrives when the task finishes or requests input.
 
+Use **Cancel push subscription** beside the switch to remove only this device's push subscription. The notification switch and local notification preferences remain unchanged; notifications while the viewer is open continue to work. The cancellation button is visible only when this browser is registered, replacing the registration button, and is disabled while a notification operation is pending. **Test notification** appears after the notification types and is available while notifications are enabled.
+
 Each device is independent: turning off its switch removes its subscription without disabling other devices. A persisted enabled preference does not create a new subscription or show a permission prompt on page load; use **Register this browser** and confirm explicitly to register a new device. Existing browser subscriptions are synchronized after authentication and when settings or project names change.
+
+### Startup browser invitation
+
+When opening Pi Viewer in a web browser with system notifications enabled, an unregistered browser displays a bottom cookie-style invitation banner offering to activate WebPush.
+
+- **Accept** directly activates Web Push through the user's click gesture and enrolls the device without presenting a second confirmation modal. If registration fails, an error message appears in the banner and the action remains retryable.
+- **Decline**, dismissing the banner, or pressing **Escape** closes the invitation and records a 24-hour browser-local cooldown before prompting again on subsequent openings. The exact 24-hour boundary becomes eligible on the next visit. Storage failures are handled safely and the prompt is not repeated within the same page session.
+- The startup invitation is suppressed for native desktop desktop applications, when notifications are disabled in preferences, when the browser is already enrolled, when Web Push is unsupported or unconfigured on the server, when browser notification permission has been denied, and while startup synchronization is settling (preventing transient prompts on already-enrolled devices). Local notification preferences are preserved throughout.
 
 ## Authorization and delivery boundaries
 

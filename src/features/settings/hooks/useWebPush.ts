@@ -5,6 +5,7 @@ import {
   registerWebPush,
   unregisterWebPush,
   syncExistingSubscription,
+  getWebPushConfig,
   type WebPushEnvironment,
   type WebPushOperationResult,
   type WebPushProject,
@@ -20,6 +21,7 @@ export interface WebPushControllerOptions {
   eventTarget?: EventTarget;
   onStatusChange?: (status: WebPushStatus) => void;
   onError?: (error: string | null) => void;
+  onSettled?: () => void;
 }
 
 export interface UseWebPushOptions extends WebPushControllerOptions {}
@@ -28,6 +30,7 @@ export interface UseWebPushReturn {
   isSupported: boolean;
   isSubscribed: boolean;
   isLoading: boolean;
+  isSyncSettled: boolean;
   status: WebPushStatus;
   error: string | null;
   enable: () => Promise<WebPushOperationResult>;
@@ -45,6 +48,7 @@ export function createWebPushController(options: WebPushControllerOptions) {
   let currentStatus: WebPushStatus = 'unsubscribed';
   let activeAbortController: AbortController | null = null;
   let inFlightOp: 'enable' | 'disable' | 'sync' | null = null;
+  let settled = false;
   let disposed = false;
 
   const updateStatus = (next: WebPushStatus) => {
@@ -69,48 +73,99 @@ export function createWebPushController(options: WebPushControllerOptions) {
 
   const controller = {
     getStatus: () => currentStatus,
+    isSettled: () => settled,
     isDisposed: () => disposed,
 
     async init(): Promise<void> {
       if (disposed) return;
-      if (!isWebPushSupported(options.dependencies)) {
-        updateStatus('unsupported');
-        return;
-      }
-
-      // Check existing subscription passively without prompting
-      const signal = abortPreviousAndCreateSignal();
-      inFlightOp = 'sync';
       try {
-        const syncResult = await syncExistingSubscription(
-          {
-            preferences: currentPreferences,
-            language: currentLanguage,
-            projects: currentProjects,
-            signal,
-          },
-          options.dependencies
-        );
-        if (disposed) return;
-
-        if (syncResult.ok) {
-          updateStatus('subscribed');
-          updateError(null);
-        } else {
-          updateStatus(syncResult.status === 'unsupported' ? 'unsupported' : 'unsubscribed');
+        if (!isWebPushSupported(options.dependencies)) {
+          updateStatus('unsupported');
+          return;
         }
-      } finally {
-        if (inFlightOp === 'sync') inFlightOp = null;
-      }
 
-      // Listen for web-auth-ready event to re-sync expired leases after re-login
-      if (target && !authListener) {
-        authListener = () => {
-          if (!disposed && currentStatus === 'subscribed') {
-            void controller.sync();
+        // Check existing subscription passively without prompting
+        const signal = abortPreviousAndCreateSignal();
+        inFlightOp = 'sync';
+        try {
+          const syncResult = await syncExistingSubscription(
+            {
+              preferences: currentPreferences,
+              language: currentLanguage,
+              projects: currentProjects,
+              signal,
+            },
+            options.dependencies
+          );
+          if (disposed || signal.aborted) return;
+
+          if (syncResult.ok) {
+            updateStatus('subscribed');
+            updateError(null);
+          } else {
+            const win =
+              options.dependencies?.windowObj !== undefined
+                ? options.dependencies.windowObj
+                : typeof window !== 'undefined'
+                  ? window
+                  : null;
+            const isPermissionDenied = win?.Notification?.permission === 'denied';
+
+            if (syncResult.status === 'error') {
+              updateStatus('error');
+              updateError(syncResult.error ?? 'Failed to synchronize push subscription');
+            } else if (syncResult.status === 'unsupported') {
+              updateStatus('unsupported');
+              updateError(syncResult.error ?? null);
+            } else if (syncResult.status === 'unavailable') {
+              updateStatus('unavailable');
+              updateError(syncResult.error ?? null);
+            } else if (syncResult.status === 'denied' && isPermissionDenied) {
+              updateStatus('denied');
+              updateError(syncResult.error ?? null);
+            } else {
+              // Genuinely unsubscribed (e.g. status === 'unsubscribed' or permission is default)
+              // Perform fallback config discovery to check server VAPID availability
+              const config = await getWebPushConfig({
+                fetchFn: options.dependencies?.fetchFn,
+                signal,
+              });
+              if (disposed || signal.aborted) return;
+
+              if (!config.available || !config.publicKey) {
+                updateStatus('unavailable');
+                updateError(null);
+              } else if (isPermissionDenied) {
+                updateStatus('denied');
+                updateError(null);
+              } else {
+                updateStatus('unsubscribed');
+                updateError(null);
+              }
+            }
           }
-        };
-        target.addEventListener(WEB_AUTH_READY_EVENT, authListener as EventListener);
+        } finally {
+          if (inFlightOp === 'sync') inFlightOp = null;
+        }
+
+        // Listen for web-auth-ready event to re-sync expired leases after re-login
+        if (target && !authListener) {
+          authListener = () => {
+            if (!disposed && currentStatus === 'subscribed') {
+              void controller.sync();
+            }
+          };
+          target.addEventListener(WEB_AUTH_READY_EVENT, authListener as EventListener);
+        }
+      } catch (err) {
+        if (disposed || activeAbortController?.signal.aborted) return;
+        updateStatus('error');
+        updateError(err instanceof Error ? err.message : String(err));
+      } finally {
+        settled = true;
+        if (!disposed) {
+          options.onSettled?.();
+        }
       }
     },
 
@@ -245,6 +300,7 @@ export function createWebPushController(options: WebPushControllerOptions) {
 export function useWebPush(options: UseWebPushOptions): UseWebPushReturn {
   const [status, setStatus] = useState<WebPushStatus>('unsubscribed');
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncSettled, setIsSyncSettled] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onStatusChangeRef = useRef(setStatus);
@@ -265,6 +321,7 @@ export function useWebPush(options: UseWebPushOptions): UseWebPushReturn {
 
   useEffect(() => {
     // Recreate controller on effect setup (StrictMode safe)
+    setIsSyncSettled(false);
     const ctrl = createWebPushController({
       preferences: optionsRef.current.preferences,
       language: optionsRef.current.language,
@@ -273,6 +330,7 @@ export function useWebPush(options: UseWebPushOptions): UseWebPushReturn {
       eventTarget: optionsRef.current.eventTarget,
       onStatusChange: (s) => onStatusChangeRef.current(s),
       onError: (e) => onErrorRef.current(e),
+      onSettled: () => setIsSyncSettled(true),
     });
     controllerRef.current = ctrl;
 
@@ -338,6 +396,7 @@ export function useWebPush(options: UseWebPushOptions): UseWebPushReturn {
     isSupported,
     isSubscribed: status === 'subscribed',
     isLoading,
+    isSyncSettled,
     status,
     error,
     enable,

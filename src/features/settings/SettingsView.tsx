@@ -148,6 +148,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } finally { setNotificationBusy(false); }
   };
 
+  const handleCancelWebPush = async () => {
+    setNotificationBusy(true);
+    setNotificationNotice(null);
+    try {
+      await onSystemNotificationsToggle?.(false);
+    } catch (error) {
+      setNotificationNotice(error instanceof Error ? error.message : String(error));
+    } finally { setNotificationBusy(false); }
+  };
+
   const handleEnrollBrowser = async () => {
     setNotificationBusy(true);
     setEnrollmentError(null);
@@ -452,15 +462,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                   <span>{t('settings.notifications_request_permission')}</span>
                 </label>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleTestNotification}
-                  disabled={!notifications.enabled || notificationBusy}
-                  title={t('settings.notifications_test_btn')}
-                >
-                  <span>{t('settings.notifications_test_btn')}</span>
-                </button>
+                {onSystemNotificationsToggle && webPushStatus && webPushStatus !== 'unsupported' && (
+                  <>
+                    {webPushStatus === 'subscribed' ? (
+                      <button type="button" className="btn btn-secondary btn-sm" data-testid="web-push-cancel"
+                        disabled={notificationBusy}
+                        onClick={() => { void handleCancelWebPush(); }}>
+                        {t('settings.web_push_cancel_button')}
+                      </button>
+                    ) : notifications.enabled && (
+                      <button type="button" className="btn btn-secondary btn-sm" data-testid="web-push-enroll"
+                        disabled={notificationBusy} onClick={openEnrollment}>
+                        {t('settings.web_push_enroll_button')}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -469,12 +486,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {t('settings.notifications_permission_label')}: {t(`settings.notifications_permission_${notificationPermission}`)}
           </p>
           <p className="field-subtext">{t('settings.notifications_permission_help')}</p>
-          {webPushStatus && <p role="status" aria-live="polite">{t(`settings.web_push_${webPushStatus}`)}</p>}
-          {onSystemNotificationsToggle && webPushStatus && webPushStatus !== 'unsupported' && (
-            <button type="button" className="btn btn-secondary btn-sm" data-testid="web-push-enroll"
-              disabled={notificationBusy || webPushStatus === 'subscribed'} onClick={openEnrollment}>
-              {t(webPushStatus === 'subscribed' ? 'settings.web_push_registered' : 'settings.web_push_enroll_button')}
-            </button>
+          {webPushStatus && webPushStatus !== 'unsubscribed' && (
+            <p role="status" aria-live="polite">{t(`settings.web_push_${webPushStatus}`)}</p>
           )}
           {notificationNotice && <p role="status" aria-live="polite">{notificationNotice}</p>}
 
@@ -566,6 +579,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {t('settings.notifications_on_waiting_input_hint')}
                 </span>
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleTestNotification}
+                disabled={!notifications.enabled || notificationBusy}
+                title={t('settings.notifications_test_btn')}
+              >
+                <span>{t('settings.notifications_test_btn')}</span>
+              </button>
             </div>
           </div>
         </section>
