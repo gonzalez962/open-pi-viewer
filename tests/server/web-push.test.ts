@@ -137,14 +137,14 @@ test('resolveWebPushConfig: available when valid base64url keys and mailto subje
 // 1. Config Endpoint (GET /api/push/config)
 // ---------------------------------------------------------------------------
 
-test('push config: unavailable when auth is disabled', async () => {
+test('push config: unavailable for remote access when auth is disabled', async () => {
   const webAuth = createWebAuth({ enabled: false });
   const push = createWebPush({
     webAuth,
     config: VALID_VAPID_CONFIG,
   });
 
-  const req = new MockRequest({ url: '/api/push/config', method: 'GET' });
+  const req = new MockRequest({ url: '/api/push/config', method: 'GET', remoteAddress: '192.168.1.5' });
   const res = new MockResponse();
   await push.handleConfig(req, res);
 

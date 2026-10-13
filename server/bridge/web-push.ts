@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import webpush from 'web-push';
@@ -74,6 +75,8 @@ export interface WebPushOptions {
 }
 
 export interface WebPushService {
+  getRequestOwner: (req: any) => string | null;
+  isOwnerAuthorized: (owner: string) => boolean;
   isConfigured: () => boolean;
   getPublicKey: () => string | undefined;
   handleConfig: (req: IncomingMessage | any, res: ServerResponse | any) => Promise<void>;
@@ -328,6 +331,29 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
   // In-memory subscriptions store: endpoint -> PushSubscriptionRecord
   const subscriptions = new Map<string, PushSubscriptionRecord>();
 
+  const localOwners = new Map<string, number>();
+  const cookieName = 'pi_viewer_push_device';
+  const isLocal = (req: any): boolean => {
+    const peer = req.socket?.remoteAddress || '';
+    const loopback = peer === '::1' || /^(?:127\.|::ffff:127\.)/.test(peer);
+    try {
+      const host = new URL(`http://${req.headers.host}`).hostname.toLowerCase();
+      return loopback && ['localhost', '127.0.0.1', '[::1]'].includes(host);
+    } catch { return false; }
+  };
+  const isOwnerAuthorized = (owner: string): boolean => {
+    if (webAuth?.isEnabled()) return webAuth.validateOwnerLease(owner);
+    const expires = localOwners.get(owner);
+    if (expires === undefined || expires <= nowFn()) { localOwners.delete(owner); return false; }
+    return true;
+  };
+  const getRequestOwner = (req: any): string | null => {
+    if (webAuth?.isEnabled()) return webAuth.authenticate(req);
+    if (!isLocal(req) || !validateSameOrigin(req)) return null;
+    const token = typeof req.headers.cookie === 'string'
+      ? req.headers.cookie.match(/(?:^|;\s*)pi_viewer_push_device=([a-f0-9]{64})(?:;|$)/)?.[1] : undefined;
+    return token && isOwnerAuthorized(token) ? token : null;
+  };
   const isConfigured = (): boolean => config.available;
   const getPublicKey = (): string | undefined => config.publicKey;
 
@@ -353,8 +379,8 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
       return;
     }
 
-    // Push config requires configured web authentication
-    if (!webAuth || !webAuth.isEnabled()) {
+    // Anonymous access is limited to actual loopback requests and localhost origins.
+    if (!webAuth?.isEnabled() && !isLocal(req)) {
       sendJsonResponse(res, 200, { available: false });
       return;
     }
@@ -364,6 +390,13 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
       return;
     }
 
+    if (!webAuth?.isEnabled() && !getRequestOwner(req)) {
+      for (const [token, expires] of localOwners) if (expires <= nowFn()) localOwners.delete(token);
+      if (localOwners.size >= maxSubscriptions) { sendJsonResponse(res, 429, { error: 'Too many local devices' }); return; }
+      const token = randomBytes(32).toString('hex');
+      localOwners.set(token, nowFn() + 24 * 60 * 60 * 1000);
+      res.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/api; HttpOnly; SameSite=Strict; Max-Age=86400${req.socket?.encrypted ? '; Secure' : ''}`);
+    }
     sendJsonResponse(res, 200, {
       available: true,
       publicKey: config.publicKey,
@@ -395,18 +428,16 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
       return;
     }
 
-    // Determine authenticated owner
-    let owner: string | null = null;
-    if (webAuth?.isEnabled()) {
-      owner = webAuth.authenticate(req);
+    if (!webAuth?.isEnabled() && !isLocal(req)) {
+      sendJsonResponse(res, 403, { error: 'Local browser access required' }); return;
     }
-
-    if (webAuth?.isEnabled() && !owner) {
+    const owner = getRequestOwner(req);
+    if (!owner) {
       sendJsonResponse(res, 401, { error: 'Unauthorized: Web login session required' });
       return;
     }
 
-    const effectiveOwner = owner || 'anonymous';
+    const effectiveOwner = owner;
 
     // -----------------------------------------------------------------------
     // DELETE: Unregister subscription
@@ -451,9 +482,8 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
       if (existing) {
         // Allow deletion if caller is the owner or prior owner lease is no longer valid
         if (
-          !webAuth?.isEnabled() ||
           existing.owner === effectiveOwner ||
-          !webAuth.validateOwnerLease(existing.owner)
+          !isOwnerAuthorized(existing.owner)
         ) {
           subscriptions.delete(endpoint);
         }
@@ -561,7 +591,7 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
     if (existing) {
       if (existing.owner !== effectiveOwner) {
         // Cross-owner update attempt: check if prior owner lease is still active
-        const priorActive = webAuth?.isEnabled() && webAuth.validateOwnerLease(existing.owner);
+        const priorActive = isOwnerAuthorized(existing.owner);
         if (priorActive) {
           sendJsonResponse(res, 403, {
             error: 'Forbidden: Subscription belongs to another active session',
@@ -653,11 +683,7 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
         if (isWaiting && record.preferences.onWaitingInput === false) continue;
 
         // 2. Lease check for authenticated owner
-        if (webAuth?.isEnabled()) {
-          if (!webAuth.validateOwnerLease(record.owner)) {
-            continue;
-          }
-        }
+        if (!isOwnerAuthorized(record.owner)) continue;
 
         // 3. Resolve origin name according to hierarchy
         const origin = resolveOriginName(event.cwd, record.projects, options.gitResolver);
@@ -692,7 +718,7 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
 
         // 5. Send with bounded timeout; recheck lease immediately before send
         if (!record.preferences.enabled) continue;
-        if (webAuth?.isEnabled() && !webAuth.validateOwnerLease(record.owner)) {
+        if (!isOwnerAuthorized(record.owner)) {
           continue;
         }
         if (isOwnerConnected(record.owner)) {
@@ -729,10 +755,13 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
     subscriptions.get(endpoint);
   const clearSubscriptions = (): void => subscriptions.clear();
   const dispose = (): void => {
+    localOwners.clear();
     subscriptions.clear();
   };
 
   return {
+    getRequestOwner,
+    isOwnerAuthorized,
     isConfigured,
     getPublicKey,
     handleConfig,

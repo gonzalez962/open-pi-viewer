@@ -13,7 +13,7 @@ Web Push delivers task-completion and waiting-for-input notifications to each br
    | `PI_VIEWER_VAPID_PRIVATE_KEY` | Private VAPID key; server only |
    | `PI_VIEWER_VAPID_SUBJECT` | Operator contact, such as `mailto:admin@example.com` |
 
-3. Enable web authentication using `PI_VIEWER_AUTH_ENABLED=true` and a configured `PI_VIEWER_AUTH_KEY`. Serve Pi Viewer over HTTPS (localhost is accepted for development). Preserve the existing same-origin authentication and reverse-proxy rules.
+3. For local use, open `http://localhost` with authentication disabled: Web Push uses a separate, per-browser HttpOnly cookie valid for 24 hours. Both the Host and the actual connection must be loopback; LAN access and forwarded headers do not enable this mode. For remote access, enable `PI_VIEWER_AUTH_ENABLED=true` with a configured `PI_VIEWER_AUTH_KEY` and HTTPS. Preserve same-origin and reverse-proxy rules.
 4. Build and start with the existing `npm run build` and `npm run start` commands. Do not use the frontend-only preview as the backend. For development, `npm run dev` loads the server-only VAPID variables from Vite's `.env` files; production `npm run start` loads `.env` from its working directory. Restart the server after changing keys or authentication configuration. Process environment overrides `.env` values. VAPID private keys are never exposed through `VITE_` variables or frontend build definitions.
 
 When Web Push is unconfigured or unsupported, existing notifications while the page is open remain available. Do not expose the service publicly with authentication disabled.
@@ -29,7 +29,7 @@ Each device is independent: turning off its switch removes its subscription with
 ## Authorization and delivery boundaries
 
 - With web authentication enabled, delivery pauses when the device's login session expires and stops after logout. Open Pi Viewer and sign in again to renew the subscription authorization.
-- Subscription records follow the server's in-memory login leases. After a server restart, reopen Pi Viewer to synchronize the existing browser subscription.
+- Subscription records follow in-memory authorization leases. Local browser identities also expire after 24 hours; reopen Pi Viewer to renew. After a server restart, reopen Pi Viewer to synchronize the existing browser subscription. Authentication-enabled deployments continue using login leases, not local identities.
 - The server avoids sending push to a device's login session while it has an active, authorized viewer event connection; existing in-page alerts handle that session. Other subscribed devices with no active connection still receive push.
 - Every valid push received by the service worker is displayed, even if a viewer page opens while it is in transit. A connection transition can produce a duplicate, but pushes are never silently discarded based on open windows.
 - Clicking a notification focuses an existing viewer window or opens the viewer root. It does not navigate to a filesystem path.

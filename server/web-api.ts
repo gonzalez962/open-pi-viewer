@@ -19,8 +19,8 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
   const activeWebAuthSseClients = new Map<string, Set<ServerResponse>>();
 
   const isOwnerConnected = (owner: string): boolean => {
-    if (!owner || !webAuth.isEnabled()) return false;
-    if (!webAuth.validateOwnerLease(owner)) {
+    if (!owner) return false;
+    if (!webPush.isOwnerAuthorized(owner)) {
       activeWebAuthSseClients.delete(owner);
       return false;
     }
@@ -103,7 +103,7 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     const owner = oauthAccess.authenticate(req) ?? undefined;
     addSseClient(res, owner, () => Boolean(owner && oauthAccess.validateOwnerLease(owner)));
 
-    const webAuthOwner = webAuth.isEnabled() ? webAuth.authenticate(req) : null;
+    const webAuthOwner = webPush.getRequestOwner(req);
     if (webAuthOwner) {
       let clients = activeWebAuthSseClients.get(webAuthOwner);
       if (!clients) {
