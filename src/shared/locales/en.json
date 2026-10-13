@@ -152,7 +152,7 @@
   "settings.notifications_test_body": "Notifications and sound are working properly!",
 
   "notifications.task_complete_title": "Task finished",
-  "notifications.task_complete_body": "Pi has finished generating its response",
+  "notifications.task_complete_body": "The task has finished",
   "notifications.waiting_input_title": "Waiting for your answer",
   "notifications.waiting_input_body": "Pi is blocked waiting for your input or approval",
 

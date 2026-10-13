@@ -696,8 +696,8 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
         if (isSettled) {
           baseTitle = isEs ? 'Tarea finalizada' : 'Task finished';
           body = isEs
-            ? 'Pi ha terminado de generar la respuesta'
-            : 'Pi has finished generating its response';
+            ? 'La tarea ha finalizado'
+            : 'The task has finished';
         } else {
           baseTitle = isEs ? 'Esperando tu respuesta' : 'Waiting for your answer';
           body = isEs
