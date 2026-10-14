@@ -4,6 +4,7 @@ import test from 'node:test';
 import { chatReducer, INITIAL_STATE, type ChatSessionState, type ChatAction } from '@core/reducer';
 import { SessionEventController } from '@features/chat/session-events';
 import { getAgentWorkingStatus, deriveAgentWorkingStatus } from '@features/chat/agent-working-status';
+import { parseSubagentSnapshot } from '@core/agent-activity';
 import type { RpcEventBase } from '@core/types/events';
 
 function createConnectedState(sessionId = 'session-1'): ChatSessionState {
@@ -267,6 +268,64 @@ test('S3.3 malformed, unrelated or stale-session widget data does not corrupt ac
     method: 'setWidget',
     widgetKey: 'unrelated-widget',
     widgetLines: [JSON.stringify({ tasks: [] })],
+    sessionId: 'session-1',
+  } as unknown as RpcEventBase);
+  assert.equal(getAgentWorkingStatus(state, 'en'), 'Working - Explore: reading');
+
+  // Malformed schema-valid tasks (missing, null, string, number): must not corrupt or clear live activity
+  const malformedPayloads = [
+    { schema: 'gentle-agents.activity/v1' },
+    { schema: 'gentle-agents.activity/v1', tasks: null },
+    { schema: 'gentle-agents.activity/v1', tasks: 'invalid-string' },
+    { schema: 'gentle-agents.activity/v1', tasks: 42 },
+  ];
+
+  for (const payload of malformedPayloads) {
+    controller.handleEvent({
+      type: 'extension_ui_request',
+      id: 'widget-malformed-tasks',
+      method: 'setWidget',
+      widgetKey: 'gentle-agents',
+      widgetLines: [JSON.stringify(payload)],
+      sessionId: 'session-1',
+    } as unknown as RpcEventBase);
+    assert.equal(
+      getAgentWorkingStatus(state, 'en'),
+      'Working - Explore: reading',
+      'malformed tasks payload must retain previously seeded live activity'
+    );
+  }
+
+  // Direct helper checks for malformed vs valid empty tasks
+  assert.equal(parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1' }), null);
+  assert.equal(parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: null }), null);
+  assert.equal(parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: 'invalid-string' }), null);
+  assert.equal(parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: 42 }), null);
+  assert.deepEqual(parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: [] }), []);
+
+  // Valid empty snapshot clears previously seeded live activity
+  controller.handleEvent({
+    type: 'extension_ui_request',
+    id: 'widget-valid-empty',
+    method: 'setWidget',
+    widgetKey: 'gentle-agents',
+    widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [] })],
+    sessionId: 'session-1',
+  } as unknown as RpcEventBase);
+  assert.equal(getAgentWorkingStatus(state, 'en'), null, 'valid empty snapshot must clear live activity');
+
+  // Reseed live activity for stale-session and disconnect checks
+  controller.handleEvent({
+    type: 'extension_ui_request',
+    id: 'widget-reseed',
+    method: 'setWidget',
+    widgetKey: 'gentle-agents',
+    widgetLines: [
+      JSON.stringify({
+        schema: 'gentle-agents.activity/v1',
+        tasks: [{ summary: { id: 't1', agent: 'explore', status: 'running', lastStep: 'reading' } }],
+      }),
+    ],
     sessionId: 'session-1',
   } as unknown as RpcEventBase);
   assert.equal(getAgentWorkingStatus(state, 'en'), 'Working - Explore: reading');
