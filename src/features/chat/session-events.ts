@@ -9,6 +9,7 @@ import {
   type NotifyAppEventParams,
 } from '@infra/notifications';
 import { AgentOutcomeTracker } from '@core/agent-outcome';
+import { parseSubagentSnapshot } from '@core/agent-activity';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
 } from '@core/notifications';
@@ -189,15 +190,18 @@ export class SessionEventController {
           targetProjectId,
         });
       } else if (eventType === 'extension_ui_request') {
-        this.options.dispatch({
-          type: 'UPDATE_SESSION_STATUS',
-          payload: {
-            sessionPath: (event as any).sessionFile,
-            sessionId: (event as any).sessionId,
-            status: 'waiting',
-          },
-          targetProjectId,
-        });
+        const req = event as unknown as ExtensionUiRequest;
+        if (req && req.method !== 'setWidget' && isSupportedDialogExtensionUiRequest(req)) {
+          this.options.dispatch({
+            type: 'UPDATE_SESSION_STATUS',
+            payload: {
+              sessionPath: (event as any).sessionFile,
+              sessionId: (event as any).sessionId,
+              status: 'waiting',
+            },
+            targetProjectId,
+          });
+        }
       }
       return;
     }
@@ -316,6 +320,32 @@ export class SessionEventController {
       });
     } else if (eventType === 'extension_ui_request') {
       const req = event as unknown as ExtensionUiRequest;
+      if (req && req.method === 'setWidget') {
+        if (
+          req.widgetKey === 'gentle-agents' &&
+          Array.isArray(req.widgetLines) &&
+          req.widgetLines.length > 0
+        ) {
+          const firstLine = req.widgetLines[0];
+          if (typeof firstLine === 'string' && firstLine.length <= 262144) {
+            try {
+              const parsed = JSON.parse(firstLine);
+              const activeTasks = parseSubagentSnapshot(parsed);
+              if (activeTasks !== null) {
+                this.options.dispatch({
+                  type: 'UPDATE_SUBAGENT_ACTIVITY',
+                  payload: { tasks: activeTasks },
+                  targetProjectId,
+                });
+              }
+            } catch {
+              // Malformed JSON fails safely: do not dispatch, do not corrupt state
+            }
+          }
+        }
+        return;
+      }
+
       if (req && isSupportedDialogExtensionUiRequest(req)) {
         void this.handleExtensionUiRequest(req);
 

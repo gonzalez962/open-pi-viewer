@@ -135,9 +135,9 @@ test('S2.2 busy run executing tools includes formatted running tool names, dedup
     payload: { toolCallId: 'c3', toolName: 'ask_user_question' },
   });
 
-  // Without explicit phase, fallback prefix is Working
-  assert.equal(getAgentWorkingStatus(state, 'en'), 'Working - Bash/Read-file');
-  assert.equal(getAgentWorkingStatus(state, 'es'), 'Trabajando - Bash/Read-file');
+  // Under S3.4, common read/search tool (read_file) conveys exploration phase
+  assert.equal(getAgentWorkingStatus(state, 'en'), 'Exploring - Bash/Read-file');
+  assert.equal(getAgentWorkingStatus(state, 'es'), 'Explorando - Bash/Read-file');
 
   // Add more distinct tools to test 3-item limit and overflow suffix: +N
   state = chatReducer(state, {
@@ -154,8 +154,8 @@ test('S2.2 busy run executing tools includes formatted running tool names, dedup
   });
 
   // Tools: Bash, Read-file, Grep, Edit, Write -> 5 tools -> first 3 + "+2"
-  assert.equal(getAgentWorkingStatus(state, 'en'), 'Working - Bash/Read-file/Grep/+2');
-  assert.equal(getAgentWorkingStatus(state, 'es'), 'Trabajando - Bash/Read-file/Grep/+2');
+  assert.equal(getAgentWorkingStatus(state, 'en'), 'Exploring - Bash/Read-file/Grep/+2');
+  assert.equal(getAgentWorkingStatus(state, 'es'), 'Explorando - Bash/Read-file/Grep/+2');
 
   const detailed = deriveAgentWorkingStatus(state, 'en');
   assert.deepEqual(detailed.runningTools, ['Bash', 'Read-file', 'Grep', 'Edit', 'Write']);

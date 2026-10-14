@@ -38,7 +38,7 @@ $$\text{core} \longleftarrow \text{shared} \longleftarrow \text{infra} \longleft
 
 | Layer | Path | Allowed Inbound Imports | Prohibited Imports | Responsibilities |
 |---|---|---|---|---|
-| **Core** | `src/core/` | Internal `core/` only | React (`react`, `react-dom`), Tauri (`@tauri-apps/*`), `@shared/*`, `@infra/*`, `@features/*`, `@app/*` | Protocol messages, JSONL session handling, chat reducer slices (`connection`, `messaging`, `models`, `sessions`, `tool-execution`), markdown parser, domain types. |
+| **Core** | `src/core/` | Internal `core/` only | React (`react`, `react-dom`), Tauri (`@tauri-apps/*`), `@shared/*`, `@infra/*`, `@features/*`, `@app/*` | Protocol messages, JSONL session handling, chat reducer slices (`connection`, `messaging`, `models`, `sessions`, `tool-execution`), subagent activity snapshot parsing (`agent-activity.ts`), markdown parser, domain types. |
 | **Shared** | `src/shared/` | `@core/*`, internal `shared/` | React, Tauri, `@infra/*`, `@features/*`, `@app/*` | Design tokens (`tokens.css`), base reset (`base.css`), theme resolution, i18n dictionaries (`en.json`, `es.json`) & translation, formatting helpers, clipboard & scroll controllers. |
 | **Infra** | `src/infra/` | `@core/*`, `@shared/*`, internal `infra/` | React, `@features/*`, `@app/*` | The **only** layer permitted to import `@tauri-apps/*`. Native Tauri IPC invocation (`bridge.ts`), external opener adapter (`opener.ts`), preferences persistence (`preferences.ts`). |
 | **Features** | `src/features/*` | `@core/*`, `@shared/*`, `@infra/*`, local feature files | Other features (`@features/<otherFeature>`), `@app/*` | Feature UI components, presentation logic, hooks, and feature stylesheets (`*.css`). Feature boundaries are strictly isolated: cross-feature dependencies are composed via props/slots in `app/App.tsx`. |
@@ -62,7 +62,7 @@ The temporary legacy alias `@/*` has been completely retired. Deep relative impo
 
 Features live under `src/features/<feature-name>/`:
 
-- **`chat`**: Activity blocks, message stream, prompt controls, chat scrolling, copy feedback, session event listener, dynamic agent working status derivation (`agent-working-status.ts`).
+- **`chat`**: Activity blocks, message stream, prompt controls, chat scrolling, copy feedback, session event listener, dynamic agent working status and live subagent activity derivation (`agent-working-status.ts`).
 - **`projects`**: Project dock sidebar, project registry persistence, monogram calculation, hover expansion.
 - **`providers`**: Providers management view, provider modal form, custom models draft builder, API model classification & enrichment.
 - **`sessions`**: Session history sidebar, session item chips, delete confirmation dialog, session action decision logic.

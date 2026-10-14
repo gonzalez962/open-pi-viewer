@@ -30,12 +30,26 @@ export function chatReducer(
   state: ChatSessionState,
   action: ChatAction
 ): ChatSessionState {
-  return (
+  const next =
     connectionReducer(state, action) ??
     sessionsReducer(state, action) ??
     messagingReducer(state, action) ??
     toolExecutionReducer(state, action) ??
     modelsReducer(state, action) ??
-    state
-  );
+    state;
+
+  if (
+    action.type === 'NEW_SESSION_SUCCESS' ||
+    action.type === 'NEW_CONVERSATION_SUCCESS' ||
+    action.type === 'SWITCH_SESSION_SUCCESS'
+  ) {
+    if (next.subagents && next.subagents.length > 0) {
+      return {
+        ...next,
+        subagents: [],
+      };
+    }
+  }
+
+  return next;
 }

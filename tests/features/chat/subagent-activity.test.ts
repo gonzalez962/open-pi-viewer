@@ -37,10 +37,9 @@ test('S3.1 current-session gentle-agents.activity/v1 setWidget snapshot updates 
 
   let dialogOpened = false;
   const mockDialogAdapter = {
-    showSelect: async () => { dialogOpened = true; return { cancelled: true }; },
-    showInput: async () => { dialogOpened = true; return { cancelled: true }; },
-    showConfirm: async () => { dialogOpened = true; return { cancelled: true }; },
-    showEditor: async () => { dialogOpened = true; return { cancelled: true }; },
+    select: async () => { dialogOpened = true; return null; },
+    input: async () => { dialogOpened = true; return null; },
+    confirm: async () => { dialogOpened = true; return null; },
     cancelPending: () => {},
   };
 
@@ -292,7 +291,11 @@ test('S3.3 malformed, unrelated or stale-session widget data does not corrupt ac
   assert.equal(getAgentWorkingStatus(state, 'en'), 'Working - Explore: reading');
 
   // Disconnect resets activity
-  controller.handleStatusChange({ state: 'disconnected' });
+  controller.handleStatusChange({
+    state: 'disconnected',
+    label: 'Disconnected',
+    detail: 'Process disconnected',
+  });
   assert.equal(getAgentWorkingStatus(state, 'en'), null);
 });
 

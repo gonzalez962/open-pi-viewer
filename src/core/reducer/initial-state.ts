@@ -29,4 +29,5 @@ export const INITIAL_STATE: ChatSessionState = {
   isSwitchingSession: false,
   isSidebarOpen: true,
   pendingApprovals: [],
+  subagents: [],
 };

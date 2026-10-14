@@ -126,6 +126,8 @@ export interface ExtensionUiRequest extends RpcEventBase {
   placeholder?: string;
   prefill?: string;
   timeout?: number;
+  widgetKey?: string;
+  widgetLines?: string[];
 }
 
 export interface ExtensionUiResponsePayload {

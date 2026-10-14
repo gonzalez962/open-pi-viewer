@@ -328,9 +328,11 @@ export const App: React.FC = () => {
     t,
   } = usePreferences();
 
+  const derivedWorkingStatus = getAgentWorkingStatus(state, preferences.language);
   const workingStatusText = isBusy
-    ? (getAgentWorkingStatus(state, preferences.language) ?? t('agent_working_status.fallback'))
-    : null;
+    ? (derivedWorkingStatus ?? t('agent_working_status.fallback'))
+    : derivedWorkingStatus;
+  const isIndicatorActive = Boolean(workingStatusText);
 
   // Subscribes to effective appearance via central controller for live background & working animation
   const [effectiveAppearance, setEffectiveAppearance] = useState<AppearancePreferences>(() =>
@@ -1732,7 +1734,7 @@ export const App: React.FC = () => {
           <div className="prompt-field-group">
             <div className="prompt-header-row">
               <div className="prompt-label-wrapper">
-                {isBusy && (
+                {isIndicatorActive && (
                   <span
                     className={runtimeWorkStyles.className}
                     style={runtimeWorkStyles.style as React.CSSProperties}

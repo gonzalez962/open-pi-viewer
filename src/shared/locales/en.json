@@ -289,6 +289,8 @@
   "agent_working_status.fallback": "Working",
   "agent_working_status.thinking": "Thinking",
   "agent_working_status.generating": "Generating",
+  "agent_working_status.waiting_response": "waiting for response",
+  "agent_working_status.waiting_subagent": "{agent}: waiting for response",
   "agent_working_status.phase_authorizing": "Authorizing",
   "agent_working_status.phase_exploring": "Exploring",
   "agent_working_status.phase_researching": "Researching",
