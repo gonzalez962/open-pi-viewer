@@ -21,27 +21,11 @@ import {
   modelSupportsInputModality,
   calculateContextMetrics,
 } from '@core/prompt-controls-utils';
+import { getTransferFiles, prepareAttachments } from './file-attachments';
+import { bindFileDropZone } from './file-drop-zone';
 import { PopoverSearchBar } from './components/PopoverSearchBar';
 
 export { modelSupportsFiles, modelSupportsInputModality };
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
-}
 
 export interface PromptControlsProps {
   modelInfo: ModelInfo | null;
@@ -402,99 +386,47 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
     setIsFileAttachOpen(false);
   };
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const processed: AttachedFile[] = [];
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [attachmentNotice, setAttachmentNotice] = useState('');
+  const attachFiles = useCallback(async (files: File[]) => {
+    if (!isConnected || isBusy || isChangingModel || !onAttachFiles) return;
+    const result = await prepareAttachments(files, effectiveModel);
+    if (result.files.length) onAttachFiles(result.files);
+    setAttachmentNotice([
+      result.rejected.length ? t('prompt_controls.files_rejected', { files: result.rejected.join(', ') }) : '',
+      result.failed.length ? t('prompt_controls.files_failed', { files: result.failed.join(', ') }) : '',
+    ].filter(Boolean).join(' '));
+  }, [isConnected, isBusy, isChangingModel, onAttachFiles, effectiveModel, t]);
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|svg)$/i.test(file.name);
-      const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi)$/i.test(file.name);
-      const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|ogg|aac|m4a|flac)$/i.test(file.name);
+  useEffect(() => {
+    const form = toolbarRef.current?.closest('form');
+    if (!form) return;
+    const zone = toolbarRef.current?.closest('[data-file-drop-zone]') as HTMLElement | null;
+    const unbindDrop = bindFileDropZone(zone ?? form, isConnected && !isBusy && !isChangingModel, transfer => {
+      void attachFiles(getTransferFiles(transfer));
+    });
+    const paste = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return;
+      const files = getTransferFiles(event.clipboardData);
+      if (!files.length) return;
+      event.preventDefault();
+      void attachFiles(files);
+    };
+    form.addEventListener('paste', paste);
+    return () => {
+      unbindDrop();
+      form.removeEventListener('paste', paste);
+    };
+  }, [attachFiles, isConnected, isBusy, isChangingModel]);
 
-      if (isImage) {
-        const dataUrl = await readFileAsDataUrl(file);
-        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-        processed.push({
-          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-          name: file.name,
-          size: file.size,
-          type: 'image',
-          mimeType: file.type || 'image/png',
-          data: base64,
-          previewUrl: dataUrl,
-        });
-      } else if (isVideo) {
-        const dataUrl = await readFileAsDataUrl(file);
-        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-        processed.push({
-          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-          name: file.name,
-          size: file.size,
-          type: 'video',
-          mimeType: file.type || 'video/mp4',
-          data: base64,
-          previewUrl: dataUrl,
-        });
-      } else if (isAudio) {
-        const dataUrl = await readFileAsDataUrl(file);
-        const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-        processed.push({
-          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-          name: file.name,
-          size: file.size,
-          type: 'audio',
-          mimeType: file.type || 'audio/mpeg',
-          data: base64,
-        });
-      } else {
-        try {
-          const text = await readFileAsText(file);
-          if (/[\x00-\x08\x0E-\x1F]/.test(text)) {
-            const dataUrl = await readFileAsDataUrl(file);
-            const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-            processed.push({
-              id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-              name: file.name,
-              size: file.size,
-              type: 'file',
-              mimeType: file.type || 'application/octet-stream',
-              data: base64,
-            });
-          } else {
-            processed.push({
-              id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-              name: file.name,
-              size: file.size,
-              type: 'text',
-              mimeType: file.type || 'text/plain',
-              content: text,
-            });
-          }
-        } catch {
-          const dataUrl = await readFileAsDataUrl(file);
-          const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
-          processed.push({
-            id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-            name: file.name,
-            size: file.size,
-            type: 'file',
-            mimeType: file.type || 'application/octet-stream',
-            data: base64,
-          });
-        }
-      }
-    }
-
-    if (onAttachFiles && processed.length > 0) {
-      onAttachFiles(processed);
-    }
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
+    void attachFiles(files);
   };
 
   return (
-    <div className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
+    <div ref={toolbarRef} className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
       {/* 0. Unified Action Button (Send / Cancel / Confirm). While busy, the abort button
           stays available; a queue-send button joins it only when there is draft text ready
           to queue as a followUp, so the idle layout is unaffected. */}
@@ -531,6 +463,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
           {t('action.send')}
         </button>
       )}
+
+      {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}
 
       {/* File Attachment Selector */}
       {supportsFiles && (
