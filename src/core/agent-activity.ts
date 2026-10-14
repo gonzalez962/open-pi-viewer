@@ -14,7 +14,7 @@ export function parseSubagentSnapshot(raw: unknown): SubagentTask[] | null {
   if (!raw || typeof raw !== 'object') return null;
   const snapshot = raw as Partial<AgentActivitySnapshot>;
   if (snapshot.schema !== 'gentle-agents.activity/v1') return null;
-  if (!Array.isArray(snapshot.tasks)) return [];
+  if (!Array.isArray(snapshot.tasks)) return null;
 
   const active: SubagentTask[] = [];
   const maxTasks = 64;
