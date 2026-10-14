@@ -484,27 +484,73 @@ export function handleNewSession() {
   };
 }
 
+export function isSessionPathAllowed(sessionPath: unknown): boolean {
+  if (!sessionPath || typeof sessionPath !== 'string') {
+    return false;
+  }
+  if (!sessionPath.endsWith('.jsonl')) {
+    return false;
+  }
+  try {
+    if (!fs.existsSync(sessionPath)) {
+      return false;
+    }
+    const sessionsRoot = getSessionsRootDir();
+    if (!sessionsRoot || !fs.existsSync(sessionsRoot)) {
+      return false;
+    }
+    const canonicalSessionsRoot = fs.realpathSync(path.resolve(sessionsRoot));
+    const canonicalSessionPath = fs.realpathSync(path.resolve(sessionPath));
+
+    if (!canonicalSessionPath.endsWith('.jsonl')) {
+      return false;
+    }
+
+    const stat = fs.statSync(canonicalSessionPath);
+    if (stat.isDirectory()) {
+      return false;
+    }
+
+    const rootPrefix = canonicalSessionsRoot.endsWith(path.sep)
+      ? canonicalSessionsRoot
+      : canonicalSessionsRoot + path.sep;
+
+    return (
+      canonicalSessionPath.startsWith(rootPrefix) ||
+      (process.platform === 'win32' &&
+        canonicalSessionPath.toLowerCase().startsWith(rootPrefix.toLowerCase()))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function handleDeleteSession(args: any = {}) {
   const sessionPath = args.payload?.sessionPath || args.sessionPath;
+  if (!isSessionPathAllowed(sessionPath)) {
+    return { success: false, wasActive: false };
+  }
+
   let wasActive = false;
-  if (sessionPath && fs.existsSync(sessionPath)) {
-    if (sessionPath === piRpc.sessionFile) {
-      wasActive = true;
-      piRpc.kill();
-    }
-    try {
-      fs.unlinkSync(sessionPath);
-    } catch {
-      return { success: false, wasActive };
-    }
+  if (
+    sessionPath === piRpc.sessionFile ||
+    (piRpc.sessionFile && path.resolve(sessionPath) === path.resolve(piRpc.sessionFile))
+  ) {
+    wasActive = true;
+    piRpc.kill();
+  }
+  try {
+    fs.unlinkSync(sessionPath);
+  } catch {
+    return { success: false, wasActive };
   }
   return { success: true, wasActive };
 }
 
 export async function handleRenameSession(args: any = {}) {
   const sessionPath = args.payload?.sessionPath || args.sessionPath;
-  const newTitle = (args.payload?.newTitle || args.newTitle || '').trim();
-  if (!sessionPath || !fs.existsSync(sessionPath) || !newTitle) {
+  const newTitle = (args.payload?.newTitle || args.newTitle || args.payload?.name || args.name || '').trim();
+  if (!sessionPath || !newTitle || !isSessionPathAllowed(sessionPath)) {
     return { success: false };
   }
 
