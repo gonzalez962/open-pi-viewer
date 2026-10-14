@@ -8,6 +8,8 @@ Trigger: explicit SDD; Scope in: prompt label and working indicator; Scope out: 
 
 - T1: `src/app/App.tsx`, `src/features/chat/agent-working-status.ts`, `tests/features/chat/agent-working-status.test.ts`, `src/shared/locales/en.json`, `src/shared/locales/es.json`, `docs/architecture.md`
 
+- T2: `src/core/types/chat-state.ts`, `src/core/types/events.ts`, `src/core/types/agent-activity.ts`, `src/core/agent-activity.ts`, `src/core/reducer/initial-state.ts`, `src/core/reducer/index.ts`, `src/core/reducer/connection.ts`, `src/core/reducer/messaging.ts`, `src/features/chat/session-events.ts`, `src/features/chat/agent-working-status.ts`, `src/app/App.tsx`, `src/shared/locales/en.json`, `src/shared/locales/es.json`, `tests/features/chat/agent-working-status.test.ts`, `tests/features/chat/subagent-activity.test.ts`, `docs/architecture.md`
+
 ## Specs
 
 ### S1 — Remove the redundant visible label [presentational]
@@ -31,6 +33,17 @@ Trigger: explicit SDD; Scope in: prompt label and working indicator; Scope out: 
 - **S2.5** Given an idle agent or a disconnected session containing old running blocks, when the indicator is derived, then no current working activity is reported.
 - **S2.6** Given English or Spanish UI preferences, when current activity is displayed, then phase and fallback labels use the selected UI language while tool identities remain recognizable.
 
+### S3 — Live agent and subagent activity [behavior]
+
+> "no esta cambiando prompt-label-wrapper segun el estado del agente/subagente como en pi-notify"
+
+- The prompt indicator MUST reflect actual live agent/subagent activity rather than just the main-agent busy flag.
+- **S3.1** Given a current-session gentle-agents.activity/v1 setWidget snapshot, when RPC activity arrives, then active task identity, status and last step update the target project's indicator, without opening a dialog.
+- **S3.2** Given queued, running or waiting subagents, when their activity changes or the main agent settles, then the indicator continues to represent active subagents, prioritizes waiting, and stops representing tasks once a new snapshot marks them finished or removes them.
+- **S3.3** Given malformed, unrelated or stale-session widget data, when it arrives, then it does not corrupt live activity, open a dialog or mark a stale session waiting; disconnect or session replacement clears old activity.
+- **S3.4** Given primary-agent tool activity without an explicit phase call, when the indicator is derived, then common read/search, write/edit and validation commands convey exploration, implementation or checking phases; explicit valid phases retain precedence and unknown commands remain conservative.
+- Assumption: read/search tools map to exploration, write/edit to implementation; bash validation is recognized by explicit test/build/check commands only, never by arbitrary shell text. No in-process registry or new backend transport is required. Activity snapshots already arrive via setWidget; no runtime subagent state is inferred from a completed dispatch.
+
 ## Tasks
 
 | ID | Specs | Route | Status | Evidence |
@@ -38,8 +51,15 @@ Trigger: explicit SDD; Scope in: prompt label and working indicator; Scope out: 
 | T1 | S1, S2 | delegated gentle-ai-worker (explicit SDD) | done | RED cf96f5b0ee9f13e5182dd527b9c680381392e27b; GREEN d3d67c8014cf2b8e0df29ac7738c67189bdd2c31; official gate PASS |
 | V1 | S1, S2 | independent gentle-ai-verify + mechanical gate | done | Original gate recheck exit 0 at head/spec-ref f5ccadd192c3c16b273bd5a81f2096f0ecb56e78; S1.1 N/A, S2.1–S2.6 COMPLIANT; all four checks pass |
 
+| T2 | S3, preserve S1/S2 | delegated gentle-ai-worker (SDD followup) | implemented; verification pending | Base fa440f6a9d0ef1c5d0a0afcbd8f30b226f022ce1; RED 6364dd4bebad04d529ff99cfb2c708d4337c8fae; GREEN b5513b6737cf39762470261fdf89e90b8c45481c |
+| V2 | S3, preserve S1/S2 | independent verifier + scoped gate | in_progress | Gate --only S3 and independent transport/lifecycle verification pending |
+
 ## Log
 
+- **L7** followup: "no esta cambiando prompt-label-wrapper segun el estado del agente/subagente como en pi-notify"
+- **D4 — Actual telemetry ingestion.** Choice: parse bounded gentle-agents.activity/v1 setWidget snapshots into per-project state, deriving identity/status/lastStep only, preserving dialog and session isolation. Alternatives: infer from dispatch (incorrect) or invent external polling. Rationale: publisher uses tasks[].summary fields; existing controller drops non-dialog widget messages. Child protocol source inspected, no writes outside viewer.
+- **P9** Worker delivered actual widget ingestion and per-project subagent state; reported focused 12/12, full suite 1740 pass / 0 fail / 1 optional skip, architecture 8/8 and successful build. Parent verified RED/GREEN hashes and baseline scope; independent verification pending, not declared complete. Parent review focus: malformed snapshot.tasks currently returns [] and may erase valid activity rather than ignore malformed input (S3.3); real source project/session handling and main-idle telemetry lifecycle require probes. No source changes by parent.
+- **P8** Prior scoped native review review-ec84a22c28c62744 approved and acknowledged; authority burned for its exact candidate. Followup S3 is a new work unit and does not reopen old authority. Baseline fa440f6; new tests-only commit and separate gate range required.
 - **L1** original request: "vamos a cambiar el comportamiento elimina el elemento prompt-input, luego en los textos de working vamos a detectar los estados del agente como se hace en este repo C:\xampp\htdocs\trabajosgithub\gentle-ai\pi-notify"
 - **L2** clarification: "no quiero eliminar el texto que dice Prompt lo siento redundante es el label."
 - **L3** routing: "hagamoslo con sdd"
