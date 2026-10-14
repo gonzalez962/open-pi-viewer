@@ -406,6 +406,8 @@
   "prompt_controls.file_type_documents_desc": "Texto, código, Markdown, config",
   "prompt_controls.file_type_all": "Todos los archivos",
   "prompt_controls.file_type_all_desc": "Cualquier tipo de archivo (*.*)",
+  "prompt_controls.files_rejected": "Archivos no compatibles con este modelo: {files}",
+  "prompt_controls.files_failed": "No se pudieron leer los archivos: {files}",
   "prompt_controls.remove_attachment": "Eliminar adjunto",
   "prompt_controls.select_profile_title": "Perfil activo — Clic para cambiar de perfil",
   "prompt_controls.default_profile": "Perfil predeterminado",

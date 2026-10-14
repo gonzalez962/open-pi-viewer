@@ -4259,3 +4259,21 @@
 }
 
 
+
+.chat-file-drop-zone {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-file-drop-zone.prompt-file-dragover,
+.prompt-form.prompt-file-dragover {
+  outline: 2px dashed var(--color-accent-fg, #58a6ff);
+  outline-offset: -2px;
+}
+
+.prompt-attachment-notice {
+  font-size: 12px;
+  color: var(--color-fg-muted, #8b949e);
+}
