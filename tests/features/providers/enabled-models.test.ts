@@ -104,6 +104,48 @@ test('S2.2 — Given missing or empty enabledModels, when models load, then exis
   assert.equal(filtered.some((m) => m.id === 'gpt-4o'), true);
 });
 
+test('S2.1 — Given single-character wildcard ? pattern, filterByEnabledModels matches single character', () => {
+  const matching = filterByEnabledModels(sampleModels, ['google/gemini-1.?-pro']);
+  assert.equal(matching.length, 1);
+  assert.equal(matching[0].id, 'gemini-1.5-pro');
+});
+
+test('S2.1 — Given bracket class [34] pattern, filterByEnabledModels matches characters in bracket class', () => {
+  const matching = filterByEnabledModels(sampleModels, ['openai/gpt-[34]*']);
+  const ids = matching.map((m) => m.id);
+  assert.deepEqual(ids, ['gpt-4o', 'gpt-3.5-turbo']);
+});
+
+test('S2.1 — Given non-glob fuzzy model reference, selects single preferred alias model rather than all substring matches', () => {
+  const testModels: ModelInfo[] = [
+    { id: 'claude-3-5-sonnet-20241022', provider: 'anthropic', name: 'Claude 3.5 Sonnet' },
+    { id: 'claude-3-5-sonnet-latest', provider: 'anthropic', name: 'Claude 3.5 Sonnet' },
+    { id: 'claude-3-haiku-20240307', provider: 'anthropic', name: 'Claude 3 Haiku' },
+  ];
+  // Pi tryMatchModel prefers alias over dated version and returns exactly one model
+  const matching = filterByEnabledModels(testModels, ['sonnet']);
+  assert.deepEqual(
+    matching.map((m) => m.id),
+    ['claude-3-5-sonnet-latest']
+  );
+});
+
+test('S2.1 — Given ambiguous bare ID across multiple providers, rejects bare reference unless provider-scoped', () => {
+  const ambiguousModels: ModelInfo[] = [
+    { id: 'shared-model', provider: 'provider-a', name: 'Shared Model A' },
+    { id: 'shared-model', provider: 'provider-b', name: 'Shared Model B' },
+    { id: 'unique-model', provider: 'provider-a', name: 'Unique Model' },
+  ];
+  // In Pi, ambiguous bare ID without provider prefix matches nothing
+  const matchingBare = filterByEnabledModels(ambiguousModels, ['shared-model']);
+  assert.deepEqual(matchingBare, []);
+
+  // Qualified provider/id matches unambiguously
+  const matchingQualified = filterByEnabledModels(ambiguousModels, ['provider-a/shared-model']);
+  assert.equal(matchingQualified.length, 1);
+  assert.equal(matchingQualified[0].provider, 'provider-a');
+});
+
 test('PRESERVE — filterExcludedModels still honors includedModels and excludedModels when enabledModels is absent', () => {
   const providerPolicies = [
     {

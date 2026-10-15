@@ -142,3 +142,49 @@ test('S1.3 — upsert_custom_provider accepts built-in provider override without
     f.cleanup();
   }
 });
+
+test('S1.3 — pattern-only built-in override produces models.json accepted by installed Pi ModelRuntime composer', async () => {
+  const f = createIsolatedFixture();
+  try {
+    const patternOnlyPayload = {
+      provider: {
+        id: 'anthropic',
+        name: 'Anthropic',
+        models: [],
+        excludedModels: ['claude-3-haiku*'],
+        includedModels: ['claude-3*'],
+      },
+    };
+
+    await handleIpcCommand('upsert_custom_provider', patternOnlyPayload);
+
+    // Verify directly with real installed Pi ModelConfig and composeModelProvider
+    const agentPackageDir =
+      'C:/Users/Personal/AppData/Local/pnpm/global/v11/9530-18dc61ef1941f0dc-0/node_modules/.pnpm/@earendil-works+pi-coding-a_c19e4ab82a0def5cb171f1af9a1d8b62/node_modules/@earendil-works/pi-coding-agent';
+    if (!fs.existsSync(agentPackageDir)) {
+      return;
+    }
+    const { pathToFileURL } = await import('node:url');
+    const { ModelConfig } = await import(pathToFileURL(path.join(agentPackageDir, 'dist/core/model-config.js')).href);
+    const { composeModelProvider } = await import(pathToFileURL(path.join(agentPackageDir, 'dist/core/provider-composer.js')).href);
+
+    const config = await ModelConfig.load(f.modelsPath);
+    assert.equal(config.error, undefined, 'ModelConfig.load must not produce error');
+
+    const baseProvider = {
+      id: 'anthropic',
+      name: 'Anthropic',
+      baseUrl: 'https://api.anthropic.com',
+      auth: { apiKey: { type: 'api-key', getApiKey: () => 'test' } },
+      getModels: () => [{ id: 'claude-3-5-sonnet', api: 'anthropic-messages', provider: 'anthropic', baseUrl: 'https://api.anthropic.com' }],
+    };
+
+    // This MUST not throw: "Provider anthropic: must specify baseUrl, headers, compat, modelOverrides, or models"
+    const composed = composeModelProvider('anthropic', baseProvider as any, config, undefined);
+    assert.ok(composed, 'composeModelProvider must succeed for pattern-only built-in override');
+    assert.equal(composed.getModels().length, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
