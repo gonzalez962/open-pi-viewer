@@ -688,6 +688,8 @@
   "providers.oauth.btn_confirm_disconnect": "Log Out",
   "providers.oauth.signing_in": "Signing in...",
   "providers.oauth.browser_opened": "Browser opened for authentication. Complete the sign-in in your browser.",
+  "providers.oauth.open_auth_link": "Open Sign-In Page",
+  "providers.oauth.auth_url_open_link": "Open Sign-In Page",
   "providers.oauth.device_code_title": "Device Authorization",
   "providers.oauth.device_code_prompt": "Enter this code at the verification page:",
   "providers.oauth.device_code_copy": "Copy Code",

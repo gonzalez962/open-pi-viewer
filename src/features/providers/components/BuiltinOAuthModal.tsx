@@ -10,6 +10,8 @@ export interface BuiltinOAuthModalProps {
   mode: 'login' | 'disconnect' | null;
   provider: BuiltinOAuthProviderStatus | null;
   statusMessage?: string | null;
+  authUrl?: string | null;
+  authorizationUrl?: string | null;
   deviceCodeInfo?: DeviceCodeInfo | null;
   pendingPrompt?: OAuthSafePrompt | null;
   isStarting?: boolean;
@@ -28,6 +30,8 @@ export const BuiltinOAuthModal: React.FC<BuiltinOAuthModalProps> = ({
   mode,
   provider,
   statusMessage,
+  authUrl,
+  authorizationUrl,
   deviceCodeInfo,
   pendingPrompt,
   isStarting = false,
@@ -40,16 +44,19 @@ export const BuiltinOAuthModal: React.FC<BuiltinOAuthModalProps> = ({
   onRespondToPrompt,
   t,
 }) => {
+  const effectiveAuthUrl = authUrl ?? authorizationUrl ?? null;
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
   const [copiedUri, setCopiedUri] = useState<boolean>(false);
+  const [copiedAuthUrl, setCopiedAuthUrl] = useState<boolean>(false);
   const [promptInputValue, setPromptInputValue] = useState<string>('');
 
-  // Clear prompt input on prompt change or modal close
+  // Clear prompt input and copied state on prompt change or modal close
   useEffect(() => {
     setPromptInputValue('');
+    setCopiedAuthUrl(false);
   }, [pendingPrompt?.promptId, provider?.id, isOpen]);
 
   // Focus entry and restoration
@@ -178,6 +185,17 @@ export const BuiltinOAuthModal: React.FC<BuiltinOAuthModalProps> = ({
     }
   };
 
+  const handleCopyAuthUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedAuthUrl(true);
+      setTimeout(() => setCopiedAuthUrl(false), 2000);
+    } catch {
+      setCopiedAuthUrl(true);
+      setTimeout(() => setCopiedAuthUrl(false), 2000);
+    }
+  };
+
   const handleOpenUri = (e: React.MouseEvent, uri: string) => {
     e.preventDefault();
     if (isSafeVerificationUri(uri)) {
@@ -277,6 +295,54 @@ export const BuiltinOAuthModal: React.FC<BuiltinOAuthModalProps> = ({
                     : statusMessage || t('providers.oauth.signing_in')}
                 </span>
               </div>
+
+              {/* Authorization URL Flow (User-Click Browser Sign-In) */}
+              {effectiveAuthUrl && (
+                <div className="builtin-oauth-auth-url-block builtin-oauth-verify-link">
+                  <span className="builtin-oauth-verify-uri">
+                    {effectiveAuthUrl}
+                  </span>
+                  <div className="builtin-oauth-verify-actions">
+                    {isSafeVerificationUri(effectiveAuthUrl) && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm builtin-oauth-open-link-btn"
+                        onClick={(e) => handleOpenUri(e, effectiveAuthUrl)}
+                        title={t('providers.oauth.open_auth_link')}
+                      >
+                        <svg
+                          width="12"
+                          height="12"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        <span>{t('providers.oauth.open_auth_link')}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm builtin-oauth-copy-uri-btn"
+                      onClick={() => handleCopyAuthUrl(effectiveAuthUrl)}
+                      title={t('action.copy')}
+                    >
+                      <span>
+                        {copiedAuthUrl
+                          ? t('providers.oauth.device_code_copied')
+                          : t('action.copy')}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Device Code Flow */}
               {deviceCodeInfo && (

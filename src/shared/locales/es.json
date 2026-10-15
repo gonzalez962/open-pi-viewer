@@ -688,6 +688,8 @@
   "providers.oauth.btn_confirm_disconnect": "Cerrar sesión",
   "providers.oauth.signing_in": "Iniciando sesión...",
   "providers.oauth.browser_opened": "Navegador abierto para autenticación. Complete el inicio de sesión en su navegador.",
+  "providers.oauth.open_auth_link": "Abrir página de inicio de sesión",
+  "providers.oauth.auth_url_open_link": "Abrir página de inicio de sesión",
   "providers.oauth.device_code_title": "Autorización de dispositivo",
   "providers.oauth.device_code_prompt": "Introduzca este código en la página de verificación:",
   "providers.oauth.device_code_copy": "Copiar código",

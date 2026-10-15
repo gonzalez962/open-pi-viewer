@@ -97,6 +97,8 @@ function createMockOAuthState(overrides: Partial<Parameters<typeof BuiltinOAuthA
     isStarting: false,
     isCancelling: false,
     statusMessage: null,
+    authUrl: null,
+    authorizationUrl: null,
     deviceCodeInfo: null,
     pendingPrompt: null,
     activeError: null,
