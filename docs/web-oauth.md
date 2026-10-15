@@ -20,6 +20,7 @@ The automatic handshake establishes an expiring, server-held session in an HttpO
 - HTTPS enables Secure cookies when the Node server directly terminates TLS. The server does not trust arbitrary forwarded headers; a reverse proxy must preserve same-origin Host/Origin and protect its upstream network.
 - Authentication callbacks belong to the server running Pi. For providers with a localhost callback, use the provider's manual-code/paste flow when signing in from another device, if that provider supports it. Otherwise complete sign-in from the server machine. Remote web access does not turn a provider's localhost callback into a remote callback.
 - Logout changes the server's Pi credential store for that provider, so it affects sessions using that store.
+- **Installation identity and device IDs**: Providers requiring an installation identity (such as OpenAI ChatGPT subscription sign-in) automatically receive a persistent device UUID via the official Pi SDK `SettingsManager` anchored to the effective agent home (`settings.json`). The identifier is generated lazily on first request, flushed before process exit, and reused stably across subsequent helper runs. Legacy providers that do not require an installation identity do not trigger identity creation, and unrelated settings and credentials remain intact without exposing raw identifiers or secrets.
 
 ## Troubleshooting
 
