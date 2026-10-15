@@ -238,6 +238,14 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return await setResourceActivation(args.payload || args);
     case 'get_builtin_oauth_providers':
       return oauthManager.list(context.oauthOwner);
+    case 'get_builtin_provider_catalog': {
+      const rawPayload = args.payload ?? args;
+      const providerId = typeof rawPayload === 'string' ? rawPayload : rawPayload?.providerId;
+      if (!providerId || typeof providerId !== 'string' || !providerId.trim()) {
+        throw new Error('Provider ID is required to query configuration catalog');
+      }
+      return await oauthManager.catalog(providerId.trim(), context.oauthOwner);
+    }
     case 'start_oauth_login':
       return oauthManager.start(context.oauthOwner!, args.payload);
     case 'cancel_oauth_login':

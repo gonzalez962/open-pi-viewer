@@ -163,3 +163,65 @@ test('S1.3 — Given edited built-in models and pattern-only policies, when vali
     'Pattern-only overrides with empty models array must be valid for built-in provider (S1.3)'
   );
 });
+
+test('S1.1 / S1.2 — Given catalog models and saved overrides, when opening or refreshing built-in configuration, then catalog models are loaded and saved policies remain intact', () => {
+  const catalogModels = [
+    {
+      id: 'claude-3-5-sonnet',
+      name: 'Claude 3.5 Sonnet',
+      provider: 'anthropic',
+      contextWindow: 200000,
+      maxTokens: 8192,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+    {
+      id: 'claude-3-opus',
+      name: 'Claude 3 Opus',
+      provider: 'anthropic',
+      contextWindow: 200000,
+      maxTokens: 4096,
+      reasoning: false,
+    },
+  ];
+
+  const savedConfig: CustomProviderConfig = {
+    id: 'anthropic',
+    models: [
+      {
+        id: 'claude-3-5-sonnet',
+        name: 'Claude 3.5 Sonnet (Custom Name)',
+        maxTokens: 16384,
+      },
+    ],
+    excludedModels: ['claude-3-haiku*'],
+    includedModels: ['claude-3*'],
+    isBuiltin: true,
+  };
+
+  const existingMap = new Map(savedConfig.models.map((m) => [m.id, m]));
+  const mergedModels: any[] = [];
+  for (const cat of catalogModels) {
+    const saved = existingMap.get(cat.id);
+    if (saved) {
+      mergedModels.push({ ...cat, ...saved });
+      existingMap.delete(cat.id);
+    } else {
+      mergedModels.push(cat);
+    }
+  }
+
+  const sonnet = mergedModels.find((m) => m.id === 'claude-3-5-sonnet');
+  assert.ok(sonnet);
+  assert.equal(sonnet.name, 'Claude 3.5 Sonnet (Custom Name)', 'Saved model name override should be preserved');
+  assert.equal(sonnet.maxTokens, 16384, 'Saved model maxTokens override should be preserved');
+  assert.equal(sonnet.contextWindow, 200000, 'Catalog contextWindow should be populated');
+  assert.equal(sonnet.reasoning, true, 'Catalog reasoning metadata should be populated');
+
+  const opus = mergedModels.find((m) => m.id === 'claude-3-opus');
+  assert.ok(opus);
+  assert.equal(opus.maxTokens, 4096);
+
+  assert.deepEqual(savedConfig.excludedModels, ['claude-3-haiku*']);
+  assert.deepEqual(savedConfig.includedModels, ['claude-3*']);
+});

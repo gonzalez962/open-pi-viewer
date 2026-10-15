@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomModelDefinition, CustomProviderConfig } from '@core/types/providers';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
-import { getAvailableModelsPi } from '@infra/bridge';
+import { getBuiltinProviderCatalogPi } from '@infra/bridge';
 import {
   clampThinkingLevelToSupported,
   fetchProviderModels,
@@ -265,10 +265,7 @@ export function useProviderModalForm({
       setAutoDiscoveryNotice(null);
 
       try {
-        const allModels = await getAvailableModelsPi();
-        const providerCatalog = allModels.filter(
-          (m) => (m.provider || '').toLowerCase() === formData.id.toLowerCase()
-        );
+        const providerCatalog = await getBuiltinProviderCatalogPi(formData.id);
         const catalogDefs: CustomModelDefinition[] = providerCatalog
           .filter((m) => typeof m.id === 'string' && m.id.trim() !== '')
           .map((m) => ({
