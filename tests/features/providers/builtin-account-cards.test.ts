@@ -240,6 +240,33 @@ test('S2.1: Active sign-in renders labelled modal dialog outside grid with statu
   assert.ok(!gridSection.includes('builtin-oauth-active-panel'), 'Cards must not contain active panel');
 });
 
+test('S2.1: Active sign-in renders authorization URL open and copy actions alongside manual callback prompt in modal', () => {
+  const oauth = createMockOAuthState({
+    activeProviderId: 'openai-codex',
+    authUrl: 'https://auth.openai.com/oauth/authorize?response_type=code',
+    statusMessage: 'Complete sign-in in your browser.',
+    pendingPrompt: {
+      promptId: 'prompt-1',
+      promptType: 'manual_code',
+      message: 'Complete sign-in in your browser. If the callback does not complete, paste the final redirect URL here.',
+    },
+  } as any);
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t }));
+
+  // Modal dialog outside grid contains both URL actions and callback prompt
+  assert.ok(html.includes('role="dialog"'));
+  assert.ok(html.includes('builtin-oauth-modal'));
+  assert.ok(html.includes('https://auth.openai.com/oauth/authorize?response_type=code'));
+  assert.ok(html.includes('Open Sign-In Page'));
+  assert.ok(html.includes('Complete sign-in in your browser. If the callback does not complete, paste the final redirect URL here.'));
+
+  // Cards grid remains separate from modal
+  const gridIndex = html.indexOf('builtin-oauth-grid');
+  const modalIndex = html.indexOf('builtin-oauth-modal');
+  assert.ok(gridIndex !== -1 && modalIndex !== -1 && gridIndex < modalIndex);
+});
+
 test('S2.2: Disconnect confirmation renders in labelled modal dialog outside compact cards', () => {
   const oauth = createMockOAuthState({
     confirmLogoutId: 'anthropic',

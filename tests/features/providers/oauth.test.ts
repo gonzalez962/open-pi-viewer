@@ -23,6 +23,7 @@ import {
   executeOAuthCancel,
   executeOAuthPromptResponse,
   executeUnmountOAuthCleanup,
+  useBuiltinOAuthAccounts,
 } from '@features/providers/hooks/useBuiltinOAuthAccounts';
 import {
   authorizeWebOAuth,
@@ -1244,3 +1245,163 @@ test('BuiltinOAuthAccounts markup: does NOT render unlock section in web shim mo
   assert.ok(!html.includes('builtin-oauth-unlock-card'));
   assert.ok(!html.includes('Unlock Remote OAuth'));
 });
+
+// ============================================================================
+// Authorization URL Retention, Actions, and Lifecycle Tests
+// ============================================================================
+
+test('useBuiltinOAuthAccounts public interface: exposes authUrl initialized to null', () => {
+  let hookValue: any = null;
+  function HookInspector() {
+    hookValue = useBuiltinOAuthAccounts({ t });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(HookInspector));
+  assert.ok(hookValue !== null);
+  assert.equal('authUrl' in hookValue, true, 'authUrl property must exist on useBuiltinOAuthAccounts return object');
+  assert.equal(hookValue.authUrl, null, 'authUrl must initialize to null');
+});
+
+test('BuiltinOAuthAccounts markup: renders authorization URL, open link button, and copy button alongside manual callback prompt', () => {
+  const manualPrompt: OAuthSafePrompt = {
+    promptId: 'prompt-openai-1',
+    promptType: 'manual_code',
+    message: 'Complete sign-in in your browser. If the callback does not complete, paste the final redirect URL here.',
+    placeholder: 'Paste redirect URL here...',
+  };
+
+  const oauth = createMockOAuthState({
+    activeProviderId: 'openai-codex',
+    authUrl: 'https://auth.openai.com/oauth/authorize?response_type=code&client_id=pi-client&state=abc123xyz',
+    pendingPrompt: manualPrompt,
+  } as any);
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t }));
+
+  // 1. Authorization URL is rendered in the active modal body
+  assert.ok(
+    html.includes('https://auth.openai.com/oauth/authorize?response_type=code&amp;client_id=pi-client&amp;state=abc123xyz') ||
+    html.includes('https://auth.openai.com/oauth/authorize?response_type=code&client_id=pi-client&state=abc123xyz'),
+    'Authorization URL must be displayed in modal'
+  );
+
+  // 2. Open link button is rendered with safe user action
+  assert.ok(html.includes('builtin-oauth-open-link-btn'), 'Open link button must be rendered');
+  assert.ok(html.includes('Open Sign-In Page'), 'Open Sign-In Page text must be rendered');
+
+  // 3. Copy button is rendered
+  assert.ok(html.includes('builtin-oauth-copy-uri-btn'), 'Copy URI button must be rendered');
+  assert.ok(html.includes('Copy'), 'Copy text must be rendered');
+
+  // 4. Manual callback prompt form is rendered alongside URL actions
+  assert.ok(
+    html.includes('Complete sign-in in your browser. If the callback does not complete, paste the final redirect URL here.'),
+    'Manual callback prompt message must be rendered'
+  );
+  assert.ok(html.includes('Paste redirect URL here...'), 'Prompt input placeholder must be rendered');
+  assert.ok(html.includes('Submit'), 'Prompt submit button must be rendered');
+});
+
+test('BuiltinOAuthAccounts markup: does NOT render open link button when authUrl uses an unsafe scheme', () => {
+  const oauth = createMockOAuthState({
+    activeProviderId: 'openai-codex',
+    authUrl: 'javascript:alert(document.cookie)',
+    pendingPrompt: {
+      promptId: 'prompt-1',
+      promptType: 'manual_code',
+      message: 'Paste callback URL',
+    },
+  } as any);
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t }));
+
+  // Must NOT render open link button for unsafe scheme
+  assert.ok(!html.includes('builtin-oauth-open-link-btn'), 'Open link button must not be rendered for unsafe schemes');
+  assert.ok(!html.includes('Open Sign-In Page'), 'Open Sign-In Page text must not be rendered for unsafe schemes');
+});
+
+test('BuiltinOAuthAccounts markup: Spanish localization translates open auth URL button without English leaks', () => {
+  const tEs = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>): string => {
+    return translate('es', key, params);
+  };
+
+  const oauth = createMockOAuthState({
+    activeProviderId: 'openai-codex',
+    authUrl: 'https://auth.openai.com/oauth/authorize',
+  } as any);
+
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t: tEs }));
+
+  assert.ok(html.includes('Abrir página de inicio de sesión'), 'Must render Spanish "Abrir página de inicio de sesión"');
+  assert.ok(!html.includes('Open Sign-In Page'), 'Must not leak English "Open Sign-In Page"');
+});
+
+test('oauth event-to-state-to-render: auth_url event retains URL, renders actionable modal alongside manual callback, and resets on lifecycle boundaries', async () => {
+  const mod = await import('@features/providers/hooks/useBuiltinOAuthAccounts');
+  assert.equal(typeof (mod as any).handleOAuthEventPayload, 'function', 'handleOAuthEventPayload must be exported');
+
+  const { handleOAuthEventPayload } = mod as any;
+
+  // 1. Inbound auth_url event for active provider retains authUrl
+  const authUrlResult = handleOAuthEventPayload({
+    envelope: {
+      providerId: 'openai-codex',
+      kind: 'event',
+      data: {
+        type: 'auth_url',
+        url: 'https://auth.openai.com/oauth/authorize?response_type=code&client_id=pi',
+        instructions: 'Complete sign-in in your browser.',
+      },
+    },
+    expectedProviderId: 'openai-codex',
+    t,
+  });
+
+  assert.equal(authUrlResult.handled, true);
+  assert.equal(authUrlResult.authUrl, 'https://auth.openai.com/oauth/authorize?response_type=code&client_id=pi');
+  assert.equal(authUrlResult.statusMessage, 'Complete sign-in in your browser.');
+  assert.equal(authUrlResult.shouldResetSession, false);
+
+  // 2. Render state with authUrl + manual callback prompt
+  const activeState = createMockOAuthState({
+    activeProviderId: 'openai-codex',
+    authUrl: authUrlResult.authUrl,
+    statusMessage: authUrlResult.statusMessage,
+    pendingPrompt: {
+      promptId: 'prompt-callback-1',
+      promptType: 'manual_code',
+      message: 'If the callback does not complete, paste the final redirect URL here.',
+    },
+  } as any);
+
+  const activeHtml = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: activeState, t }));
+  assert.ok(activeHtml.includes('https://auth.openai.com/oauth/authorize'), 'Rendered modal must contain authorization URL');
+  assert.ok(activeHtml.includes('Open Sign-In Page'), 'Rendered modal must contain Open Sign-In Page action');
+  assert.ok(activeHtml.includes('If the callback does not complete, paste the final redirect URL here.'), 'Rendered modal must contain manual callback prompt');
+
+  // 3. Lifecycle boundary: cancel or terminal status clears session and URL
+  const cancelStatusResult = handleOAuthEventPayload({
+    envelope: {
+      providerId: 'openai-codex',
+      kind: 'status',
+      data: { state: 'cancelled' },
+    },
+    expectedProviderId: 'openai-codex',
+    t,
+  });
+  assert.equal(cancelStatusResult.handled, true);
+  assert.equal(cancelStatusResult.shouldResetSession, true);
+  assert.equal(cancelStatusResult.terminalState, 'cancelled');
+
+  // Reset state: session cleared (authUrl null, activeProviderId null)
+  const resetState = createMockOAuthState({
+    activeProviderId: null,
+    authUrl: null,
+    pendingPrompt: null,
+  } as any);
+
+  const resetHtml = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth: resetState, t }));
+  assert.ok(!resetHtml.includes('https://auth.openai.com/oauth/authorize'), 'Reset view must not contain stale auth URL');
+  assert.ok(!resetHtml.includes('Open Sign-In Page'), 'Reset view must not contain stale open button');
+});
+
