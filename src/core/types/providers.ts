@@ -32,6 +32,7 @@ export interface CustomProviderConfig {
   models: CustomModelDefinition[];
   excludedModels?: string[];
   includedModels?: string[];
+  compat?: Record<string, unknown>;
   isBuiltin?: boolean;
 }
 

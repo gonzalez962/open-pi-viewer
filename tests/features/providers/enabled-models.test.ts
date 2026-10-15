@@ -75,11 +75,20 @@ test('S2.1 — Given nonempty enabledModels with exact references and wildcard p
 });
 
 test('S2.1 — Pi enabledModels semantics: does not treat leading exclamation as negation/exclusion operator', () => {
-  // Pi model scope matching iterates patterns and includes matches; it does not support negative exclusion patterns
-  const patternsWithNegationAttempt = ['!claude*'];
-  const res = isModelAllowedByEnabledModels(sampleModels[0], patternsWithNegationAttempt);
-  // In Pi, '!claude*' does not match 'claude-3-5-sonnet-20241022' (it would only match a model literally starting with '!')
-  assert.equal(res, false, 'Negation is not an exclusion operator in Pi enabledModels semantics');
+  // Pi enabledModels only adds to scope; an exclamation pattern does NOT exclude models added by prior patterns
+  const patternsWithExclusionAttempt = ['anthropic/*', '!anthropic/claude-3-haiku*'];
+  const matching = filterByEnabledModels(sampleModels, patternsWithExclusionAttempt);
+  // Even with '!anthropic/claude-3-haiku*', haiku is still in scope because Pi enabledModels is an allowlist, not an exclusion filter
+  assert.equal(
+    matching.some((m) => m.id === 'claude-3-haiku-20240307'),
+    true,
+    'Exclamation pattern does not subtract or exclude models from scope in Pi enabledModels semantics'
+  );
+  assert.equal(
+    isModelAllowedByEnabledModels(sampleModels[0], ['anthropic/*'], sampleModels),
+    true,
+    'isModelAllowedByEnabledModels accurately evaluates model membership in resolved scope'
+  );
 });
 
 test('S2.2 — Given missing or empty enabledModels, when models load, then existing provider filtering behavior is unchanged', () => {
@@ -130,20 +139,18 @@ test('S2.1 — Given non-glob fuzzy model reference, selects single preferred al
   );
 });
 
-test('S2.1 — Given ambiguous bare ID across multiple providers, rejects bare reference unless provider-scoped', () => {
+test('S2.1 — Given ambiguous fuzzy reference matching multiple aliases, selects single highest sorting alias', () => {
   const ambiguousModels: ModelInfo[] = [
-    { id: 'shared-model', provider: 'provider-a', name: 'Shared Model A' },
-    { id: 'shared-model', provider: 'provider-b', name: 'Shared Model B' },
-    { id: 'unique-model', provider: 'provider-a', name: 'Unique Model' },
+    { id: 'gpt-4o', provider: 'openai', name: 'GPT-4o' },
+    { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o Mini' },
+    { id: 'gpt-3.5-turbo', provider: 'openai', name: 'GPT-3.5 Turbo' },
   ];
-  // In Pi, ambiguous bare ID without provider prefix matches nothing
-  const matchingBare = filterByEnabledModels(ambiguousModels, ['shared-model']);
-  assert.deepEqual(matchingBare, []);
-
-  // Qualified provider/id matches unambiguously
-  const matchingQualified = filterByEnabledModels(ambiguousModels, ['provider-a/shared-model']);
-  assert.equal(matchingQualified.length, 1);
-  assert.equal(matchingQualified[0].provider, 'provider-a');
+  // Pi tryMatchModel sorts aliases descending by id and selects single preferred model
+  const matching = filterByEnabledModels(ambiguousModels, ['gpt']);
+  assert.deepEqual(
+    matching.map((m) => m.id),
+    ['gpt-4o-mini']
+  );
 });
 
 test('PRESERVE — filterExcludedModels still honors includedModels and excludedModels when enabledModels is absent', () => {

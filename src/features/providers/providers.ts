@@ -1,3 +1,4 @@
+import { minimatch } from 'minimatch';
 import type { CustomModelDefinition, CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '@core/types/providers';
 import {
   type ModelInfo,
@@ -371,6 +372,17 @@ export function arrayToProvidersMap(providers: CustomProviderConfig[]): CustomPr
         .filter(Boolean);
     }
 
+    const hasModelsLen = Array.isArray(entry.models) && entry.models.length > 0;
+    const hasBaseUrl = typeof entry.baseUrl === 'string' && entry.baseUrl.trim().length > 0;
+    const hasHeaders = entry.headers !== undefined && entry.headers !== null;
+    const hasCompat = entry.compat !== undefined && entry.compat !== null;
+    const hasApiKey = typeof entry.apiKey === 'string' && entry.apiKey.trim().length > 0;
+    const hasAuthHeader = entry.authHeader !== undefined && entry.authHeader !== null;
+
+    if (!hasCompat && (!hasBaseUrl || !hasModelsLen) && !hasHeaders && !hasApiKey && !hasAuthHeader) {
+      entry.compat = {};
+    }
+
     map[id.trim()] = entry;
   }
   return map;
@@ -433,6 +445,17 @@ export function mergeCustomProviderAdditive(
     }
 
     mergedProvider.models = mergedModels;
+  }
+
+  const hasModelsLen = Array.isArray(mergedProvider.models) && (mergedProvider.models as unknown[]).length > 0;
+  const hasBaseUrl = typeof mergedProvider.baseUrl === 'string' && mergedProvider.baseUrl.trim().length > 0;
+  const hasHeaders = mergedProvider.headers !== undefined && mergedProvider.headers !== null;
+  const hasCompat = mergedProvider.compat !== undefined && mergedProvider.compat !== null;
+  const hasApiKey = typeof mergedProvider.apiKey === 'string' && mergedProvider.apiKey.trim().length > 0;
+  const hasAuthHeader = mergedProvider.authHeader !== undefined && mergedProvider.authHeader !== null;
+
+  if (!hasCompat && (!hasBaseUrl || !hasModelsLen) && !hasHeaders && !hasApiKey && !hasAuthHeader) {
+    mergedProvider.compat = {};
   }
 
   existingProviders[id] = mergedProvider;
@@ -628,45 +651,187 @@ export function stripThinkingLevelFromPattern(rawPattern: string): string {
 }
 
 /**
- * Checks if a model matches a single enabledModels pattern following Pi's pattern semantics.
+ * Helper to check if a model ID looks like an alias (no date suffix), matching Pi resolver.
  */
-export function matchEnabledModelPattern(
-  fullId: string,
-  bareId: string,
-  modelName: string | undefined,
-  pattern: string
-): boolean {
-  const clean = stripThinkingLevelFromPattern(pattern);
-  if (!clean) return false;
+export function isAlias(id: string): boolean {
+  if (id.endsWith('-latest')) return true;
+  const datePattern = /-\d{8}$/;
+  return !datePattern.test(id);
+}
 
-  // Wildcard / glob check
-  if (clean.includes('*') || clean.includes('?') || clean.includes('[')) {
-    return (
-      matchSinglePattern(fullId, clean) ||
-      matchSinglePattern(bareId, clean)
-    );
+/**
+ * Find an exact model reference match according to Pi resolver contract.
+ * Supports bare model id or canonical provider/modelId reference.
+ * When matching by bare id, ambiguous matches across providers are rejected.
+ */
+export function findExactModelReferenceMatch(
+  modelReference: string,
+  availableModels: readonly ModelInfo[]
+): ModelInfo | undefined {
+  const trimmedReference = modelReference.trim();
+  if (!trimmedReference) {
+    return undefined;
+  }
+  const normalizedReference = trimmedReference.toLowerCase();
+  const canonicalMatches = availableModels.filter(
+    (model) => model.id && `${model.provider || ''}/${model.id}`.toLowerCase() === normalizedReference
+  );
+  if (canonicalMatches.length === 1) {
+    return canonicalMatches[0];
+  }
+  if (canonicalMatches.length > 1) {
+    return undefined;
+  }
+  const slashIndex = trimmedReference.indexOf('/');
+  if (slashIndex !== -1) {
+    const provider = trimmedReference.substring(0, slashIndex).trim();
+    const modelId = trimmedReference.substring(slashIndex + 1).trim();
+    if (provider && modelId) {
+      const providerMatches = availableModels.filter(
+        (model) =>
+          model.id &&
+          (model.provider || '').toLowerCase() === provider.toLowerCase() &&
+          model.id.toLowerCase() === modelId.toLowerCase()
+      );
+      if (providerMatches.length === 1) {
+        return providerMatches[0];
+      }
+      if (providerMatches.length > 1) {
+        return undefined;
+      }
+    }
+  }
+  const idMatches = availableModels.filter(
+    (model) => model.id && model.id.toLowerCase() === normalizedReference
+  );
+  return idMatches.length === 1 ? idMatches[0] : undefined;
+}
+
+/**
+ * Try to match a pattern to a model from available models according to Pi resolver contract.
+ * Non-glob fuzzy matching selects a single preferred model (alias preferred over dated versions,
+ * sorting highest if multiple aliases).
+ */
+export function tryMatchModel(
+  modelPattern: string,
+  availableModels: readonly ModelInfo[]
+): ModelInfo | undefined {
+  const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
+  if (exactMatch) {
+    return exactMatch;
+  }
+  const matches = availableModels.filter(
+    (m) =>
+      Boolean(m.id && m.id.toLowerCase().includes(modelPattern.toLowerCase())) ||
+      Boolean(m.name?.toLowerCase().includes(modelPattern.toLowerCase()))
+  );
+  if (matches.length === 0) {
+    return undefined;
+  }
+  const aliases = matches.filter((m) => Boolean(m.id && isAlias(m.id)));
+  const datedVersions = matches.filter((m) => Boolean(m.id && !isAlias(m.id)));
+  if (aliases.length > 0) {
+    aliases.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+    return aliases[0];
+  } else {
+    datedVersions.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+    return datedVersions[0];
+  }
+}
+
+/**
+ * Parse a pattern to extract model according to Pi resolver contract.
+ */
+export function parseModelPattern(
+  pattern: string,
+  availableModels: readonly ModelInfo[]
+): { model?: ModelInfo; thinkingLevel?: string } {
+  const exactMatch = tryMatchModel(pattern, availableModels);
+  if (exactMatch) {
+    return { model: exactMatch };
+  }
+  const lastColonIndex = pattern.lastIndexOf(':');
+  if (lastColonIndex === -1) {
+    return {};
+  }
+  const prefix = pattern.substring(0, lastColonIndex);
+  const suffix = pattern.substring(lastColonIndex + 1);
+  const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  if (knownLevels.has(suffix.toLowerCase())) {
+    const res = parseModelPattern(prefix, availableModels);
+    if (res.model) {
+      return { model: res.model, thinkingLevel: suffix };
+    }
+  }
+  return {};
+}
+
+/**
+ * Resolves model scope from patterns against available models according to Pi contract.
+ * Uses minimatch for glob patterns (*, ?, [...]) and exact/fuzzy single model selection for non-globs.
+ */
+export function resolveModelScopeFromModels(
+  patterns: readonly string[],
+  models: readonly ModelInfo[]
+): { model: ModelInfo; thinkingLevel?: string }[] {
+  const availableModels = [...models];
+  const scopedModels: { model: ModelInfo; thinkingLevel?: string }[] = [];
+
+  const modelsAreEqual = (a: ModelInfo, b: ModelInfo) =>
+    (a.provider || '').toLowerCase() === (b.provider || '').toLowerCase() &&
+    (a.id || '').toLowerCase() === (b.id || '').toLowerCase();
+
+  for (const rawPattern of patterns) {
+    const pattern = rawPattern.trim();
+    if (!pattern) continue;
+
+    if (pattern.includes('*') || pattern.includes('?') || pattern.includes('[')) {
+      const colonIdx = pattern.lastIndexOf(':');
+      let globPattern = pattern;
+      let thinkingLevel: string | undefined;
+      if (colonIdx !== -1) {
+        const suffix = pattern.substring(colonIdx + 1);
+        const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+        if (knownLevels.has(suffix.toLowerCase())) {
+          thinkingLevel = suffix;
+          globPattern = pattern.substring(0, colonIdx);
+        }
+      }
+
+      const exactMatch = findExactModelReferenceMatch(globPattern, availableModels);
+      if (exactMatch) {
+        if (!scopedModels.some((sm) => modelsAreEqual(sm.model, exactMatch))) {
+          scopedModels.push({ model: exactMatch, thinkingLevel });
+        }
+        continue;
+      }
+
+      const matchingModels = availableModels.filter((m) => {
+        if (!m.id) return false;
+        const fullId = `${m.provider || ''}/${m.id}`;
+        return (
+          minimatch(fullId, globPattern, { nocase: true }) ||
+          minimatch(m.id, globPattern, { nocase: true })
+        );
+      });
+
+      for (const model of matchingModels) {
+        if (!scopedModels.some((sm) => modelsAreEqual(sm.model, model))) {
+          scopedModels.push({ model, thinkingLevel });
+        }
+      }
+      continue;
+    }
+
+    const { model, thinkingLevel } = parseModelPattern(pattern, availableModels);
+    if (!model) continue;
+
+    if (!scopedModels.some((sm) => modelsAreEqual(sm.model, model))) {
+      scopedModels.push({ model, thinkingLevel });
+    }
   }
 
-  // Exact reference check (provider/modelId or bareId)
-  const normPattern = clean.toLowerCase();
-  const normFull = fullId.toLowerCase();
-  const normBare = bareId.toLowerCase();
-
-  if (normPattern === normFull || normPattern === normBare) {
-    return true;
-  }
-
-  // If pattern has a slash, it's a provider-scoped reference
-  if (clean.includes('/')) {
-    return normPattern === normFull;
-  }
-
-  // Fallback to substring matching on ID or Name (matching Pi's tryMatchModel)
-  if (normBare.includes(normPattern) || (modelName && modelName.toLowerCase().includes(normPattern))) {
-    return true;
-  }
-
-  return false;
+  return scopedModels;
 }
 
 /**
@@ -675,19 +840,20 @@ export function matchEnabledModelPattern(
  */
 export function isModelAllowedByEnabledModels(
   model: ModelInfo,
-  enabledModels?: string[]
+  enabledModels?: string[],
+  allModels?: readonly ModelInfo[]
 ): boolean {
   if (!model || !model.id) return false;
   if (!enabledModels || enabledModels.length === 0) return true;
 
-  const fullId = `${model.provider || ''}/${model.id}`;
-  const bareId = model.id;
-  const name = model.name;
+  const candidatePool = allModels && allModels.length > 0 ? allModels : [model];
+  const scoped = resolveModelScopeFromModels(enabledModels, candidatePool);
 
-  return enabledModels.some((pattern) => {
-    if (typeof pattern !== 'string') return false;
-    return matchEnabledModelPattern(fullId, bareId, name, pattern);
-  });
+  return scoped.some(
+    (sm) =>
+      (sm.model.provider || '').toLowerCase() === (model.provider || '').toLowerCase() &&
+      (sm.model.id || '').toLowerCase() === (model.id || '').toLowerCase()
+  );
 }
 
 /**
@@ -701,7 +867,16 @@ export function filterByEnabledModels(
   if (!models || models.length === 0) return [];
   if (!enabledModels || enabledModels.length === 0) return models;
 
-  return models.filter((m) => isModelAllowedByEnabledModels(m, enabledModels));
+  const scoped = resolveModelScopeFromModels(enabledModels, models);
+  const scopedSet = new Set(
+    scoped
+      .filter((sm) => Boolean(sm.model.id))
+      .map((sm) => `${(sm.model.provider || '').toLowerCase()}/${sm.model.id!.toLowerCase()}`)
+  );
+
+  return models.filter((m) =>
+    Boolean(m.id && scopedSet.has(`${(m.provider || '').toLowerCase()}/${m.id.toLowerCase()}`))
+  );
 }
 
 export interface FetchModelsOptions {

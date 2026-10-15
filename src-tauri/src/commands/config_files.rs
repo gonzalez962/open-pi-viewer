@@ -462,6 +462,38 @@ pub fn apply_provider_merge_to_root(
         }
     }
 
+    let has_models_len = match target_provider.get("models") {
+        Some(Value::Array(arr)) => !arr.is_empty(),
+        _ => false,
+    };
+    let has_base_url = target_provider
+        .get("baseUrl")
+        .and_then(|v| v.as_str())
+        .map_or(false, |s| !s.trim().is_empty());
+    let has_headers = target_provider.get("headers").is_some();
+    let has_compat = target_provider.get("compat").is_some();
+    let has_overrides = target_provider
+        .get("modelOverrides")
+        .and_then(|v| v.as_object())
+        .map_or(false, |m| !m.is_empty());
+    let has_api_key = target_provider
+        .get("apiKey")
+        .and_then(|v| v.as_str())
+        .map_or(false, |s| !s.trim().is_empty());
+    let has_oauth = target_provider.get("oauth").is_some();
+    let has_auth_header = target_provider.get("authHeader").is_some();
+
+    if !has_compat
+        && (!has_base_url || !has_models_len)
+        && !has_headers
+        && !has_overrides
+        && !has_api_key
+        && !has_oauth
+        && !has_auth_header
+    {
+        target_provider.insert("compat".to_string(), Value::Object(serde_json::Map::new()));
+    }
+
     providers_map.insert(provider_id.to_string(), Value::Object(target_provider));
     Ok(())
 }
@@ -7584,6 +7616,7 @@ mod tests {
         let anthropic = providers.get("anthropic").unwrap().as_object().unwrap();
         assert!(!anthropic.contains_key("baseUrl"));
         assert!(!anthropic.contains_key("api"));
+        assert!(anthropic.contains_key("compat"), "Built-in provider override must persist compat object for Pi composer compatibility");
         assert_eq!(anthropic["excludedModels"], serde_json::json!(["claude-3-haiku*"]));
         assert_eq!(anthropic["includedModels"], serde_json::json!(["claude-3*"]));
 

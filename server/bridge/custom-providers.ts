@@ -387,6 +387,31 @@ export function mergeCustomProviderAdditive(
     mergedProvider.models = mergedModels;
   }
 
+  const hasModelsLen = Array.isArray(mergedProvider.models) && (mergedProvider.models as unknown[]).length > 0;
+  const hasBaseUrl = typeof mergedProvider.baseUrl === 'string' && mergedProvider.baseUrl.trim().length > 0;
+  const hasHeaders = mergedProvider.headers !== undefined && mergedProvider.headers !== null;
+  const hasCompat = mergedProvider.compat !== undefined && mergedProvider.compat !== null;
+  const hasOverrides =
+    mergedProvider.modelOverrides !== undefined &&
+    typeof mergedProvider.modelOverrides === 'object' &&
+    mergedProvider.modelOverrides !== null &&
+    Object.keys(mergedProvider.modelOverrides as object).length > 0;
+  const hasApiKey = typeof mergedProvider.apiKey === 'string' && mergedProvider.apiKey.trim().length > 0;
+  const hasOAuth = mergedProvider.oauth !== undefined && mergedProvider.oauth !== null;
+  const hasAuthHeader = mergedProvider.authHeader !== undefined && mergedProvider.authHeader !== null;
+
+  if (
+    !hasCompat &&
+    (!hasBaseUrl || !hasModelsLen) &&
+    !hasHeaders &&
+    !hasOverrides &&
+    !hasApiKey &&
+    !hasOAuth &&
+    !hasAuthHeader
+  ) {
+    mergedProvider.compat = {};
+  }
+
   existingProviders[providerId] = mergedProvider as CustomProviderConfig;
   root.providers = existingProviders as CustomProvidersMap;
   return root;
