@@ -53,28 +53,41 @@ pub fn validate_and_extract_providers(input: &Value) -> Result<serde_json::Map<S
             format!("Provider '{}' configuration must be an object", id_trimmed)
         })?;
 
-        let base_url = provider_obj.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.trim());
-        if let Some(url) = base_url {
-            if url.is_empty() {
-                return Err(format!("Provider '{}' baseUrl must not be empty", id_trimmed));
-            }
-            if !url.starts_with("http://") && !url.starts_with("https://") {
-                return Err(format!(
-                    "Provider '{}' baseUrl must start with http:// or https://, got '{}'",
-                    id_trimmed, url
-                ));
-            }
-        } else {
-            return Err(format!("Provider '{}' missing required 'baseUrl'", id_trimmed));
-        }
+        let has_models = provider_obj.get("models").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty()) || provider_obj.get("models").is_some();
+        let has_included = provider_obj.get("includedModels").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty());
+        let has_excluded = provider_obj.get("excludedModels").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty());
+        let is_override_only = has_models || has_included || has_excluded;
 
+        let base_url = provider_obj.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.trim());
         let api_type = provider_obj.get("api").and_then(|v| v.as_str()).map(|s| s.trim());
-        if let Some(api) = api_type {
-            if api.is_empty() {
-                return Err(format!("Provider '{}' 'api' field must not be empty", id_trimmed));
-            }
+
+        let has_no_base_url = base_url.is_none() || base_url.unwrap().is_empty();
+        let has_no_api = api_type.is_none() || api_type.unwrap().is_empty();
+
+        if has_no_base_url && has_no_api && is_override_only {
+            // Built-in models / pattern-only override: baseUrl and api are not required
         } else {
-            return Err(format!("Provider '{}' missing required 'api' field", id_trimmed));
+            if let Some(url) = base_url {
+                if url.is_empty() {
+                    return Err(format!("Provider '{}' baseUrl must not be empty", id_trimmed));
+                }
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    return Err(format!(
+                        "Provider '{}' baseUrl must start with http:// or https://, got '{}'",
+                        id_trimmed, url
+                    ));
+                }
+            } else {
+                return Err(format!("Provider '{}' missing required 'baseUrl'", id_trimmed));
+            }
+
+            if let Some(api) = api_type {
+                if api.is_empty() {
+                    return Err(format!("Provider '{}' 'api' field must not be empty", id_trimmed));
+                }
+            } else {
+                return Err(format!("Provider '{}' missing required 'api' field", id_trimmed));
+            }
         }
 
         if let Some(models_val) = provider_obj.get("models") {
@@ -244,28 +257,41 @@ pub fn extract_and_validate_single_provider(
         return Err("Provider payload must be a JSON object".to_string());
     };
 
-    let base_url = provider_obj.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.trim());
-    if let Some(url) = base_url {
-        if url.is_empty() {
-            return Err(format!("Provider '{}' baseUrl must not be empty", id_trimmed));
-        }
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(format!(
-                "Provider '{}' baseUrl must start with http:// or https://, got '{}'",
-                id_trimmed, url
-            ));
-        }
-    } else {
-        return Err(format!("Provider '{}' missing required 'baseUrl'", id_trimmed));
-    }
+    let has_models = provider_obj.get("models").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty()) || provider_obj.get("models").is_some();
+    let has_included = provider_obj.get("includedModels").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty());
+    let has_excluded = provider_obj.get("excludedModels").and_then(|v| v.as_array()).map_or(false, |a| !a.is_empty());
+    let is_override_only = has_models || has_included || has_excluded;
 
+    let base_url = provider_obj.get("baseUrl").and_then(|v| v.as_str()).map(|s| s.trim());
     let api_type = provider_obj.get("api").and_then(|v| v.as_str()).map(|s| s.trim());
-    if let Some(api) = api_type {
-        if api.is_empty() {
-            return Err(format!("Provider '{}' 'api' field must not be empty", id_trimmed));
-        }
+
+    let has_no_base_url = base_url.is_none() || base_url.unwrap().is_empty();
+    let has_no_api = api_type.is_none() || api_type.unwrap().is_empty();
+
+    if has_no_base_url && has_no_api && is_override_only {
+        // Built-in models / pattern-only override: baseUrl and api are not required
     } else {
-        return Err(format!("Provider '{}' missing required 'api' field", id_trimmed));
+        if let Some(url) = base_url {
+            if url.is_empty() {
+                return Err(format!("Provider '{}' baseUrl must not be empty", id_trimmed));
+            }
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(format!(
+                    "Provider '{}' baseUrl must start with http:// or https://, got '{}'",
+                    id_trimmed, url
+                ));
+            }
+        } else {
+            return Err(format!("Provider '{}' missing required 'baseUrl'", id_trimmed));
+        }
+
+        if let Some(api) = api_type {
+            if api.is_empty() {
+                return Err(format!("Provider '{}' 'api' field must not be empty", id_trimmed));
+            }
+        } else {
+            return Err(format!("Provider '{}' missing required 'api' field", id_trimmed));
+        }
     }
 
     if let Some(models_val) = provider_obj.get("models") {
@@ -314,7 +340,16 @@ pub fn extract_and_validate_single_provider(
         }
     }
 
-    Ok((id_trimmed.to_string(), provider_obj.clone()))
+    let mut clean_obj = provider_obj.clone();
+    if has_no_base_url && has_no_api && is_override_only {
+        clean_obj.remove("baseUrl");
+        clean_obj.remove("api");
+        if clean_obj.get("apiKey").map_or(false, |v| v.as_str().map_or(false, |s| s.trim().is_empty())) {
+            clean_obj.remove("apiKey");
+        }
+    }
+
+    Ok((id_trimmed.to_string(), clean_obj))
 }
 
 /// Merges a validated provider object into a root models.json map.
@@ -967,6 +1002,43 @@ pub fn save_model_thinking_levels_impl(
     }
 
     Ok(Value::Object(levels_map))
+}
+
+/// Reads `settings.json` configuration and returns its `"enabledModels"` array.
+/// If the file does not exist, or does not contain an array `"enabledModels"`, returns an empty Vec.
+pub fn get_enabled_models_impl(config_path: &Path) -> Result<Vec<String>, String> {
+    if !config_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let contents = std::fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read settings.json: {}", e))?;
+
+    if contents.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parsed: Value = serde_json::from_str(&contents)
+        .map_err(|e| format!("Failed to parse settings.json: {}", e))?;
+
+    if let Some(val) = parsed.get("enabledModels") {
+        if let Some(arr) = val.as_array() {
+            let patterns: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            return Ok(patterns);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+pub async fn get_enabled_models() -> Result<Vec<String>, String> {
+    let path = resolve_settings_config_path()
+        .ok_or_else(|| "Could not determine user profile directory".to_string())?;
+    get_enabled_models_impl(&path)
 }
 
 #[tauri::command]
@@ -7440,6 +7512,80 @@ mod tests {
         std::fs::write(&valid_path, r#"{"modelThinkingLevels": {"model-a": "high"}}"#).unwrap();
         let valid_res = get_model_thinking_levels_impl(&valid_path).unwrap();
         assert_eq!(valid_res["model-a"], "high");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_get_enabled_models_missing_and_valid() {
+        let temp_dir = std::env::temp_dir().join(format!("test_enabled_models_{}", std::process::id()));
+        let missing_path = temp_dir.join("nonexistent_settings.json");
+
+        // Missing file returns empty vec
+        let res = get_enabled_models_impl(&missing_path).unwrap();
+        assert_eq!(res.len(), 0);
+
+        // Empty file returns empty vec
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let empty_path = temp_dir.join("empty_settings.json");
+        std::fs::write(&empty_path, "   \n").unwrap();
+        let empty_res = get_enabled_models_impl(&empty_path).unwrap();
+        assert_eq!(empty_res.len(), 0);
+
+        // File without enabledModels returns empty vec
+        let other_path = temp_dir.join("other_settings.json");
+        std::fs::write(&other_path, r#"{"theme": "dark"}"#).unwrap();
+        let other_res = get_enabled_models_impl(&other_path).unwrap();
+        assert_eq!(other_res.len(), 0);
+
+        // File with valid enabledModels returns patterns
+        let valid_path = temp_dir.join("valid_settings.json");
+        let initial_json = r#"{"enabledModels": ["anthropic/*", "openai/gpt-4o", "*sonnet*"]}"#;
+        std::fs::write(&valid_path, initial_json).unwrap();
+        let valid_res = get_enabled_models_impl(&valid_path).unwrap();
+        assert_eq!(valid_res, vec!["anthropic/*", "openai/gpt-4o", "*sonnet*"]);
+
+        // Preserves file on disk without modifying
+        let after_contents = std::fs::read_to_string(&valid_path).unwrap();
+        assert_eq!(after_contents, initial_json);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_upsert_builtin_provider_without_base_url_and_api() {
+        let temp_dir = std::env::temp_dir().join(format!("test_builtin_upsert_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let models_path = temp_dir.join("models.json");
+
+        std::fs::write(
+            &models_path,
+            r#"{"providers": {"existing": {"baseUrl": "https://api.existing.com/v1", "api": "openai"}}}"#,
+        ).unwrap();
+
+        let builtin_data = serde_json::json!({
+            "models": [{"id": "claude-3-5-sonnet-20241022", "contextWindow": 200000}],
+            "excludedModels": ["claude-3-haiku*"],
+            "includedModels": ["claude-3*"]
+        });
+
+        let res = upsert_custom_provider_impl(
+            &models_path,
+            "anthropic",
+            &builtin_data,
+            None,
+            None,
+        ).unwrap();
+
+        let providers = res.get("providers").unwrap().as_object().unwrap();
+        assert!(providers.contains_key("existing"));
+        assert!(providers.contains_key("anthropic"));
+
+        let anthropic = providers.get("anthropic").unwrap().as_object().unwrap();
+        assert!(!anthropic.contains_key("baseUrl"));
+        assert!(!anthropic.contains_key("api"));
+        assert_eq!(anthropic["excludedModels"], serde_json::json!(["claude-3-haiku*"]));
+        assert_eq!(anthropic["includedModels"], serde_json::json!(["claude-3*"]));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

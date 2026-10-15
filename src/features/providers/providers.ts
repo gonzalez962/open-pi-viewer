@@ -205,30 +205,52 @@ export function validateProviderConfig(provider: CustomProviderConfig): { valid:
     return idCheck;
   }
 
-  const urlCheck = validateBaseUrl(provider.baseUrl);
-  if (!urlCheck.valid) {
-    return urlCheck;
+  const hasModels = Array.isArray(provider.models) && provider.models.length > 0;
+  const hasIncluded = Array.isArray(provider.includedModels) && provider.includedModels.length > 0;
+  const hasExcluded = Array.isArray(provider.excludedModels) && provider.excludedModels.length > 0;
+  const isOverrideOnly = Boolean(
+    provider.isBuiltin ||
+      ((hasModels || hasIncluded || hasExcluded) && !provider.baseUrl && !provider.api)
+  );
+
+  if (!isOverrideOnly) {
+    const urlCheck = validateBaseUrl(provider.baseUrl || '');
+    if (!urlCheck.valid) {
+      return urlCheck;
+    }
+
+    const api = provider.api?.trim();
+    if (!api) {
+      return { valid: false, error: "API protocol type ('api') is required" };
+    }
+  } else if (provider.baseUrl && provider.baseUrl.trim()) {
+    const urlCheck = validateBaseUrl(provider.baseUrl);
+    if (!urlCheck.valid) {
+      return urlCheck;
+    }
   }
 
-  const api = provider.api?.trim();
-  if (!api) {
-    return { valid: false, error: "API protocol type ('api') is required" };
-  }
-
-  if (!Array.isArray(provider.models)) {
+  if (provider.models !== undefined && !Array.isArray(provider.models)) {
     return { valid: false, error: 'Provider models must be an array' };
   }
 
-  if (provider.models.length === 0) {
+  const modelsList = Array.isArray(provider.models) ? provider.models : [];
+  if (!isOverrideOnly && modelsList.length === 0) {
     return { valid: false, error: 'At least one model must be configured for this provider' };
   }
+  if (isOverrideOnly && modelsList.length === 0 && !hasIncluded && !hasExcluded) {
+    return {
+      valid: false,
+      error: 'At least one model or model pattern rule must be configured for this provider',
+    };
+  }
 
-  for (let i = 0; i < provider.models.length; i++) {
-    const modelCheck = validateModelDefinition(provider.models[i]);
+  for (let i = 0; i < modelsList.length; i++) {
+    const modelCheck = validateModelDefinition(modelsList[i]);
     if (!modelCheck.valid) {
       return {
         valid: false,
-        error: `Model #${i + 1} (${provider.models[i]?.id || 'unnamed'}): ${modelCheck.error}`,
+        error: `Model #${i + 1} (${modelsList[i]?.id || 'unnamed'}): ${modelCheck.error}`,
       };
     }
   }
@@ -311,8 +333,8 @@ export function arrayToProvidersMap(providers: CustomProviderConfig[]): CustomPr
   for (const p of providers) {
     const { id, name, baseUrl, api, apiKey, authHeader, headers, models, excludedModels, includedModels, ...extra } = p;
     const entry: Omit<CustomProviderConfig, 'id'> = {
-      baseUrl: baseUrl.trim(),
-      api: api.trim(),
+      ...(baseUrl ? { baseUrl: baseUrl.trim() } : {}),
+      ...(api ? { api: api.trim() } : {}),
       models: (models || []).map((m) => {
         const modelEntry: CustomModelDefinition = {
           id: m.id.trim(),
@@ -588,6 +610,98 @@ export function filterExcludedModels(
     if (!policy) return true;
     return isModelAllowed(m.id, policy);
   });
+}
+
+/**
+ * Strip thinking level suffix from an enabledModels pattern (e.g. 'anthropic/*:high' -> 'anthropic/*').
+ */
+export function stripThinkingLevelFromPattern(rawPattern: string): string {
+  const pattern = rawPattern.trim();
+  const colonIdx = pattern.lastIndexOf(':');
+  if (colonIdx === -1) return pattern;
+  const suffix = pattern.substring(colonIdx + 1).toLowerCase();
+  const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  if (knownLevels.has(suffix)) {
+    return pattern.substring(0, colonIdx).trim();
+  }
+  return pattern;
+}
+
+/**
+ * Checks if a model matches a single enabledModels pattern following Pi's pattern semantics.
+ */
+export function matchEnabledModelPattern(
+  fullId: string,
+  bareId: string,
+  modelName: string | undefined,
+  pattern: string
+): boolean {
+  const clean = stripThinkingLevelFromPattern(pattern);
+  if (!clean) return false;
+
+  // Wildcard / glob check
+  if (clean.includes('*') || clean.includes('?') || clean.includes('[')) {
+    return (
+      matchSinglePattern(fullId, clean) ||
+      matchSinglePattern(bareId, clean)
+    );
+  }
+
+  // Exact reference check (provider/modelId or bareId)
+  const normPattern = clean.toLowerCase();
+  const normFull = fullId.toLowerCase();
+  const normBare = bareId.toLowerCase();
+
+  if (normPattern === normFull || normPattern === normBare) {
+    return true;
+  }
+
+  // If pattern has a slash, it's a provider-scoped reference
+  if (clean.includes('/')) {
+    return normPattern === normFull;
+  }
+
+  // Fallback to substring matching on ID or Name (matching Pi's tryMatchModel)
+  if (normBare.includes(normPattern) || (modelName && modelName.toLowerCase().includes(normPattern))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks whether a given model is allowed by Pi's enabledModels restrictions.
+ * Missing or empty enabledModels preserves unrestricted behavior.
+ */
+export function isModelAllowedByEnabledModels(
+  model: ModelInfo,
+  enabledModels?: string[]
+): boolean {
+  if (!model || !model.id) return false;
+  if (!enabledModels || enabledModels.length === 0) return true;
+
+  const fullId = `${model.provider || ''}/${model.id}`;
+  const bareId = model.id;
+  const name = model.name;
+
+  return enabledModels.some((pattern) => {
+    if (typeof pattern !== 'string') return false;
+    return matchEnabledModelPattern(fullId, bareId, name, pattern);
+  });
+}
+
+/**
+ * Filters models according to Pi's enabledModels restriction list.
+ * Missing or empty enabledModels returns models unchanged.
+ */
+export function filterByEnabledModels(
+  models: ModelInfo[],
+  enabledModels?: string[]
+): ModelInfo[] {
+  if (!models || models.length === 0) return [];
+  if (!enabledModels || enabledModels.length === 0) return models;
+
+  return models.filter((m) => isModelAllowedByEnabledModels(m, enabledModels));
 }
 
 export interface FetchModelsOptions {

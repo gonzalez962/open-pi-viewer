@@ -23,15 +23,21 @@ export interface UseProvidersDataOptions {
 }
 
 export function prepareProviderPayload(formData: ProviderFormData): CustomProviderConfig {
+  const isBuiltin = Boolean(formData.isBuiltin);
+  const baseUrlTrimmed = formData.baseUrl ? formData.baseUrl.trim() : '';
+  const apiTrimmed = formData.api ? formData.api.trim() : '';
+  const apiKeyTrimmed = formData.apiKey ? formData.apiKey.trim() : '';
+
   return {
     id: formData.id.trim(),
     name: formData.name.trim() || undefined,
-    baseUrl: formData.baseUrl.trim(),
-    api: formData.api.trim(),
-    apiKey: formData.apiKey.trim() || undefined,
+    baseUrl: baseUrlTrimmed ? baseUrlTrimmed : (isBuiltin ? undefined : ''),
+    api: apiTrimmed ? apiTrimmed : (isBuiltin ? undefined : ''),
+    apiKey: apiKeyTrimmed || undefined,
     models: formData.models,
     excludedModels: Array.isArray(formData.excludedModels) ? formData.excludedModels : [],
     includedModels: Array.isArray(formData.includedModels) ? formData.includedModels : [],
+    isBuiltin: isBuiltin ? true : undefined,
   };
 }
 

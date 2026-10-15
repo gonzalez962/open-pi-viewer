@@ -834,6 +834,21 @@ export async function deleteCustomProviderPi(
 }
 
 export const MOCK_MODEL_THINKING_LEVELS_STORAGE_KEY = 'pi_viewer_model_thinking_levels_mock';
+export const MOCK_ENABLED_MODELS_STORAGE_KEY = 'pi_viewer_enabled_models_mock';
+
+export async function getEnabledModelsPi(
+  invokeFn = invoke
+): Promise<string[]> {
+  if (!isTauri() && invokeFn === invoke) {
+    try {
+      const stored = localStorage.getItem(MOCK_ENABLED_MODELS_STORAGE_KEY);
+      return stored ? (JSON.parse(stored) as string[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return await invokeFn<string[]>('get_enabled_models');
+}
 
 export async function getModelThinkingLevelsPi(
   invokeFn = invoke

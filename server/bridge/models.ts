@@ -698,6 +698,26 @@ export function handleSaveCustomProviders(args: any = {}) {
   return rootObj;
 }
 
+export function handleGetEnabledModels(): string[] {
+  const settingsFile = path.join(getPiAgentDir(), 'settings.json');
+  if (fs.existsSync(settingsFile)) {
+    const raw = fs.readFileSync(settingsFile, 'utf8');
+    if (!raw.trim()) {
+      return [];
+    }
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err: any) {
+      throw new Error(`Failed to parse settings.json: ${err.message}`);
+    }
+    if (parsed && Array.isArray(parsed.enabledModels)) {
+      return parsed.enabledModels.filter((item: unknown): item is string => typeof item === 'string');
+    }
+  }
+  return [];
+}
+
 export function handleGetModelThinkingLevels() {
   const settingsFile = path.join(getPiAgentDir(), 'settings.json');
   if (fs.existsSync(settingsFile)) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { BuiltinOAuthProviderStatus } from '@core/types/oauth';
-import type { CustomProviderConfig, CustomModelDefinition } from '@core/types/providers';
+import type { CustomProviderConfig } from '@core/types/providers';
 import { BuiltinOAuthAccounts } from '@features/providers/components/BuiltinOAuthAccounts';
 import { translate } from '@shared/i18n';
 import {

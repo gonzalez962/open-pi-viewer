@@ -24,14 +24,15 @@ export interface CustomModelDefinition {
 export interface CustomProviderConfig {
   id: string;
   name?: string;
-  baseUrl: string;
-  api: string;
+  baseUrl?: string;
+  api?: string;
   apiKey?: string;
   authHeader?: boolean;
   headers?: Record<string, string>;
   models: CustomModelDefinition[];
   excludedModels?: string[];
   includedModels?: string[];
+  isBuiltin?: boolean;
 }
 
 export type CustomProvidersMap = Record<string, Omit<CustomProviderConfig, 'id'>>;
