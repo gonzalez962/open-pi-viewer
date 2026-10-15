@@ -65,6 +65,11 @@ export {
   handleTogglePiResource,
 } from './bridge/models';
 
+export {
+  handleUpsertCustomProvider,
+  handleDeleteCustomProvider,
+} from './bridge/custom-providers';
+
 import { handleDeleteMcpServer, handleDeletePiResource } from './bridge/resource-deletion';
 
 import {
@@ -129,6 +134,11 @@ import {
   handleGetPiResources,
   handleTogglePiResource,
 } from './bridge/models';
+
+import {
+  handleUpsertCustomProvider,
+  handleDeleteCustomProvider,
+} from './bridge/custom-providers';
 
 import {
   setResourceActivation,
@@ -200,6 +210,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetCustomProviders();
     case 'save_custom_providers':
       return handleSaveCustomProviders(args);
+    case 'upsert_custom_provider':
+      return handleUpsertCustomProvider(args.payload || args);
+    case 'delete_custom_provider':
+      return handleDeleteCustomProvider(args.payload || args);
     case 'get_model_thinking_levels':
       return handleGetModelThinkingLevels();
     case 'save_model_thinking_levels':

@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  PI_AGENT_DIR,
   getPiAgentDir,
   getActiveCwd,
   setActiveModel,
@@ -582,7 +581,7 @@ export function getPiResourcesImpl(cwd?: string) {
 }
 
 export function getAvailableModelsImpl() {
-  const modelsFile = path.join(PI_AGENT_DIR, 'models.json');
+  const modelsFile = path.join(getPiAgentDir(), 'models.json');
   const list: any[] = [];
 
   if (fs.existsSync(modelsFile)) {
@@ -677,7 +676,7 @@ export async function handleSetThinkingLevel(args: any = {}) {
 }
 
 export function handleGetCustomProviders() {
-  const modelsFile = path.join(PI_AGENT_DIR, 'models.json');
+  const modelsFile = path.join(getPiAgentDir(), 'models.json');
   if (fs.existsSync(modelsFile)) {
     try {
       return JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
@@ -687,7 +686,7 @@ export function handleGetCustomProviders() {
 }
 
 export function handleSaveCustomProviders(args: any = {}) {
-  const modelsFile = path.join(PI_AGENT_DIR, 'models.json');
+  const modelsFile = path.join(getPiAgentDir(), 'models.json');
   let rootObj: any = {};
   if (fs.existsSync(modelsFile)) {
     try {
@@ -700,7 +699,7 @@ export function handleSaveCustomProviders(args: any = {}) {
 }
 
 export function handleGetModelThinkingLevels() {
-  const settingsFile = path.join(PI_AGENT_DIR, 'settings.json');
+  const settingsFile = path.join(getPiAgentDir(), 'settings.json');
   if (fs.existsSync(settingsFile)) {
     try {
       const s = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
@@ -711,7 +710,7 @@ export function handleGetModelThinkingLevels() {
 }
 
 export function handleSaveModelThinkingLevels(args: any = {}) {
-  const settingsFile = path.join(PI_AGENT_DIR, 'settings.json');
+  const settingsFile = path.join(getPiAgentDir(), 'settings.json');
   let settings: any = {};
   if (fs.existsSync(settingsFile)) {
     try {
