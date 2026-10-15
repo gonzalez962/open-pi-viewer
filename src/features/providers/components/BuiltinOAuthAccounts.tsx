@@ -247,10 +247,11 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
                     <>
                       <button
                         type="button"
-                        className="btn btn-secondary btn-sm builtin-oauth-action-btn builtin-oauth-edit-models-btn"
+                        className="btn-icon-subtle builtin-oauth-edit-models-btn"
                         onClick={() => onOpenEditModels?.(provider)}
                         disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
                         title={t('providers.oauth.btn_edit_models')}
+                        aria-label={t('providers.oauth.btn_edit_models')}
                       >
                         <svg
                           width="14"
@@ -263,10 +264,9 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
                           strokeLinejoin="round"
                           aria-hidden="true"
                         >
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                          <path d="M9.17 4.14 9.6 2h4.8l.43 2.14 1.43.83 2.07-.7 2.4 4.16-1.64 1.44v1.66l1.64 1.44-2.4 4.16-2.07-.7-1.43.83-.43 2.14H9.6l-.43-2.14-1.43-.83-2.07.7-2.4-4.16 1.64-1.44V9.97L3.27 8.53l2.4-4.16 2.07.7z" transform="translate(0 1)" />
+                          <circle cx="12" cy="12" r="3" />
                         </svg>
-                        <span>{t('providers.oauth.btn_edit_models')}</span>
                       </button>
                       <button
                         type="button"

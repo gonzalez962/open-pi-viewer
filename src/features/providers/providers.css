@@ -1096,8 +1096,28 @@
 .builtin-oauth-card-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   width: 100%;
   margin-top: auto;
+}
+
+.builtin-oauth-edit-models-btn {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.builtin-oauth-edit-models-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .builtin-oauth-action-btn {
