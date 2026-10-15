@@ -22,6 +22,19 @@ export interface UseProvidersDataOptions {
   cwd?: string | null;
 }
 
+export function prepareProviderPayload(formData: ProviderFormData): CustomProviderConfig {
+  return {
+    id: formData.id.trim(),
+    name: formData.name.trim() || undefined,
+    baseUrl: formData.baseUrl.trim(),
+    api: formData.api.trim(),
+    apiKey: formData.apiKey.trim() || undefined,
+    models: formData.models,
+    excludedModels: Array.isArray(formData.excludedModels) ? formData.excludedModels : [],
+    includedModels: Array.isArray(formData.includedModels) ? formData.includedModels : [],
+  };
+}
+
 export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOptions) {
   const [providers, setProviders] = useState<CustomProviderConfig[]>([]);
   const [fullConfig, setFullConfig] = useState<ModelsConfigFile>({});
@@ -83,16 +96,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
 
   const saveProvider = useCallback(
     async (formData: ProviderFormData, isEditing: boolean): Promise<boolean> => {
-      const providerToValidate: CustomProviderConfig = {
-        id: formData.id.trim(),
-        name: formData.name.trim() || undefined,
-        baseUrl: formData.baseUrl.trim(),
-        api: formData.api.trim(),
-        apiKey: formData.apiKey.trim() || undefined,
-        models: formData.models,
-        excludedModels: formData.excludedModels.length > 0 ? formData.excludedModels : undefined,
-        includedModels: formData.includedModels.length > 0 ? formData.includedModels : undefined,
-      };
+      const providerToValidate = prepareProviderPayload(formData);
 
       const validation = validateProviderConfig(providerToValidate);
       if (!validation.valid) {
