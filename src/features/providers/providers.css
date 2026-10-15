@@ -1111,7 +1111,7 @@
   justify-content: center;
   background: transparent;
   border: 0;
-  color: var(--text-secondary);
+  color: var(--fg-muted);
   cursor: pointer;
 }
 
