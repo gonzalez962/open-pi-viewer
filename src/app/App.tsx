@@ -724,6 +724,7 @@ export const App: React.FC = () => {
     modelThinkingLevels,
     handleSelectModel,
     handleSelectThinkingLevel,
+    handleRefreshModels,
   } = useModels({
     connectionStatus: state.connectionStatus,
     sessionId: state.sessionId,
@@ -748,10 +749,12 @@ export const App: React.FC = () => {
     try {
       await disconnectPi(config.workingDirectory);
       await startConnection(config, { force: true });
+      // Reconnecting the same hydrated session may not trigger useModels' effect.
+      await handleRefreshModels();
     } finally {
       providerRefreshInFlight.current = false;
     }
-  }, [state.connectionStatus, isBusy, config, startConnection]);
+  }, [state.connectionStatus, isBusy, config, startConnection, handleRefreshModels]);
 
   useEffect(() => {
     if (!isBusy && state.connectionStatus === 'connected' && providerRefreshPending.current) {
@@ -1343,6 +1346,7 @@ export const App: React.FC = () => {
                   <React.Suspense fallback={null}>
                     <ProfilesView
                       cwd={config.workingDirectory}
+                      availableModels={state.availableModels}
                       isBusy={isBusy}
                       onClose={onBackToSettings}
                     />
