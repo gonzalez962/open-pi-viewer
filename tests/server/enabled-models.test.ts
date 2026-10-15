@@ -6,6 +6,7 @@ import {
   handleIpcCommand,
   setPiAgentDirForTest,
 } from '@server/web-ipc-bridge';
+import { getEnabledModelsPi } from '@infra/bridge';
 
 function createIsolatedFixture() {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.workspace-enabled-models-test-'));
@@ -187,4 +188,46 @@ test('S1.3 — pattern-only built-in override produces models.json accepted by i
     f.cleanup();
   }
 });
+
+test('R3-001 — getEnabledModelsPi routes to server get_enabled_models IPC in web-shim mode with default invoke', async () => {
+  const f = createIsolatedFixture();
+  try {
+    f.writeSettings({
+      enabledModels: ['anthropic/*', 'openai/gpt-4o'],
+    });
+
+    const origWindow = (globalThis as any).window;
+    const origIsTauri = (globalThis as any).isTauri;
+
+    let calledCmd: string | null = null;
+    (globalThis as any).isTauri = false;
+    (globalThis as any).window = {
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async (cmd: string, args: any) => {
+          calledCmd = cmd;
+          return await handleIpcCommand(cmd, args);
+        },
+      },
+      localStorage: {
+        getItem: () => JSON.stringify(['mock-should-not-be-called']),
+      },
+    };
+
+    try {
+      const result = await getEnabledModelsPi();
+      assert.equal(calledCmd, 'get_enabled_models', 'Must invoke server IPC get_enabled_models in web-shim');
+      assert.deepEqual(result, ['anthropic/*', 'openai/gpt-4o']);
+    } finally {
+      if (origWindow === undefined) delete (globalThis as any).window;
+      else (globalThis as any).window = origWindow;
+      if (origIsTauri === undefined) delete (globalThis as any).isTauri;
+      else (globalThis as any).isTauri = origIsTauri;
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
 
