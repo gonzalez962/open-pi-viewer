@@ -1,5 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { isWebShim } from './web-oauth-access';
 import type { ConnectConfig, ConnectResult, ConnectSessionOptions } from '@core/types/connection';
 import type { ModelInfo, ModelThinkingLevelsMap, SessionStats, ThinkingLevel } from '@core/types/models';
 import type {
@@ -839,7 +840,7 @@ export const MOCK_ENABLED_MODELS_STORAGE_KEY = 'pi_viewer_enabled_models_mock';
 export async function getEnabledModelsPi(
   invokeFn = invoke
 ): Promise<string[]> {
-  if (!isTauri() && invokeFn === invoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
     try {
       const stored = localStorage.getItem(MOCK_ENABLED_MODELS_STORAGE_KEY);
       return stored ? (JSON.parse(stored) as string[]) : [];
