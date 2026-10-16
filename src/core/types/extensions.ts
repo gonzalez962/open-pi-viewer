@@ -22,8 +22,11 @@ export interface PiResourceEntry {
   autoload?: boolean;
   filters?: PiPackageFilters;
   hasProjectOverride?: boolean;
+  alwaysActive?: boolean;
   globalEnabled?: boolean;
   sourceScope?: PiResourceScope;
+  extensionPath?: string;
+  extensionDir?: string;
 }
 
 export interface PiResourcesPayload {
@@ -42,6 +45,8 @@ export interface SavePiResourcePayload {
   enabled?: boolean;
   raw?: unknown;
   cwd?: string;
+  extensionPath?: string;
+  extensionDir?: string;
 }
 
 export interface SavePiResourceResult {
@@ -164,7 +169,12 @@ export function deriveResourceName(kind: PiResourceKind, source: string): string
   const parts = clean.split('/').filter((p) => p !== '' && p !== '.');
   if (parts.length >= 2) {
     const last = parts[parts.length - 1];
-    if (last === 'index.ts' || last === 'index.js') {
+    if (
+      last === 'index.ts' ||
+      last === 'index.js' ||
+      last === 'index.mjs' ||
+      last === 'index'
+    ) {
       const parent = parts[parts.length - 2];
       if (parent !== 'extensions' && parent !== '.') {
         return parent;
@@ -172,6 +182,87 @@ export function deriveResourceName(kind: PiResourceKind, source: string): string
     }
   }
   return parts[parts.length - 1] || clean;
+}
+
+export const INDEX_ENTRY_NAMES = new Set([
+  'index',
+  'index.ts',
+  'index.js',
+  'index.mjs',
+]);
+
+/**
+ * Checks whether an entry or file name is a generic index file.
+ */
+export function isIndexEntryName(name?: string): boolean {
+  if (!name) return true;
+  return INDEX_ENTRY_NAMES.has(name.trim().toLowerCase());
+}
+
+/**
+ * Derives user-facing display name for a Pi resource.
+ * - Preserves declared names for regular extensions and packages.
+ * - Defensively falls back to parent folder for unnamed or index/index.ts/js/mjs entries when metadata/source is available.
+ * - Avoids changing package names.
+ */
+export function getResourceDisplayName(resource: PiResourceEntry): string {
+  if (resource.kind === 'package') {
+    return resource.name?.trim() || deriveResourceName('package', resource.source);
+  }
+
+  const declared = resource.name?.trim();
+  if (declared && !INDEX_ENTRY_NAMES.has(declared.toLowerCase())) {
+    return declared;
+  }
+
+  // 1. Check extensionDir
+  if (resource.extensionDir) {
+    const norm = resource.extensionDir.replace(/\\/g, '/').replace(/\/+$/, '');
+    const parts = norm.split('/').filter((p) => p !== '' && p !== '.');
+    const folder = parts[parts.length - 1];
+    if (folder && folder !== 'extensions' && !INDEX_ENTRY_NAMES.has(folder.toLowerCase())) {
+      return folder;
+    }
+  }
+
+  // 2. Check extensionPath
+  if (resource.extensionPath) {
+    const norm = resource.extensionPath.replace(/\\/g, '/');
+    const parts = norm.split('/').filter((p) => p !== '' && p !== '.');
+    if (parts.length >= 2) {
+      const last = parts[parts.length - 1];
+      if (INDEX_ENTRY_NAMES.has(last.toLowerCase())) {
+        const parent = parts[parts.length - 2];
+        if (parent && parent !== 'extensions' && parent !== '.') {
+          return parent;
+        }
+      }
+    }
+  }
+
+  // 3. Check source
+  if (resource.source) {
+    const derived = deriveResourceName('extension', resource.source);
+    if (derived && !INDEX_ENTRY_NAMES.has(derived.toLowerCase())) {
+      return derived;
+    }
+  }
+
+  return (
+    declared ||
+    (resource.source ? deriveResourceName('extension', resource.source) : 'Unnamed extension')
+  );
+}
+
+/**
+ * Returns hover title path for an extension or resource:
+ * Displays extensionDir (fallback extensionPath, then source, but NEVER configPath).
+ */
+export function getExtensionHoverPath(resource: PiResourceEntry): string {
+  if (resource.kind === 'extension') {
+    return resource.extensionDir || resource.extensionPath || resource.source;
+  }
+  return resource.source;
 }
 
 /**
@@ -303,10 +394,18 @@ export function extensionSourcesMatch(sourceA: string, sourceB: string): boolean
   if (a === b) {
     return true;
   }
-  if (a === `${b}/index.ts` || a === `${b}/index.js`) {
+  if (
+    a === `${b}/index.ts` ||
+    a === `${b}/index.js` ||
+    a === `${b}/index.mjs`
+  ) {
     return true;
   }
-  if (b === `${a}/index.ts` || b === `${a}/index.js`) {
+  if (
+    b === `${a}/index.ts` ||
+    b === `${a}/index.js` ||
+    b === `${a}/index.mjs`
+  ) {
     return true;
   }
   return false;

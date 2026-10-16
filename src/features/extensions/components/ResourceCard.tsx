@@ -1,11 +1,20 @@
 import React from 'react';
 import type { TranslationKey } from '@shared/i18n';
-import type { PiResourceEntry } from '@core/types/extensions';
+import {
+  type PiResourceEntry,
+  getResourceDisplayName,
+  getExtensionHoverPath,
+} from '@core/types/extensions';
 
 export interface ResourceCardProps {
   resource: PiResourceEntry;
   onToggle: (resource: PiResourceEntry, nextEnabled: boolean) => void;
   isToggling?: boolean;
+  onToggleAlwaysActive?: (
+    resource: PiResourceEntry,
+    nextAlwaysActive: boolean
+  ) => void;
+  isTogglingAlwaysActive?: boolean;
   onEdit?: (resource: PiResourceEntry) => void;
   onDelete?: (resource: PiResourceEntry) => void;
   isDeleting?: boolean;
@@ -18,6 +27,8 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
   resource,
   onToggle,
   isToggling = false,
+  onToggleAlwaysActive,
+  isTogglingAlwaysActive = false,
   onEdit,
   onDelete,
   isDeleting = false,
@@ -38,7 +49,9 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
   const statusLabel = resource.enabled
     ? t('extensions.status_active')
     : t('extensions.status_inactive');
-  const toggleAriaLabel = `${resource.name}: ${statusLabel}`;
+  const displayName = getResourceDisplayName(resource);
+  const hoverTitle = getExtensionHoverPath(resource);
+  const toggleAriaLabel = `${displayName}: ${statusLabel}`;
 
   const isCurrentDeleting = deletingId === resource.id;
 
@@ -49,7 +62,9 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
     >
       <div className="ext-card-header">
         <div className="ext-card-identity">
-          <h3 className="ext-card-name">{resource.name}</h3>
+          <h3 className="ext-card-name" title={hoverTitle}>
+            {displayName}
+          </h3>
           <div className="ext-card-badges">
             <span
               className={`ext-badge ext-badge-scope ext-badge-scope-${resource.scope}`}
@@ -64,6 +79,11 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
             {resource.hasProjectOverride && (
               <span className="ext-badge ext-badge-override">
                 {t('extensions.badge_override')}
+              </span>
+            )}
+            {resource.kind === 'extension' && resource.alwaysActive && (
+              <span className="ext-badge ext-badge-always-active">
+                {t('extensions.badge_always_active')}
               </span>
             )}
           </div>
@@ -92,6 +112,31 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
               <span className="ext-toggle-slider" aria-hidden="true" />
             </label>
           </div>
+
+          {resource.kind === 'extension' && onToggleAlwaysActive && (
+            <div className="ext-always-active-area">
+              <label
+                className={`ext-always-active-label ${isTogglingAlwaysActive ? 'ext-toggling' : ''}`}
+                htmlFor={`ext-always-${resource.id}`}
+              >
+                <span className="ext-always-active-text">
+                  {t('extensions.always_activate_label')}
+                </span>
+                <input
+                  id={`ext-always-${resource.id}`}
+                  type="checkbox"
+                  className="ext-toggle-checkbox ext-always-checkbox"
+                  checked={Boolean(resource.alwaysActive)}
+                  disabled={isToggling || isDeleting || isTogglingAlwaysActive}
+                  aria-label={`${displayName}: ${t('extensions.always_activate_label')}`}
+                  onChange={() =>
+                    onToggleAlwaysActive(resource, !resource.alwaysActive)
+                  }
+                />
+                <span className="ext-toggle-slider" aria-hidden="true" />
+              </label>
+            </div>
+          )}
 
           {onEdit && (
             <button
@@ -155,9 +200,9 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
       </div>
 
       <div className="ext-card-body">
-        <div className="ext-card-source">
+        <div className="ext-card-source" title={hoverTitle}>
           <span className="ext-source-label">{t('extensions.field_source')}:</span>
-          <code className="ext-code-block">{resource.source}</code>
+          <code className="ext-code-block" title={hoverTitle}>{resource.source}</code>
         </div>
         {resource.configPath && (
           <div className="ext-card-path">

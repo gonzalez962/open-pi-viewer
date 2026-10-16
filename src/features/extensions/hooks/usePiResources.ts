@@ -7,9 +7,14 @@ import type {
   TogglePiResourceResult,
   DeletePiResourcePayload,
 } from '@core/types/extensions';
+import type {
+  SetResourceActivationPayload,
+  SetResourceActivationResult,
+} from '@core/types/mcp';
 import {
   getPiResources,
   savePiResource,
+  setResourceActivationPi,
   togglePiResource,
   deletePiResource,
 } from '@infra/bridge';
@@ -39,6 +44,10 @@ export interface UsePiResourcesResult {
     resource: PiResourceEntry,
     enabled: boolean
   ) => Promise<void>;
+  handleToggleAlwaysActive: (
+    resource: PiResourceEntry,
+    alwaysActive: boolean
+  ) => Promise<void>;
   handleSaveResource: (
     payload: SavePiResourcePayload,
     original?: PiResourceEntry | null
@@ -67,6 +76,72 @@ export interface ExecuteResourceToggleResult {
   nextResources: PiResourceEntry[];
   success: boolean;
   error?: string;
+}
+
+export interface ExecuteResourceAlwaysActiveToggleOptions {
+  resources: PiResourceEntry[];
+  resource: PiResourceEntry;
+  alwaysActive: boolean;
+  activationFn?: (
+    payload: SetResourceActivationPayload
+  ) => Promise<SetResourceActivationResult>;
+}
+
+export interface ExecuteResourceAlwaysActiveToggleResult {
+  nextResources: PiResourceEntry[];
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Optimistically toggles always-active global exception on extension and invokes bridge activation.
+ * No-op for packages.
+ */
+export async function executeResourceAlwaysActiveToggle({
+  resources,
+  resource,
+  alwaysActive,
+  activationFn = setResourceActivationPi,
+}: ExecuteResourceAlwaysActiveToggleOptions): Promise<ExecuteResourceAlwaysActiveToggleResult> {
+  if (resource.kind !== 'extension') {
+    return {
+      nextResources: resources,
+      success: true,
+    };
+  }
+
+  const nextResources = resources.map((r) =>
+    r.id === resource.id ? { ...r, alwaysActive } : r
+  );
+
+  try {
+    const res = await activationFn({
+      kind: 'extension',
+      identity: resource.source,
+      enabled: alwaysActive,
+      cwd: undefined,
+    });
+
+    if (!res.success) {
+      return {
+        nextResources: resources,
+        success: false,
+        error: `Failed to update always-active exception for extension "${resource.name}"`,
+      };
+    }
+
+    return {
+      nextResources,
+      success: true,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      nextResources: resources,
+      success: false,
+      error: message,
+    };
+  }
 }
 
 /**
@@ -216,13 +291,102 @@ export function usePiResources({
 
   const handleToggleProjectResource = useCallback(
     async (resource: PiResourceEntry, enabled: boolean) => {
-      await handleToggleResource(
-        resource,
-        enabled,
-        cwd ? 'project' : resource.scope
-      );
+      if (resource.kind === 'extension' && cwd) {
+        setTogglingIds((prev) => new Set(prev).add(resource.id));
+        setError(null);
+        setSuccessNotice(null);
+
+        setResources((prev) =>
+          calculateToggledResourceState(prev, resource.id, enabled, 'project')
+        );
+
+        try {
+          const res = await setResourceActivationPi({
+            kind: 'extension',
+            identity: resource.source,
+            enabled,
+            cwd,
+          });
+
+          if (!res.success) {
+            setResources((prev) =>
+              calculateToggledResourceState(prev, resource.id, resource.enabled)
+            );
+            setError(`Failed to update project activation for resource "${resource.name}"`);
+          }
+        } catch (err) {
+          setResources((prev) =>
+            calculateToggledResourceState(prev, resource.id, resource.enabled)
+          );
+          const message = err instanceof Error ? err.message : String(err);
+          setError(message);
+        } finally {
+          setTogglingIds((prev) => {
+            const next = new Set(prev);
+            next.delete(resource.id);
+            return next;
+          });
+        }
+      } else {
+        await handleToggleResource(
+          resource,
+          enabled,
+          cwd ? 'project' : resource.scope
+        );
+      }
     },
     [cwd, handleToggleResource]
+  );
+
+  const handleToggleAlwaysActive = useCallback(
+    async (resource: PiResourceEntry, alwaysActive: boolean) => {
+      if (resource.kind !== 'extension') {
+        return;
+      }
+
+      setTogglingIds((prev) => new Set(prev).add(resource.id));
+      setError(null);
+      setSuccessNotice(null);
+
+      setResources((prev) =>
+        prev.map((r) => (r.id === resource.id ? { ...r, alwaysActive } : r))
+      );
+
+      try {
+        const res = await setResourceActivationPi({
+          kind: 'extension',
+          identity: resource.source,
+          enabled: alwaysActive,
+          cwd: undefined,
+        });
+
+        if (!res.success) {
+          setResources((prev) =>
+            prev.map((r) =>
+              r.id === resource.id ? { ...r, alwaysActive: resource.alwaysActive } : r
+            )
+          );
+          setError(
+            `Failed to update activation policy for extension "${resource.name}"`
+          );
+        }
+      } catch (err) {
+        setResources((prev) =>
+          prev.map((r) =>
+            r.id === resource.id ? { ...r, alwaysActive: resource.alwaysActive } : r
+          )
+        );
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+      } finally {
+        setTogglingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(resource.id);
+          return next;
+        });
+      }
+    },
+    []
   );
 
   const handleSaveResource = useCallback(
@@ -331,6 +495,7 @@ export function usePiResources({
     packagesCount,
     handleToggleResource,
     handleToggleProjectResource,
+    handleToggleAlwaysActive,
     handleSaveResource,
     handleDeleteResource,
     refreshResources,

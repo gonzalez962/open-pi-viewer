@@ -250,16 +250,35 @@ pub struct StatusChangePayload {
     pub cwd: Option<String>,
 }
 
-/// Build command-line arguments for launching Pi in RPC mode as an unrestricted wrapper.
+/// Build command-line arguments for launching Pi in RPC mode with scoped activation enforcement.
 pub fn build_pi_args(
     entrypoint: &Path,
     session_file: Option<&Path>,
+    authorized_extensions: &[PathBuf],
+    has_authorized_mcp: bool,
 ) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> = Vec::new();
     args.push(entrypoint.as_os_str().to_os_string());
     args.push("--mode".into());
     args.push("rpc".into());
     args.push("--approve".into());
+
+    // Scoped activation invariant: disable automatic extension discovery
+    args.push("--no-extensions".into());
+
+    // Explicitly load authorized extensions
+    for ext in authorized_extensions {
+        args.push("-e".into());
+        args.push(ext.as_os_str().to_os_string());
+    }
+
+    // Load builtin:mcp only when an MCP server is authorized; --no-mcp when none
+    if has_authorized_mcp {
+        args.push("-e".into());
+        args.push("builtin:mcp".into());
+    } else {
+        args.push("--no-mcp".into());
+    }
 
     if let Some(sf) = session_file {
         args.push("--session".into());
@@ -325,9 +344,16 @@ impl ActiveSession {
         // Set kill_on_drop(true) as baseline defense against leaked child processes
         cmd.kill_on_drop(true);
 
+        // Enforce resource activation policy before spawning Node process (fail closed before spawn)
+        let policy = crate::resource_activation::load_resource_activation_state()
+            .map_err(|e| format!("Resource activation policy failure before spawn: {e}"))?;
+
+        let (authorized_extensions, has_authorized_mcp) = crate::resource_activation::enforce_startup_resources(cwd, &policy)
+            .map_err(|e| format!("Failed to enforce resource activation policy for {}: {e}", cwd.display()))?;
+
         // Spawn Node directly with argv arguments (no shell, no pi.cmd shell-string workaround).
-        // Unrestricted direct wrapper: node <entrypoint> --mode rpc --approve [--session <session_file>]
-        let pi_args = build_pi_args(entrypoint, session_file);
+        // Scoped wrapper: node <entrypoint> --mode rpc --approve --no-extensions [-e <ext> ...] [-e builtin:mcp | --no-mcp] [--session <session_file>]
+        let pi_args = build_pi_args(entrypoint, session_file, &authorized_extensions, has_authorized_mcp);
         cmd.args(&pi_args);
 
         // Only for Gentle Shell entrypoints, signal that pi-viewer acts as an interactive RPC host.
@@ -1201,8 +1227,8 @@ mod tests {
     fn test_build_pi_args_unrestricted_wrapper() {
         let entrypoint = Path::new("/mock/path/cli.js");
 
-        // Without session
-        let args = build_pi_args(entrypoint, None);
+        // Without session, no authorized extensions, no authorized mcp
+        let args = build_pi_args(entrypoint, None, &[], false);
         let args_str: Vec<String> = args
             .into_iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -1213,8 +1239,9 @@ mod tests {
         assert!(args_str.contains(&"rpc".to_string()));
         assert!(args_str.contains(&"--approve".to_string()));
 
-        // Crucial: unrestricted direct wrapper must NOT include guards, tool policies, or restriction flags
-        assert!(!args_str.contains(&"--no-extensions".to_string()));
+        // Scoped invariant: disable extension discovery and disable mcp by default
+        assert!(args_str.contains(&"--no-extensions".to_string()));
+        assert!(args_str.contains(&"--no-mcp".to_string()));
         assert!(!args_str.contains(&"--no-skills".to_string()));
         assert!(!args_str.contains(&"--no-prompt-templates".to_string()));
         assert!(!args_str.contains(&"--no-context-files".to_string()));
@@ -1224,9 +1251,11 @@ mod tests {
         assert!(!args_str.contains(&"-e".to_string()));
         assert!(!args_str.contains(&"--session".to_string()));
 
-        // With session
+        // With session, authorized extensions, authorized mcp
         let session = Path::new("/home/user/.pi/session.json");
-        let args_with_session = build_pi_args(entrypoint, Some(session));
+        let ext_a = PathBuf::from("/mock/ext/a.ts");
+        let ext_b = PathBuf::from("/mock/ext/b.ts");
+        let args_with_session = build_pi_args(entrypoint, Some(session), &[ext_a, ext_b], true);
         let args_session_str: Vec<String> = args_with_session
             .into_iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -1243,14 +1272,20 @@ mod tests {
             .expect("--session must be present");
         assert_eq!(args_session_str[s_idx + 1], "/home/user/.pi/session.json");
 
-        assert!(!args_session_str.contains(&"--no-extensions".to_string()));
-        assert!(!args_session_str.contains(&"--no-skills".to_string()));
-        assert!(!args_session_str.contains(&"--no-prompt-templates".to_string()));
-        assert!(!args_session_str.contains(&"--no-context-files".to_string()));
-        assert!(!args_session_str.contains(&"--no-approve".to_string()));
-        assert!(!args_session_str.contains(&"--tools".to_string()));
-        assert!(!args_session_str.contains(&"--exclude-tools".to_string()));
-        assert!(!args_session_str.contains(&"-e".to_string()));
+        assert!(args_session_str.contains(&"--no-extensions".to_string()));
+        assert!(!args_session_str.contains(&"--no-mcp".to_string()));
+
+        // Verify authorized extensions and builtin:mcp loaded via -e
+        let e_indices: Vec<usize> = args_session_str
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| *s == "-e")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(e_indices.len(), 3);
+        assert_eq!(args_session_str[e_indices[0] + 1], "/mock/ext/a.ts");
+        assert_eq!(args_session_str[e_indices[1] + 1], "/mock/ext/b.ts");
+        assert_eq!(args_session_str[e_indices[2] + 1], "builtin:mcp");
     }
 
     #[test]

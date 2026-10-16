@@ -5,6 +5,10 @@ import { getBridgeConfig, getAgnosticExecEnv } from '../config';
 import { broadcastSse } from './sse';
 import { resolveCrossPlatformCwd } from './paths';
 import {
+  materializeProjectMcpEnforcement,
+  computeRpcStartupArgs,
+} from './resource-activation';
+import {
   setSessionStatus,
   invalidateSessionParseCache,
   sessionStatusMap,
@@ -72,6 +76,10 @@ export class PiRpcSession {
     const nodePath = cfg.nodeExecutable;
     const entrypoint = cfg.piCliPath;
 
+    // Enforce MCP materialization atomically and compute authorized startup flags
+    await materializeProjectMcpEnforcement(this.cwd);
+    const startupArgs = await computeRpcStartupArgs(this.cwd);
+
     let childProc: ChildProcess | null = null;
     const env = {
       ...getAgnosticExecEnv(),
@@ -80,7 +88,7 @@ export class PiRpcSession {
     const customSpawner = getSubprocessSpawner();
 
     if (customSpawner) {
-      const args = ['--mode', 'rpc', '--approve'];
+      const args = ['--mode', 'rpc', '--approve', ...startupArgs];
       if (this.sessionFile && fs.existsSync(this.sessionFile)) {
         args.push('--session', this.sessionFile);
       }
@@ -95,7 +103,7 @@ export class PiRpcSession {
         childProc = null;
       }
     } else if (entrypoint && fs.existsSync(entrypoint)) {
-      const args = [entrypoint, '--mode', 'rpc', '--approve'];
+      const args = [entrypoint, '--mode', 'rpc', '--approve', ...startupArgs];
       if (this.sessionFile && fs.existsSync(this.sessionFile)) {
         args.push('--session', this.sessionFile);
       }
@@ -110,7 +118,7 @@ export class PiRpcSession {
         childProc = null;
       }
     } else {
-      const args = ['--mode', 'rpc', '--approve'];
+      const args = ['--mode', 'rpc', '--approve', ...startupArgs];
       if (this.sessionFile && fs.existsSync(this.sessionFile)) {
         args.push('--session', this.sessionFile);
       }

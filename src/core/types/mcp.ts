@@ -13,6 +13,7 @@ export interface McpServerConfig {
   enabled: boolean;
   scope: McpServerScope;
   hasProjectOverride?: boolean;
+  alwaysActive?: boolean;
   configPath: string;
   env?: Record<string, string>;
   headers?: Record<string, string>;
@@ -72,4 +73,18 @@ export interface DeleteMcpServerResult {
   name: string;
   path: string;
 }
+
+export type ResourceActivationKind = 'extension' | 'mcp';
+
+export interface SetResourceActivationPayload {
+  kind: ResourceActivationKind;
+  identity: string;
+  enabled: boolean;
+  cwd?: string;
+}
+
+export interface SetResourceActivationResult {
+  success: boolean;
+}
+
 

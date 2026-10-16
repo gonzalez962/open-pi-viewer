@@ -26,6 +26,10 @@ export interface ExtensionsViewProps {
     resource: PiResourceEntry,
     enabled: boolean
   ) => Promise<void>;
+  onToggleAlwaysActive?: (
+    resource: PiResourceEntry,
+    alwaysActive: boolean
+  ) => Promise<void>;
   onRefresh?: () => Promise<void>;
   onSaveResource?: (
     payload: SavePiResourcePayload,
@@ -41,6 +45,7 @@ export const ExtensionsView: React.FC<ExtensionsViewProps> = ({
   isBusy = false,
   resources: controlledResources,
   onToggleResource: controlledToggleResource,
+  onToggleAlwaysActive: controlledToggleAlwaysActive,
   onRefresh: controlledRefresh,
   onSaveResource: controlledSaveResource,
   onDeleteResource: controlledDeleteResource,
@@ -59,6 +64,9 @@ export const ExtensionsView: React.FC<ExtensionsViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [togglingAlwaysActiveIds, setTogglingAlwaysActiveIds] = useState<Set<string>>(
     () => new Set()
   );
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -122,6 +130,36 @@ export const ExtensionsView: React.FC<ExtensionsViewProps> = ({
       }
     },
     [controlledToggleResource, hookResources, t]
+  );
+
+  const handleToggleAlwaysActive = useCallback(
+    async (resource: PiResourceEntry, nextAlwaysActive: boolean) => {
+      if (resource.kind !== 'extension') return;
+      setTogglingAlwaysActiveIds((prev) => new Set(prev).add(resource.id));
+      setError(null);
+      setSuccessNotice(null);
+
+      try {
+        if (controlledToggleAlwaysActive) {
+          await controlledToggleAlwaysActive(resource, nextAlwaysActive);
+        } else {
+          await hookResources.handleToggleAlwaysActive(
+            resource,
+            nextAlwaysActive
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+      } finally {
+        setTogglingAlwaysActiveIds((prev) => {
+          const next = new Set(prev);
+          next.delete(resource.id);
+          return next;
+        });
+      }
+    },
+    [controlledToggleAlwaysActive, hookResources]
   );
 
   const handleSaveResource = useCallback(
@@ -307,7 +345,10 @@ export const ExtensionsView: React.FC<ExtensionsViewProps> = ({
             <line x1="12" y1="16" x2="12" y2="12" />
             <line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
-          <span>{t('extensions.notice_reload')}</span>
+          <div className="ext-notice-text">
+            <span>{t('extensions.notice_reload')}</span>
+            <span className="ext-notice-subtext">{t('extensions.activation_next_session_notice')}</span>
+          </div>
         </div>
 
         {/* Error Banner */}
@@ -364,6 +405,8 @@ export const ExtensionsView: React.FC<ExtensionsViewProps> = ({
                 resource={resource}
                 onToggle={handleToggleResource}
                 isToggling={togglingIds.has(resource.id)}
+                onToggleAlwaysActive={handleToggleAlwaysActive}
+                isTogglingAlwaysActive={togglingAlwaysActiveIds.has(resource.id)}
                 onEdit={modalForm.openEditModal}
                 onDelete={handleDeleteResource}
                 isDeleting={isDeleting && deletingId === resource.id}

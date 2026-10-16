@@ -48,6 +48,17 @@
   margin-top: 1px;
 }
 
+.ext-notice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ext-notice-subtext {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
 /* Success Banner */
 .ext-success-banner {
   background-color: var(--status-green-bg, rgba(63, 185, 80, 0.12));
@@ -263,6 +274,12 @@
   color: #f0883e;
 }
 
+.ext-badge-always-active {
+  background-color: rgba(56, 139, 253, 0.12);
+  border: 1px solid rgba(56, 139, 253, 0.35);
+  color: var(--accent-primary, #58a6ff);
+}
+
 .ext-card-actions {
   display: flex;
   align-items: center;
@@ -272,6 +289,30 @@
 .ext-toggle-area {
   display: flex;
   align-items: center;
+}
+
+.ext-always-active-area {
+  display: flex;
+  align-items: center;
+}
+
+.ext-always-active-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+
+.ext-always-active-label.ext-toggling {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.ext-always-active-text {
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 
 .ext-toggle-label {

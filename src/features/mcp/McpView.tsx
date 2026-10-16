@@ -15,6 +15,7 @@ import type {
 } from '@core/types/mcp';
 import {
   getMcpServersPi,
+  setResourceActivationPi,
   toggleMcpServerPi,
   saveMcpServerPi,
   deleteMcpServerPi,
@@ -31,6 +32,10 @@ export interface McpViewProps {
   isBusy?: boolean;
   servers?: McpServerConfig[];
   onToggleServer?: (server: McpServerConfig, enabled: boolean) => Promise<void>;
+  onToggleAlwaysActive?: (
+    server: McpServerConfig,
+    alwaysActive: boolean
+  ) => Promise<void>;
   onRefresh?: () => Promise<void>;
   onSaveServer?: (
     payload: SaveMcpServerPayload
@@ -167,6 +172,7 @@ export const McpView: React.FC<McpViewProps> = ({
   isBusy = false,
   servers: controlledServers,
   onToggleServer: controlledToggleServer,
+  onToggleAlwaysActive: controlledToggleAlwaysActive,
   onRefresh: controlledRefresh,
   onSaveServer,
   onDeleteServer,
@@ -180,6 +186,9 @@ export const McpView: React.FC<McpViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [togglingServers, setTogglingServers] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [togglingAlwaysActiveServers, setTogglingAlwaysActiveServers] = useState<Set<string>>(
     () => new Set()
   );
 
@@ -269,6 +278,58 @@ export const McpView: React.FC<McpViewProps> = ({
       }
     },
     [cwd, t, controlledToggleServer]
+  );
+
+  const handleToggleAlwaysActive = useCallback(
+    async (server: McpServerConfig, nextAlwaysActive: boolean) => {
+      setTogglingAlwaysActiveServers((prev) => new Set(prev).add(server.name));
+      setError(null);
+      setSuccessNotice(null);
+
+      try {
+        if (controlledToggleAlwaysActive) {
+          await controlledToggleAlwaysActive(server, nextAlwaysActive);
+        } else {
+          const res = await setResourceActivationPi({
+            kind: 'mcp',
+            identity: server.name,
+            enabled: nextAlwaysActive,
+            cwd: undefined,
+          });
+
+          if (res.success) {
+            setInternalServers((prev) =>
+              prev.map((s) =>
+                s.name === server.name ? { ...s, alwaysActive: nextAlwaysActive } : s
+              )
+            );
+          } else {
+            setError(
+              t('mcp.toggle_error', {
+                name: server.name,
+                error: 'Failed to update always-active exception',
+              })
+            );
+            return;
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        setError(
+          t('mcp.toggle_error', {
+            name: server.name,
+            error: errorMsg,
+          })
+        );
+      } finally {
+        setTogglingAlwaysActiveServers((prev) => {
+          const next = new Set(prev);
+          next.delete(server.name);
+          return next;
+        });
+      }
+    },
+    [controlledToggleAlwaysActive, t]
   );
 
   const handleSaveServer = useCallback(
@@ -443,7 +504,10 @@ export const McpView: React.FC<McpViewProps> = ({
             <line x1="12" y1="16" x2="12" y2="12" />
             <line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
-          <span>{t('mcp.notice_reload')}</span>
+          <div className="mcp-notice-text">
+            <span>{t('mcp.notice_reload')}</span>
+            <span className="mcp-notice-subtext">{t('mcp.activation_next_session_notice')}</span>
+          </div>
         </div>
 
         {/* Error Banner */}
@@ -501,6 +565,8 @@ export const McpView: React.FC<McpViewProps> = ({
                 server={server}
                 onToggle={handleToggleServer}
                 isToggling={togglingServers.has(server.name)}
+                onToggleAlwaysActive={handleToggleAlwaysActive}
+                isTogglingAlwaysActive={togglingAlwaysActiveServers.has(server.name)}
                 onEdit={modalForm.openEditModal}
                 onDelete={handleDeleteServer}
                 isDeleting={isDeleting && deletingName === server.name}

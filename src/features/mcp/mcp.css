@@ -48,6 +48,17 @@
   margin-top: 1px;
 }
 
+.mcp-notice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-notice-subtext {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
 /* Success Banner */
 .mcp-success-banner {
   background-color: var(--status-green-bg, rgba(63, 185, 80, 0.12));
@@ -253,11 +264,40 @@
   color: var(--fg-muted);
 }
 
+.mcp-badge-always-active {
+  background-color: rgba(56, 139, 253, 0.12);
+  border: 1px solid rgba(56, 139, 253, 0.35);
+  color: var(--accent-primary, #58a6ff);
+}
+
 /* Toggle Area & Switch */
 .mcp-server-toggle-area {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.mcp-always-active-area {
+  display: flex;
+  align-items: center;
+}
+
+.mcp-always-active-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mcp-always-active-label.mcp-toggling {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.mcp-always-active-text {
+  font-size: 11px;
+  color: var(--fg-muted);
 }
 
 .mcp-toggle-label {

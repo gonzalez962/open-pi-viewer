@@ -1325,6 +1325,10 @@ export const App: React.FC = () => {
                         await globalMcp.handleToggleServer(server, enabled, 'global');
                         void projectMcp.refreshServers();
                       }}
+                      onToggleAlwaysActive={async (server, alwaysActive) => {
+                        await globalMcp.handleToggleAlwaysActive(server, alwaysActive);
+                        void projectMcp.refreshServers();
+                      }}
                       onRefresh={async () => {
                         await globalMcp.refreshServers();
                         void projectMcp.refreshServers();
@@ -1367,6 +1371,10 @@ export const App: React.FC = () => {
                       resources={globalPiResources.resources}
                       onToggleResource={async (resource, enabled) => {
                         await globalPiResources.handleToggleResource(resource, enabled, 'global');
+                        void projectPiResources.refreshResources();
+                      }}
+                      onToggleAlwaysActive={async (resource, alwaysActive) => {
+                        await globalPiResources.handleToggleAlwaysActive(resource, alwaysActive);
                         void projectPiResources.refreshResources();
                       }}
                       onRefresh={async () => {
