@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
-import type { WorkspaceGitStatus } from '../../src/core/types/workspace';
+import type { WorkspaceGitStatus, WorkspaceFileDiff } from '../../src/core/types/workspace';
 import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
@@ -256,6 +256,54 @@ export function handleListWorkspaceDir(args: any = {}) {
   });
 
   return results;
+}
+
+/** Return a unified patch for the web file viewer without changing Git state. */
+export function handleGetWorkspaceFileDiff(args: any = {}): WorkspaceFileDiff {
+  const payload = args.payload || {};
+  const rel = payload.relativePath;
+  if (!rel || typeof rel !== 'string') {
+    throw new Error('Relative path must be a non-empty string');
+  }
+  const normalizedRel = rel.replace(/\\/g, '/');
+  if (normalizedRel.split('/').includes('..')) {
+    throw new Error(`Path traversal attempt detected ('..'): ${rel}`);
+  }
+  const root = fs.realpathSync(resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd()));
+  const target = fs.realpathSync(path.resolve(root, normalizedRel));
+  const relative = path.relative(root, target);
+  if (path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error(`Access denied: path is outside workspace root: ${rel}`);
+  }
+  if (!fs.statSync(target).isFile()) {
+    throw new Error(`Target path is a directory, not a file: ${rel}`);
+  }
+  const relativePath = relative.split(path.sep).join('/');
+  const empty = { relativePath, hasDiff: false, diff: '' };
+  const git = (...gitArgs: string[]) => spawnSync('git', gitArgs, {
+    cwd: root, encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024,
+  });
+  if (git('rev-parse', '--show-toplevel').status !== 0) return empty;
+  const tracked = git('ls-files', '--error-unmatch', '--', `:(literal)${relativePath}`);
+  if (tracked.error) throw tracked.error;
+  let result;
+  if (tracked.status === 0) {
+    const hasHead = git('rev-parse', '--verify', 'HEAD').status === 0;
+    result = git('--literal-pathspecs', 'diff', '--no-ext-diff', '--no-textconv', '--no-color',
+      ...(hasHead ? ['HEAD'] : ['--cached']), '--', relativePath);
+  } else if (tracked.status === 1) {
+    // --no-index returns 1 when it successfully finds differences.
+    result = git('diff', '--no-index', '--no-ext-diff', '--no-textconv', '--no-color',
+      '--', '/dev/null', relativePath);
+  } else {
+    throw new Error(tracked.stderr.trim() || 'Unable to inspect tracked file');
+  }
+  if (result.error) throw result.error;
+  if (result.status !== 0 && !(tracked.status === 1 && result.status === 1)) {
+    throw new Error(result.stderr.trim() || 'Unable to read workspace diff');
+  }
+  const diff = result.stdout;
+  return { relativePath, hasDiff: Boolean(diff.trim()), diff };
 }
 
 export function handleReadWorkspaceFile(args: any = {}) {
