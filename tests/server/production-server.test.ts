@@ -9,6 +9,7 @@ async function fixture(enabled = false) {
   fs.mkdirSync(path.join(root, 'assets'));
   fs.writeFileSync(path.join(root, 'index.html'), '<html>production interface</html>');
   fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log("build")');
+  fs.writeFileSync(path.join(root, 'push-sw.js'), 'self.addEventListener("push", () => {});');
   fs.writeFileSync(path.join(root, 'private.txt'), 'not a public asset');
   const server = createProductionServer({ staticDir: root, authConfig: { enabled, key: enabled ? 'test-key' : undefined } });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -30,6 +31,12 @@ test('production server serves build assets, SPA routes and existing IPC without
     const asset = await fetch(`${f.base}/assets/app.js`);
     assert.match(asset.headers.get('content-type') || '', /javascript/);
     assert.equal(await asset.text(), 'console.log("build")');
+    assert.equal(asset.headers.get('cache-control'), 'public, max-age=3600');
+    const worker = await fetch(`${f.base}/push-sw.js`);
+    assert.equal(worker.status, 200);
+    assert.match(worker.headers.get('content-type') || '', /javascript/);
+    assert.equal(worker.headers.get('cache-control'), 'no-cache');
+    assert.equal(await worker.text(), 'self.addEventListener("push", () => {});');
     const route = await fetch(`${f.base}/projects/example`);
     assert.equal(route.status, 200);
     assert.match(await route.text(), /production interface/);

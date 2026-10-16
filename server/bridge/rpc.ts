@@ -21,6 +21,43 @@ import {
   setActiveSessionId,
 } from './state';
 
+export type PushNotificationHook = (event: {
+  type: string;
+  cwd?: string;
+  sessionFile?: string | null;
+  sessionId?: string | null;
+  [key: string]: any;
+}) => void;
+
+const pushNotificationHooks = new Set<PushNotificationHook>();
+
+export function addPushNotificationHook(hook: PushNotificationHook): () => void {
+  pushNotificationHooks.add(hook);
+  let unsubscribed = false;
+  return () => {
+    if (!unsubscribed) {
+      unsubscribed = true;
+      pushNotificationHooks.delete(hook);
+    }
+  };
+}
+
+function dispatchPushNotificationHooks(event: {
+  type: string;
+  cwd?: string;
+  sessionFile?: string | null;
+  sessionId?: string | null;
+  [key: string]: any;
+}): void {
+  for (const hook of pushNotificationHooks) {
+    try {
+      hook(event);
+    } catch (err) {
+      console.warn('[Push notification hook error]:', err);
+    }
+  }
+}
+
 export class PiRpcSession {
   private child: ChildProcess | null = null;
   private pending = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void; timer: any }>();
@@ -265,6 +302,14 @@ export class PiRpcSession {
           if (this.sessionFile) {
             setSessionStatus(this.sessionFile, 'waiting', this.sessionId);
           }
+          dispatchPushNotificationHooks({
+            type: 'extension_ui_request',
+            method,
+            id: data.id,
+            cwd: data.cwd,
+            sessionFile: this.sessionFile,
+            sessionId: this.sessionId,
+          });
         }
       } else if (data.type === 'extension_ui_response') {
         if (this.sessionFile) {
@@ -284,6 +329,12 @@ export class PiRpcSession {
           invalidateSessionParseCache(this.sessionFile);
         }
         broadcastSse('pi://event', {
+          type: 'agent_settled',
+          cwd: this.cwd,
+          sessionFile: this.sessionFile,
+          sessionId: this.sessionId,
+        });
+        dispatchPushNotificationHooks({
           type: 'agent_settled',
           cwd: this.cwd,
           sessionFile: this.sessionFile,
@@ -356,6 +407,7 @@ export function resetPiRpcForTest(): void {
   sessionCreations.clear();
   setActiveSessionFile(null);
   setActiveSessionId(null);
+  pushNotificationHooks.clear();
 }
 
 export const piRpc = {

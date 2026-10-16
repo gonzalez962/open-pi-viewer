@@ -8,6 +8,7 @@ import {
   WEB_AUTH_REQUIRED_EVENT,
 } from '@infra/web-auth';
 import { TurnstileWidget } from './TurnstileWidget';
+import { revokePushOnLogout } from '@infra/web-push';
 import { loadUiPreferences } from '@infra/preferences';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import './web-auth.css';
@@ -156,7 +157,12 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
     setLogoutPending(true);
     setLogoutError(null);
     try {
-      await logout();
+      try {
+        await revokePushOnLogout();
+      } finally {
+        // Revoking authentication must not depend on browser push cleanup.
+        await logout();
+      }
       setLogoutConfirmOpen(false);
       // Only signal auth-required and unmount when server revoke succeeded (or was already invalid)
       activeCheckSeq.current++;
