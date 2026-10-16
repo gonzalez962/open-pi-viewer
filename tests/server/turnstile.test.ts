@@ -11,12 +11,39 @@ function response() {
 }
 const pass: typeof fetch = async () => new Response(JSON.stringify({ success: true, action: 'login', hostname: 'viewer.example' }));
 
-test('Turnstile configuration requires paired keys and enabled web auth; status never leaks secret', () => {
-  for (const env of [
+test('Turnstile is ignored when web authentication is disabled, including unpaired keys', async () => {
+  for (const keys of [
     { PI_VIEWER_TURNSTILE_SITE_KEY: 'public' },
     { PI_VIEWER_TURNSTILE_SECRET_KEY: 'secret' },
     { PI_VIEWER_TURNSTILE_SITE_KEY: 'public', PI_VIEWER_TURNSTILE_SECRET_KEY: 'secret' },
-  ]) assert.throws(() => resolveWebAuthConfig(env), /Turnstile/);
+  ]) {
+    const config = resolveWebAuthConfig({ PI_VIEWER_AUTH_ENABLED: 'false', ...keys });
+    assert.equal(config.enabled, false);
+    assert.equal(config.turnstileSiteKey, undefined);
+    assert.equal(config.turnstileSecretKey, undefined);
+    let calls = 0;
+    const auth = createWebAuth({ enabled: false, turnstileSiteKey: keys.PI_VIEWER_TURNSTILE_SITE_KEY,
+      turnstileSecretKey: keys.PI_VIEWER_TURNSTILE_SECRET_KEY,
+      turnstileFetch: async () => { calls++; throw new Error('must not contact Turnstile'); } });
+    try {
+      const status = response();
+      auth.handleStatus({ method: 'GET', headers: {} }, status);
+      assert.deepEqual(JSON.parse(status.body), { required: false, authenticated: true });
+      const login = response();
+      await auth.handleLogin(request(), login, {});
+      assert.equal(login.statusCode, 200);
+      assert.equal(calls, 0);
+      assert.equal(auth.getSessionsCount(), 0);
+      assert.equal(login.headers['set-cookie'], undefined);
+    } finally { auth.dispose(); }
+  }
+});
+
+test('Turnstile configuration requires paired keys when web auth is enabled; status never leaks secret', () => {
+  for (const env of [
+    { PI_VIEWER_TURNSTILE_SITE_KEY: 'public' },
+    { PI_VIEWER_TURNSTILE_SECRET_KEY: 'secret' },
+  ]) assert.throws(() => resolveWebAuthConfig({ PI_VIEWER_AUTH_ENABLED: 'true', PI_VIEWER_AUTH_KEY: 'key', ...env }), /Turnstile/);
   const config = resolveWebAuthConfig({ PI_VIEWER_AUTH_ENABLED: 'true', PI_VIEWER_AUTH_KEY: 'key', PI_VIEWER_TURNSTILE_SITE_KEY: 'public', PI_VIEWER_TURNSTILE_SECRET_KEY: 'secret' });
   const auth = createWebAuth(config);
   const res = response();
