@@ -527,3 +527,36 @@
   font-family: var(--font-mono, monospace);
   font-size: 12px;
 }
+
+/* ==========================================================================
+   Mobile Responsive Extensions Dialog & Cards (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .modal-container.ext-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .ext-card {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .ext-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ext-card-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .ext-radio-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

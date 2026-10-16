@@ -1259,3 +1259,92 @@
   color: var(--fg-muted, #8b949e);
   font-size: 11px;
 }
+
+/* ==========================================================================
+   Mobile Responsive Profiles Dialog & Views (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .profile-modal-backdrop {
+    padding: 8px;
+  }
+
+  .profile-modal-dialog {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .profile-modal-header {
+    padding: 10px 14px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .profile-modal-title {
+    font-size: 15px;
+  }
+
+  .profile-modal-close-btn {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .profile-modal-body {
+    padding: 12px 14px;
+    gap: 14px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .profile-modal-footer {
+    padding: 10px 14px;
+    gap: 8px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .profile-modal-footer button {
+    min-height: 36px;
+  }
+
+  .profile-form-grid,
+  .profile-main-model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-form-full {
+    grid-column: span 1;
+  }
+
+  .profile-scope-radio-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-agents-table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    max-width: 100%;
+  }
+
+  .profile-agents-table-header,
+  .profile-agent-row {
+    min-width: 480px;
+  }
+
+  .profiles-grid,
+  .chains-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-card {
+    padding: 12px 14px;
+  }
+
+  .profile-card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+

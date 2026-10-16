@@ -739,3 +739,43 @@
   resize: vertical;
   min-height: 56px;
 }
+
+/* ==========================================================================
+   Mobile Responsive MCP Dialog & Cards (<= 768px) - MOBILE-2
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  .modal-container.mcp-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .mcp-server-card {
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .mcp-server-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .mcp-server-actions {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .mcp-radio-cards-grid,
+  .mcp-scope-options,
+  .mcp-type-options {
+    grid-template-columns: 1fr;
+  }
+
+  .mcp-key-value-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+}
+

@@ -61,6 +61,11 @@ const FileViewerModal = React.lazy(() =>
 const ProfileModal = React.lazy(() =>
   import('@features/profiles/components/ProfileModal').then((m) => ({ default: m.ProfileModal }))
 );
+const FolderPickerModal = React.lazy(() =>
+  import('@features/projects/components/FolderPickerModal').then((m) => ({
+    default: m.FolderPickerModal,
+  }))
+);
 const ProfilesView = React.lazy(() =>
   import('@features/profiles/ProfilesView').then((m) => ({ default: m.ProfilesView }))
 );
@@ -118,6 +123,13 @@ import {
   resolveZenKeyboardAction,
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
+import { MobileNavigation } from './MobileNavigation';
+import {
+  DRAWER_ID,
+  MOBILE_BREAKPOINT,
+  checkIsMobileViewport,
+  resolveMobileBrandTitle,
+} from './mobile-navigation';
 
 export const App: React.FC = () => {
   const [multiProjectState, multiDispatch] = useReducer(
@@ -146,6 +158,8 @@ export const App: React.FC = () => {
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [showSettings, setShowSettings] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
   const zenToggleRef = useRef<HTMLButtonElement>(null);
   const floatingExitRef = useRef<HTMLButtonElement>(null);
   const prevZenModeRef = useRef<boolean | undefined>(undefined);
@@ -372,6 +386,7 @@ export const App: React.FC = () => {
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
+      setIsMobileNavOpen(false);
       handleSelectProject(project);
     },
     [handleSelectProject]
@@ -383,6 +398,41 @@ export const App: React.FC = () => {
       handleRemoveProject(projectId);
     },
     [dispatch, handleRemoveProject]
+  );
+
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
+  const addProjectTriggerRef = useRef<HTMLElement | null>(null);
+
+  const handleOpenAddProject = useCallback(() => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      addProjectTriggerRef.current = document.activeElement;
+    }
+    // Close mobile drawer first if open to avoid conflicting modal traps and keep 1 active aria-modal
+    if (isMobileNavOpen) {
+      setIsMobileNavOpen(false);
+    }
+    setIsFolderPickerOpen(true);
+  }, [isMobileNavOpen]);
+
+  const handleCloseFolderPicker = useCallback(() => {
+    setIsFolderPickerOpen(false);
+    const trigger = addProjectTriggerRef.current;
+    if (trigger && typeof trigger.focus === 'function' && typeof document !== 'undefined' && document.contains(trigger)) {
+      if (!trigger.closest?.('[inert], [aria-hidden="true"], .is-closed')) {
+        trigger.focus();
+      } else if (mobileMenuToggleRef.current && typeof mobileMenuToggleRef.current.focus === 'function') {
+        mobileMenuToggleRef.current.focus();
+      }
+    }
+    addProjectTriggerRef.current = null;
+  }, []);
+
+  const handleConfirmAddProject = useCallback(
+    (folderPath: string, customName?: string) => {
+      handleAddProject(folderPath, customName);
+      handleCloseFolderPicker();
+    },
+    [handleAddProject, handleCloseFolderPicker]
   );
 
   const projectStatusMap: Record<string, ProjectStatusInfo> = useMemo(() => {
@@ -775,6 +825,7 @@ export const App: React.FC = () => {
   };
 
   const handleToggleSettings = () => {
+    setIsMobileNavOpen(false);
     if (showSettings) {
       handleCancelSettings();
     } else {
@@ -789,10 +840,48 @@ export const App: React.FC = () => {
     setShowSettings(false);
   };
 
+  const handleToggleMobileNav = useCallback(() => {
+    setIsMobileNavOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseMobileNav = useCallback(() => {
+    setIsMobileNavOpen(false);
+  }, []);
+
+  // Viewport tracking: automatically dismiss open mobile navigation on resize to desktop (>768px)
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleResize = () => {
+      if (!checkIsMobileViewport() && isMobileNavOpen) {
+        setIsMobileNavOpen(false);
+      }
+    };
+
+    if (typeof window.matchMedia === 'function') {
+      const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+      const handleMql = (e: MediaQueryListEvent) => {
+        if (!e.matches && isMobileNavOpen) {
+          setIsMobileNavOpen(false);
+        }
+      };
+      if (typeof mql.addEventListener === 'function') {
+        mql.addEventListener('change', handleMql);
+        return () => mql.removeEventListener('change', handleMql);
+      }
+    }
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [isMobileNavOpen]);
+
   const handleToggleZenMode = useCallback(() => {
     const hasOpenModal = Boolean(
       viewingFile ||
       profilesHook.isModalOpen ||
+      isFolderPickerOpen ||
       commandPalette.isOpen ||
       activeDialog ||
       hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
@@ -833,6 +922,7 @@ export const App: React.FC = () => {
     const hasOpenModal = Boolean(
       viewingFile ||
       profilesHook.isModalOpen ||
+      isFolderPickerOpen ||
       showSettings ||
       commandPalette.isOpen ||
       activeDialog ||
@@ -869,8 +959,10 @@ export const App: React.FC = () => {
       const hasOpenModal = Boolean(
         viewingFile ||
         profilesHook.isModalOpen ||
+        isFolderPickerOpen ||
         showSettings ||
         commandPalette.isOpen ||
+        isMobileNavOpen ||
         activeDialog ||
         hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
       );
@@ -899,6 +991,7 @@ export const App: React.FC = () => {
     profilesHook.isModalOpen,
     showSettings,
     commandPalette.isOpen,
+    isMobileNavOpen,
     activeDialog,
     handleToggleZenMode,
     handleExitZenMode,
@@ -965,6 +1058,32 @@ export const App: React.FC = () => {
       <header className="app-header" role="banner">
         <div className="header-brand">
           <button
+            ref={mobileMenuToggleRef}
+            type="button"
+            className="btn-mobile-menu-toggle"
+            onClick={handleToggleMobileNav}
+            title={t('sidebar.toggle')}
+            aria-label={t('sidebar.toggle')}
+            aria-expanded={isMobileNavOpen}
+            aria-controls={DRAWER_ID}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+          <button
             type="button"
             className="btn-sidebar-toggle"
             onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
@@ -994,7 +1113,15 @@ export const App: React.FC = () => {
             </svg>
           </div>
           <div className="brand-text">
-            <h1 className="brand-title">{t('app.title')}</h1>
+            <h1 className="brand-title">
+              <span className="brand-title-desktop">{t('app.title')}</span>
+              <span
+                className="brand-title-mobile"
+                title={resolveMobileBrandTitle(activeProjectName, t('app.title'))}
+              >
+                {resolveMobileBrandTitle(activeProjectName, t('app.title'))}
+              </span>
+            </h1>
             <span className="brand-version">{t('app.version')}</span>
           </div>
         </div>
@@ -1047,53 +1174,75 @@ export const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Workspace Layout: Sidebar + Main Content */}
+      {/* Workspace Layout: Navigation Drawer + Main Content */}
       <div className="app-workspace">
-        <ProjectDock
-          projects={projectsRegistry.projects}
-          activeProjectId={projectsRegistry.activeProjectId}
-          connectionState={state.connectionStatus}
-          agentActivity={state.agentActivity}
-          isBusy={isBusy}
+        <MobileNavigation
+          isOpen={isMobileNavOpen}
+          onClose={handleCloseMobileNav}
+          activeProjectName={activeProjectName}
           locale={preferences.language}
-          onSelectProject={handleSelectProjectAndSync}
-          onAddProject={handleAddProject}
-          onRenameProject={handleRenameProject}
-          onRemoveProject={handleRemoveProjectAndSync}
-          projectStatusMap={projectStatusMap}
-          isSettingsOpen={showSettings}
-          onOpenSettings={handleToggleSettings}
-        />
-
-        {state.isSidebarOpen && (
-          <SessionSidebar
-            projectName={activeProjectName}
-            sessions={state.sessions}
-            isLoading={state.isSessionsLoading}
-            isSwitching={state.isSwitchingSession}
-            error={state.sessionsError}
-            activeSessionId={state.sessionId}
-            activeSessionFile={state.sessionFile}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewConversation}
-            onDeleteSession={handleDeleteSession}
-            onRenameSession={handleRenameSession}
-            onClose={() => dispatch({ type: 'TOGGLE_SIDEBAR', payload: { isOpen: false } })}
+          triggerRef={mobileMenuToggleRef}
+          restoreFocusOnClose={!isFolderPickerOpen}
+        >
+          <ProjectDock
+            projects={projectsRegistry.projects}
+            activeProjectId={projectsRegistry.activeProjectId}
+            connectionState={state.connectionStatus}
+            agentActivity={state.agentActivity}
+            isBusy={isBusy}
             locale={preferences.language}
-            filesChangesCount={gitChangesCount}
-            filesPanel={
-              <FileTree
-                key={config.workingDirectory ? normalizeWorkspaceKey(config.workingDirectory) : 'empty'}
-                workingDirectory={config.workingDirectory}
-                locale={preferences.language}
-                onOpenFile={openFile}
-                refreshInterval={config.fileTreeRefreshInterval}
-                refreshTrigger={fileTreeRefreshTrigger}
-                onGitStatusChange={handleGitStatusChange}
-              />
-            }
+            onSelectProject={handleSelectProjectAndSync}
+            onAddProject={handleAddProject}
+            onRenameProject={handleRenameProject}
+            onRemoveProject={handleRemoveProjectAndSync}
+            projectStatusMap={projectStatusMap}
+            isSettingsOpen={showSettings}
+            onOpenSettings={handleToggleSettings}
+            onOpenAddProject={handleOpenAddProject}
           />
-        )}
+
+          {(state.isSidebarOpen || isMobileNavOpen) && (
+            <SessionSidebar
+              projectName={activeProjectName}
+              sessions={state.sessions}
+              isLoading={state.isSessionsLoading}
+              isSwitching={state.isSwitchingSession}
+              error={state.sessionsError}
+              activeSessionId={state.sessionId}
+              activeSessionFile={state.sessionFile}
+              onSelectSession={(session) => {
+                handleCloseMobileNav();
+                handleSelectSession(session);
+              }}
+              onNewSession={() => {
+                handleCloseMobileNav();
+                handleNewConversation();
+              }}
+              onDeleteSession={handleDeleteSession}
+              onRenameSession={handleRenameSession}
+              onClose={() => {
+                if (isMobileNavOpen) {
+                  handleCloseMobileNav();
+                } else {
+                  dispatch({ type: 'TOGGLE_SIDEBAR', payload: { isOpen: false } });
+                }
+              }}
+              locale={preferences.language}
+              filesChangesCount={gitChangesCount}
+              filesPanel={
+                <FileTree
+                  key={config.workingDirectory ? normalizeWorkspaceKey(config.workingDirectory) : 'empty'}
+                  workingDirectory={config.workingDirectory}
+                  locale={preferences.language}
+                  onOpenFile={openFile}
+                  refreshInterval={config.fileTreeRefreshInterval}
+                  refreshTrigger={fileTreeRefreshTrigger}
+                  onGitStatusChange={handleGitStatusChange}
+                />
+              }
+            />
+          )}
+        </MobileNavigation>
 
         <main className="workspace-main" role="main">
           {isZenMode && (
@@ -1745,6 +1894,21 @@ export const App: React.FC = () => {
             onSave={async (e) => {
               await profilesHook.handleSaveProfile(e);
             }}
+          />
+        </React.Suspense>
+      )}
+
+      {isFolderPickerOpen && (
+        <React.Suspense fallback={null}>
+          <FolderPickerModal
+            isOpen={isFolderPickerOpen}
+            initialPath={
+              projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
+              config.workingDirectory
+            }
+            onClose={handleCloseFolderPicker}
+            onSelectFolder={handleConfirmAddProject}
+            locale={preferences.language}
           />
         </React.Suspense>
       )}

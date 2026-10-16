@@ -562,3 +562,13 @@
   white-space: nowrap;
 }
 
+/* Responsive adaptations for narrow drawer <= 768px */
+@media (max-width: 768px) {
+  .session-sidebar {
+    width: 100%;
+    max-width: 100%;
+    border-right: none;
+  }
+}
+
+

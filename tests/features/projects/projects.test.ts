@@ -14,6 +14,7 @@ import {
   ProjectDock,
   type ProjectDockProps,
 } from '@features/projects/ProjectDock';
+import { FolderPickerModal } from '@features/projects/components/FolderPickerModal';
 import {
   addProject,
   decideRemoveProject,
@@ -928,6 +929,110 @@ test('ProjectDock footer: clicking Settings button triggers onOpenSettings callb
   assert.strictEqual(typeof settingsBtn.props.onClick, 'function', 'onClick must be a function');
   settingsBtn.props.onClick();
   assert.strictEqual(opened, true, 'onClick must trigger onOpenSettings callback');
+});
+
+test('ProjectDock footer: clicking Add Project button triggers onOpenAddProject callback', () => {
+  let opened = false;
+  let capturedTree: any = null;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = ProjectDock({
+        ...baseProjectDockProps,
+        onOpenAddProject: () => {
+          opened = true;
+        },
+      });
+      return capturedTree;
+    })
+  );
+
+  const addBtn = findElement(
+    capturedTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('project-footer-row') &&
+      !el.props.className.includes('project-footer-settings')
+  );
+
+  assert.ok(addBtn, 'Add Project button must be present in component tree');
+  assert.strictEqual(typeof addBtn.props.onClick, 'function', 'onClick must be a function');
+  addBtn.props.onClick();
+  assert.strictEqual(opened, true, 'onClick must trigger onOpenAddProject callback');
+});
+
+test('FolderPickerModal: renders accessible modal dialog with role="dialog" and aria-modal="true"', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/test/workspace',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  assert.ok(html.includes('role="dialog"'), 'must have role="dialog"');
+  assert.ok(html.includes('aria-modal="true"'), 'must have aria-modal="true"');
+  assert.ok(html.includes('folder-picker-overlay'), 'must have folder-picker-overlay');
+  assert.ok(html.includes('folder-picker-close-btn'), 'must have close button');
+});
+
+test('FolderPickerModal: close button and cancel button invoke onClose callback', () => {
+  let closedCount = 0;
+  let capturedTree: any = null;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = FolderPickerModal({
+        isOpen: true,
+        initialPath: '/test/workspace',
+        onClose: () => {
+          closedCount++;
+        },
+        onSelectFolder: () => {},
+        locale: 'en',
+      });
+      return capturedTree;
+    })
+  );
+
+  const closeBtn = findElement(
+    capturedTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('folder-picker-close-btn')
+  );
+  assert.ok(closeBtn, 'Close button must be present');
+  closeBtn.props.onClick();
+  assert.strictEqual(closedCount, 1, 'Close button must trigger onClose callback');
+
+  const cancelBtn = findElement(
+    capturedTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('btn-secondary') &&
+      el?.props?.children === 'Cancel'
+  );
+  assert.ok(cancelBtn, 'Cancel button must be present');
+  cancelBtn.props.onClick();
+  assert.strictEqual(closedCount, 2, 'Cancel button must trigger onClose callback');
+});
+
+test('FolderPickerModal: closed state renders null', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: false,
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  assert.strictEqual(html, '');
 });
 
 test('projects: browseFilesystemPi returns result from mock invoke', async () => {
