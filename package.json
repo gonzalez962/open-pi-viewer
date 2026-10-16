@@ -13,19 +13,20 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@tauri-apps/plugin-notification": "2.2.3",
     "highlight.js": "11.12.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "@tauri-apps/api": "2.2.0",
-    "@tauri-apps/cli": "2.2.0",
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/cli": "2.11.4",
     "@types/node": "26.6.2",
-    "@types/react": "18.3.18",
-    "@types/react-dom": "18.3.5",
-    "@vitejs/plugin-react": "4.3.4",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "4.7.0",
     "tsx": "4.23.13",
-    "typescript": "5.7.3",
-    "vite": "6.2.0"
+    "typescript": "5.9.3",
+    "vite": "6.4.3"
   }
 }
