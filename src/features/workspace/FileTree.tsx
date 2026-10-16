@@ -31,6 +31,17 @@ export interface FileTreeProps {
 
 
 /**
+ * Normalizes a relative path for consistent lookups across Windows/POSIX and Git output.
+ */
+export function normalizeTreePath(p: string | null | undefined): string {
+  if (!p) return '';
+  return p
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+|\/+$/g, '');
+}
+
+/**
  * Computes a map of directory relative paths to the count of changed files nested within them.
  */
 export function computeDirChangesMap(gitStatus: WorkspaceGitStatus | null): Record<string, number> {
@@ -44,7 +55,8 @@ export function computeDirChangesMap(gitStatus: WorkspaceGitStatus | null): Reco
   ];
 
   for (const rawPath of allChangedFiles) {
-    const normalized = rawPath.replace(/\\/g, '/');
+    const normalized = normalizeTreePath(rawPath);
+    if (!normalized) continue;
     const parts = normalized.split('/');
     let cur = '';
     for (let i = 0; i < parts.length - 1; i++) {
@@ -199,10 +211,11 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
   const isLoadingThisFile = loadingFile === entry.relativePath;
   const children = dirChildren[entry.relativePath] || [];
 
-  const isGitModified = !entry.isDir && gitModifiedSet.has(entry.relativePath);
-  const isGitAdded = !entry.isDir && gitAddedSet.has(entry.relativePath);
-  const isGitUntracked = !entry.isDir && gitUntrackedSet.has(entry.relativePath);
-  const dirChangesCount = entry.isDir ? dirChangesMap[entry.relativePath] || 0 : 0;
+  const normalizedRel = normalizeTreePath(entry.relativePath);
+  const isGitModified = !entry.isDir && gitModifiedSet.has(normalizedRel);
+  const isGitAdded = !entry.isDir && gitAddedSet.has(normalizedRel);
+  const isGitUntracked = !entry.isDir && gitUntrackedSet.has(normalizedRel);
+  const dirChangesCount = entry.isDir ? dirChangesMap[normalizedRel] || 0 : 0;
 
   const handleClick = () => {
     if (entry.isDir) {
@@ -394,15 +407,15 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   // Fast lookup sets for git status
   const gitModifiedSet = useMemo(
-    () => new Set(gitStatus?.modifiedFiles || []),
+    () => new Set((gitStatus?.modifiedFiles || []).map(normalizeTreePath)),
     [gitStatus]
   );
   const gitAddedSet = useMemo(
-    () => new Set(gitStatus?.addedFiles || []),
+    () => new Set((gitStatus?.addedFiles || []).map(normalizeTreePath)),
     [gitStatus]
   );
   const gitUntrackedSet = useMemo(
-    () => new Set(gitStatus?.untrackedFiles || []),
+    () => new Set((gitStatus?.untrackedFiles || []).map(normalizeTreePath)),
     [gitStatus]
   );
 
@@ -717,10 +730,11 @@ export const FileTree: React.FC<FileTreeProps> = ({
               </div>
             ) : (
               searchResults.map((entry) => {
-                const isMod = !entry.isDir && gitModifiedSet.has(entry.relativePath);
-                const isAdd = !entry.isDir && gitAddedSet.has(entry.relativePath);
-                const isUntracked = !entry.isDir && gitUntrackedSet.has(entry.relativePath);
-                const dirChanges = entry.isDir ? dirChangesMap[entry.relativePath] || 0 : 0;
+                const normRel = normalizeTreePath(entry.relativePath);
+                const isMod = !entry.isDir && gitModifiedSet.has(normRel);
+                const isAdd = !entry.isDir && gitAddedSet.has(normRel);
+                const isUntracked = !entry.isDir && gitUntrackedSet.has(normRel);
+                const dirChanges = entry.isDir ? dirChangesMap[normRel] || 0 : 0;
 
                 return (
                   <div

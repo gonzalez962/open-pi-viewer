@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
+import type { WorkspaceGitStatus } from '../../src/core/types/workspace';
 import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
@@ -212,19 +213,23 @@ export function handleListWorkspaceDir(args: any = {}) {
   const payload = args.payload || {};
   const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
   const rel = payload.relativePath || '';
-  const fullDir = path.join(targetCwd, rel);
+  const fullDir = path.resolve(targetCwd, rel);
 
   if (!fs.existsSync(fullDir)) return [];
 
   const entries = fs.readdirSync(fullDir, { withFileTypes: true });
   const results: any[] = [];
 
+  const normRel = typeof rel === 'string'
+    ? (process.platform === 'win32' ? rel.replace(/\\/g, '/') : rel).replace(/^\/+|\/+$/g, '')
+    : '';
+
   for (const e of entries) {
     if (e.name === '.git' || e.name === 'node_modules' || e.name === 'target' || e.name === 'dist') {
       continue;
     }
     const isDir = e.isDirectory();
-    const eRel = rel ? path.join(rel, e.name) : e.name;
+    const eRel = normRel ? `${normRel}/${e.name}` : e.name;
     let size: number | null = null;
     let ext: string | null = null;
 
@@ -383,7 +388,7 @@ export function handleReadWorkspaceFile(args: any = {}) {
   };
 }
 
-export function handleGetWorkspaceGitStatus(args: any = {}) {
+export function handleGetWorkspaceGitStatus(args: any = {}): WorkspaceGitStatus {
   const payload = args.payload || {};
   const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
   try {
@@ -391,18 +396,44 @@ export function handleGetWorkspaceGitStatus(args: any = {}) {
       return { isRepo: false, modifiedFiles: [], addedFiles: [], untrackedFiles: [] };
     }
 
-    const toplevel = execSync('git rev-parse --show-toplevel', {
-      cwd: targetCwd,
-      encoding: 'utf8',
-      timeout: 1500,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
+    let toplevel: string;
+    try {
+      toplevel = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 1500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    } catch {
+      return { isRepo: false, modifiedFiles: [], addedFiles: [], untrackedFiles: [] };
+    }
+
+    let canonicalTop: string;
+    try {
+      canonicalTop = fs.realpathSync(toplevel);
+    } catch {
+      canonicalTop = path.resolve(toplevel);
+    }
+
+    let canonicalCwd: string;
+    try {
+      canonicalCwd = fs.realpathSync(targetCwd);
+    } catch {
+      canonicalCwd = path.resolve(targetCwd);
+    }
 
     // Avoid treating the entire user HOME folder as a git repository for sub-projects
-    if (toplevel === HOME_DIR && targetCwd !== HOME_DIR) {
+    const resolvedHome = path.resolve(HOME_DIR);
+    const isHome =
+      canonicalTop === resolvedHome ||
+      (process.platform === 'win32' && canonicalTop.toLowerCase() === resolvedHome.toLowerCase());
+
+    const repoName = (canonicalTop || canonicalCwd).split(/[\\/]/).filter(Boolean).pop() || 'workspace';
+
+    if (isHome && canonicalCwd !== canonicalTop) {
       return {
         isRepo: false,
-        repoName: path.basename(targetCwd),
+        repoName,
         branch: 'main',
         modifiedFiles: [],
         addedFiles: [],
@@ -410,16 +441,9 @@ export function handleGetWorkspaceGitStatus(args: any = {}) {
       };
     }
 
-    const out = execSync('git status --porcelain', {
-      cwd: targetCwd,
-      encoding: 'utf8',
-      timeout: 2500,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-
     let branchOut = 'main';
     try {
-      branchOut = execSync('git rev-parse --abbrev-ref HEAD', {
+      branchOut = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
         cwd: targetCwd,
         encoding: 'utf8',
         timeout: 1000,
@@ -427,23 +451,87 @@ export function handleGetWorkspaceGitStatus(args: any = {}) {
       }).trim();
     } catch {}
 
+    const out = execFileSync(
+      'git',
+      ['status', '--porcelain=v1', '-z', '--untracked-files=all'],
+      {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 2500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }
+    );
+
     const modifiedFiles: string[] = [];
     const addedFiles: string[] = [];
     const untrackedFiles: string[] = [];
 
-    for (const line of out.split('\n')) {
-      if (!line.trim()) continue;
-      const status = line.slice(0, 2);
-      const file = line.slice(3).trim();
-      if (status.includes('M')) modifiedFiles.push(file);
-      else if (status.includes('A')) addedFiles.push(file);
-      else if (status.includes('?')) untrackedFiles.push(file);
-      else modifiedFiles.push(file);
+    const tokens = out.split('\0');
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+      if (!token || token.length < 3) continue;
+
+      const x = token[0];
+      const y = token[1];
+      // Git porcelain delimiter is index 2 (a space ' ').
+      // Slicing at index 3 preserves leading/trailing spaces and Unicode in filename.
+      const rawPath = token.slice(3);
+
+      // Git status -z rename/copy format:
+      // Token 0: XY DESTINATION
+      // Token 1: SOURCE (must be consumed, but keep DESTINATION)
+      if (x === 'R' || y === 'R' || x === 'C' || y === 'C') {
+        if (i + 1 < tokens.length) {
+          i++;
+        }
+      }
+
+      if (!rawPath) continue;
+
+      // Git porcelain v1 paths are repository-root relative regardless of status.relativePaths.
+      // Rebase against targetCwd and exclude files outside the active workspace.
+      const fullFilePath = path.resolve(canonicalTop, rawPath);
+      const relToWorkspace = path.relative(canonicalCwd, fullFilePath);
+
+      if (relToWorkspace.startsWith('..') || path.isAbsolute(relToWorkspace) || !relToWorkspace) {
+        continue;
+      }
+
+      const workspacePath = process.platform === 'win32'
+        ? relToWorkspace.replace(/\\/g, '/')
+        : relToWorkspace;
+
+      // Handle staged/worktree classifications:
+      // - ?? : untracked files
+      // - !! : ignored files (skip)
+      // - U in X/Y or AA or DD : conflicts
+      // - T in X/Y : type changes
+      // - A in X (without unstaged modification) : added
+      // - All others (M, R, C, D, AM, etc.) : modified
+      if (x === '?' && y === '?') {
+        untrackedFiles.push(workspacePath);
+      } else if (x === '!' && y === '!') {
+        continue;
+      } else if (
+        x === 'U' ||
+        y === 'U' ||
+        (x === 'A' && y === 'A') ||
+        (x === 'D' && y === 'D') ||
+        x === 'T' ||
+        y === 'T'
+      ) {
+        modifiedFiles.push(workspacePath);
+      } else if (x === 'A' && y !== 'M') {
+        addedFiles.push(workspacePath);
+      } else {
+        modifiedFiles.push(workspacePath);
+      }
     }
 
     return {
       isRepo: true,
-      repoName: path.basename(toplevel || targetCwd),
+      repoName,
       branch: branchOut || 'main',
       modifiedFiles,
       addedFiles,

@@ -16,6 +16,7 @@ import {
   computeTotalGitChanges,
   updateDirChildrenOnRefresh,
   pruneExpandedDirsOnRefresh,
+  normalizeTreePath,
 } from '@features/workspace/FileTree';
 import { FileSearchBar } from '@features/workspace/components/FileSearchBar';
 import type {
@@ -576,3 +577,77 @@ test('FileSearchBar: uses default clearAriaLabel when omitted', () => {
   assert.ok(clearBtn);
   assert.strictEqual(clearBtn.props['aria-label'], 'Clear search');
 });
+
+/* ========================================================================= */
+/* Regression tests: Path Normalization & Windows Ancestor Matching           */
+/* ========================================================================= */
+
+test('normalizeTreePath: normalizes backslashes, leading ./, and slashes while preserving spaces and Unicode', () => {
+  assert.strictEqual(normalizeTreePath('src\\components\\Button.tsx'), 'src/components/Button.tsx');
+  assert.strictEqual(normalizeTreePath('.\\src\\App.tsx'), 'src/App.tsx');
+  assert.strictEqual(normalizeTreePath('./src/App.tsx'), 'src/App.tsx');
+  assert.strictEqual(normalizeTreePath('/nested/dir/'), 'nested/dir');
+  assert.strictEqual(normalizeTreePath('\\nested\\dir\\'), 'nested/dir');
+  assert.strictEqual(normalizeTreePath('  leading and trailing  .txt'), '  leading and trailing  .txt');
+  assert.strictEqual(normalizeTreePath('sub\\  spaced  \\日本語.txt'), 'sub/  spaced  /日本語.txt');
+  assert.strictEqual(normalizeTreePath(''), '');
+  assert.strictEqual(normalizeTreePath(null as any), '');
+  assert.strictEqual(normalizeTreePath(undefined as any), '');
+});
+
+test('computeDirChangesMap: normalizes Windows backslashes and relative prefixes for ancestor counts', () => {
+  const gitStatus: WorkspaceGitStatus = {
+    isRepo: true,
+    repoName: 'pi-viewer',
+    branch: 'main',
+    modifiedFiles: ['src\\components\\Button.tsx', '.\\src\\App.tsx'],
+    addedFiles: ['docs\\sub\\intro.md'],
+    untrackedFiles: ['odd/tasks/workspace.md'],
+  };
+
+  const map = computeDirChangesMap(gitStatus);
+
+  assert.strictEqual(map['src'], 2);
+  assert.strictEqual(map['src/components'], 1);
+  assert.strictEqual(map['docs'], 1);
+  assert.strictEqual(map['docs/sub'], 1);
+  assert.strictEqual(map['odd'], 1);
+  assert.strictEqual(map['odd/tasks'], 1);
+});
+
+test('frontend tree matching: normalized sets match Windows tree entry relativePath', () => {
+  const gitStatus: WorkspaceGitStatus = {
+    isRepo: true,
+    repoName: 'pi-viewer',
+    branch: 'main',
+    modifiedFiles: ['src/components/Button.tsx'],
+    addedFiles: ['src/New.tsx'],
+    untrackedFiles: ['temp.log'],
+  };
+
+  const gitModifiedSet = new Set((gitStatus.modifiedFiles || []).map(normalizeTreePath));
+  const gitAddedSet = new Set((gitStatus.addedFiles || []).map(normalizeTreePath));
+  const gitUntrackedSet = new Set((gitStatus.untrackedFiles || []).map(normalizeTreePath));
+  const dirChangesMap = computeDirChangesMap(gitStatus);
+
+  // Even if Windows bridge returned backslashes in entry.relativePath:
+  const windowsEntry = {
+    name: 'Button.tsx',
+    relativePath: 'src\\components\\Button.tsx',
+    isDir: false,
+  };
+  const windowsFolderEntry = {
+    name: 'components',
+    relativePath: 'src\\components',
+    isDir: true,
+  };
+
+  const normFile = normalizeTreePath(windowsEntry.relativePath);
+  const normFolder = normalizeTreePath(windowsFolderEntry.relativePath);
+
+  assert.strictEqual(gitModifiedSet.has(normFile), true, 'Modified set should match normalized Windows relativePath');
+  assert.strictEqual(gitAddedSet.has(normFile), false);
+  assert.strictEqual(gitUntrackedSet.has(normFile), false);
+  assert.strictEqual(dirChangesMap[normFolder], 1, 'Ancestor map should match normalized Windows folder relativePath');
+});
+
