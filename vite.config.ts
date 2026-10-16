@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { handleIpcCommand, addSseClient, removeSseClient } from "./server/web-ipc-bridge";
+import { createOAuthAccess } from "./server/bridge/oauth-access";
+import { oauthManager } from "./server/bridge/oauth";
 
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
@@ -10,15 +12,43 @@ function piWebIpcPlugin(): Plugin {
   return {
     name: "pi-web-ipc-bridge",
     configureServer(server) {
+      const oauthAccess = createOAuthAccess();
+      server.httpServer?.once("close", () => { void oauthManager.dispose(); });
+      server.middlewares.use("/api/oauth/authorize", (req, res) => {
+        if (req.method !== "POST" || !req.headers["content-type"]?.startsWith("application/json")) {
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: "JSON POST required" }));
+          return;
+        }
+        let body = "";
+        let tooLarge = false;
+        req.on("data", (chunk) => {
+          if (tooLarge) return;
+          body += chunk;
+          if (Buffer.byteLength(body) > 8192) {
+            tooLarge = true;
+            res.statusCode = 413;
+            res.end(JSON.stringify({ error: "Authorization request too large" }));
+          }
+        });
+        req.on("end", async () => {
+          if (tooLarge) return;
+          const result = await oauthAccess.authorize(req, res, body);
+          res.statusCode = result.status;
+          res.setHeader("Content-Type", "application/json");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(JSON.stringify(result.ok ? { ok: true, expiresAt: result.expiresAt } : { error: result.error }));
+        });
+      });
       server.middlewares.use("/api/events", (req, res) => {
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*",
         });
         res.write("data: {}\n\n");
-        addSseClient(res);
+        const owner = oauthAccess.authenticate(req) ?? undefined;
+        addSseClient(res, owner, () => Boolean(owner && oauthAccess.validateOwnerLease(owner)));
         req.on("close", () => {
           removeSseClient(res);
         });
@@ -62,7 +92,14 @@ function piWebIpcPlugin(): Plugin {
         req.on("end", async () => {
           try {
             const { cmd, args } = JSON.parse(body || "{}");
-            const result = await handleIpcCommand(cmd, args);
+            const access = oauthAccess.requireOAuthOwner(cmd, req);
+            if (!access.ok) {
+              res.setHeader("Content-Type", "application/json");
+              res.statusCode = 200;
+              res.end(JSON.stringify({ error: access.error }));
+              return;
+            }
+            const result = await handleIpcCommand(cmd, args, { oauthOwner: access.owner });
             res.setHeader("Content-Type", "application/json");
             res.statusCode = 200;
             res.end(JSON.stringify({ result }));

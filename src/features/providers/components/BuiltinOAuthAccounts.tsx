@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import { openExternalUrl } from '@infra/opener';
+import { isOAuthUnauthorizedError } from '@infra/web-oauth-access';
 import { isSafeVerificationUri } from '../hooks/useBuiltinOAuthAccounts';
 import type { useBuiltinOAuthAccounts } from '../hooks/useBuiltinOAuthAccounts';
 
@@ -157,6 +158,65 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
           >
             {t('action.dismiss_error')}
           </button>
+        </div>
+      )}
+
+      {/* Remote Web Access Unlock Section (Web Shim Mode only) */}
+      {oauth.isWebShim && (oauth.isLocked || isOAuthUnauthorizedError(accountsError) || isOAuthUnauthorizedError(activeError)) && (
+        <div className="builtin-oauth-unlock-card storage-warning-banner" role="region" aria-labelledby="oauth-unlock-title" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+            <div style={{ flex: 1 }}>
+              <strong id="oauth-unlock-title" style={{ display: 'block', marginBottom: '4px' }}>
+                {t('providers.oauth.unlock_title')}
+              </strong>
+              <span style={{ fontSize: '12px', opacity: 0.9 }}>
+                {t('providers.oauth.unlock_description')}
+              </span>
+            </div>
+          </div>
+          <form
+            className="builtin-oauth-unlock-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (oauth.submitUnlock) {
+                oauth.submitUnlock();
+              }
+            }}
+            style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}
+          >
+            <input
+              type="password"
+              className="builtin-oauth-prompt-input"
+              placeholder={t('providers.oauth.access_key_placeholder')}
+              value={oauth.unlockKeyInput || ''}
+              onChange={(e) => {
+                if (oauth.setUnlockKeyInput) {
+                  oauth.setUnlockKeyInput(e.target.value);
+                }
+              }}
+              disabled={oauth.isUnlocking}
+              autoComplete="off"
+              spellCheck={false}
+              style={{ flex: 1, padding: '6px 10px', fontSize: '13px' }}
+            />
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm btn-unlock"
+              disabled={oauth.isUnlocking || !oauth.unlockKeyInput?.trim()}
+            >
+              {oauth.isUnlocking ? t('providers.oauth.unlocking') : t('providers.oauth.btn_unlock')}
+            </button>
+          </form>
+          {oauth.unlockError && (
+            <div className="validation-error-banner" role="alert" style={{ marginTop: '4px', padding: '6px 8px' }}>
+              <span>{oauth.unlockError}</span>
+            </div>
+          )}
+          {oauth.unlockSuccess && (
+            <div className="providers-success-banner" role="status" style={{ marginTop: '4px', padding: '6px 8px' }}>
+              <span>{t('providers.oauth.unlock_success')}</span>
+            </div>
+          )}
         </div>
       )}
 

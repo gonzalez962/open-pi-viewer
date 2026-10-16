@@ -16,6 +16,12 @@ import {
   logoutOAuthProviderPi,
   listenOAuthEventsPi,
 } from '@infra/bridge';
+import {
+  isWebShim,
+  isOAuthUnauthorizedError,
+  ensureWebOAuthSession,
+} from '@infra/web-oauth-access';
+import { useWebOAuthUnlock } from './useWebOAuthUnlock';
 import type { UnlistenFn } from '@tauri-apps/api/event';
 
 export interface DeviceCodeInfo {
@@ -89,10 +95,10 @@ export async function executeOAuthCancel({
   }
   try {
     const result = await cancelFn({ providerId });
-    if (result && result.cancelled === false) {
+    if (!result || result.cancelled !== true) {
       return {
         cancelled: false,
-        error: result.message || 'Failed to cancel sign-in.',
+        error: result?.message || 'Failed to cancel sign-in.',
         shouldResetSession: false,
       };
     }
@@ -134,10 +140,10 @@ export async function executeOAuthPromptResponse({
 }: ExecuteOAuthPromptResponseOptions): Promise<ExecuteOAuthPromptResponseResult> {
   try {
     const result = await sendFn({ promptId, response });
-    if (result && result.sent === false) {
+    if (!result || result.sent !== true) {
       return {
         sent: false,
-        error: result.message || 'Failed to submit response. Please try again.',
+        error: result?.message || 'Failed to submit response. Please try again.',
         shouldClearPrompt: false,
       };
     }
@@ -261,8 +267,16 @@ export function useBuiltinOAuthAccounts({
     setIsLoading(true);
     setAccountsError(null);
     try {
+      if (isWebShim()) {
+        const sessionRes = await ensureWebOAuthSession();
+        if (!sessionRes.ok && sessionRes.error && isOAuthUnauthorizedError(sessionRes.error)) {
+          setAccountsError(sessionRes.error);
+          setIsLoading(false);
+          return;
+        }
+      }
       const result = await getBuiltinOAuthProviders();
-      setAccounts(result);
+      setAccounts(Array.isArray(result) ? result : []);
     } catch (err) {
       setAccountsError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -369,6 +383,15 @@ export function useBuiltinOAuthAccounts({
       pendingPromptRef.current = null;
 
       try {
+        if (isWebShim()) {
+          const sessionRes = await ensureWebOAuthSession();
+          if (!sessionRes.ok && sessionRes.error && isOAuthUnauthorizedError(sessionRes.error)) {
+            setActiveError(sessionRes.error);
+            setIsStarting(false);
+            return;
+          }
+        }
+
         // Contract requirement: event listener pi://oauth-event, subscribe BEFORE invoking start
         if (unlistenRef.current) {
           unlistenRef.current();
@@ -384,8 +407,8 @@ export function useBuiltinOAuthAccounts({
         const result = await startOAuthLogin({ providerId });
         setIsStarting(false);
 
-        if (!result.started) {
-          setActiveError(result.message || 'Failed to start OAuth login');
+        if (!result || result.started !== true) {
+          setActiveError(result?.message || 'Failed to start OAuth login');
           cleanupSession();
         }
       } catch (err) {
@@ -467,14 +490,14 @@ export function useBuiltinOAuthAccounts({
       setActiveError(null);
       try {
         const result = await logoutOAuthProvider({ providerId });
-        if (result.success) {
+        if (result && result.success === true) {
           setSuccessNotice(t('providers.oauth.logout_success_notice', { provider: providerId }));
           await refreshAccounts();
           if (onRefreshModels) {
             await onRefreshModels();
           }
         } else {
-          setActiveError(result.message || 'Logout failed');
+          setActiveError(result?.message || 'Logout failed');
         }
       } catch (err) {
         setActiveError(err instanceof Error ? err.message : String(err));
@@ -483,6 +506,19 @@ export function useBuiltinOAuthAccounts({
       }
     },
     [logoutOAuthProvider, t, refreshAccounts, onRefreshModels]
+  );
+
+  const webUnlock = useWebOAuthUnlock({
+    onUnlocked: async () => {
+      setAccountsError(null);
+      setActiveError(null);
+      await refreshAccounts();
+    },
+  });
+
+  const isShim = isWebShim();
+  const isLocked = isShim && Boolean(
+    isOAuthUnauthorizedError(accountsError) || isOAuthUnauthorizedError(activeError)
   );
 
   return {
@@ -510,5 +546,14 @@ export function useBuiltinOAuthAccounts({
     setActiveError,
     setAccountsError,
     dismissAccountsError,
+    isLocked,
+    isWebShim: isShim,
+    isUnlocking: webUnlock.isAuthorizing,
+    unlockError: webUnlock.unlockError,
+    unlockSuccess: webUnlock.unlockSuccess,
+    unlockKeyInput: webUnlock.keyInput,
+    setUnlockKeyInput: webUnlock.setKeyInput,
+    submitUnlock: webUnlock.submitUnlock,
+    resetUnlock: webUnlock.resetUnlock,
   };
 }
