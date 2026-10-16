@@ -1,3 +1,6 @@
+mod background;
+mod tray;
+mod tray_activity;
 pub mod commands;
 pub mod framing;
 pub mod process;
@@ -5,6 +8,7 @@ pub mod process;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use commands::AppState;
+use tauri::Manager;
 
 static IS_EXITING: AtomicBool = AtomicBool::new(false);
 
@@ -18,6 +22,31 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(app_state)
+        .setup(|app| {
+            if let Err(error) = tray::setup(app) {
+                // Keep ordinary window close/cleanup if no reopen affordance exists.
+                eprintln!("System tray unavailable; close will exit Pi Viewer: {error}");
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let action = background::close_action(
+                    tray::available(window.app_handle()),
+                    IS_EXITING.load(Ordering::SeqCst),
+                );
+                if action == background::CloseAction::Hide {
+                    // Prevent destruction even if hiding fails: keep sessions and window alive.
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("Unable to hide Pi Viewer: {error}");
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::connect,
             commands::disconnect,
