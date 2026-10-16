@@ -6,6 +6,8 @@ export interface WorkspaceEntry {
   extension?: string | null;
 }
 
+export type WorkspaceFileKind = 'text' | 'image' | 'video' | 'binary';
+
 export interface WorkspaceFileContent {
   relativePath: string;
   name: string;
@@ -13,6 +15,9 @@ export interface WorkspaceFileContent {
   size: number;
   isBinary: boolean;
   extension?: string | null;
+  kind?: WorkspaceFileKind;
+  mimeType?: string | null;
+  mediaDataUrl?: string | null;
 }
 
 export interface ListWorkspaceDirPayload {

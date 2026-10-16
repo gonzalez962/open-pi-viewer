@@ -3,6 +3,14 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
+import {
+  MAX_TEXT_FILE_BYTES,
+  MAX_MEDIA_FILE_BYTES,
+  getImageMimeType,
+  getVideoMimeType,
+  isDeterministicBinary,
+  isBinaryBuffer,
+} from '../../src/core/workspace/file-kind';
 
 export function resolveCrossPlatformCwd(cwd?: string | null): string {
   const cfg = getBridgeConfig();
@@ -249,22 +257,129 @@ export function handleReadWorkspaceFile(args: any = {}) {
   const payload = args.payload || {};
   const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
   const rel = payload.relativePath;
-  const fullPath = path.join(targetCwd, rel);
 
+  if (!rel || typeof rel !== 'string') {
+    throw new Error('Relative path must be a non-empty string');
+  }
+
+  // Check for path traversal components
+  const normalizedRel = rel.replace(/\\/g, '/');
+  const segments = normalizedRel.split('/');
+  if (segments.some((seg) => seg === '..')) {
+    throw new Error(`Path traversal attempt detected ('..'): ${rel}`);
+  }
+
+  const resolvedRoot = path.resolve(targetCwd);
+  if (!fs.existsSync(resolvedRoot)) {
+    throw new Error(`Workspace root does not exist: ${targetCwd}`);
+  }
+  const canonicalRoot = fs.realpathSync(resolvedRoot);
+
+  const fullPath = path.resolve(canonicalRoot, rel);
   if (!fs.existsSync(fullPath)) {
     throw new Error(`File not found: ${rel}`);
   }
 
-  const stat = fs.statSync(fullPath);
-  const content = fs.readFileSync(fullPath, 'utf8');
+  const canonicalTarget = fs.realpathSync(fullPath);
 
+  // Security containment check (prevent symlink / traversal escape)
+  const rootPrefix = canonicalRoot.endsWith(path.sep) ? canonicalRoot : canonicalRoot + path.sep;
+  const isContained =
+    canonicalTarget === canonicalRoot ||
+    canonicalTarget.startsWith(rootPrefix) ||
+    (process.platform === 'win32' &&
+      (canonicalTarget.toLowerCase() === canonicalRoot.toLowerCase() ||
+        canonicalTarget.toLowerCase().startsWith(rootPrefix.toLowerCase())));
+
+  if (!isContained) {
+    throw new Error(`Access denied: path is outside workspace root: ${rel}`);
+  }
+
+  const stat = fs.statSync(canonicalTarget);
+  if (stat.isDirectory()) {
+    throw new Error(`Target path is a directory, not a file: ${rel}`);
+  }
+
+  const fileName = path.basename(canonicalTarget);
+  const ext = path.extname(fileName).slice(1).toLowerCase() || null;
+
+  // 1. Deterministic binary files (e.g. .so versions, .db-wal) - return metadata without reading bytes
+  if (isDeterministicBinary(fileName)) {
+    return {
+      relativePath: rel,
+      name: fileName,
+      content: '',
+      size: stat.size,
+      isBinary: true,
+      extension: ext,
+      kind: 'binary' as const,
+      mimeType: null,
+      mediaDataUrl: null,
+    };
+  }
+
+  // 2. Media files (images and videos) with 25 MB limit
+  const imageMime = getImageMimeType(fileName);
+  const videoMime = getVideoMimeType(fileName);
+
+  if (imageMime || videoMime) {
+    if (stat.size > MAX_MEDIA_FILE_BYTES) {
+      throw new Error(
+        `File is too large to preview (size: ${stat.size} bytes, maximum allowed: ${MAX_MEDIA_FILE_BYTES} bytes)`
+      );
+    }
+
+    const buffer = fs.readFileSync(canonicalTarget);
+    const mime = (imageMime || videoMime)!;
+    const kind = imageMime ? ('image' as const) : ('video' as const);
+    const mediaDataUrl = `data:${mime};base64,${buffer.toString('base64')}`;
+
+    return {
+      relativePath: rel,
+      name: fileName,
+      content: '',
+      size: stat.size,
+      isBinary: true,
+      extension: ext,
+      kind,
+      mimeType: mime,
+      mediaDataUrl,
+    };
+  }
+
+  // 3. Text and unknown binary files with 2 MB limit
+  if (stat.size > MAX_TEXT_FILE_BYTES) {
+    throw new Error(
+      `File is too large to preview (size: ${stat.size} bytes, maximum allowed: ${MAX_TEXT_FILE_BYTES} bytes)`
+    );
+  }
+
+  const buffer = fs.readFileSync(canonicalTarget);
+  if (isBinaryBuffer(buffer)) {
+    return {
+      relativePath: rel,
+      name: fileName,
+      content: '',
+      size: stat.size,
+      isBinary: true,
+      extension: ext,
+      kind: 'binary' as const,
+      mimeType: null,
+      mediaDataUrl: null,
+    };
+  }
+
+  const content = buffer.toString('utf8');
   return {
     relativePath: rel,
-    name: path.basename(rel),
+    name: fileName,
     content,
     size: stat.size,
     isBinary: false,
-    extension: path.extname(rel).slice(1) || null,
+    extension: ext,
+    kind: 'text' as const,
+    mimeType: null,
+    mediaDataUrl: null,
   };
 }
 

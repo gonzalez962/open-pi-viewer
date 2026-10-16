@@ -107,6 +107,13 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
   const [activeTab, setActiveTab] = useState<'content' | 'diff'>('content');
   const [diffData, setDiffData] = useState<WorkspaceFileDiff | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
+  const [mediaError, setMediaError] = useState(false);
+
+  // Reset media error and active tab state on file change
+  useEffect(() => {
+    setMediaError(false);
+    setActiveTab('content');
+  }, [file?.relativePath]);
 
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) =>
@@ -309,7 +316,40 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
 
         {/* Content Body */}
         <main className="file-viewer-body">
-          {file.isBinary ? (
+          {file.kind === 'image' && file.mediaDataUrl ? (
+            <div className="file-viewer-media-container">
+              {mediaError ? (
+                <div className="file-viewer-media-error">
+                  <p>{t('file_viewer.media_load_error')}</p>
+                </div>
+              ) : (
+                <img
+                  src={file.mediaDataUrl}
+                  alt={file.name}
+                  className="file-viewer-media-image"
+                  onError={() => setMediaError(true)}
+                />
+              )}
+            </div>
+          ) : file.kind === 'video' && file.mediaDataUrl ? (
+            <div className="file-viewer-media-container">
+              {mediaError ? (
+                <div className="file-viewer-media-error">
+                  <p>{t('file_viewer.media_load_error')}</p>
+                </div>
+              ) : (
+                <video
+                  controls
+                  preload="metadata"
+                  className="file-viewer-media-video"
+                  onError={() => setMediaError(true)}
+                >
+                  <source src={file.mediaDataUrl} type={file.mimeType || undefined} />
+                  {t('file_viewer.video_unsupported')}
+                </video>
+              )}
+            </div>
+          ) : file.isBinary ? (
             <div className="file-viewer-binary">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
