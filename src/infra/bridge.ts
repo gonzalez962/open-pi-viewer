@@ -2915,7 +2915,7 @@ export async function getBuiltinProviderCatalogPi(
   providerId: string,
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<ModelInfo[]> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return [];
   }
   const cleanId = (providerId || '').trim();
