@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -960,6 +961,67 @@ test('ProjectDock footer: clicking Add Project button triggers onOpenAddProject 
   assert.strictEqual(typeof addBtn.props.onClick, 'function', 'onClick must be a function');
   addBtn.props.onClick();
   assert.strictEqual(opened, true, 'onClick must trigger onOpenAddProject callback');
+});
+
+test('FolderPickerModal: omits the selection footer and custom name field', () => {
+  const html = renderToStaticMarkup(React.createElement(FolderPickerModal, {
+    isOpen: true, initialPath: '/test/workspace', locale: 'en',
+    onClose: () => {}, onSelectFolder: () => {},
+  }));
+  assert.ok(!html.includes('folder-picker-selection-footer'));
+  assert.ok(!html.includes('folder-picker-custom-name'));
+});
+
+test('FolderPickerModal: keeps the native OS picker out of the web shim modal', () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const originalTauri = Object.getOwnPropertyDescriptor(globalThis, 'isTauri');
+  Object.defineProperty(globalThis, 'isTauri', { configurable: true, value: true });
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true, value: { isTauri: true, __IS_WEB_IPC__: true },
+  });
+  try {
+  const html = renderToStaticMarkup(React.createElement(FolderPickerModal, {
+    isOpen: true, initialPath: '/test/workspace', locale: 'en',
+    onClose: () => {}, onSelectFolder: () => {},
+  }));
+  assert.ok(!html.includes('folder-picker-btn-native'));
+  assert.ok(!html.includes('OS Explorer'));
+  } finally {
+    if (originalTauri) Object.defineProperty(globalThis, 'isTauri', originalTauri);
+    else Reflect.deleteProperty(globalThis, 'isTauri');
+    if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+test('FolderPickerModal: uses an icon grid with names below icons and no per-folder paths', () => {
+  const css = readFileSync('src/features/projects/projects.css', 'utf8');
+  const source = readFileSync('src/features/projects/components/FolderPickerModal.tsx', 'utf8');
+  assert.match(css, /\.folder-picker-grid\s*\{[^}]*display:\s*grid/);
+  assert.match(css, /\.folder-picker-item\s*\{[^}]*flex-direction:\s*column/);
+  assert.ok(!source.includes('folder-item-winpath'));
+  assert.ok(!source.includes('folder-item-enter-btn'), 'folder tiles must not show an entry arrow');
+  assert.ok(!css.includes('.folder-item-enter-btn'), 'entry arrow styles must be removed');
+  assert.ok(source.includes('onDoubleClick={() => handleFolderClick(folder)}'), 'double-click navigation must remain');
+});
+
+test('FolderPickerModal: confirmation preserves the initial folder and derived project name', () => {
+  let tree: any;
+  let selected: unknown[] = [];
+  let closed = false;
+  renderToStaticMarkup(React.createElement(() => {
+    tree = FolderPickerModal({
+      isOpen: true, initialPath: '/test/workspace', locale: 'en',
+      onClose: () => { closed = true; },
+      onSelectFolder: (...args) => { selected = args; },
+    });
+    return tree;
+  }));
+  const confirm = findElement(tree, (el) => el?.type === 'button' && el.props.className === 'btn btn-primary');
+  assert.ok(confirm);
+  confirm.props.onClick();
+  assert.deepStrictEqual(selected, ['/test/workspace', 'workspace']);
+  assert.strictEqual(closed, true);
 });
 
 test('FolderPickerModal: renders accessible modal dialog with role="dialog" and aria-modal="true"', () => {
