@@ -97,6 +97,10 @@ import {
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 import { usePreferences } from '@features/settings/hooks/usePreferences';
 import { useWebPush } from '@features/settings/hooks/useWebPush';
+import { useWebPushPrompt } from '@features/settings/hooks/useWebPushPrompt';
+import { WebPushInvitation } from '@features/settings/components/WebPushInvitation';
+import '@features/settings/components/web-push-invitation.css';
+import { isWebShim } from '@infra/web-oauth-access';
 import { DEFAULT_NOTIFICATION_PREFERENCES } from '@core/notifications';
 import { useConnection } from '@features/settings/hooks/useConnection';
 import { computeWallpaperStyles } from '@features/settings/wallpaper';
@@ -389,6 +393,12 @@ export const App: React.FC = () => {
     preferences: preferences.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES,
     language: preferences.language,
     projects: projectsRegistry.projects,
+  });
+
+  const webPushPrompt = useWebPushPrompt({
+    webPush,
+    notificationsEnabled: (preferences.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES).enabled,
+    isWeb: isWebShim(),
   });
   const handleSystemNotificationsToggle = async (enabled: boolean) => {
     const result = await (enabled ? webPush.enable() : webPush.disable());
@@ -1948,6 +1958,15 @@ export const App: React.FC = () => {
         toast={exportToast}
         onDismiss={dismissExportToast}
         closeAriaLabel={t('command_palette.toast_close')}
+      />
+
+      <WebPushInvitation
+        isOpen={webPushPrompt.isOpen}
+        isPending={webPushPrompt.isPending}
+        error={webPushPrompt.error}
+        onAccept={webPushPrompt.accept}
+        onDecline={webPushPrompt.decline}
+        t={t}
       />
     </div>
   );

@@ -27,6 +27,7 @@ for (const enabled of [true, false]) {
     const testButton = html.match(/<button[^>]*title="Test notification"[^>]*>/)?.[0];
     assert.ok(testButton);
     assert.equal(testButton.includes('disabled=""'), !enabled);
+    assert.ok(html.indexOf('title="Test notification"') > html.indexOf('id="settings-notifications-on-waiting-input"'));
     assert.doesNotMatch(html, new RegExp(`<button[^>]*>\\s*${permissionLabel}\\s*</button>`));
     for (const option of ['sound', 'suppress-focused', 'on-task-complete', 'on-waiting-input']) {
       const input = html.match(new RegExp(`<input[^>]*id="settings-notifications-${option}"[^>]*>`))?.[0];

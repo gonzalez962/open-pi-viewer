@@ -442,3 +442,261 @@ test('controller: updateProps during in-flight enable does not abort enable', as
   assert.equal(res.ok, true, 'In-flight enable must succeed without being aborted');
   assert.equal(controller.getStatus(), 'subscribed');
 });
+
+// ---------------------------------------------------------------------------
+// 6. Regression tests: B, C, and settlement
+// ---------------------------------------------------------------------------
+
+test('regression B: controller init preserves sync error status instead of rewriting to unsubscribed', async () => {
+  const { env, setPermission } = createMockEnv({
+    fetchFn: async (url: any) => {
+      const urlStr = String(url);
+      if (urlStr === '/api/push/config') {
+        // Server config is available with valid VAPID key
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ available: true, publicKey: 'VAPID_KEY' }),
+        } as any;
+      }
+      if (urlStr === '/api/push/subscriptions') {
+        // Sync endpoint fails on server with 500
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ error: 'Database unavailable' }),
+        } as any;
+      }
+      return { ok: false, status: 404 } as any;
+    },
+  });
+  // Browser is already enrolled with granted permission and subscription
+  setPermission('granted');
+
+  let observedStatus: string | null = null;
+  let observedError: string | null = null;
+
+  const controller = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: env,
+    onStatusChange: (s) => {
+      observedStatus = s;
+    },
+    onError: (e) => {
+      observedError = e;
+    },
+  });
+
+  await controller.init();
+
+  // Defect B: Previously, failure went to config fallback, which saw config available
+  // and permission granted, and rewrote status to 'unsubscribed', falsely inviting enrolled browser!
+  assert.equal(controller.getStatus(), 'error', 'Must preserve error status for enrolled sync failure');
+  assert.equal(observedStatus, 'error', 'Must notify status change as error');
+  assert.ok(observedError !== null, 'Must preserve sync error details');
+  assert.notEqual(controller.getStatus(), 'unsubscribed', 'Must NOT rewrite enrolled browser to unsubscribed');
+});
+
+test('regression B: controller init preserves denied and unavailable results without rewriting to unsubscribed', async () => {
+  // Case 1: Permission denied
+  const { env: deniedEnv, setPermission } = createMockEnv();
+  setPermission('denied');
+
+  const controllerDenied = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: deniedEnv,
+  });
+
+  await controllerDenied.init();
+  assert.equal(controllerDenied.getStatus(), 'denied', 'Must preserve denied status');
+
+  // Case 2: Config unavailable for genuinely unsubscribed browser
+  const { env: unavailEnv, setUnsubscribed } = createMockEnv({
+    fetchFn: async (url: any) => {
+      if (String(url) === '/api/push/config') {
+        return { ok: true, status: 200, json: async () => ({ available: false }) } as any;
+      }
+      return { ok: true } as any;
+    },
+  });
+  setUnsubscribed(true);
+
+  const controllerUnavail = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: unavailEnv,
+  });
+
+  await controllerUnavail.init();
+  assert.equal(controllerUnavail.getStatus(), 'unavailable', 'Must preserve unavailable status');
+});
+
+test('regression C: init catches unexpected exceptions safely, sets error, settles, and suppresses unhandled rejection', async () => {
+  const throwingEnv: WebPushEnvironment = {
+    isNativeHost: false,
+    windowObj: {
+      isSecureContext: true,
+      Notification: {
+        permission: 'granted',
+        requestPermission: async () => 'granted',
+      },
+      PushManager: class PushManager {},
+    },
+    navigatorObj: {
+      get serviceWorker(): any {
+        throw new Error('Fatal ServiceWorker engine crash');
+      },
+    },
+    fetchFn: async () => {
+      throw new Error('Fatal network crash');
+    },
+  };
+
+  let settledCalled = false;
+  let statusReported: string | null = null;
+  const errorReports: string[] = [];
+
+  const controller = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: throwingEnv,
+    onStatusChange: (s) => {
+      statusReported = s;
+    },
+    onError: (e) => {
+      if (e) errorReports.push(e);
+    },
+    onSettled: () => {
+      settledCalled = true;
+    },
+  });
+
+  // Calling init() must NOT reject with an unhandled exception
+  await assert.doesNotReject(
+    async () => {
+      await controller.init();
+    },
+    'init must catch and handle exceptions safely rather than rejecting'
+  );
+
+  // Defect C: Previously, exception bubbled past status setting, leaving status at default 'unsubscribed'!
+  assert.equal(controller.isSettled(), true, 'Must settle despite exception');
+  assert.equal(settledCalled, true, 'onSettled callback must fire');
+  assert.equal(controller.getStatus(), 'error', 'Must set status to error, not default unsubscribed');
+  assert.equal(statusReported, 'error', 'Status listener must receive error');
+  assert.ok(
+    errorReports.some((msg) => msg.includes('Fatal ServiceWorker engine crash')),
+    'Error listener must receive failure message'
+  );
+});
+
+test('regression C: disposed/aborted controller does not report live success after settlement', async () => {
+  let resolveSync!: (val: any) => void;
+  const syncDeferred = new Promise((resolve) => {
+    resolveSync = resolve;
+  });
+
+  const { env, setPermission } = createMockEnv({
+    fetchFn: async (url: any) => {
+      if (String(url) === '/api/push/subscriptions') {
+        await syncDeferred;
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as any;
+      }
+      return { ok: true, status: 200, json: async () => ({ available: true, publicKey: 'KEY' }) } as any;
+    },
+  });
+  setPermission('granted');
+
+  let statusChangeCount = 0;
+  let lastStatus = '';
+  let settledCalled = false;
+
+  const controller = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: env,
+    onStatusChange: (s) => {
+      statusChangeCount++;
+      lastStatus = s;
+    },
+    onSettled: () => {
+      settledCalled = true;
+    },
+  });
+
+  // Start init in background
+  const initPromise = controller.init();
+
+  // Controller is disposed before sync completes (e.g. StrictMode unmount)
+  controller.dispose();
+  assert.equal(controller.isDisposed(), true);
+
+  // Complete the underlying network sync operation
+  resolveSync(true);
+  await initPromise;
+
+  // Disposed controller must NOT have reported live success ('subscribed')
+  assert.notEqual(lastStatus, 'subscribed', 'Disposed controller must not report subscribed');
+  assert.notEqual(controller.getStatus(), 'subscribed');
+  assert.equal(statusChangeCount, 0);
+  assert.equal(settledCalled, false);
+});
+
+test('settlement: isSettled state transitions deterministically via deferred promise without timers', async () => {
+  let resolveConfig!: (val: any) => void;
+  const configDeferred = new Promise((resolve) => {
+    resolveConfig = resolve;
+  });
+
+  const { env, setUnsubscribed } = createMockEnv({
+    fetchFn: async (url: any) => {
+      if (String(url) === '/api/push/config') {
+        await configDeferred;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ available: true, publicKey: 'VAPID' }),
+        } as any;
+      }
+      return { ok: true } as any;
+    },
+  });
+  setUnsubscribed(true);
+
+  let settledFired = false;
+  const controller = createWebPushController({
+    preferences: SAMPLE_PREFERENCES,
+    language: 'en',
+    projects: SAMPLE_PROJECTS,
+    dependencies: env,
+    onSettled: () => {
+      settledFired = true;
+    },
+  });
+
+  // Prior to init completion, isSettled is false
+  assert.equal(controller.isSettled(), false);
+  assert.equal(settledFired, false);
+
+  const initTask = controller.init();
+
+  // In flight: still not settled
+  assert.equal(controller.isSettled(), false);
+  assert.equal(settledFired, false);
+
+  // Resolve deferred promise
+  resolveConfig(true);
+  await initTask;
+
+  // Deterministically settled without timer retries
+  assert.equal(controller.isSettled(), true);
+  assert.equal(settledFired, true);
+});
+
