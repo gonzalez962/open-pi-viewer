@@ -120,6 +120,8 @@
   "settings.notifications_heading": "Notifications",
   "settings.notifications_hint": "Desktop alerts, sound effects, and focus suppression",
   "settings.notifications_enable": "Enable notifications",
+  "settings.notifications_active": "Active",
+  "settings.notifications_paused": "Paused",
   "settings.notifications_sound": "Notification sound",
   "settings.notifications_suppress_focused": "Suppress when window is focused",
   "settings.notifications_suppress_focused_hint": "Only show desktop popups when Pi Viewer is in the background",
@@ -911,5 +913,14 @@
   "web_auth.turnstile_retry": "Retry verification",
   "web_auth.turnstile_error": "Security verification failed. Please try again.",
   "web_auth.turnstile_expired": "Security verification expired. Please verify again.",
-  "web_auth.turnstile_timeout": "Security verification timed out. Please try again."
+  "web_auth.turnstile_timeout": "Security verification timed out. Please try again.",
+  "settings.notifications_permission_label": "Notification permission",
+  "settings.notifications_permission_granted": "Allowed",
+  "settings.notifications_permission_denied": "Blocked",
+  "settings.notifications_permission_default": "Not requested",
+  "settings.notifications_permission_unavailable": "Unavailable",
+  "settings.notifications_request_permission": "Enable system notifications",
+  "settings.notifications_permission_help": "Web alerts require HTTPS or localhost and an open page. If blocked, change browser or system permissions, then return here. Native desktop sound is controlled by the operating system.",
+  "settings.notifications_test_sent": "Test notification submitted. System settings may still hide it.",
+  "settings.notifications_test_failed": "Notification could not be submitted. Check permission and platform support."
 }

@@ -55,6 +55,7 @@ export interface SessionEventControllerOptions {
   ) => Promise<SendExtensionUiResponseResult>;
   getPreferences?: () => UiPreferences;
   notifyAppEventFn?: (params: NotifyAppEventParams) => void;
+  resolveNotificationOriginName?: (cwd: string) => string | Promise<string>;
 }
 
 interface PendingDialogRequest {
@@ -106,6 +107,25 @@ export class SessionEventController {
    */
   public handleEvent(event: RpcEventBase): void {
     const eventType = event.type;
+    const notificationCwd = typeof event.cwd === 'string' && event.cwd.trim()
+      ? event.cwd.trim()
+      : this.options.getCurrentConfig().workingDirectory;
+    const notifyWithOrigin = (params: NotifyAppEventParams) => {
+      const folderName = notificationCwd?.replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop();
+      const deliver = (name?: string) => this.notifyAppEventFn({
+        ...params,
+        title: name?.trim() ? `${params.title} — ${name.trim()}` : params.title,
+      });
+      if (!notificationCwd || !this.options.resolveNotificationOriginName) {
+        deliver(folderName);
+        return;
+      }
+      // Event dispatch stays synchronous; capture the origin before a project switch.
+      try {
+        void Promise.resolve(this.options.resolveNotificationOriginName(notificationCwd))
+          .then(name => deliver(name || folderName), () => deliver(folderName));
+      } catch { deliver(folderName); }
+    };
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
     if (eventType === 'runtime_snapshot') {
       this.options.dispatch({
@@ -281,8 +301,10 @@ export class SessionEventController {
         prefs?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
       const locale = prefs?.language ?? DEFAULT_LOCALE;
 
-      this.notifyAppEventFn({
+      notifyWithOrigin({
         eventType: 'task_complete',
+        sessionId: currentSessionId ?? undefined,
+        projectId: targetProjectId ?? undefined,
         title: translate(locale, 'notifications.task_complete_title'),
         body: translate(locale, 'notifications.task_complete_body'),
         preferences: notificationPrefs,
@@ -299,8 +321,10 @@ export class SessionEventController {
           prefs?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
         const locale = prefs?.language ?? DEFAULT_LOCALE;
 
-        this.notifyAppEventFn({
+        notifyWithOrigin({
           eventType: 'waiting_input',
+          sessionId: currentSessionId ?? undefined,
+          projectId: targetProjectId ?? undefined,
           title: translate(locale, 'notifications.waiting_input_title'),
           body: translate(locale, 'notifications.waiting_input_body'),
           preferences: notificationPrefs,

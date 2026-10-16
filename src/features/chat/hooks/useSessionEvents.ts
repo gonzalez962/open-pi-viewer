@@ -3,6 +3,7 @@ import {
   discoverEnvironmentPi,
   formatDiscoveryDiagnostic,
   getSessionStatsPi,
+  getWorkspaceGitStatusPi,
   registerBridgeListeners,
   type DiscoveredEnvironment,
   type DiscoverEnvironmentPayload,
@@ -40,6 +41,23 @@ function findProjectByCwd(
 ): ProjectItem | undefined {
   if (!cwd) return undefined;
   return projects.find((p) => isSameProjectPath(p.path, cwd));
+}
+
+/** Resolve the event's own project; a background project need not be in the workspace cache. */
+export async function resolveNotificationOriginName(
+  cwd: string,
+  projects: ProjectItem[],
+  getGitStatus = getWorkspaceGitStatusPi,
+): Promise<string> {
+  const customName = findProjectByCwd(projects, cwd)?.customName?.trim();
+  if (customName) return customName;
+  try {
+    const status = await getGitStatus(cwd);
+    if (status.isRepo && status.repoName?.trim()) return status.repoName.trim();
+  } catch {
+    // A missing Git executable or disconnected bridge must not suppress the alert.
+  }
+  return cwd.trim().replace(/\\/g, '/').replace(/\/+$/, '').split('/').pop() || cwd;
 }
 
 export interface UseSessionEventsOptions {
@@ -313,6 +331,7 @@ export function useSessionEvents({
     sessionEventControllerRef.current = new SessionEventController({
       getCurrentConfig: () => configRef.current,
       getCurrentSessionId: () => sessionIdRef.current,
+      resolveNotificationOriginName: (cwd) => resolveNotificationOriginName(cwd, projectsRef.current),
       getProjectSessionId: (projectId) => projectSessionIdsRef.current
         ? projectSessionIdsRef.current[projectId] ?? null
         : sessionIdRef.current,

@@ -61,6 +61,16 @@ The existing authentication, IPC, OAuth, and SSE routes are shared with developm
 
 `npm run preview` remains a frontend-only preview, not the service startup command.
 
+## Notifications in web and desktop
+
+In **Settings → Notifications**, use the **Enable system notifications** switch to activate or pause alerts. Turning it on requests browser/system permission if needed; there is no separate permission button. **Test notification** is available whenever the switch is on (except during an in-flight notification action) and also requests missing permission before sending a test. The switch replaces the general enable checkbox; the individual notification options remain listed below it. Pausing stops automatic popups and app sounds and disables the test button without resetting those options. Task completion and requests for input identify their origin in the title using this hierarchy: custom project name, Git repository name, then working-folder name. The body contains only the localized event message; the working-directory path is not displayed. Repository lookup uses the event's directory, not the active tab; if Git lookup fails, the folder name is used. Test notifications remain generic. Alerts include localized text, never conversation contents. Existing notification preferences and focus suppression apply; alerts from different sessions are debounced independently.
+
+- **Web:** requires HTTPS or localhost, browser permission, and an open page. Browser popups request silent delivery; the sound preference controls the app's audio tone. Browser and operating-system policies may suppress delivery or audio.
+- **Tauri:** uses the official native notification plugin while the app is running, including when hidden in the tray. Desktop popup sound is controlled by OS notification settings, not the app's sound toggle; the app avoids adding a second audio tone. On Windows, verify notification behavior with the installed application, not only development mode.
+- **Blocked permissions:** change browser or system permissions and return to Settings to refresh status. Permission requests occur only after turning on the switch or clicking **Test notification**. A successful test means submission, not proof that the system displayed it.
+
+Closing the browser or quitting the desktop app stops this notification path. Web Push, service workers, and notifications after shutdown are not included. Native desktop notification clicks are not guaranteed to reopen a specific session; use the tray to reopen the app.
+
 ## Architecture & Verification Status
 
 | Area | Implementation | Verified Status |

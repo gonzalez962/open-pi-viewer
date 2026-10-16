@@ -7,6 +7,7 @@ import {
 } from '@core/notifications';
 import {
   playNotificationSound,
+  getNotificationPermission,
   requestNotificationPermission,
   showDesktopNotification,
 } from '@infra/notifications';
@@ -19,6 +20,7 @@ import { SettingsSelect } from './components/SettingsSelect';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
 import { ThemeCustomizer } from './components/ThemeCustomizer';
 import { COMMANDS, type CustomCommand } from '@core/commands';
+import type { NotificationPermissionStatus } from '@infra/notification-delivery';
 
 export interface SettingsViewProps {
   config: ConnectConfig;
@@ -87,6 +89,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   } | null>(null);
 
   const notifications = preferences.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermissionStatus>('default');
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationNotice, setNotificationNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => { void getNotificationPermission().then(value => { if (active) setNotificationPermission(value); }); };
+    refresh();
+    window.addEventListener('focus', refresh);
+    return () => { active = false; window.removeEventListener('focus', refresh); };
+  }, []);
+
+  const handleNotificationsToggle = async (enabled: boolean) => {
+    onNotificationsChange?.({ enabled });
+    if (!enabled) return;
+    setNotificationBusy(true);
+    setNotificationNotice(null);
+    try { setNotificationPermission(await requestNotificationPermission()); }
+    finally { setNotificationBusy(false); }
+  };
 
   const handleDetectGentleShell = async () => {
     setIsDetectingShell(true);
@@ -141,14 +163,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleTestNotification = async () => {
-    if (typeof Notification !== 'undefined' && Notification.permission !== 'granted') {
-      await requestNotificationPermission();
-    }
-    playNotificationSound('complete');
-    showDesktopNotification({
-      title: t('settings.notifications_test_title'),
-      body: t('settings.notifications_test_body'),
-    });
+    setNotificationBusy(true);
+    setNotificationNotice(null);
+    try {
+      // Testing is also an explicit user gesture: recover an enabled preference
+      // whose system permission has not yet been granted.
+      setNotificationPermission(await requestNotificationPermission());
+      const delivered = await showDesktopNotification({
+        title: t('settings.notifications_test_title'),
+        body: t('settings.notifications_test_body'),
+      });
+      setNotificationPermission(await getNotificationPermission());
+      if (delivered && notifications.sound) {
+        // Browser popups are silent; native desktop sounds are controlled by the OS.
+        const { getNotificationDelivery } = await import('@infra/notification-delivery');
+        if (getNotificationDelivery().platform === 'web') playNotificationSound('complete');
+      }
+      setNotificationNotice(t(delivered ? 'settings.notifications_test_sent' : 'settings.notifications_test_failed'));
+    } finally { setNotificationBusy(false); }
   };
 
   useEffect(() => {
@@ -353,35 +385,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {t('settings.notifications_hint')}
                 </span>
               </div>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleTestNotification}
-                title={t('settings.notifications_test_btn')}
-              >
-                <span>{t('settings.notifications_test_btn')}</span>
-              </button>
+              <div className="notifications-header-actions">
+                <label className="notification-switch-label">
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-checked={notifications.enabled}
+                    aria-label={t('settings.notifications_request_permission')}
+                    disabled={notificationBusy}
+                    className="notification-switch"
+                    checked={notifications.enabled}
+                    onChange={(e) => { void handleNotificationsToggle(e.target.checked); }}
+                  />
+                  <span>{t('settings.notifications_request_permission')}</span>
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleTestNotification}
+                  disabled={!notifications.enabled || notificationBusy}
+                  title={t('settings.notifications_test_btn')}
+                >
+                  <span>{t('settings.notifications_test_btn')}</span>
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="notifications-grid">
-            <div className="checkbox-group">
-              <label className="checkbox-label" htmlFor="settings-notifications-enable">
-                <input
-                  id="settings-notifications-enable"
-                  type="checkbox"
-                  className="field-checkbox"
-                  checked={notifications.enabled}
-                  onChange={(e) =>
-                    onNotificationsChange?.({ enabled: e.target.checked })
-                  }
-                />
-                <span className="checkbox-text">
-                  {t('settings.notifications_enable')}
-                </span>
-              </label>
-            </div>
+          <p role="status" aria-live="polite">
+            {t('settings.notifications_permission_label')}: {t(`settings.notifications_permission_${notificationPermission}`)}
+          </p>
+          <p className="field-subtext">{t('settings.notifications_permission_help')}</p>
+          {notificationNotice && <p role="status" aria-live="polite">{notificationNotice}</p>}
 
+          <div className="notifications-grid">
             <div
               className="notifications-controls-group"
               style={{
