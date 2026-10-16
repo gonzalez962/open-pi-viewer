@@ -535,7 +535,7 @@ test('origin naming: prefers customName > Git root basename > folder basename; n
   await push.dispatchPushEvent({ type: 'agent_settled', cwd: '/workspace/custom' });
   assert.equal(sentPayloads.length, 1);
   assert.equal(sentPayloads[0].data.title, 'Task finished — My Special Project');
-  assert.equal(sentPayloads[0].data.body, 'Pi has finished generating its response');
+  assert.equal(sentPayloads[0].data.body, 'The task has finished');
   assert.equal(sentPayloads[0].data.eventType, 'task_complete');
   assert.equal(sentPayloads[0].data.path, undefined);
   assert.equal(sentPayloads[0].data.cwd, undefined);
@@ -564,7 +564,7 @@ test('origin naming: prefers customName > Git root basename > folder basename; n
   const esPayload = sentPayloads.find((p) => p.sub.endpoint === subEs.endpoint && p.data.eventType === 'waiting_input');
   assert.ok(esPayload);
   assert.equal(esPayload.data.title, 'Esperando tu respuesta — plain-folder');
-  assert.equal(esPayload.data.body, 'Pi requiere tu aprobación o respuesta para continuar');
+  assert.equal(esPayload.data.body, 'Pi necesita tu aprobación, respuesta o una acción para continuar');
 });
 
 // ---------------------------------------------------------------------------

@@ -152,9 +152,11 @@
   "settings.notifications_test_body": "¡Las notificaciones y el sonido funcionan correctamente!",
 
   "notifications.task_complete_title": "Tarea finalizada",
-  "notifications.task_complete_body": "Pi ha terminado de generar la respuesta",
+  "notifications.task_complete_body": "La tarea ha finalizado",
+  "notifications.error_title": "No se pudo completar la tarea",
+  "notifications.error_body": "Pi encontró un error o no pudo finalizar. Revisa la conversación para ver los detalles",
   "notifications.waiting_input_title": "Esperando tu respuesta",
-  "notifications.waiting_input_body": "Pi requiere tu aprobación o respuesta para continuar",
+  "notifications.waiting_input_body": "Pi necesita tu aprobación, respuesta o una acción para continuar",
 
   "settings.connection_heading": "Configuración de conexión",
   "settings.connection_hint": "Configuración persistida para la ejecución directa de Node argv",

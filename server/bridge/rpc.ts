@@ -317,6 +317,9 @@ export class PiRpcSession {
         }
       }
 
+      if (data.type === 'agent_start' || data.type === 'message_end') {
+        dispatchPushNotificationHooks(data);
+      }
       broadcastSse('pi://event', data);
 
       // When Pi CLI finishes a turn (agent_end without willRetry), also emit agent_settled
@@ -330,6 +333,14 @@ export class PiRpcSession {
         }
         broadcastSse('pi://event', {
           type: 'agent_settled',
+          messages: data.messages,
+          cwd: this.cwd,
+          sessionFile: this.sessionFile,
+          sessionId: this.sessionId,
+        });
+        dispatchPushNotificationHooks({
+          type: 'agent_settled',
+          messages: data.messages,
           cwd: this.cwd,
           sessionFile: this.sessionFile,
           sessionId: this.sessionId,
