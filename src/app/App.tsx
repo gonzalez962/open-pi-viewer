@@ -231,6 +231,7 @@ export const App: React.FC = () => {
       if (targetProjectId) {
         const targetState = multiProjectStateRef.current.projects[targetProjectId];
         if (
+          res.activity === undefined &&
           targetState?.isHydrated === true &&
           (targetState.messages.length > 0 || targetState.agentActivity === 'busy')
         ) {
@@ -255,12 +256,14 @@ export const App: React.FC = () => {
           messages: hydrated,
           model: res.model,
           hasMore: res.hasMore,
+          activity: res.activity,
           detail:
             hydrated.length > 0
               ? `Resumed session (${hydrated.length} messages)`
               : 'Connected to fresh session',
         },
       });
+      restoreExtensionPrompts(res.pendingExtensionPrompts ?? []);
       if (targetProjectId === projectsRegistryRef.current.activeProjectId) {
         pinAndJumpToBottom();
       }
@@ -489,9 +492,10 @@ export const App: React.FC = () => {
   // requestFileTreeRefresh (workspace), setStorageWarning (connection) and
   // startConnection/cancelConnection (connection) all cross feature lines and arrive as
   // injected callbacks - the hook itself imports none of those features.
-  useSessionEvents({
+  const restoreExtensionPrompts = useSessionEvents({
     config,
     sessionId: state.sessionId,
+    projectSessionIds: Object.fromEntries(Object.entries(multiProjectState.projects).map(([id, project]) => [id, project.sessionId])),
     projects: projectsRegistry.projects,
     activeProjectId: projectsRegistry.activeProjectId,
     dispatch,

@@ -88,6 +88,7 @@ export interface BridgeStatusPayload {
   detail: string;
   model?: ModelInfo | null;
   cwd?: string | null;
+  sessionId?: string | null;
 }
 
 export interface BridgeErrorPayload {

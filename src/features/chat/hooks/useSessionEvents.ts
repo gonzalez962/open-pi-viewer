@@ -11,6 +11,7 @@ import { SessionEventController, shouldRefreshWorkspaceOnEvent } from '@features
 import type { ExtensionUiDialogAdapter } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig } from '@core/types/connection';
+import type { ExtensionUiRequest } from '@core/types/events';
 import { isWindowsPath, normalizeWorkingDirectory } from '@core/session';
 
 export interface ProjectItem {
@@ -48,6 +49,7 @@ export interface UseSessionEventsOptions {
   config: ConnectConfig;
   /** Fresh every render, same reasoning as `config`. */
   sessionId: string | null;
+  projectSessionIds?: Record<string, string | null>;
   projects?: ProjectItem[];
   activeProjectId?: string | null;
   dispatch: (action: ChatAction & { targetProjectId?: string }) => void;
@@ -269,6 +271,7 @@ export async function executeAutoStart({
 export function useSessionEvents({
   config,
   sessionId,
+  projectSessionIds,
   projects,
   activeProjectId,
   dispatch,
@@ -281,12 +284,14 @@ export function useSessionEvents({
   discoverEnvironmentFn,
   onDiscoverySettled,
   onMissingConfiguration,
-}: UseSessionEventsOptions): void {
+}: UseSessionEventsOptions): (requests: ExtensionUiRequest[]) => void {
   // Dynamic references avoiding stale closures in bridge listeners.
   const configRef = useRef<ConnectConfig>(config);
   configRef.current = config;
   const sessionIdRef = useRef<string | null>(sessionId);
   sessionIdRef.current = sessionId;
+  const projectSessionIdsRef = useRef(projectSessionIds);
+  projectSessionIdsRef.current = projectSessionIds;
   const projectsRef = useRef<ProjectItem[]>(projects ?? []);
   projectsRef.current = projects ?? [];
   const activeProjectIdRef = useRef<string | null>(activeProjectId ?? null);
@@ -308,6 +313,9 @@ export function useSessionEvents({
     sessionEventControllerRef.current = new SessionEventController({
       getCurrentConfig: () => configRef.current,
       getCurrentSessionId: () => sessionIdRef.current,
+      getProjectSessionId: (projectId) => projectSessionIdsRef.current
+        ? projectSessionIdsRef.current[projectId] ?? null
+        : sessionIdRef.current,
       dispatch: handleEventDispatch,
       refreshSessionStatsFn: () => getSessionStatsPi(),
       onStorageWarning: (warning) => onStorageWarning(warning),
@@ -373,9 +381,13 @@ export function useSessionEvents({
       isCancelled = true;
       cancelConnection();
       unlisten();
-      sessionEventControllerRef.current?.cancelPendingDialogRequests();
+      sessionEventControllerRef.current?.cancelPendingDialogRequests(undefined, Boolean((window as any).__IS_WEB_IPC__));
     };
     // Intentionally empty: mount-only registration/startup, matching the pre-extraction
     // effect exactly (this repository has no ESLint step to satisfy or suppress).
   }, []);
+
+  return (requests) => {
+    for (const request of requests) void sessionEventControllerRef.current?.handleExtensionUiRequest(request);
+  };
 }

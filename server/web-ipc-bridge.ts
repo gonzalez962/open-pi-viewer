@@ -58,6 +58,7 @@ import {
   handleSendExtensionUiResponse,
   handleAbort,
   handleDisconnect,
+  handleStopSession,
   handleGetBridgeState,
 } from './bridge/rpc';
 
@@ -130,9 +131,11 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'send_extension_ui_response':
       return await handleSendExtensionUiResponse(args);
     case 'abort':
-      return await handleAbort();
+      return await handleAbort(args);
     case 'disconnect':
       return handleDisconnect();
+    case 'stop_session':
+      return handleStopSession(args);
     case 'list_sessions':
       return handleListSessions(args);
     case 'switch_session':

@@ -18,6 +18,7 @@ export type ConnectionAction =
         sessionId?: string | null;
         sessionFile?: string | null;
         messages: ChatMessage[];
+        activity?: 'idle' | 'busy' | 'waiting';
         model?: ModelInfo | null;
         hasMore?: boolean;
         detail?: string;
@@ -134,7 +135,7 @@ export function connectionReducer(
         connectionStatus: 'connected',
         isHydrated: true,
         isResetting: false,
-        agentActivity: 'idle',
+        agentActivity: action.payload.activity === 'busy' || action.payload.activity === 'waiting' ? 'busy' : 'idle',
         sessionId: action.payload.sessionId ?? state.sessionId,
         sessionFile: action.payload.sessionFile ?? state.sessionFile,
         messages: action.payload.messages,

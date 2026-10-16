@@ -14,7 +14,7 @@ import {
   setActiveSessionId,
   getActiveModel,
 } from './state';
-import { piRpc, getOrCreatePiRpc } from './rpc';
+import { piRpc, getOrCreatePiRpc, sessionPool } from './rpc';
 
 export function resolveSessionsDir(cwd: string): string {
   const resolved = resolveCrossPlatformCwd(cwd);
@@ -353,7 +353,9 @@ export async function handleConnect(args: any = {}) {
 
   piRpc.sessionFile = resolvedSessionFile;
   piRpc.sessionId = resolvedSessionId;
-  if (resolvedSessionFile) {
+  const live = resolvedSessionFile ? sessionPool.get(path.resolve(resolvedSessionFile)) : null;
+  const snapshot = live?.isAlive() ? await live.snapshot() : null;
+  if (resolvedSessionFile && !snapshot) {
     setSessionStatus(resolvedSessionFile, 'completed', resolvedSessionId);
   }
 
@@ -364,12 +366,13 @@ export async function handleConnect(args: any = {}) {
 
   let initialMessages: any[] = [];
   let hasMore = false;
-  if (parsed?.messages) {
-    const total = parsed.messages.length;
+  const messages = snapshot?.messages ?? parsed?.messages;
+  if (messages) {
+    const total = messages.length;
     const loadAll = Boolean(payload.loadAll);
     hasMore = !loadAll && total > 80;
     // Window messages to recent 80 on connect for instantaneous load across network
-    initialMessages = loadAll || total <= 80 ? parsed.messages : parsed.messages.slice(-80);
+    initialMessages = loadAll || total <= 80 ? messages : messages.slice(-80);
   }
 
   return {
@@ -377,8 +380,10 @@ export async function handleConnect(args: any = {}) {
     model: piRpc.modelInfo || getActiveModel(),
     sessionId: resolvedSessionId,
     sessionFile: resolvedSessionFile,
-    messageCount: parsed?.messageCount || 0,
-    canonicalCwd: getActiveCwd(),
+    messageCount: messages?.length || 0,
+    canonicalCwd: targetCwd,
+    activity: snapshot?.activity ?? 'idle',
+    pendingExtensionPrompts: snapshot?.pendingExtensionPrompts ?? [],
     messages: initialMessages,
     hasMore,
   };
