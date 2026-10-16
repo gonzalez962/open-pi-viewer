@@ -345,6 +345,12 @@ export class PiRpcSession {
           sessionFile: this.sessionFile,
           sessionId: this.sessionId,
         });
+        dispatchPushNotificationHooks({
+          type: 'agent_settled',
+          cwd: this.cwd,
+          sessionFile: this.sessionFile,
+          sessionId: this.sessionId,
+        });
       }
     }
   }
