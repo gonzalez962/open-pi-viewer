@@ -11,6 +11,7 @@ import {
 } from '@features/providers/hooks/useProvidersData';
 import { validateProviderConfig } from '@features/providers/providers';
 import type { ProviderFormData } from '@features/providers/types';
+import { getBuiltinProviderCatalogPi } from '@infra/bridge';
 
 function t(key: Parameters<typeof translate>[1], params?: Record<string, string | number>): string {
   return translate('en', key, params);
@@ -224,4 +225,41 @@ test('S1.1 / S1.2 — Given catalog models and saved overrides, when opening or 
 
   assert.deepEqual(savedConfig.excludedModels, ['claude-3-haiku*']);
   assert.deepEqual(savedConfig.includedModels, ['claude-3*']);
+});
+
+test('S1.1: getBuiltinProviderCatalogPi invokes backend in web-shim mode with default invoke and falls back in preview', async () => {
+  const origWindow = (globalThis as any).window;
+  const origIsTauri = (globalThis as any).isTauri;
+
+  try {
+    delete (globalThis as any).window;
+    (globalThis as any).isTauri = false;
+    const previewResult = await getBuiltinProviderCatalogPi('anthropic');
+    assert.deepEqual(previewResult, [], 'Preview fallback must return empty array without throwing');
+
+    let calledCmd: string | null = null;
+    let passedArgs: any = null;
+    (globalThis as any).window = {
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async (cmd: string, args: any) => {
+          calledCmd = cmd;
+          passedArgs = args;
+          return [{ id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic' }];
+        },
+      },
+    };
+
+    const shimResult = await getBuiltinProviderCatalogPi('anthropic');
+    assert.equal(calledCmd, 'get_builtin_provider_catalog', 'Must invoke get_builtin_provider_catalog in web shim');
+    assert.equal(passedArgs?.payload?.providerId, 'anthropic', 'Must pass provider ID in payload');
+    assert.equal(shimResult.length, 1, 'Web shim must return catalog models from backend');
+    assert.equal(shimResult[0].id, 'claude-3-5-sonnet');
+  } finally {
+    if (origWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = origWindow;
+    if (origIsTauri === undefined) delete (globalThis as any).isTauri;
+    else (globalThis as any).isTauri = origIsTauri;
+  }
 });
