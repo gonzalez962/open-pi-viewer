@@ -9,11 +9,10 @@ import {
 import { ProjectDock } from '@features/projects/ProjectDock';
 import { mapProvidersToArray, resolveModelDefaultThinkingLevel } from '@features/providers/providers';
 import { isConfigReady, validateConnectConfig } from '@features/settings/config';
-import { canRetryConnection } from '@features/settings/connection';
+import { canRetryConnection, shouldShowHeaderStatus } from '@features/settings/connection';
 import {
   formatLocalizedDiagnostic,
   formatLocalizedStatus,
-  formatLocalizedStatusDetail,
   type TranslationKey,
 } from '@shared/i18n';
 import { preserveScrollOnPrepend } from '@shared/scroll';
@@ -1041,10 +1040,6 @@ export const App: React.FC = () => {
     state.agentActivity,
     preferences.language
   );
-  const localizedStatusDetail = formatLocalizedStatusDetail(
-    state.statusDetail,
-    preferences.language
-  );
 
   return (
     <div className={`app-container ${isZenMode ? ZEN_MODE_CONTAINER_CLASS : ''}`}>
@@ -1127,13 +1122,15 @@ export const App: React.FC = () => {
         </div>
 
         <div className="header-controls">
-          <div className="header-status" role="status" aria-live="polite">
-            <span
-              className={`status-indicator status-${state.connectionStatus}`}
-              aria-hidden="true"
-            />
-            <span className="status-label">{localizedStatusLabel}</span>
-          </div>
+          {shouldShowHeaderStatus(state.connectionStatus) && (
+            <div className="header-status" role="status" aria-live="polite">
+              <span
+                className={`status-indicator status-${state.connectionStatus}`}
+                aria-hidden="true"
+              />
+              <span className="status-label">{localizedStatusLabel}</span>
+            </div>
+          )}
 
           {canRetryConnection(state.connectionStatus) && (
             <button
@@ -1684,11 +1681,6 @@ export const App: React.FC = () => {
                 <label htmlFor="prompt-input" className="prompt-label">
                   {t('prompt.label')}
                 </label>
-                <span
-                  className={`prompt-status-dot status-${state.connectionStatus} ${isBusy ? 'is-busy' : ''}`}
-                  title={localizedStatusDetail || localizedStatusLabel}
-                  aria-label={t('prompt.status_dot_aria', { status: localizedStatusLabel })}
-                />
                 {isBusy && (
                   <span
                     className={runtimeWorkStyles.className}

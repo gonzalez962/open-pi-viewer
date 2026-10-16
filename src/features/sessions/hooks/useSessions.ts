@@ -143,6 +143,10 @@ export function useSessions({
     }
 
     if (decision.action === 'already-current') {
+      dispatch({
+        type: 'UPDATE_SESSION_STATUS',
+        payload: { sessionId: session.id, sessionPath: session.path, status: undefined },
+      });
       if (decision.closeSettings) {
         setShowSettings(false);
       }
