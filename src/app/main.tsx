@@ -1,10 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
+import { WebAuthGate } from './WebAuthGate';
 import '@infra/web-ipc-client';
 import '@shared/styles/tokens.css';
 import '@shared/styles/base.css';
 import './app.css';
+import '@app/components/confirmation-modal.css';
 import '@features/projects/projects.css';
 import '@features/sessions/sessions.css';
 import '@features/workspace/workspace.css';
@@ -23,6 +25,8 @@ if (!rootElement) {
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <App />
+    <WebAuthGate>
+      <App />
+    </WebAuthGate>
   </React.StrictMode>
 );

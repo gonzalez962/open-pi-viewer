@@ -45,3 +45,4 @@ Thumbs.db
 server/config.json
 /.playwright-cli
 nul
+/.playwright-mcp

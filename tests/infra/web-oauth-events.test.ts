@@ -22,6 +22,7 @@ test('web authorization reconnects events before OAuth actions resume', async ()
   Object.assign(globalThis, { window: fakeWindow, EventSource: FakeSource });
   try {
     initWebIpcClient();
+    fakeWindow.dispatchEvent(new Event('pi:web-auth-ready'));
     assert.equal(streams.length, 1);
     let ready = false;
     const detail = { ready: () => { ready = true; } };
