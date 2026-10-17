@@ -194,6 +194,131 @@ export function executeUnmountOAuthCleanup({
   return { cancelledProviderId: null };
 }
 
+export interface HandleOAuthEventOptions {
+  envelope: OAuthEventEnvelope;
+  expectedProviderId: string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}
+
+export interface HandleOAuthEventResult {
+  handled: boolean;
+  authUrl?: string | null;
+  statusMessage?: string | null;
+  deviceCodeInfo?: DeviceCodeInfo | null;
+  pendingPrompt?: OAuthSafePrompt | null;
+  promptCancelledId?: string | null;
+  terminalState?: 'completed' | 'cancelled' | 'failed' | null;
+  terminalError?: string | null;
+  shouldResetSession: boolean;
+  shouldRefreshAccounts: boolean;
+}
+
+/**
+ * Pure decision and extraction helper for incoming OAuth events:
+ * - Rejects events matching other providers.
+ * - Extracts auth_url to retain authorization URL for user-click open / copy actions.
+ * - Handles device_code, prompts, and terminal status transitions.
+ */
+export function handleOAuthEventPayload({
+  envelope,
+  expectedProviderId,
+  t,
+}: HandleOAuthEventOptions): HandleOAuthEventResult {
+  if (!shouldProcessOAuthEvent(envelope, expectedProviderId)) {
+    return { handled: false, shouldResetSession: false, shouldRefreshAccounts: false };
+  }
+
+  switch (envelope.kind) {
+    case 'event': {
+      const event = envelope.data as OAuthSafeEvent;
+      if (event.type === 'auth_url') {
+        return {
+          handled: true,
+          authUrl: event.url,
+          statusMessage: event.instructions || t('providers.oauth.browser_opened'),
+          shouldResetSession: false,
+          shouldRefreshAccounts: false,
+        };
+      }
+      if (event.type === 'device_code') {
+        return {
+          handled: true,
+          deviceCodeInfo: {
+            userCode: event.userCode,
+            verificationUri: event.verificationUri,
+            expiresInSeconds: event.expiresInSeconds ?? null,
+          },
+          statusMessage: t('providers.oauth.device_code_title'),
+          shouldResetSession: false,
+          shouldRefreshAccounts: false,
+        };
+      }
+      if (event.type === 'progress' || event.type === 'info') {
+        return {
+          handled: true,
+          statusMessage: event.message,
+          shouldResetSession: false,
+          shouldRefreshAccounts: false,
+        };
+      }
+      return { handled: false, shouldResetSession: false, shouldRefreshAccounts: false };
+    }
+
+    case 'prompt': {
+      const prompt = envelope.data as OAuthSafePrompt;
+      return {
+        handled: true,
+        pendingPrompt: prompt,
+        shouldResetSession: false,
+        shouldRefreshAccounts: false,
+      };
+    }
+
+    case 'prompt_cancelled': {
+      const cancelled = envelope.data as OAuthPromptCancelledEvent;
+      return {
+        handled: true,
+        promptCancelledId: cancelled.promptId,
+        shouldResetSession: false,
+        shouldRefreshAccounts: false,
+      };
+    }
+
+    case 'status': {
+      const status = envelope.data as OAuthStatusEvent;
+      if (status.state === 'completed') {
+        return {
+          handled: true,
+          terminalState: 'completed',
+          shouldResetSession: true,
+          shouldRefreshAccounts: true,
+        };
+      }
+      if (status.state === 'cancelled') {
+        return {
+          handled: true,
+          terminalState: 'cancelled',
+          shouldResetSession: true,
+          shouldRefreshAccounts: false,
+        };
+      }
+      if (status.state === 'failed') {
+        return {
+          handled: true,
+          terminalState: 'failed',
+          terminalError: status.error || status.message || t('providers.oauth.error_title'),
+          shouldResetSession: true,
+          shouldRefreshAccounts: false,
+        };
+      }
+      return { handled: false, shouldResetSession: false, shouldRefreshAccounts: false };
+    }
+
+    default:
+      return { handled: false, shouldResetSession: false, shouldRefreshAccounts: false };
+  }
+}
+
 export interface UseBuiltinOAuthAccountsOptions {
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   onRefreshModels?: () => Promise<void>;
@@ -227,6 +352,7 @@ export function useBuiltinOAuthAccounts({
   const [isStarting, setIsStarting] = useState<boolean>(false);
   const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [authUrl, setAuthUrl] = useState<string | null>(null);
   const [deviceCodeInfo, setDeviceCodeInfo] = useState<DeviceCodeInfo | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<OAuthSafePrompt | null>(null);
   const [activeError, setActiveError] = useState<string | null>(null);
@@ -254,6 +380,7 @@ export function useBuiltinOAuthAccounts({
     setIsCancelling(false);
     isCancellingRef.current = false;
     setStatusMessage(null);
+    setAuthUrl(null);
     setDeviceCodeInfo(null);
     setPendingPrompt(null);
     pendingPromptRef.current = null;
@@ -302,64 +429,39 @@ export function useBuiltinOAuthAccounts({
 
   const handleOAuthEvent = useCallback(
     (envelope: OAuthEventEnvelope, expectedProviderId: string) => {
-      if (!shouldProcessOAuthEvent(envelope, expectedProviderId)) {
+      const res = handleOAuthEventPayload({ envelope, expectedProviderId, t });
+      if (!res.handled) {
         return;
       }
 
-      switch (envelope.kind) {
-        case 'event': {
-          const event = envelope.data as OAuthSafeEvent;
-          if (event.type === 'auth_url') {
-            // Note: Rust supervisor already opened the URL in the system browser via tauri-plugin-opener.
-            // Do NOT open browser twice in React.
-            setStatusMessage(event.instructions || t('providers.oauth.browser_opened'));
-          } else if (event.type === 'device_code') {
-            setDeviceCodeInfo({
-              userCode: event.userCode,
-              verificationUri: event.verificationUri,
-              expiresInSeconds: event.expiresInSeconds ?? null,
-            });
-            setStatusMessage(t('providers.oauth.device_code_title'));
-          } else if (event.type === 'progress') {
-            setStatusMessage(event.message);
-          } else if (event.type === 'info') {
-            setStatusMessage(event.message);
-          }
-          break;
-        }
+      if (res.authUrl !== undefined) {
+        setAuthUrl(res.authUrl);
+      }
+      if (res.statusMessage !== undefined && res.statusMessage !== null) {
+        setStatusMessage(res.statusMessage);
+      }
+      if (res.deviceCodeInfo !== undefined) {
+        setDeviceCodeInfo(res.deviceCodeInfo);
+      }
+      if (res.pendingPrompt !== undefined) {
+        setPendingPrompt(res.pendingPrompt);
+      }
+      if (res.promptCancelledId) {
+        setPendingPrompt((prev) => (prev?.promptId === res.promptCancelledId ? null : prev));
+      }
 
-        case 'prompt': {
-          const prompt = envelope.data as OAuthSafePrompt;
-          setPendingPrompt(prompt);
-          break;
+      if (res.terminalState === 'completed') {
+        cleanupSession();
+        setSuccessNotice(t('providers.oauth.success_notice', { provider: expectedProviderId }));
+        refreshAccounts();
+        if (onRefreshModels) {
+          onRefreshModels().catch((e) => console.error('Failed to refresh models:', e));
         }
-
-        case 'prompt_cancelled': {
-          const cancelled = envelope.data as OAuthPromptCancelledEvent;
-          setPendingPrompt((prev) => (prev?.promptId === cancelled.promptId ? null : prev));
-          break;
-        }
-
-        case 'status': {
-          const status = envelope.data as OAuthStatusEvent;
-          if (status.state === 'completed') {
-            cleanupSession();
-            setSuccessNotice(t('providers.oauth.success_notice', { provider: expectedProviderId }));
-            refreshAccounts();
-            if (onRefreshModels) {
-              onRefreshModels().catch((e) => console.error('Failed to refresh models:', e));
-            }
-          } else if (status.state === 'cancelled') {
-            cleanupSession();
-          } else if (status.state === 'failed') {
-            cleanupSession();
-            setActiveError(status.error || status.message || t('providers.oauth.error_title'));
-          }
-          break;
-        }
-
-        default:
-          break;
+      } else if (res.terminalState === 'cancelled') {
+        cleanupSession();
+      } else if (res.terminalState === 'failed') {
+        cleanupSession();
+        setActiveError(res.terminalError || t('providers.oauth.error_title'));
       }
     },
     [t, cleanupSession, refreshAccounts, onRefreshModels]
@@ -378,6 +480,7 @@ export function useBuiltinOAuthAccounts({
       setStatusMessage(t('providers.oauth.signing_in'));
       setActiveError(null);
       setSuccessNotice(null);
+      setAuthUrl(null);
       setDeviceCodeInfo(null);
       setPendingPrompt(null);
       pendingPromptRef.current = null;
@@ -529,6 +632,8 @@ export function useBuiltinOAuthAccounts({
     isStarting,
     isCancelling,
     statusMessage,
+    authUrl,
+    authorizationUrl: authUrl,
     deviceCodeInfo,
     pendingPrompt,
     activeError,

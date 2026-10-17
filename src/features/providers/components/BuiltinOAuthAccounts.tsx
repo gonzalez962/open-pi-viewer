@@ -26,6 +26,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
     isStarting,
     isCancelling,
     statusMessage,
+    authUrl,
     deviceCodeInfo,
     pendingPrompt,
     activeError,
@@ -300,6 +301,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
         mode={modalMode}
         provider={modalProvider}
         statusMessage={statusMessage}
+        authUrl={authUrl ?? (oauth as any)?.authorizationUrl}
         deviceCodeInfo={deviceCodeInfo}
         pendingPrompt={pendingPrompt}
         isStarting={isStarting}
