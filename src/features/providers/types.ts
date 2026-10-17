@@ -15,6 +15,7 @@ export interface ProviderFormData {
   models: CustomModelDefinition[];
   excludedModels: string[];
   includedModels: string[];
+  isBuiltin?: boolean;
 }
 
 export const EMPTY_FORM: ProviderFormData = {
@@ -26,6 +27,7 @@ export const EMPTY_FORM: ProviderFormData = {
   models: [],
   excludedModels: [],
   includedModels: [],
+  isBuiltin: false,
 };
 
 export function buildDraftModel(

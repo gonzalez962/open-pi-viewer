@@ -1,3 +1,4 @@
+import { minimatch } from 'minimatch';
 import type { CustomModelDefinition, CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '@core/types/providers';
 import {
   type ModelInfo,
@@ -205,30 +206,52 @@ export function validateProviderConfig(provider: CustomProviderConfig): { valid:
     return idCheck;
   }
 
-  const urlCheck = validateBaseUrl(provider.baseUrl);
-  if (!urlCheck.valid) {
-    return urlCheck;
+  const hasModels = Array.isArray(provider.models) && provider.models.length > 0;
+  const hasIncluded = Array.isArray(provider.includedModels) && provider.includedModels.length > 0;
+  const hasExcluded = Array.isArray(provider.excludedModels) && provider.excludedModels.length > 0;
+  const isOverrideOnly = Boolean(
+    provider.isBuiltin ||
+      ((hasModels || hasIncluded || hasExcluded) && !provider.baseUrl && !provider.api)
+  );
+
+  if (!isOverrideOnly) {
+    const urlCheck = validateBaseUrl(provider.baseUrl || '');
+    if (!urlCheck.valid) {
+      return urlCheck;
+    }
+
+    const api = provider.api?.trim();
+    if (!api) {
+      return { valid: false, error: "API protocol type ('api') is required" };
+    }
+  } else if (provider.baseUrl && provider.baseUrl.trim()) {
+    const urlCheck = validateBaseUrl(provider.baseUrl);
+    if (!urlCheck.valid) {
+      return urlCheck;
+    }
   }
 
-  const api = provider.api?.trim();
-  if (!api) {
-    return { valid: false, error: "API protocol type ('api') is required" };
-  }
-
-  if (!Array.isArray(provider.models)) {
+  if (provider.models !== undefined && !Array.isArray(provider.models)) {
     return { valid: false, error: 'Provider models must be an array' };
   }
 
-  if (provider.models.length === 0) {
+  const modelsList = Array.isArray(provider.models) ? provider.models : [];
+  if (!isOverrideOnly && modelsList.length === 0) {
     return { valid: false, error: 'At least one model must be configured for this provider' };
   }
+  if (isOverrideOnly && modelsList.length === 0 && !hasIncluded && !hasExcluded) {
+    return {
+      valid: false,
+      error: 'At least one model or model pattern rule must be configured for this provider',
+    };
+  }
 
-  for (let i = 0; i < provider.models.length; i++) {
-    const modelCheck = validateModelDefinition(provider.models[i]);
+  for (let i = 0; i < modelsList.length; i++) {
+    const modelCheck = validateModelDefinition(modelsList[i]);
     if (!modelCheck.valid) {
       return {
         valid: false,
-        error: `Model #${i + 1} (${provider.models[i]?.id || 'unnamed'}): ${modelCheck.error}`,
+        error: `Model #${i + 1} (${modelsList[i]?.id || 'unnamed'}): ${modelCheck.error}`,
       };
     }
   }
@@ -311,8 +334,8 @@ export function arrayToProvidersMap(providers: CustomProviderConfig[]): CustomPr
   for (const p of providers) {
     const { id, name, baseUrl, api, apiKey, authHeader, headers, models, excludedModels, includedModels, ...extra } = p;
     const entry: Omit<CustomProviderConfig, 'id'> = {
-      baseUrl: baseUrl.trim(),
-      api: api.trim(),
+      ...(baseUrl ? { baseUrl: baseUrl.trim() } : {}),
+      ...(api ? { api: api.trim() } : {}),
       models: (models || []).map((m) => {
         const modelEntry: CustomModelDefinition = {
           id: m.id.trim(),
@@ -347,6 +370,17 @@ export function arrayToProvidersMap(providers: CustomProviderConfig[]): CustomPr
       entry.excludedModels = excludedModels
         .map((s) => s.trim())
         .filter(Boolean);
+    }
+
+    const hasModelsLen = Array.isArray(entry.models) && entry.models.length > 0;
+    const hasBaseUrl = typeof entry.baseUrl === 'string' && entry.baseUrl.trim().length > 0;
+    const hasHeaders = entry.headers !== undefined && entry.headers !== null;
+    const hasCompat = entry.compat !== undefined && entry.compat !== null;
+    const hasApiKey = typeof entry.apiKey === 'string' && entry.apiKey.trim().length > 0;
+    const hasAuthHeader = entry.authHeader !== undefined && entry.authHeader !== null;
+
+    if (!hasCompat && (!hasBaseUrl || !hasModelsLen) && !hasHeaders && !hasApiKey && !hasAuthHeader) {
+      entry.compat = {};
     }
 
     map[id.trim()] = entry;
@@ -411,6 +445,17 @@ export function mergeCustomProviderAdditive(
     }
 
     mergedProvider.models = mergedModels;
+  }
+
+  const hasModelsLen = Array.isArray(mergedProvider.models) && (mergedProvider.models as unknown[]).length > 0;
+  const hasBaseUrl = typeof mergedProvider.baseUrl === 'string' && mergedProvider.baseUrl.trim().length > 0;
+  const hasHeaders = mergedProvider.headers !== undefined && mergedProvider.headers !== null;
+  const hasCompat = mergedProvider.compat !== undefined && mergedProvider.compat !== null;
+  const hasApiKey = typeof mergedProvider.apiKey === 'string' && mergedProvider.apiKey.trim().length > 0;
+  const hasAuthHeader = mergedProvider.authHeader !== undefined && mergedProvider.authHeader !== null;
+
+  if (!hasCompat && (!hasBaseUrl || !hasModelsLen) && !hasHeaders && !hasApiKey && !hasAuthHeader) {
+    mergedProvider.compat = {};
   }
 
   existingProviders[id] = mergedProvider;
@@ -588,6 +633,250 @@ export function filterExcludedModels(
     if (!policy) return true;
     return isModelAllowed(m.id, policy);
   });
+}
+
+/**
+ * Strip thinking level suffix from an enabledModels pattern (e.g. 'anthropic/*:high' -> 'anthropic/*').
+ */
+export function stripThinkingLevelFromPattern(rawPattern: string): string {
+  const pattern = rawPattern.trim();
+  const colonIdx = pattern.lastIndexOf(':');
+  if (colonIdx === -1) return pattern;
+  const suffix = pattern.substring(colonIdx + 1).toLowerCase();
+  const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  if (knownLevels.has(suffix)) {
+    return pattern.substring(0, colonIdx).trim();
+  }
+  return pattern;
+}
+
+/**
+ * Helper to check if a model ID looks like an alias (no date suffix), matching Pi resolver.
+ */
+export function isAlias(id: string): boolean {
+  if (id.endsWith('-latest')) return true;
+  const datePattern = /-\d{8}$/;
+  return !datePattern.test(id);
+}
+
+/**
+ * Find an exact model reference match according to Pi resolver contract.
+ * Supports bare model id or canonical provider/modelId reference.
+ * When matching by bare id, ambiguous matches across providers are rejected.
+ */
+export function findExactModelReferenceMatch(
+  modelReference: string,
+  availableModels: readonly ModelInfo[]
+): ModelInfo | undefined {
+  const trimmedReference = modelReference.trim();
+  if (!trimmedReference) {
+    return undefined;
+  }
+  const normalizedReference = trimmedReference.toLowerCase();
+  const canonicalMatches = availableModels.filter(
+    (model) => model.id && `${model.provider || ''}/${model.id}`.toLowerCase() === normalizedReference
+  );
+  if (canonicalMatches.length === 1) {
+    return canonicalMatches[0];
+  }
+  if (canonicalMatches.length > 1) {
+    return undefined;
+  }
+  const slashIndex = trimmedReference.indexOf('/');
+  if (slashIndex !== -1) {
+    const provider = trimmedReference.substring(0, slashIndex).trim();
+    const modelId = trimmedReference.substring(slashIndex + 1).trim();
+    if (provider && modelId) {
+      const providerMatches = availableModels.filter(
+        (model) =>
+          model.id &&
+          (model.provider || '').toLowerCase() === provider.toLowerCase() &&
+          model.id.toLowerCase() === modelId.toLowerCase()
+      );
+      if (providerMatches.length === 1) {
+        return providerMatches[0];
+      }
+      if (providerMatches.length > 1) {
+        return undefined;
+      }
+    }
+  }
+  const idMatches = availableModels.filter(
+    (model) => model.id && model.id.toLowerCase() === normalizedReference
+  );
+  return idMatches.length === 1 ? idMatches[0] : undefined;
+}
+
+/**
+ * Try to match a pattern to a model from available models according to Pi resolver contract.
+ * Non-glob fuzzy matching selects a single preferred model (alias preferred over dated versions,
+ * sorting highest if multiple aliases).
+ */
+export function tryMatchModel(
+  modelPattern: string,
+  availableModels: readonly ModelInfo[]
+): ModelInfo | undefined {
+  const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
+  if (exactMatch) {
+    return exactMatch;
+  }
+  const matches = availableModels.filter(
+    (m) =>
+      Boolean(m.id && m.id.toLowerCase().includes(modelPattern.toLowerCase())) ||
+      Boolean(m.name?.toLowerCase().includes(modelPattern.toLowerCase()))
+  );
+  if (matches.length === 0) {
+    return undefined;
+  }
+  const aliases = matches.filter((m) => Boolean(m.id && isAlias(m.id)));
+  const datedVersions = matches.filter((m) => Boolean(m.id && !isAlias(m.id)));
+  if (aliases.length > 0) {
+    aliases.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+    return aliases[0];
+  } else {
+    datedVersions.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
+    return datedVersions[0];
+  }
+}
+
+/**
+ * Parse a pattern to extract model according to Pi resolver contract.
+ */
+export function parseModelPattern(
+  pattern: string,
+  availableModels: readonly ModelInfo[]
+): { model?: ModelInfo; thinkingLevel?: string } {
+  const exactMatch = tryMatchModel(pattern, availableModels);
+  if (exactMatch) {
+    return { model: exactMatch };
+  }
+  const lastColonIndex = pattern.lastIndexOf(':');
+  if (lastColonIndex === -1) {
+    return {};
+  }
+  const prefix = pattern.substring(0, lastColonIndex);
+  const suffix = pattern.substring(lastColonIndex + 1);
+  const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+  if (knownLevels.has(suffix.toLowerCase())) {
+    const res = parseModelPattern(prefix, availableModels);
+    if (res.model) {
+      return { model: res.model, thinkingLevel: suffix };
+    }
+  }
+  return {};
+}
+
+/**
+ * Resolves model scope from patterns against available models according to Pi contract.
+ * Uses minimatch for glob patterns (*, ?, [...]) and exact/fuzzy single model selection for non-globs.
+ */
+export function resolveModelScopeFromModels(
+  patterns: readonly string[],
+  models: readonly ModelInfo[]
+): { model: ModelInfo; thinkingLevel?: string }[] {
+  const availableModels = [...models];
+  const scopedModels: { model: ModelInfo; thinkingLevel?: string }[] = [];
+
+  const modelsAreEqual = (a: ModelInfo, b: ModelInfo) =>
+    (a.provider || '').toLowerCase() === (b.provider || '').toLowerCase() &&
+    (a.id || '').toLowerCase() === (b.id || '').toLowerCase();
+
+  for (const rawPattern of patterns) {
+    const pattern = rawPattern.trim();
+    if (!pattern) continue;
+
+    if (pattern.includes('*') || pattern.includes('?') || pattern.includes('[')) {
+      const colonIdx = pattern.lastIndexOf(':');
+      let globPattern = pattern;
+      let thinkingLevel: string | undefined;
+      if (colonIdx !== -1) {
+        const suffix = pattern.substring(colonIdx + 1);
+        const knownLevels = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+        if (knownLevels.has(suffix.toLowerCase())) {
+          thinkingLevel = suffix;
+          globPattern = pattern.substring(0, colonIdx);
+        }
+      }
+
+      const exactMatch = findExactModelReferenceMatch(globPattern, availableModels);
+      if (exactMatch) {
+        if (!scopedModels.some((sm) => modelsAreEqual(sm.model, exactMatch))) {
+          scopedModels.push({ model: exactMatch, thinkingLevel });
+        }
+        continue;
+      }
+
+      const matchingModels = availableModels.filter((m) => {
+        if (!m.id) return false;
+        const fullId = `${m.provider || ''}/${m.id}`;
+        return (
+          minimatch(fullId, globPattern, { nocase: true }) ||
+          minimatch(m.id, globPattern, { nocase: true })
+        );
+      });
+
+      for (const model of matchingModels) {
+        if (!scopedModels.some((sm) => modelsAreEqual(sm.model, model))) {
+          scopedModels.push({ model, thinkingLevel });
+        }
+      }
+      continue;
+    }
+
+    const { model, thinkingLevel } = parseModelPattern(pattern, availableModels);
+    if (!model) continue;
+
+    if (!scopedModels.some((sm) => modelsAreEqual(sm.model, model))) {
+      scopedModels.push({ model, thinkingLevel });
+    }
+  }
+
+  return scopedModels;
+}
+
+/**
+ * Checks whether a given model is allowed by Pi's enabledModels restrictions.
+ * Missing or empty enabledModels preserves unrestricted behavior.
+ */
+export function isModelAllowedByEnabledModels(
+  model: ModelInfo,
+  enabledModels?: string[],
+  allModels?: readonly ModelInfo[]
+): boolean {
+  if (!model || !model.id) return false;
+  if (!enabledModels || enabledModels.length === 0) return true;
+
+  const candidatePool = allModels && allModels.length > 0 ? allModels : [model];
+  const scoped = resolveModelScopeFromModels(enabledModels, candidatePool);
+
+  return scoped.some(
+    (sm) =>
+      (sm.model.provider || '').toLowerCase() === (model.provider || '').toLowerCase() &&
+      (sm.model.id || '').toLowerCase() === (model.id || '').toLowerCase()
+  );
+}
+
+/**
+ * Filters models according to Pi's enabledModels restriction list.
+ * Missing or empty enabledModels returns models unchanged.
+ */
+export function filterByEnabledModels(
+  models: ModelInfo[],
+  enabledModels?: string[]
+): ModelInfo[] {
+  if (!models || models.length === 0) return [];
+  if (!enabledModels || enabledModels.length === 0) return models;
+
+  const scoped = resolveModelScopeFromModels(enabledModels, models);
+  const scopedSet = new Set(
+    scoped
+      .filter((sm) => Boolean(sm.model.id))
+      .map((sm) => `${(sm.model.provider || '').toLowerCase()}/${sm.model.id!.toLowerCase()}`)
+  );
+
+  return models.filter((m) =>
+    Boolean(m.id && scopedSet.has(`${(m.provider || '').toLowerCase()}/${m.id.toLowerCase()}`))
+  );
 }
 
 export interface FetchModelsOptions {

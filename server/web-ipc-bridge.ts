@@ -61,6 +61,7 @@ export {
   getMcpServersImpl,
   getPiResourcesImpl,
   getAvailableModelsImpl,
+  handleGetEnabledModels,
   handleToggleMcpServer,
   handleTogglePiResource,
 } from './bridge/models';
@@ -122,6 +123,7 @@ import {
 
 import {
   handleGetAvailableModels,
+  handleGetEnabledModels,
   handleSetModel,
   handleGetAvailableThinkingLevels,
   handleSetThinkingLevel,
@@ -200,6 +202,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetPiChains();
     case 'get_available_models':
       return handleGetAvailableModels();
+    case 'get_enabled_models':
+      return handleGetEnabledModels();
     case 'set_model':
       return await handleSetModel(args);
     case 'get_available_thinking_levels':

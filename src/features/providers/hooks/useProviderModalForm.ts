@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomModelDefinition, CustomProviderConfig } from '@core/types/providers';
-import type { ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
+import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
+import { getAvailableModelsPi } from '@infra/bridge';
 import {
   clampThinkingLevelToSupported,
   fetchProviderModels,
@@ -119,19 +120,87 @@ export function useProviderModalForm({
     setAutoDiscoveredEndpoint(null); resetModalState(); setIsModalOpen(true);
   };
 
+  const openEditBuiltinModal = (
+    provider: { id: string; name?: string },
+    catalogModels: (ModelInfo | CustomModelDefinition)[] = [],
+    savedConfig?: CustomProviderConfig
+  ) => {
+    const providerId = provider.id;
+    const catalogDefs: CustomModelDefinition[] = catalogModels
+      .filter(
+        (m) =>
+          typeof m.id === 'string' &&
+          m.id.trim() !== '' &&
+          (!('provider' in m) || !m.provider || m.provider.toLowerCase() === providerId.toLowerCase())
+      )
+      .map((m) => ({
+        id: (m.id || '').trim(),
+        name: m.name || m.id,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        reasoning: m.reasoning,
+        reasoningEfforts: (m as any).reasoningEfforts,
+        input: m.input || (m as any).input_modalities || ['text'],
+        thinkingLevel: m.thinkingLevel,
+        defaultThinkingLevel: m.defaultThinkingLevel,
+      }));
+
+    const savedModels = savedConfig?.models || [];
+    const existingMap = new Map(savedModels.map((m) => [m.id, m]));
+    const mergedModels: CustomModelDefinition[] = [];
+
+    for (const cat of catalogDefs) {
+      const saved = existingMap.get(cat.id);
+      if (saved) {
+        mergedModels.push({
+          ...cat,
+          ...saved,
+        });
+        existingMap.delete(cat.id);
+      } else {
+        mergedModels.push(cat);
+      }
+    }
+    for (const extra of existingMap.values()) {
+      mergedModels.push(extra);
+    }
+
+    setFormData({
+      id: providerId,
+      name: provider.name || providerId,
+      baseUrl: '',
+      api: '',
+      apiKey: '',
+      models: mergedModels,
+      excludedModels: savedConfig?.excludedModels ? [...savedConfig.excludedModels] : [],
+      includedModels: savedConfig?.includedModels ? [...savedConfig.includedModels] : [],
+      isBuiltin: true,
+    });
+    setIsEditing(true);
+    setShowApiKey(false);
+    setAutoDiscoveredEndpoint(null);
+    resetModalState();
+    setIsModalOpen(true);
+  };
+
   const openEditModal = (provider: CustomProviderConfig, initialEditModelId?: string) => {
+    if (provider.isBuiltin) {
+      openEditBuiltinModal(provider, provider.models || [], provider);
+      return;
+    }
     setFormData({
       id: provider.id,
       name: provider.name || '',
-      baseUrl: provider.baseUrl,
-      api: provider.api,
+      baseUrl: provider.baseUrl || '',
+      api: provider.api || '',
       apiKey: provider.apiKey || '',
       models: [...provider.models],
       excludedModels: provider.excludedModels ? [...provider.excludedModels] : [],
       includedModels: provider.includedModels ? [...provider.includedModels] : [],
+      isBuiltin: false,
     });
     setIsEditing(true); setShowApiKey(false);
-    setAutoDiscoveredEndpoint(`${provider.baseUrl}::${provider.api}::${provider.apiKey || ''}`);
+    setAutoDiscoveredEndpoint(`${provider.baseUrl || ''}::${provider.api || ''}::${provider.apiKey || ''}`);
     resetModalState();
 
     if (initialEditModelId) {
@@ -147,7 +216,7 @@ export function useProviderModalForm({
   };
 
   useEffect(() => {
-    if (!isModalOpen || isEditing) return;
+    if (!isModalOpen || isEditing || formData.isBuiltin) return;
     const trimmedUrl = formData.baseUrl.trim();
     if (!trimmedUrl.startsWith('http://') && !trimmedUrl.startsWith('https://')) return;
     try {
@@ -190,6 +259,55 @@ export function useProviderModalForm({
   }, [isModalOpen, isEditing, formData.baseUrl, formData.api, formData.apiKey, formData.excludedModels, formData.includedModels, autoDiscoveredEndpoint, t]);
 
   const handleFetchModelsInModal = async () => {
+    if (formData.isBuiltin) {
+      setIsFetchingModelsInModal(true);
+      setModelError(null);
+      setAutoDiscoveryNotice(null);
+
+      try {
+        const allModels = await getAvailableModelsPi();
+        const providerCatalog = allModels.filter(
+          (m) => (m.provider || '').toLowerCase() === formData.id.toLowerCase()
+        );
+        const catalogDefs: CustomModelDefinition[] = providerCatalog
+          .filter((m) => typeof m.id === 'string' && m.id.trim() !== '')
+          .map((m) => ({
+            id: (m.id || '').trim(),
+            name: m.name || m.id,
+            contextWindow: m.contextWindow,
+            maxTokens: m.maxTokens,
+            reasoning: m.reasoning,
+            reasoningEfforts: m.reasoningEfforts,
+            input: m.input || m.input_modalities || ['text'],
+          }));
+
+        const excludedList = formData.excludedModels || [];
+        const includedList = formData.includedModels || [];
+        const allowedFetched = catalogDefs.filter((m) =>
+          isModelAllowed(m.id, {
+            includedModels: includedList,
+            excludedModels: excludedList,
+          })
+        );
+
+        setFormData((prev) => ({
+          ...prev,
+          models:
+            prev.models.length === 0
+              ? allowedFetched
+              : mergeDiscoveredModels(prev.models, allowedFetched, excludedList, includedList),
+        }));
+
+        setAutoDiscoveryNotice(t('providers.models_discovered', { count: allowedFetched.length }));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setModelError(t('providers.fetch_models_error', { error: msg }));
+      } finally {
+        setIsFetchingModelsInModal(false);
+      }
+      return;
+    }
+
     const trimmedUrl = formData.baseUrl.trim();
     const urlValidation = validateBaseUrl(trimmedUrl);
     if (!urlValidation.valid) {
@@ -477,7 +595,7 @@ export function useProviderModalForm({
     handleSaveEditedModel, handleAddModelToDraft, handleRemoveModelFromDraft,
     handleExcludeModel, handleRemoveExcludedModel, handleAddExcludedPattern,
     handleRemoveIncludedModel, handleAddIncludedPattern,
-    handleFetchModelsInModal, handleSaveProvider, openAddModal, openEditModal, closeModal,
-    handleOpenAddModal: openAddModal, handleOpenEditModal: openEditModal, handleCloseModal: closeModal,
+    handleFetchModelsInModal, handleSaveProvider, openAddModal, openEditModal, openEditBuiltinModal, closeModal,
+    handleOpenAddModal: openAddModal, handleOpenEditModal: openEditModal, handleOpenEditBuiltinModal: openEditBuiltinModal, handleCloseModal: closeModal,
   };
 }

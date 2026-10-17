@@ -28,9 +28,11 @@ export const ProviderModal: React.FC<ProviderModalProps> = ({
       <div className="modal-container provider-modal">
         <header className="modal-header">
           <h2 id="modal-provider-title" className="modal-title">
-            {modalForm.isEditing
-              ? t('providers.modal_edit_title', { id: modalForm.formData.id })
-              : t('providers.modal_add_title')}
+            {modalForm.formData.isBuiltin
+              ? t('providers.oauth.edit_models_title', { id: modalForm.formData.id })
+              : modalForm.isEditing
+                ? t('providers.modal_edit_title', { id: modalForm.formData.id })
+                : t('providers.modal_add_title')}
           </h2>
           <button
             type="button"
@@ -51,14 +53,40 @@ export const ProviderModal: React.FC<ProviderModalProps> = ({
             )}
 
             {/* Section 1: Provider Config */}
-            <ProviderConfigFields
-              formData={modalForm.formData}
-              setFormData={modalForm.setFormData}
-              isEditing={modalForm.isEditing}
-              showApiKey={modalForm.showApiKey}
-              setShowApiKey={modalForm.setShowApiKey}
-              t={t}
-            />
+            {modalForm.formData.isBuiltin ? (
+              <div
+                className="builtin-provider-info-card form-fieldset"
+                role="region"
+                aria-label="Built-in Provider Information"
+                style={{
+                  marginBottom: '16px',
+                  padding: '12px 14px',
+                  borderRadius: '6px',
+                  background: 'var(--bg-subtle, rgba(255,255,255,0.03))',
+                  border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <strong style={{ fontSize: '15px' }}>
+                    {modalForm.formData.name || modalForm.formData.id}
+                  </strong>
+                  <span className="badge badge-subtle">{modalForm.formData.id}</span>
+                  <span className="badge badge-primary">{t('providers.oauth.status_connected')}</span>
+                </div>
+                <p style={{ margin: 0, fontSize: '12px', opacity: 0.85 }}>
+                  {t('providers.oauth.builtin_info')}
+                </p>
+              </div>
+            ) : (
+              <ProviderConfigFields
+                formData={modalForm.formData}
+                setFormData={modalForm.setFormData}
+                isEditing={modalForm.isEditing}
+                showApiKey={modalForm.showApiKey}
+                setShowApiKey={modalForm.setShowApiKey}
+                t={t}
+              />
+            )}
 
             {/* Section 2: Models Builder */}
             <ProviderModelDraftList

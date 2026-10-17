@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getAvailableModelsPi,
   getAvailableThinkingLevelsPi,
   getCustomProvidersPi,
+  getEnabledModelsPi,
   getModelThinkingLevelsPi,
   getSessionStatsPi,
   setModelPi,
@@ -10,6 +11,7 @@ import {
 } from '@infra/bridge';
 import {
   enrichAvailableModelsWithConfig,
+  filterByEnabledModels,
   filterExcludedModels,
   resolveModelDefaultThinkingLevel,
   resolveModelSelectionOutcome,
@@ -49,6 +51,7 @@ export function useModels({
   dispatch,
 }: UseModelsOptions): UseModelsResult {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
+  const enabledModelsRef = useRef<string[] | undefined>(undefined);
 
   const handleSelectModel = useCallback(
     async (provider: string, modelId: string) => {
@@ -128,13 +131,23 @@ export function useModels({
   const handleRefreshModels = useCallback(async () => {
     if (connectionStatus !== 'connected') return;
     try {
+      let currentEnabled = enabledModelsRef.current;
+      try {
+        const fetched = await getEnabledModelsPi();
+        currentEnabled = fetched;
+        enabledModelsRef.current = fetched;
+      } catch (err) {
+        console.warn('Failed to read enabledModels from settings.json:', err);
+      }
+
       const [models, customProvidersConfig] = await Promise.all([
         getAvailableModelsPi(),
         getCustomProvidersPi().catch(() => ({ providers: {} })),
       ]);
       if (models && models.length > 0) {
         const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
-        const activeModels = filterExcludedModels(enriched, customProvidersConfig?.providers);
+        const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
+        const activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
         dispatch({ type: 'SET_AVAILABLE_MODELS', payload: { models: activeModels } });
       }
     } catch (err) {
@@ -150,6 +163,17 @@ export function useModels({
 
     const loadSessionParams = async () => {
       try {
+        let currentEnabled = enabledModelsRef.current;
+        try {
+          const fetched = await getEnabledModelsPi();
+          currentEnabled = fetched;
+          if (isSubscribed) {
+            enabledModelsRef.current = fetched;
+          }
+        } catch (err) {
+          console.warn('Failed to read enabledModels from settings.json:', err);
+        }
+
         const [models, levels, stats, customProvidersConfig, thinkingLevels] = await Promise.all([
           getAvailableModelsPi(),
           getAvailableThinkingLevelsPi(),
@@ -164,7 +188,8 @@ export function useModels({
         let activeModels: ModelInfo[] = [];
         if (models && models.length > 0) {
           const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
-          activeModels = filterExcludedModels(enriched, customProvidersConfig?.providers);
+          const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
+          activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
           dispatch({ type: 'SET_AVAILABLE_MODELS', payload: { models: activeModels } });
         }
         if (levels && levels.length > 0) {
