@@ -7,18 +7,106 @@ import path from 'node:path';
 
 const HELPER_PATH = path.resolve('src-tauri/pi-oauth-helper.mjs');
 
-const FAKE_SDK_SOURCE = `export class ModelRuntime {
-  static async create() {
-    return new ModelRuntime();
+const FAKE_SDK_SOURCE = `
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class SettingsManager {
+  constructor(agentDir) {
+    this.agentDir = agentDir;
+    this.settingsPath = path.join(agentDir, 'settings.json');
+    this.globalSettings = {};
+    if (fs.existsSync(this.settingsPath)) {
+      try {
+        this.globalSettings = JSON.parse(fs.readFileSync(this.settingsPath, 'utf8'));
+      } catch (_) {}
+    }
+    this.writePromise = null;
   }
+
+  static create(cwd, agentDir) {
+    return new SettingsManager(agentDir);
+  }
+
+  getOrCreateDeviceId() {
+    if (!this.globalSettings.deviceId) {
+      this.globalSettings.deviceId = crypto.randomUUID();
+      this.writePromise = new Promise((resolve) => {
+        setImmediate(() => {
+          fs.mkdirSync(this.agentDir, { recursive: true });
+          fs.writeFileSync(this.settingsPath, JSON.stringify(this.globalSettings, null, 2), 'utf8');
+          resolve();
+        });
+      });
+    }
+    return this.globalSettings.deviceId;
+  }
+
+  async flush() {
+    if (this.writePromise) {
+      await this.writePromise;
+    }
+  }
+}
+
+export class ModelRuntime {
+  constructor(authPath) {
+    this.authPath = authPath;
+  }
+
+  static async create({ authPath } = {}) {
+    return new ModelRuntime(authPath);
+  }
+
   getProviders() {
-    return [{ id: 'fake', name: 'Fake', auth: { oauth: { name: 'Fake OAuth' } } }];
+    return [
+      { id: 'fake', name: 'Fake', auth: { oauth: { name: 'Fake OAuth' } } },
+    ];
   }
+
+  getProvider(id) {
+    if (id === 'openai') {
+      return { id: 'openai', name: 'OpenAI (ChatGPT subscription)', auth: { oauth: { name: 'OpenAI' } } };
+    }
+    if (id === 'openai-error') {
+      return { id: 'openai-error', name: 'OpenAI Failing', auth: { oauth: { name: 'OpenAI Failing' } } };
+    }
+    if (id === 'legacy-provider') {
+      return { id: 'legacy-provider', name: 'Legacy Provider', auth: { oauth: { name: 'Legacy OAuth' } } };
+    }
+    return this.getProviders().find((p) => p.id === id);
+  }
+
   async listCredentials() {
     return [];
   }
+
   async checkAuth() {
     return undefined;
+  }
+
+  async login(providerId, type, interaction, options) {
+    if (providerId === 'openai') {
+      const deviceId = options?.getDeviceId?.();
+      if (!deviceId || !UUID_PATTERN.test(deviceId)) {
+        throw new Error('Sign in with ChatGPT requires a device ID (UUID) for this installation');
+      }
+      return { type: 'oauth', access: 'token' };
+    }
+    if (providerId === 'openai-error') {
+      const deviceId = options?.getDeviceId?.();
+      if (!deviceId || !UUID_PATTERN.test(deviceId)) {
+        throw new Error('Sign in with ChatGPT requires a device ID (UUID) for this installation');
+      }
+      throw new Error('Simulated authentication error');
+    }
+    if (providerId === 'legacy-provider' || providerId === 'fake') {
+      return { type: 'oauth', access: 'token' };
+    }
+    throw new Error('Unknown provider: ' + providerId);
   }
 }
 `;
@@ -45,6 +133,26 @@ function runHelperList(entrypoint: string, home: string): { status: string; prov
     stdout = execFileSync(process.execPath, [HELPER_PATH, 'list', '--entrypoint', entrypoint, '--home', home], {
       encoding: 'utf8',
     });
+  } catch (err) {
+    stdout = String((err as { stdout?: string }).stdout ?? '');
+  }
+  return JSON.parse(stdout.trim().split('\n').pop() ?? '{}');
+}
+
+function runHelperLogin(
+  entrypoint: string,
+  home: string,
+  provider: string,
+): { type: string; providerId?: string; error?: string } {
+  let stdout: string;
+  try {
+    stdout = execFileSync(
+      process.execPath,
+      [HELPER_PATH, 'login', '--entrypoint', entrypoint, '--home', home, '--provider', provider],
+      {
+        encoding: 'utf8',
+      },
+    );
   } catch (err) {
     stdout = String((err as { stdout?: string }).stdout ?? '');
   }
@@ -101,5 +209,109 @@ test('OAuth helper reports an error when no Pi SDK is reachable from the entrypo
 
     assert.equal(result.status, 'error');
     assert.match(result.error ?? '', /Unable to resolve Pi SDK/);
+  });
+});
+
+test('S2.1: legacy OAuth login succeeds without requiring or generating device identity', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const home = path.join(dir, 'home');
+    const result = runHelperLogin(entrypoint, home, 'legacy-provider');
+
+    assert.equal(result.type, 'success', result.error ?? '');
+    assert.equal(result.providerId, 'legacy-provider');
+    // Lazy callback: settings.json was not created and device identity was not generated
+    assert.equal(fs.existsSync(path.join(home, 'settings.json')), false);
+  });
+});
+
+test('S1.1: OpenAI login receives valid installation UUID from SDK SettingsManager callback', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const home = path.join(dir, 'home');
+    const result = runHelperLogin(entrypoint, home, 'openai');
+
+    assert.equal(result.type, 'success', result.error ?? '');
+    assert.equal(result.providerId, 'openai');
+
+    const settingsPath = path.join(home, 'settings.json');
+    assert.equal(fs.existsSync(settingsPath), true, 'settings.json should be persisted');
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.match(
+      settings.deviceId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      'deviceId should be a valid UUID',
+    );
+  });
+});
+
+test('S1.2: subsequent logins against the same agent home reuse device UUID and preserve existing settings', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const home = path.join(dir, 'home');
+    fs.mkdirSync(home, { recursive: true });
+    const settingsPath = path.join(home, 'settings.json');
+    writeJson(settingsPath, {
+      defaultModel: 'test-model',
+      unrelatedSetting: 'preserved-value',
+    });
+
+    const firstRun = runHelperLogin(entrypoint, home, 'openai');
+    assert.equal(firstRun.type, 'success', firstRun.error ?? '');
+
+    const firstSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    const initialUuid = firstSettings.deviceId;
+    assert.match(
+      initialUuid,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    assert.equal(firstSettings.defaultModel, 'test-model');
+    assert.equal(firstSettings.unrelatedSetting, 'preserved-value');
+
+    const secondRun = runHelperLogin(entrypoint, home, 'openai');
+    assert.equal(secondRun.type, 'success', secondRun.error ?? '');
+
+    const secondSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.equal(secondSettings.deviceId, initialUuid, 'UUID must remain stable across helper subprocesses');
+    assert.equal(secondSettings.defaultModel, 'test-model');
+    assert.equal(secondSettings.unrelatedSetting, 'preserved-value');
+  });
+});
+
+test('S1.2: device identity is flushed and persists even when login fails after ID generation', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const home = path.join(dir, 'home');
+    const result = runHelperLogin(entrypoint, home, 'openai-error');
+    assert.equal(result.type, 'error');
+    assert.match(result.error ?? '', /Simulated authentication error/);
+
+    const settingsPath = path.join(home, 'settings.json');
+    assert.equal(fs.existsSync(settingsPath), true, 'settings.json should be flushed on error');
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    assert.match(
+      settings.deviceId,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 });

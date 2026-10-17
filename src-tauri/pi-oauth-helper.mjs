@@ -255,14 +255,14 @@ async function main() {
   process.env.PI_CODING_AGENT_DIR = effectiveHome;
   const authPath = path.join(effectiveHome, 'auth.json');
 
-  let ModelRuntime;
+  let sdk;
   try {
-    const sdk = await resolvePiSdk(entrypoint);
-    ModelRuntime = sdk.ModelRuntime;
+    sdk = await resolvePiSdk(entrypoint);
   } catch (err) {
     writeJson({ status: 'error', error: sanitizeError(err) });
     process.exit(1);
   }
+  const { ModelRuntime, SettingsManager } = sdk;
 
   if (action === 'list') {
     try {
@@ -429,13 +429,36 @@ async function main() {
       },
     };
 
+    let settingsManager = null;
+    const loginOptions = {
+      getDeviceId: () => {
+        if (!SettingsManager) {
+          return undefined;
+        }
+        if (!settingsManager) {
+          settingsManager = SettingsManager.create(process.cwd(), effectiveHome);
+        }
+        return settingsManager.getOrCreateDeviceId();
+      },
+    };
+
     try {
-      await runtime.login(provider, 'oauth', interaction);
+      await runtime.login(provider, 'oauth', interaction, loginOptions);
       rl.close();
+      if (settingsManager) {
+        try {
+          await settingsManager.flush();
+        } catch (_) {}
+      }
       writeJson({ type: 'success', providerId: provider });
       process.exit(0);
     } catch (err) {
       rl.close();
+      if (settingsManager) {
+        try {
+          await settingsManager.flush();
+        } catch (_) {}
+      }
       const isAborted =
         abortController.signal.aborted ||
         (err &&
