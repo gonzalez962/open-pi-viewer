@@ -4,7 +4,20 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+
+async function safeRmDir(dir: string, retries = 15, delayMs = 100): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+      return;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+}
 
 class MockRequest extends EventEmitter {
   headers: Record<string, string | string[] | undefined>;
@@ -125,7 +138,7 @@ function createMockApp() {
   return { app, dispatch };
 }
 
-function sendIpcRequest(dispatch: (req: MockRequest, res: MockResponse) => Promise<void>, options: {
+function sendIpcRequest(dispatch: (req: MockRequest, res: MockResponse) => Promise<unknown> | unknown, options: {
   cmd: string;
   args?: any;
   headers?: Record<string, string | string[] | undefined>;
@@ -159,19 +172,19 @@ function sendIpcRequest(dispatch: (req: MockRequest, res: MockResponse) => Promi
 test('S4.1: Given the web backend, when a permitted client opens/writes/resizes/closes a terminal, then each operation reaches the real backend session and an untrusted remote or cross-origin request is rejected without spawning or changing sessions', async (t) => {
   const { installWebApi } = await import('@server/web-api');
   const { getTerminalManager, resetTerminalManagerForTest } = await import('@server/terminal/terminal-manager');
-  resetTerminalManagerForTest();
+  await resetTerminalManagerForTest();
   const manager = getTerminalManager();
-  t.after(() => {
-    manager.dispose();
-    resetTerminalManagerForTest();
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-s41-'));
+
+  t.after(async () => {
+    await manager.dispose();
+    await resetTerminalManagerForTest();
+    await safeRmDir(fixtureDir);
   });
 
   const { app, dispatch } = createMockApp();
   const server = new EventEmitter();
   installWebApi(app, server, { enabled: false });
-
-  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-s41-'));
-  t.after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
 
   // 1. Permitted client (verified loopback peer and host, same-origin)
   const openRes = await sendIpcRequest(dispatch, {
@@ -200,6 +213,16 @@ test('S4.1: Given the web backend, when a permitted client opens/writes/resizes/
     remoteAddress: '127.0.0.1',
   });
   assert.strictEqual(resizeRes.statusCode, 200);
+
+  // Poll reaches session
+  const pollRes = await sendIpcRequest(dispatch, {
+    cmd: 'terminal_poll',
+    args: { id: sessionId, cursor: 0, timeoutMs: 1000 },
+    remoteAddress: '127.0.0.1',
+  });
+  assert.strictEqual(pollRes.statusCode, 200);
+  const pollBody = JSON.parse(pollRes.body);
+  assert.strictEqual(pollBody.result?.id, sessionId);
 
   // 2. Untrusted remote peer (non-loopback IP with auth disabled)
   const remoteRes = await sendIpcRequest(dispatch, {
@@ -246,7 +269,163 @@ test('S4.1: Given the web backend, when a permitted client opens/writes/resizes/
   assert.strictEqual(manager.getSession(sessionId), null, 'Session must be closed');
 });
 
-test('PRESERVE: existing /api/ipc commands continue to work without regression', async (t) => {
+test('S4.1: Owner isolation prevents cross-tenant access and terminal data does not leak to shared SSE', async (t) => {
+  const { createTerminalManager } = await import('@server/terminal/terminal-manager');
+  const { handleTerminalIpcCommand } = await import('@server/terminal/ipc-handler');
+  const manager = createTerminalManager();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-owner-'));
+  t.after(async () => {
+    await manager.dispose();
+    await safeRmDir(dir);
+  });
+
+  // Owner A opens a session
+  const sessionA = await handleTerminalIpcCommand(
+    'terminal_open',
+    { cwd: dir },
+    { owner: 'tenant_alice', manager }
+  );
+  assert.ok(sessionA.id);
+
+  // Owner B cannot write to Alice's session
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_write',
+        { id: sessionA.id, data: 'echo secret\r\n' },
+        { owner: 'tenant_bob', manager }
+      );
+    },
+    /access denied/i
+  );
+
+  // Owner B cannot resize Alice's session
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_resize',
+        { id: sessionA.id, cols: 100, rows: 40 },
+        { owner: 'tenant_bob', manager }
+      );
+    },
+    /access denied/i
+  );
+
+  // Owner B cannot poll Alice's session
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_poll',
+        { id: sessionA.id, cursor: 0 },
+        { owner: 'tenant_bob', manager }
+      );
+    },
+    /access denied/i
+  );
+
+  // Owner B cannot close Alice's session
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_close',
+        { id: sessionA.id },
+        { owner: 'tenant_bob', manager }
+      );
+    },
+    /access denied/i
+  );
+
+  // Owner B cannot see Alice's session in get or list
+  const getB = await handleTerminalIpcCommand(
+    'terminal_get',
+    { id: sessionA.id },
+    { owner: 'tenant_bob', manager }
+  );
+  assert.strictEqual(getB, null);
+
+  const listB = await handleTerminalIpcCommand(
+    'terminal_list',
+    {},
+    { owner: 'tenant_bob', manager }
+  );
+  assert.strictEqual(listB.length, 0);
+
+  // Missing identity (unauthenticated/undefined owner) MUST NOT access Alice's owned session
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_write',
+        { id: sessionA.id, data: 'echo unauth\r\n' },
+        { owner: undefined, manager }
+      );
+    },
+    /access denied/i
+  );
+
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_poll',
+        { id: sessionA.id, cursor: 0 },
+        { owner: undefined, manager }
+      );
+    },
+    /access denied/i
+  );
+
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_close',
+        { id: sessionA.id },
+        { owner: undefined, manager }
+      );
+    },
+    /access denied/i
+  );
+
+  await assert.rejects(
+    async () => {
+      await handleTerminalIpcCommand(
+        'terminal_open',
+        { cwd: dir },
+        { owner: undefined, manager }
+      );
+    },
+    /access denied/i
+  );
+
+  const getUnauth = await handleTerminalIpcCommand(
+    'terminal_get',
+    { id: sessionA.id },
+    { owner: undefined, manager }
+  );
+  assert.strictEqual(getUnauth, null);
+
+  const listUnauth = await handleTerminalIpcCommand(
+    'terminal_list',
+    {},
+    { owner: undefined, manager }
+  );
+  assert.strictEqual(listUnauth.some((s: any) => s.id === sessionA.id), false);
+
+  // Owner A can successfully poll their session
+  const pollA = await handleTerminalIpcCommand(
+    'terminal_poll',
+    { id: sessionA.id, cursor: 0, timeoutMs: 100 },
+    { owner: 'tenant_alice', manager }
+  );
+  assert.strictEqual(pollA.id, sessionA.id);
+
+  // Alice closes their session cleanly
+  await handleTerminalIpcCommand(
+    'terminal_close',
+    { id: sessionA.id },
+    { owner: 'tenant_alice', manager }
+  );
+});
+
+test('PRESERVE: existing /api/ipc commands continue to work without regression', async () => {
   const { installWebApi } = await import('@server/web-api');
   const { app, dispatch } = createMockApp();
   const server = new EventEmitter();

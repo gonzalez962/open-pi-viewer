@@ -6,6 +6,7 @@ import { oauthManager } from './bridge/oauth';
 import { createWebAuth, type WebAuthConfig } from './bridge/web-auth';
 import { createWebPush, resolveWebPushConfig, type WebPushConfig } from './bridge/web-push';
 import { addPushNotificationHook } from './bridge/rpc';
+import { isTerminalCommand, handleTerminalIpcCommand, validateTerminalAccess, getTerminalManager } from './terminal';
 
 export type Middleware = (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void) => void | Promise<void>;
 export interface MiddlewareApp {
@@ -54,6 +55,7 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     webPush.dispose();
     webAuth.dispose();
     void oauthManager.dispose();
+    getTerminalManager().dispose();
   });
 
   // Web authentication middleware must be wired BEFORE all API routes
@@ -198,6 +200,46 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     req.on("end", async () => {
       try {
         const { cmd, args } = JSON.parse(body || "{}");
+        if (isTerminalCommand(cmd)) {
+          const terminalAccess = validateTerminalAccess(req, webAuth);
+          if (!terminalAccess.ok) {
+            res.statusCode = terminalAccess.status;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: terminalAccess.error }));
+            return;
+          }
+          const abortController = new AbortController();
+          const onResClose = () => {
+            if (!res.writableEnded) {
+              abortController.abort();
+            }
+          };
+          res.once("close", onResClose);
+          try {
+            const result = await handleTerminalIpcCommand(cmd, args, {
+              owner: terminalAccess.owner,
+              signal: abortController.signal,
+            });
+            res.removeListener("close", onResClose);
+            if (!res.writableEnded) {
+              res.setHeader("Content-Type", "application/json");
+              res.statusCode = 200;
+              res.end(JSON.stringify({ result }));
+            }
+          } catch (err: any) {
+            res.removeListener("close", onResClose);
+            if (!res.writableEnded) {
+              res.setHeader("Content-Type", "application/json");
+              const msg = err?.message || 'Terminal command failed';
+              const isNotFound = /not found/i.test(msg);
+              const isDenied = /access denied/i.test(msg);
+              res.statusCode = isNotFound ? 404 : (isDenied ? 403 : 400);
+              res.end(JSON.stringify({ error: msg }));
+            }
+          }
+          return;
+        }
+
         const access = oauthAccess.requireOAuthOwner(cmd, req);
         if (!access.ok) {
           res.setHeader("Content-Type", "application/json");

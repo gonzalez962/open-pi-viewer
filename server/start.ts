@@ -4,6 +4,7 @@ import { createProductionServer } from './production-server';
 import { resolveWebAuthConfig } from './bridge/web-auth';
 import { sessionPool } from './bridge/rpc';
 import { oauthManager } from './bridge/oauth';
+import { getTerminalManager } from './terminal';
 
 const staticDir = fileURLToPath(new URL('../dist/', import.meta.url));
 const port = Number(process.env.PORT || 5173);
@@ -21,9 +22,11 @@ server.listen(port, host, () => console.log(`Pi Viewer listening on http://${hos
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
     for (const session of sessionPool.values()) session.kill();
-    server.closeAllConnections();
-    server.close(() => {
-      void oauthManager.dispose().finally(() => process.exit(0));
+    void getTerminalManager().dispose().finally(() => {
+      server.closeAllConnections();
+      server.close(() => {
+        void oauthManager.dispose().finally(() => process.exit(0));
+      });
     });
   });
 }
