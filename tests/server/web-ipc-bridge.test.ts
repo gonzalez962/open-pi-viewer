@@ -27,6 +27,7 @@ import {
   parseEngramProjectFromStats,
   parseEngramCloudStatus,
   clearEngramCacheForTest,
+  setProcessRunnerForTest,
 } from '@server/web-ipc-bridge';
 
 test('server/config: getHomeDir returns non-empty user home', () => {
@@ -443,4 +444,69 @@ Local daemon: running on port 7437
   assert.strictEqual(parsed.enrolled, false);
   assert.strictEqual(parsed.daemonRunning, true);
   assert.strictEqual(parsed.daemonPort, 7437);
+});
+
+test('server/bridge: IPC get_github_auth_status dispatches and returns status object', async () => {
+  setProcessRunnerForTest(async (_file, args) => {
+    if (args.includes('--version')) {
+      return { stdout: 'gh version 2.45.0', stderr: '', exitCode: 0 };
+    }
+    if (args.includes('auth')) {
+      return { stdout: 'Logged in as testuser', stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    const res: any = await handleIpcCommand('get_github_auth_status');
+    assert.deepStrictEqual(res, { installed: true, authenticated: true, username: 'testuser' });
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+test('server/bridge: IPC clone_github_repository dispatches with payload or direct args', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-clone-test-'));
+  t.after(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  let capturedArgs: string[] = [];
+  setProcessRunnerForTest(async (_file, args) => {
+    capturedArgs = args;
+    return { stdout: 'Cloned', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    // 1. Using direct args
+    const resDirect: any = await handleIpcCommand('clone_github_repository', {
+      repository: 'octocat/Hello-World',
+      parentPath: tmpDir,
+      token: 'ghp_ephemeral_token',
+    });
+    assert.strictEqual(resDirect.path, path.join(tmpDir, 'Hello-World'));
+
+    // 2. Using payload wrapper
+    const resPayload: any = await handleIpcCommand('clone_github_repository', {
+      payload: {
+        repository: 'octocat/Spoon-Knife',
+        parentPath: tmpDir,
+        token: 'ghp_ephemeral_token_2',
+      },
+    });
+    assert.strictEqual(resPayload.path, path.join(tmpDir, 'Spoon-Knife'));
+    assert.ok(capturedArgs.includes('clone'));
+    assert.strictEqual(capturedArgs[capturedArgs.length - 1], path.join(tmpDir, 'Spoon-Knife'));
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+test('server/bridge: IPC preserves existing get_bridge_state dispatch', async () => {
+  const state: any = await handleIpcCommand('get_bridge_state');
+  assert.ok(state && typeof state === 'object');
+  assert.strictEqual(state.connected, true);
+  assert.strictEqual(typeof state.cwd, 'string');
+  assert.ok(state.cwd.length > 0);
+  assert.ok(path.isAbsolute(state.cwd));
 });

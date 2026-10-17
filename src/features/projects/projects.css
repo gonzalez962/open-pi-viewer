@@ -512,6 +512,12 @@
   color: var(--accent-primary);
 }
 
+.project-footer-row:hover .project-tile-clone {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--border-active);
+  color: var(--accent-primary);
+}
+
 .project-footer-row:hover .project-tile-settings {
   background-color: var(--bg-subtle-hover);
   border-color: var(--border-active);
@@ -535,6 +541,13 @@
   flex-shrink: 0;
 }
 
+.project-tile-clone {
+  background-color: transparent;
+  border: 1px dashed var(--border-muted);
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
 .project-tile-settings {
   background-color: transparent;
   border: 1px solid var(--border-subtle);
@@ -550,6 +563,7 @@
 }
 
 .project-add-label,
+.project-clone-label,
 .project-settings-label {
   margin-left: 8px;
   font-size: 12px;
@@ -564,6 +578,8 @@
 
 .project-dock:hover .project-add-label,
 .project-dock.is-expanded .project-add-label,
+.project-dock:hover .project-clone-label,
+.project-dock.is-expanded .project-clone-label,
 .project-dock:hover .project-settings-label,
 .project-dock.is-expanded .project-settings-label {
   opacity: 1;
@@ -857,7 +873,404 @@
   border-top: 1px solid var(--border-muted);
 }
 
-/* Responsive adaptations for narrow drawer <= 768px */
+/* ==========================================================================
+   GitHub Clone Modal
+   ========================================================================== */
+
+.github-clone-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+  padding: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.github-clone-card {
+  width: 100%;
+  max-width: 580px;
+  max-height: 85vh;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.15s ease-out;
+}
+
+.github-clone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-muted);
+  background-color: var(--bg-subtle);
+}
+
+.github-clone-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.github-clone-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-primary, #6366f1);
+}
+
+.github-clone-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--fg-default);
+  margin: 0;
+}
+
+.github-clone-subtitle {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin: 2px 0 0 0;
+}
+
+.github-clone-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.github-clone-local-repo-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  box-sizing: border-box;
+  background-color: var(--bg-surface-elevated, #2a2a2e);
+  border: 1px solid var(--border-default, #3f3f46);
+  color: var(--fg-default, #e4e4e7);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0 10px;
+  border-radius: var(--radius-md, 6px);
+  transition: all 0.15s ease;
+}
+
+.github-clone-local-repo-btn:hover:not(:disabled) {
+  background-color: var(--bg-surface-hover, #333338);
+  border-color: var(--border-active, #52525b);
+  color: var(--fg-bright, #ffffff);
+}
+
+.github-clone-local-repo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-clone-local-repo-btn svg {
+  flex-shrink: 0;
+}
+
+.github-clone-switch-link {
+  background: none;
+  border: none;
+  color: var(--accent-primary, #6366f1);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: opacity 0.15s ease;
+}
+
+.github-clone-switch-link:hover {
+  opacity: 0.85;
+}
+
+.github-clone-close-btn {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  height: 32px;
+  width: 32px;
+  box-sizing: border-box;
+  padding: 0;
+  border-radius: var(--radius-md, 6px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.github-clone-close-btn:hover {
+  background-color: var(--bg-surface-elevated);
+  border-color: var(--border-default, #3f3f46);
+  color: var(--fg-default);
+}
+
+.github-clone-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.github-clone-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.github-clone-auth-banner {
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-muted);
+  background-color: var(--bg-subtle);
+  font-size: 12px;
+}
+
+.github-clone-auth-banner.is-authenticated {
+  border-color: rgba(74, 222, 128, 0.4);
+  background-color: rgba(74, 222, 128, 0.08);
+  color: var(--fg-default);
+}
+
+.github-clone-auth-banner.is-unauthenticated {
+  border-color: var(--border-muted);
+  background-color: var(--bg-subtle);
+  color: var(--fg-muted);
+}
+
+.github-clone-auth-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.github-clone-auth-badge {
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.is-authenticated .github-clone-auth-badge {
+  color: #4ade80;
+}
+
+.github-clone-auth-subtext {
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+  margin-left: 20px;
+  color: var(--fg-muted);
+}
+
+.github-clone-error-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  font-size: 13px;
+}
+
+.github-clone-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.github-clone-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.github-clone-clear-pat-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  transition: opacity 0.15s ease;
+}
+
+.github-clone-clear-pat-btn:hover:not(:disabled) {
+  opacity: 0.8;
+}
+
+.github-clone-clear-pat-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-clone-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-default);
+}
+
+.github-clone-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  background-color: var(--bg-input, var(--bg-surface-elevated));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 8px);
+  color: var(--fg-default);
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.github-clone-input:focus {
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.github-clone-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.github-clone-dest-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.github-clone-dest-input {
+  flex: 1;
+}
+
+.github-clone-browse-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-subtle);
+  color: var(--fg-default);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.github-clone-browse-btn:hover:not(:disabled) {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--border-muted);
+}
+
+.github-clone-browse-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.github-clone-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.3;
+}
+
+.github-clone-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 20px;
+  background-color: var(--bg-subtle);
+  border-top: 1px solid var(--border-muted);
+}
+
+.github-clone-btn-cancel {
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-default);
+  background-color: transparent;
+  color: var(--fg-default);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.github-clone-btn-cancel:hover:not(:disabled) {
+  background-color: var(--bg-surface-elevated);
+}
+
+.github-clone-btn-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-clone-btn-submit {
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-md, 8px);
+  border: none;
+  background-color: var(--accent-primary, #6366f1);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.github-clone-btn-submit:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.github-clone-btn-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.github-clone-spinner-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.github-clone-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 768px) {
   .project-dock-container {
     width: 48px;

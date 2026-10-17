@@ -116,6 +116,8 @@ pub fn run() {
             commands::terminal_poll,
             commands::terminal_get,
             commands::terminal_list,
+            commands::get_github_auth_status,
+            commands::clone_github_repository,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

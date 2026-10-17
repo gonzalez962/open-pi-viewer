@@ -24,6 +24,7 @@ export interface ProjectDockProps {
   isSettingsOpen?: boolean;
   onOpenSettings?: () => void;
   onOpenAddProject?: () => void;
+  onOpenGitHubClone?: () => void;
   footerControl?: React.ReactNode;
 }
 
@@ -98,6 +99,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   isSettingsOpen,
   onOpenSettings,
   onOpenAddProject,
+  onOpenGitHubClone,
   footerControl,
 }) => {
   const isSettingsActive = Boolean(isSettingsOpen);
@@ -444,6 +446,37 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             </div>
             <span className="project-add-label">
               {translate(locale, 'projects.add_project')}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className="project-footer-row project-footer-clone"
+            onClick={onOpenGitHubClone}
+            title={translate(locale, 'projects.clone_repo')}
+            aria-label={translate(locale, 'projects.clone_repo')}
+          >
+            <div className="project-tile project-tile-clone" aria-hidden="true">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="6" cy="6" r="3" />
+                <circle cx="18" cy="6" r="3" />
+                <path d="M6 9v6" />
+                <path d="M18 9a9 9 0 0 1-9 9" />
+              </svg>
+            </div>
+            <span className="project-clone-label">
+              {translate(locale, 'projects.clone_repo')}
             </span>
           </button>
 

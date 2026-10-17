@@ -3017,3 +3017,46 @@ export async function listenOAuthEventsPi(
     }
   });
 }
+
+export interface GitHubAuthStatus {
+  installed: boolean;
+  authenticated: boolean;
+  username?: string;
+}
+
+export interface CloneGitHubRepositoryPayload {
+  repository: string;
+  parentPath: string;
+  token?: string;
+}
+
+export interface CloneGitHubRepositoryResult {
+  path: string;
+}
+
+/**
+ * Retrieve GitHub CLI auth status from backend.
+ * Returns installed and authenticated flags.
+ */
+export async function getGitHubAuthStatusPi(
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<GitHubAuthStatus> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { installed: false, authenticated: false };
+  }
+  return await invokeFn<GitHubAuthStatus>('get_github_auth_status');
+}
+
+/**
+ * Clone a GitHub repository into a child directory of parentPath.
+ * Fixed IPC contract: clone_github_repository payload {repository, parentPath, token?} -> {path}.
+ */
+export async function cloneGitHubRepositoryPi(
+  payload: CloneGitHubRepositoryPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<CloneGitHubRepositoryResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<CloneGitHubRepositoryResult>('clone_github_repository', { payload });
+}

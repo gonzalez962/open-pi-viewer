@@ -70,6 +70,11 @@ const FolderPickerModal = React.lazy(() =>
     default: m.FolderPickerModal,
   }))
 );
+const GitHubCloneModal = React.lazy(() =>
+  import('@features/projects/components/GitHubCloneModal').then((m) => ({
+    default: m.GitHubCloneModal,
+  }))
+);
 const ProfilesView = React.lazy(() =>
   import('@features/profiles/ProfilesView').then((m) => ({ default: m.ProfilesView }))
 );
@@ -449,7 +454,9 @@ export const App: React.FC = () => {
   );
 
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
+  const [isGitHubCloneOpen, setIsGitHubCloneOpen] = useState(false);
   const addProjectTriggerRef = useRef<HTMLElement | null>(null);
+  const gitHubCloneTriggerRef = useRef<HTMLElement | null>(null);
 
   const handleOpenAddProject = useCallback(() => {
     if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
@@ -474,6 +481,40 @@ export const App: React.FC = () => {
     }
     addProjectTriggerRef.current = null;
   }, []);
+
+  const handleOpenGitHubClone = useCallback(() => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      gitHubCloneTriggerRef.current = document.activeElement;
+    }
+    if (isMobileNavOpen) {
+      setIsMobileNavOpen(false);
+    }
+    setIsGitHubCloneOpen(true);
+  }, [isMobileNavOpen]);
+
+  const handleCloseGitHubClone = useCallback(() => {
+    setIsGitHubCloneOpen(false);
+    const trigger = gitHubCloneTriggerRef.current;
+    if (trigger && typeof trigger.focus === 'function' && typeof document !== 'undefined' && document.contains(trigger)) {
+      if (!trigger.closest?.('[inert], [aria-hidden="true"], .is-closed')) {
+        trigger.focus();
+      } else if (mobileMenuToggleRef.current && typeof mobileMenuToggleRef.current.focus === 'function') {
+        mobileMenuToggleRef.current.focus();
+      }
+    }
+    gitHubCloneTriggerRef.current = null;
+  }, []);
+
+  const handleAddProjectRef = useRef(handleAddProject);
+  handleAddProjectRef.current = handleAddProject;
+
+  const handleCloneSuccess = useCallback(
+    (clonedPath: string) => {
+      handleAddProjectRef.current(clonedPath);
+      handleCloseGitHubClone();
+    },
+    [handleCloseGitHubClone]
+  );
 
   const handleConfirmAddProject = useCallback(
     (folderPath: string, customName?: string) => {
@@ -934,6 +975,7 @@ export const App: React.FC = () => {
       viewingFile ||
       profilesHook.isModalOpen ||
       isFolderPickerOpen ||
+      isGitHubCloneOpen ||
       commandPalette.isOpen ||
       activeDialog ||
       hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
@@ -975,6 +1017,7 @@ export const App: React.FC = () => {
       viewingFile ||
       profilesHook.isModalOpen ||
       isFolderPickerOpen ||
+      isGitHubCloneOpen ||
       showSettings ||
       commandPalette.isOpen ||
       activeDialog ||
@@ -1012,6 +1055,7 @@ export const App: React.FC = () => {
         viewingFile ||
         profilesHook.isModalOpen ||
         isFolderPickerOpen ||
+        isGitHubCloneOpen ||
         showSettings ||
         commandPalette.isOpen ||
         isMobileNavOpen ||
@@ -1262,7 +1306,7 @@ export const App: React.FC = () => {
           activeProjectName={activeProjectName}
           locale={preferences.language}
           triggerRef={mobileMenuToggleRef}
-          restoreFocusOnClose={!isFolderPickerOpen}
+          restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen}
         >
           <ProjectDock
             projects={projectsRegistry.projects}
@@ -1279,6 +1323,7 @@ export const App: React.FC = () => {
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
             onOpenAddProject={handleOpenAddProject}
+            onOpenGitHubClone={handleOpenGitHubClone}
             footerControl={webLogoutControl}
           />
 
@@ -1996,6 +2041,25 @@ export const App: React.FC = () => {
             }
             onClose={handleCloseFolderPicker}
             onSelectFolder={handleConfirmAddProject}
+            locale={preferences.language}
+          />
+        </React.Suspense>
+      )}
+
+      {isGitHubCloneOpen && (
+        <React.Suspense fallback={null}>
+          <GitHubCloneModal
+            isOpen={isGitHubCloneOpen}
+            initialDestinationPath={
+              projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
+              config.workingDirectory
+            }
+            onClose={handleCloseGitHubClone}
+            onCloneSuccess={handleCloneSuccess}
+            onOpenLocalFolder={() => {
+              handleCloseGitHubClone();
+              handleOpenAddProject();
+            }}
             locale={preferences.language}
           />
         </React.Suspense>

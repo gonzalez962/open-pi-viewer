@@ -1369,3 +1369,50 @@ test('regression: async connection completion for discovered project preserves u
   assert.ok(targetProjectId, 'targetProjectId must be identified for session hydration');
   assert.notStrictEqual(targetProjectId, 'proj-alpha', 'Session payload must target discovered project, not alpha');
 });
+test('ProjectDock footer PRESERVE: clicking Clone button triggers onOpenGitHubClone and preserves Add Project behavior', () => {
+  let cloneOpened = false;
+  let addOpened = false;
+  let capturedTree: any = null;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = ProjectDock({
+        ...baseProjectDockProps,
+        onOpenAddProject: () => {
+          addOpened = true;
+        },
+        onOpenGitHubClone: () => {
+          cloneOpened = true;
+        },
+      });
+      return capturedTree;
+    })
+  );
+
+  const cloneBtn = findElement(
+    capturedTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('project-footer-clone')
+  );
+
+  assert.ok(cloneBtn, 'Clone button must be present in ProjectDock footer');
+  assert.strictEqual(typeof cloneBtn.props.onClick, 'function');
+  cloneBtn.props.onClick();
+  assert.strictEqual(cloneOpened, true, 'onClick must trigger onOpenGitHubClone callback');
+
+  const addBtn = findElement(
+    capturedTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('project-footer-row') &&
+      !el.props.className.includes('project-footer-clone') &&
+      !el.props.className.includes('project-footer-settings')
+  );
+
+  assert.ok(addBtn, 'Add Project button must still be present and functional');
+  addBtn.props.onClick();
+  assert.strictEqual(addOpened, true, 'onClick must trigger onOpenAddProject callback');
+});
