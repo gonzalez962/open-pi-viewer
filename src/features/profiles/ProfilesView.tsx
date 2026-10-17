@@ -21,6 +21,7 @@ const getActiveLocale = (): SupportedLocale => {
 
 export const ProfilesView: React.FC<ProfilesViewProps> = ({
   cwd,
+  availableModels: liveModels,
   isBusy = false,
   onClose: _onClose,
   t,
@@ -57,7 +58,7 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
     updateAgentModel,
     removeAgentOverride,
     handleSaveProfile,
-  } = useProfiles({ cwd });
+  } = useProfiles({ cwd, availableModels: liveModels });
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [scopeFilter, setScopeFilter] = useState<'all' | ProfileScope>('all');

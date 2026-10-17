@@ -76,6 +76,7 @@ export interface ProfileModalProps {
 
 export interface ProfilesViewProps {
   cwd?: string;
+  availableModels?: ModelInfo[];
   isBusy?: boolean;
   onClose?: () => void;
   t?: (key: TranslationKey, params?: Record<string, string | number>) => string;

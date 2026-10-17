@@ -574,6 +574,7 @@ export async function applyProfileRuntime(
 
 export const PROFILE_ACTIVATED_EVENT = 'pi:profile-activated';
 export const PROFILE_CLEARED_EVENT = 'pi:profile-cleared';
+export const PROFILE_LIST_CHANGED_EVENT = 'pi:profiles-changed';
 
 export interface ProfileActivationEventDetail {
   profile: ProfileSummary;

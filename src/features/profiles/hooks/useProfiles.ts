@@ -20,6 +20,7 @@ import {
   type ModelProfileEntry,
   PROFILE_ACTIVATED_EVENT,
   PROFILE_CLEARED_EVENT,
+  PROFILE_LIST_CHANGED_EVENT,
   type ProfileActivationEventDetail,
   type ProfileClearActiveEventDetail,
 } from '@core/types/profiles';
@@ -337,13 +338,21 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
           current.length > 0
             ? current
             : extractApprovedProviderModels(customProvidersRef.current);
-        return enrichApprovedModelsWithPassed(approved, passedModels);
+        return mergeProfileCatalog(approved, passedModels, customProvidersRef.current);
       });
     }
   }, [passedModels]);
 
   useEffect(() => {
     void refreshProfiles();
+  }, [refreshProfiles]);
+
+  // Settings and the chat selector own separate hook instances.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onProfilesChanged = () => { void refreshProfiles(); };
+    window.addEventListener(PROFILE_LIST_CHANGED_EVENT, onProfilesChanged);
+    return () => window.removeEventListener(PROFILE_LIST_CHANGED_EVENT, onProfilesChanged);
   }, [refreshProfiles]);
 
   const clearNotices = useCallback(() => {
@@ -639,6 +648,9 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         setIsModalOpen(false);
         setSuccessNotice(`Perfil "${rawName}" guardado correctamente`);
         await refreshProfiles();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event(PROFILE_LIST_CHANGED_EVENT));
+        }
         return true;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

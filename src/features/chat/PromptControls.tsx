@@ -723,14 +723,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                         >
                           <div className="profile-option-main">
                             <span className="profile-option-name">{p.name}</span>
-                            {p.default_model && (
-                              <span className="profile-model-badge" title={p.default_model}>
-                                {p.default_model.split('/').pop() || p.default_model}
-                              </span>
-                            )}
-                            <span className="profile-agent-count">
-                              {p.agent_count} {t('prompt_controls.profile_agents_count')}
-                            </span>
                             <span className={`profile-badge-scope profile-badge-${p.scope}`}>
                               {p.scope === 'project'
                                 ? t('prompt_controls.scope_project_badge')
