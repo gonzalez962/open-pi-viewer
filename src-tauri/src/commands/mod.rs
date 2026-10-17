@@ -23,6 +23,7 @@ pub struct AppState {
     pub handshake_cancel_tx: Arc<Mutex<Option<(u64, oneshot::Sender<()>)>>>,
     pub declined_migrations: Arc<Mutex<HashSet<PathBuf>>>,
     pub active_oauth_login: Arc<Mutex<Option<oauth::ActiveOAuthSession>>>,
+    pub terminal_manager: Arc<crate::terminal::TerminalManager>,
 }
 
 impl AppState {
@@ -35,6 +36,7 @@ impl AppState {
             handshake_cancel_tx: Arc::new(Mutex::new(None)),
             declined_migrations: Arc::new(Mutex::new(HashSet::new())),
             active_oauth_login: Arc::new(Mutex::new(None)),
+            terminal_manager: Arc::new(crate::terminal::TerminalManager::new()),
         }
     }
 
@@ -82,6 +84,7 @@ pub mod external;
 pub mod models;
 pub mod oauth;
 pub mod sessions;
+pub mod terminal;
 pub mod workspace;
 
 pub use conversation_export::{
@@ -463,4 +466,35 @@ pub use oauth::{
     OAUTH_COMMAND_TIMEOUT,
     OAUTH_KILL_GRACE_PERIOD,
     OAUTH_LOGIN_TIMEOUT,
+};
+
+pub use terminal::{
+    terminal_open,
+    __cmd__terminal_open,
+    __tauri_command_name_terminal_open,
+    terminal_write,
+    __cmd__terminal_write,
+    __tauri_command_name_terminal_write,
+    terminal_resize,
+    __cmd__terminal_resize,
+    __tauri_command_name_terminal_resize,
+    terminal_close,
+    __cmd__terminal_close,
+    __tauri_command_name_terminal_close,
+    terminal_poll,
+    __cmd__terminal_poll,
+    __tauri_command_name_terminal_poll,
+    terminal_get,
+    __cmd__terminal_get,
+    __tauri_command_name_terminal_get,
+    terminal_list,
+    __cmd__terminal_list,
+    __tauri_command_name_terminal_list,
+    TerminalOpenPayload,
+    TerminalWritePayload,
+    TerminalResizePayload,
+    TerminalClosePayload,
+    TerminalPollPayload,
+    TerminalGetPayload,
+    TerminalSuccessResult,
 };
