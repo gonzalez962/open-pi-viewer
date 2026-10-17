@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
-import { listWorkspaceDirPi, readWorkspaceFilePi } from '@infra/bridge';
+import { listWorkspaceDirPi, readWorkspaceFilePi, createWorkspaceDirPi } from '@infra/bridge';
 import type { WorkspaceEntry, WorkspaceFileContent, WorkspaceGitStatus } from '@core/types/workspace';
 import { formatFileSize } from '@shared/format';
 import {
@@ -12,6 +12,7 @@ import {
   pruneExpandedDirsOnRefresh,
 } from './workspace-cache';
 import { FileSearchBar } from './components/FileSearchBar';
+import { CreateFolderForm } from './components/CreateFolderForm';
 
 export {
   updateDirChildrenOnRefresh,
@@ -372,11 +373,17 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const [isSoftRefreshing, setIsSoftRefreshing] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
+  const [isSubmittingFolder, setIsSubmittingFolder] = useState<boolean>(false);
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
 
   // Synchronous state adjustment when workingDirectory changes without remount
   const [prevCwd, setPrevCwd] = useState(workingDirectory);
   if (workingDirectory !== prevCwd) {
     setPrevCwd(workingDirectory);
+    setIsCreatingFolder(false);
+    setIsSubmittingFolder(false);
+    setCreateFolderError(null);
     const cached = getWorkspaceSnapshot(workingDirectory);
     if (cached && cached.loaded) {
       setRootEntries(cached.rootEntries);
@@ -397,7 +404,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   const activeCwdRef = useRef(workingDirectory);
   activeCwdRef.current = workingDirectory;
-  const isRefreshingRef = useRef(false);
+  const inFlightRefreshRef = useRef<Promise<void> | null>(null);
 
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) =>
@@ -432,6 +439,10 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   // Synchronize state with per-cwd cache and subscribe to cache updates
   useEffect(() => {
+    setIsCreatingFolder(false);
+    setIsSubmittingFolder(false);
+    setCreateFolderError(null);
+
     const cached = getWorkspaceSnapshot(workingDirectory);
     if (cached && cached.loaded) {
       setRootEntries(cached.rootEntries);
@@ -471,43 +482,53 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const refreshAll = useCallback(
     async (isInitial = false) => {
       if (!workingDirectory) return;
-      if (isRefreshingRef.current) return;
-      isRefreshingRef.current = true;
-
-      const cached = getWorkspaceSnapshot(workingDirectory);
-      if (isInitial && (!cached || !cached.loaded)) {
-        setIsLoadingRoot(true);
-        onGitStatusChange?.(null);
-      } else {
-        setIsSoftRefreshing(true);
+      if (inFlightRefreshRef.current) {
+        return inFlightRefreshRef.current;
       }
-      setError(null);
 
-      try {
-        const snapshot = await refreshWorkspaceCache(workingDirectory, {
-          revalidateExpanded: true,
-        });
-
-        if (activeCwdRef.current === workingDirectory) {
-          setRootEntries(snapshot.rootEntries);
-          setGitStatus(snapshot.gitStatus);
-          setExpandedDirs(new Set(snapshot.expandedDirs));
-          setDirChildren(snapshot.dirChildren);
-          onGitStatusChange?.(snapshot.gitStatus);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      const run = async () => {
+        const cached = getWorkspaceSnapshot(workingDirectory);
         if (isInitial && (!cached || !cached.loaded)) {
-          setError(msg);
+          setIsLoadingRoot(true);
+          onGitStatusChange?.(null);
+        } else {
+          setIsSoftRefreshing(true);
         }
-        onError?.(msg);
-      } finally {
-        isRefreshingRef.current = false;
-        if (activeCwdRef.current === workingDirectory) {
-          setIsLoadingRoot(false);
-          setIsSoftRefreshing(false);
+        setError(null);
+
+        try {
+          const snapshot = await refreshWorkspaceCache(workingDirectory, {
+            revalidateExpanded: true,
+          });
+
+          if (activeCwdRef.current === workingDirectory) {
+            setRootEntries(snapshot.rootEntries);
+            setGitStatus(snapshot.gitStatus);
+            setExpandedDirs(new Set(snapshot.expandedDirs));
+            setDirChildren(snapshot.dirChildren);
+            onGitStatusChange?.(snapshot.gitStatus);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isInitial && (!cached || !cached.loaded)) {
+            setError(msg);
+          }
+          onError?.(msg);
+        } finally {
+          if (activeCwdRef.current === workingDirectory) {
+            setIsLoadingRoot(false);
+            setIsSoftRefreshing(false);
+          }
         }
-      }
+      };
+
+      const promise = run().finally(() => {
+        if (inFlightRefreshRef.current === promise) {
+          inFlightRefreshRef.current = null;
+        }
+      });
+      inFlightRefreshRef.current = promise;
+      return promise;
     },
     [workingDirectory, onError, onGitStatusChange]
   );
@@ -529,7 +550,59 @@ export const FileTree: React.FC<FileTreeProps> = ({
     }
   }, [refreshTrigger, refreshAll]);
 
-  // Expand or collapse a folder
+  // Create new folder directly in active workspace root
+  const handleCreateFolder = useCallback(
+    async (folderName: string) => {
+      const targetCwd = workingDirectory;
+      const trimmed = folderName.trim();
+      if (!trimmed) {
+        setCreateFolderError(t('file_tree.folder_name_required'));
+        return;
+      }
+      setIsSubmittingFolder(true);
+      setCreateFolderError(null);
+      try {
+        await createWorkspaceDirPi({
+          workingDirectory: targetCwd,
+          name: trimmed,
+        });
+
+        // Abort state updates if active workspace changed while creating folder
+        if (activeCwdRef.current !== targetCwd) {
+          return;
+        }
+
+        setIsCreatingFolder(false);
+        setCreateFolderError(null);
+
+        // Await any existing in-flight scan so pre-mutation cache read finishes and clears
+        if (inFlightRefreshRef.current) {
+          try {
+            await inFlightRefreshRef.current;
+          } catch {}
+        }
+
+        if (activeCwdRef.current !== targetCwd) {
+          return;
+        }
+
+        // Fresh post-mutation scan guarantees new folder appears in the explorer
+        await refreshAll(false);
+      } catch (err) {
+        if (activeCwdRef.current !== targetCwd) {
+          return;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        setCreateFolderError(msg);
+      } finally {
+        if (activeCwdRef.current === targetCwd) {
+          setIsSubmittingFolder(false);
+        }
+      }
+    },
+    [workingDirectory, refreshAll, t]
+  );
+
   const handleToggleDir = useCallback(
     async (relativePath: string) => {
       if (expandedDirs.has(relativePath)) {
@@ -690,6 +763,19 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
         <button
           type="button"
+          className="btn-tree-create-folder"
+          onClick={() => {
+            setIsCreatingFolder((prev) => !prev);
+            setCreateFolderError(null);
+          }}
+          title={t('file_tree.create_folder')}
+          aria-label={t('file_tree.create_folder')}
+        >
+          {t('file_tree.create_folder')}
+        </button>
+
+        <button
+          type="button"
           className="btn-tree-refresh"
           onClick={() => void refreshAll(false)}
           disabled={isLoadingRoot || isSoftRefreshing}
@@ -703,6 +789,20 @@ export const FileTree: React.FC<FileTreeProps> = ({
           </svg>
         </button>
       </div>
+
+      {/* Inline Create Folder Form */}
+      {isCreatingFolder && (
+        <CreateFolderForm
+          onSubmit={handleCreateFolder}
+          onCancel={() => {
+            setIsCreatingFolder(false);
+            setCreateFolderError(null);
+          }}
+          isLoading={isSubmittingFolder}
+          error={createFolderError}
+          t={t}
+        />
+      )}
 
       {/* Body / Tree View */}
       <div className="file-tree-body">

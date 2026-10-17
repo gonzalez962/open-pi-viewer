@@ -55,6 +55,14 @@ pub struct ReadWorkspaceFilePayload {
     pub relative_path: String,
 }
 
+/// Payload for creating a new directory in the workspace root
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceDirPayload {
+    pub working_directory: Option<String>,
+    pub name: String,
+}
+
 /// Content and metadata of a workspace file
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -275,6 +283,29 @@ pub fn validate_and_resolve_child_path(
     Ok(canonical_child)
 }
 
+/// Validates a candidate new directory name for the workspace root
+pub fn validate_new_dir_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Folder name must be a non-empty string".to_string());
+    }
+
+    if trimmed == "." || trimmed == ".." || trimmed.contains("..") {
+        return Err(format!("Path traversal attempt detected in folder name: {}", name));
+    }
+
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Err(format!("Invalid folder name: path separators are not permitted: {}", name));
+    }
+
+    const INVALID_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+    if trimmed.chars().any(|c| INVALID_CHARS.contains(&c) || (c as u32) < 32) {
+        return Err(format!("Invalid characters in folder name: {}", name));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// List files and subdirectories of a workspace directory
 #[tauri::command]
 pub async fn list_workspace_dir(
@@ -476,6 +507,37 @@ pub async fn read_workspace_file(
         kind: Some("text".to_string()),
         mime_type: None,
         media_data_url: None,
+    })
+}
+
+/// Creates a new directory directly under the active workspace root.
+#[tauri::command]
+pub async fn create_workspace_dir(
+    payload: CreateWorkspaceDirPayload,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceEntry, String> {
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+    let sanitized_name = validate_new_dir_name(&payload.name)?;
+
+    let target_dir = canonical_root.join(&sanitized_name);
+
+    if !target_dir.starts_with(&canonical_root) {
+        return Err("Access denied: path is outside workspace root".to_string());
+    }
+
+    if target_dir.exists() {
+        return Err(format!("Destination already exists: {}", sanitized_name));
+    }
+
+    std::fs::create_dir(&target_dir)
+        .map_err(|e| format!("Failed to create directory '{}': {e}", sanitized_name))?;
+
+    Ok(WorkspaceEntry {
+        name: sanitized_name.clone(),
+        relative_path: sanitized_name,
+        is_dir: true,
+        size: None,
+        extension: None,
     })
 }
 
@@ -841,6 +903,29 @@ mod tests {
         assert!(file_diff_json.contains("\"diff\":\"+fn main() {}\\n\""));
         let deserialized_diff: WorkspaceFileDiff = serde_json::from_str(&file_diff_json).unwrap();
         assert_eq!(deserialized_diff, file_diff);
+
+        // 10. Folder creation validation tests
+        assert!(validate_new_dir_name("").is_err());
+        assert!(validate_new_dir_name("   ").is_err());
+        assert!(validate_new_dir_name("..").is_err());
+        assert!(validate_new_dir_name("../escape").is_err());
+        assert!(validate_new_dir_name("nested/folder").is_err());
+        assert!(validate_new_dir_name("nested\\folder").is_err());
+        assert!(validate_new_dir_name("bad:name").is_err());
+        assert!(validate_new_dir_name("bad*name").is_err());
+        assert_eq!(validate_new_dir_name("valid-folder").unwrap(), "valid-folder");
+        assert_eq!(validate_new_dir_name("  trimmed  ").unwrap(), "trimmed");
+
+        // Payload serde test
+        let create_payload = CreateWorkspaceDirPayload {
+            working_directory: Some("C:/test".to_string()),
+            name: "new-dir".to_string(),
+        };
+        let payload_json = serde_json::to_string(&create_payload).unwrap();
+        assert!(payload_json.contains("\"workingDirectory\":\"C:/test\""));
+        assert!(payload_json.contains("\"name\":\"new-dir\""));
+        let deserialized_create: CreateWorkspaceDirPayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(deserialized_create, create_payload);
     }
 
 }

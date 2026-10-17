@@ -140,7 +140,7 @@ src-tauri/src/
     models.rs       Model switching, thinking levels, session stats, and RPC helpers
     config_files.rs Custom providers (models.json) & thinking levels (settings.json) I/O
     sessions.rs     Session persistence checks, .jsonl parsing, listing, switching, deletion
-    workspace.rs    File tree traversal, file preview, git status, and unified diff
+    workspace.rs    File tree traversal, folder creation, file preview, git status, and unified diff
     external.rs     External URL validation, opener coordinator, and directory picker
   framing.rs        LF-delimited JSONL stream decoder with UTF-8 boundary preservation
   process.rs        Subprocess spawning, process lifecycle monitor, and stdin/stdout channels

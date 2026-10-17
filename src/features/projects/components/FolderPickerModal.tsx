@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   browseFilesystemPi,
   pickDirectoryPi,
+  createWorkspaceDirPi,
   type BrowseFolderItem,
   type BrowseShortcutItem,
 } from '@infra/bridge';
@@ -34,9 +35,20 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>('');
 
+  // Inline folder creation state
+  const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
+  const [isSubmittingFolder, setIsSubmittingFolder] = useState<boolean>(false);
+  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState<string>('');
+
   const cardRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const isCreatingFolderRef = useRef<boolean>(false);
+  isCreatingFolderRef.current = isCreatingFolder;
+  const activePathRef = useRef<string>(currentPath);
+  activePathRef.current = currentPath;
+  const folderNameInputRef = useRef<HTMLInputElement>(null);
 
   // Focus management, focus trap, and Escape key handling
   useEffect(() => {
@@ -56,6 +68,13 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
+        if (isCreatingFolderRef.current) {
+          setIsCreatingFolder(false);
+          setIsSubmittingFolder(false);
+          setCreateFolderError(null);
+          setNewFolderName('');
+          return;
+        }
         onClose();
         return;
       }
@@ -112,11 +131,44 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
     };
   }, [isOpen, onClose]);
 
+  // Autofocus name input when create folder form opens
+  useEffect(() => {
+    if (isCreatingFolder) {
+      const timer = setTimeout(() => {
+        folderNameInputRef.current?.focus();
+      }, 30);
+      return () => clearTimeout(timer);
+    }
+  }, [isCreatingFolder]);
+
+  // Session / request generation token to guard async lifecycle and prevent stale completions
+  const generationRef = useRef<number>(0);
+  const isOpenRef = useRef<boolean>(isOpen);
+  isOpenRef.current = isOpen;
+  const currentPathRef = useRef<string>(currentPath);
+  currentPathRef.current = currentPath;
+
   const loadDirectory = useCallback(async (dirToLoad: string) => {
+    // Invalidate prior generations synchronously at navigation start
+    const navGen = ++generationRef.current;
+
+    // Synchronously reset folder creation and submission state on navigation
+    setIsCreatingFolder(false);
+    setIsSubmittingFolder(false);
+    setCreateFolderError(null);
+    setNewFolderName('');
     setIsLoading(true);
+
     try {
       const res = await browseFilesystemPi(dirToLoad);
+
+      // Stale guard: do not apply if generation changed or modal was closed
+      if (generationRef.current !== navGen || !isOpenRef.current) {
+        return;
+      }
+
       setCurrentPath(res.currentPath);
+      currentPathRef.current = res.currentPath;
       setPathInput(res.windowsPath || res.currentPath);
       setSelectedFolder(res.windowsPath || res.currentPath);
       setParentPath(res.parentPath);
@@ -126,17 +178,31 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       }
       setSearchFilter('');
     } finally {
-      setIsLoading(false);
+      if (generationRef.current === navGen) {
+        setIsLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     if (isOpen) {
+      generationRef.current++;
+      setIsCreatingFolder(false);
+      setIsSubmittingFolder(false);
+      setCreateFolderError(null);
+      setNewFolderName('');
       void loadDirectory(initialPath || '');
+    } else {
+      generationRef.current++;
+      setIsCreatingFolder(false);
+      setIsSubmittingFolder(false);
+      setCreateFolderError(null);
+      setNewFolderName('');
     }
+    return () => {
+      generationRef.current++;
+    };
   }, [isOpen, initialPath, loadDirectory]);
-
-  if (!isOpen) return null;
 
   const handleNavigateUp = () => {
     if (parentPath) {
@@ -166,6 +232,98 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
     }
   };
 
+  const handleCancelCreateFolder = useCallback(() => {
+    setIsCreatingFolder(false);
+    setIsSubmittingFolder(false);
+    setCreateFolderError(null);
+    setNewFolderName('');
+  }, []);
+
+  const handleCreateFolder = useCallback(
+    async (e?: React.FormEvent) => {
+      if (e) {
+        e.preventDefault();
+      }
+      if (isSubmittingFolder) return;
+      const trimmed = newFolderName.trim();
+      if (!trimmed) {
+        setCreateFolderError(
+          translate(locale, 'file_tree.folder_name_required') || 'Folder name is required'
+        );
+        return;
+      }
+
+      const targetDir = currentPath;
+      const createGen = generationRef.current;
+      setIsSubmittingFolder(true);
+      setCreateFolderError(null);
+
+      try {
+        await createWorkspaceDirPi({
+          workingDirectory: targetDir,
+          name: trimmed,
+        });
+
+        // Guard against navigation or close while create was in flight
+        if (
+          generationRef.current !== createGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+
+        setIsCreatingFolder(false);
+        setNewFolderName('');
+        setCreateFolderError(null);
+
+        // Reload current directory
+        const res = await browseFilesystemPi(targetDir);
+        if (
+          generationRef.current !== createGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+
+        setCurrentPath(res.currentPath);
+        currentPathRef.current = res.currentPath;
+        setParentPath(res.parentPath);
+        const newFolders = res.folders || [];
+        setFolders(newFolders);
+        if (res.shortcuts && res.shortcuts.length > 0) {
+          setshortcuts(res.shortcuts);
+        }
+        setSearchFilter('');
+
+        // Ensure newly created folder is selected and path stays coherent
+        const createdItem = newFolders.find((f) => f.name === trimmed);
+        if (createdItem) {
+          const itemPath = createdItem.windowsPath || createdItem.fullPath;
+          setSelectedFolder(itemPath);
+          setPathInput(itemPath);
+        } else {
+          setSelectedFolder(res.windowsPath || res.currentPath);
+          setPathInput(res.windowsPath || res.currentPath);
+        }
+      } catch (err) {
+        if (
+          generationRef.current !== createGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        setCreateFolderError(msg);
+      } finally {
+        setIsSubmittingFolder(false);
+      }
+    },
+    [currentPath, isSubmittingFolder, newFolderName, locale]
+  );
+
   const handleConfirm = () => {
     const finalPath = selectedFolder || pathInput || currentPath;
     if (!finalPath) return;
@@ -177,6 +335,8 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const filteredFolders = folders.filter((f) =>
     f.name.toLowerCase().includes(searchFilter.trim().toLowerCase())
   );
+
+  if (!isOpen) return null;
 
   return (
     <div className="folder-picker-overlay" onClick={onClose} role="dialog" aria-modal="true">
@@ -273,7 +433,80 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
             onChange={(e) => setSearchFilter(e.target.value)}
             placeholder={translate(locale, 'projects.folder_picker_filter')}
           />
+          <button
+            type="button"
+            className="folder-picker-btn-create-folder btn-tree-create-folder"
+            onClick={() => {
+              setIsCreatingFolder((prev) => {
+                if (!prev) {
+                  setCreateFolderError(null);
+                  setNewFolderName('');
+                }
+                return !prev;
+              });
+            }}
+            title={translate(locale, 'file_tree.create_folder')}
+            aria-label={translate(locale, 'file_tree.create_folder')}
+            disabled={isLoading || isSubmittingFolder}
+          >
+            {translate(locale, 'file_tree.create_folder')}
+          </button>
         </div>
+
+        {/* Inline Create Folder Form */}
+        {isCreatingFolder && (
+          <form
+            className="create-folder-form folder-picker-create-form"
+            onSubmit={handleCreateFolder}
+            role="form"
+            aria-label="Create folder form"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleCancelCreateFolder();
+              }
+            }}
+          >
+            <div className="create-folder-row">
+              <input
+                ref={folderNameInputRef}
+                type="text"
+                className="create-folder-input"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder={translate(locale, 'file_tree.folder_name_placeholder') || 'Folder name...'}
+                aria-label={translate(locale, 'file_tree.folder_name_placeholder') || 'Folder name...'}
+                disabled={isSubmittingFolder}
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="btn-create-folder-submit"
+                disabled={isSubmittingFolder || !newFolderName.trim()}
+                title={translate(locale, 'file_tree.create_folder_submit') || 'Create'}
+                aria-label={translate(locale, 'file_tree.create_folder_submit') || 'Create'}
+              >
+                {translate(locale, 'file_tree.create_folder_submit') || 'Create'}
+              </button>
+              <button
+                type="button"
+                className="btn-create-folder-cancel"
+                onClick={handleCancelCreateFolder}
+                disabled={isSubmittingFolder}
+                title={translate(locale, 'file_tree.create_folder_cancel') || 'Cancel'}
+                aria-label={translate(locale, 'file_tree.create_folder_cancel') || 'Cancel'}
+              >
+                {translate(locale, 'file_tree.create_folder_cancel') || 'Cancel'}
+              </button>
+            </div>
+            {createFolderError && (
+              <div className="create-folder-error" role="alert">
+                {createFolderError}
+              </div>
+            )}
+          </form>
+        )}
 
         {/* Folder icon grid */}
         <div className="folder-picker-list-area">
