@@ -3,15 +3,13 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { TerminalOverlay } from '../../../src/features/terminal/components/TerminalOverlay';
-import { TerminateConfirmationModal } from '../../../src/features/terminal/components/TerminateConfirmationModal';
+import { TerminalOverlay } from '@features/terminal/components/TerminalOverlay';
+import { TerminateConfirmationModal } from '@features/terminal/components/TerminateConfirmationModal';
 import {
   terminalReducer,
   createInitialTerminalState,
-  type TerminalState,
-  type TerminalAction,
-} from '../../../src/features/terminal/terminal-state';
-import type { TerminalSessionDto } from '../../../src/core/terminal';
+} from '@features/terminal/terminal-state';
+import type { TerminalSessionDto } from '@core/terminal';
 
 test('S2.1: TerminalOverlay renders full-window dialog with minimize and terminate controls', () => {
   const session: TerminalSessionDto = {
@@ -188,16 +186,13 @@ test('S3.2: Switching active projects maintains background session continuity', 
 });
 
 test('S3.3: Terminate confirmation modal protects against accidental termination', () => {
-  let confirmed = false;
-  let cancelled = false;
-
   const html = renderToStaticMarkup(
     React.createElement(TerminateConfirmationModal, {
       isOpen: true,
       projectName: 'my-project',
       locale: 'en',
-      onConfirm: () => { confirmed = true; },
-      onCancel: () => { cancelled = true; },
+      onConfirm: () => {},
+      onCancel: () => {},
     })
   );
 

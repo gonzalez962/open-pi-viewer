@@ -389,14 +389,20 @@ export function saveProjectsRegistry(
   }
 }
 
+export interface AddProjectOptions {
+  activate?: boolean;
+}
+
 /**
- * If project with same path exists, activates it and returns isNew: false.
- * Otherwise, appends new ProjectItem, sets active, and returns isNew: true.
+ * If project with same path exists, activates it (when options.activate !== false) and returns isNew: false.
+ * Otherwise, appends new ProjectItem, sets active (when options.activate !== false), and returns isNew: true.
+ * When options.activate is false, existing activeProjectId is preserved without hijacking.
  */
 export function addProject(
   registry: ProjectsRegistry,
   path: string,
-  customName?: string
+  customName?: string,
+  options?: AddProjectOptions
 ): { registry: ProjectsRegistry; project: ProjectItem; isNew: boolean } {
   const normalizedPath = normalizeProjectPath(path);
   const existingIndex = registry.projects.findIndex((p) =>
@@ -405,12 +411,13 @@ export function addProject(
 
   const now = new Date().toISOString();
   const trimmedName = customName?.trim() || undefined;
+  const shouldActivate = options?.activate ?? true;
 
   if (existingIndex >= 0) {
     const existing = registry.projects[existingIndex];
     const updatedProject: ProjectItem = {
       ...existing,
-      lastOpenedAt: now,
+      ...(shouldActivate ? { lastOpenedAt: now } : {}),
       ...(trimmedName ? { customName: trimmedName } : {}),
     };
     const updatedProjects = [...registry.projects];
@@ -418,7 +425,9 @@ export function addProject(
     return {
       registry: {
         projects: updatedProjects,
-        activeProjectId: updatedProject.id,
+        activeProjectId: shouldActivate
+          ? updatedProject.id
+          : (registry.activeProjectId ?? updatedProject.id),
       },
       project: updatedProject,
       isNew: false,
@@ -436,7 +445,9 @@ export function addProject(
   return {
     registry: {
       projects: [...registry.projects, newProject],
-      activeProjectId: newProject.id,
+      activeProjectId: shouldActivate
+        ? newProject.id
+        : (registry.activeProjectId ?? newProject.id),
     },
     project: newProject,
     isNew: true,

@@ -968,5 +968,17 @@
   "settings.notifications_request_permission": "Enable system notifications",
   "settings.notifications_permission_help": "Web alerts require HTTPS or localhost and an open page. If blocked, change browser or system permissions, then return here. Native desktop sound is controlled by the operating system.",
   "settings.notifications_test_sent": "Test notification submitted. System settings may still hide it.",
-  "settings.notifications_test_failed": "Notification could not be submitted. Check permission and platform support."
+  "settings.notifications_test_failed": "Notification could not be submitted. Check permission and platform support.",
+  "terminal.title": "Terminal",
+  "terminal.open": "Open Terminal",
+  "terminal.minimize": "Minimize",
+  "terminal.terminate": "Terminate",
+  "terminal.terminate_confirm_title": "Terminate Terminal?",
+  "terminal.terminate_confirm_message": "Are you sure you want to terminate this terminal session? All running processes in this project terminal will be stopped.",
+  "terminal.terminate_confirm_button": "Terminate",
+  "terminal.cancel": "Cancel",
+  "terminal.retry": "Retry",
+  "terminal.connecting": "Connecting terminal...",
+  "terminal.error": "Terminal connection error",
+  "terminal.process_exited": "Process exited with code {code}"
 }

@@ -968,5 +968,17 @@
   "settings.notifications_request_permission": "Activar notificaciones del sistema",
   "settings.notifications_permission_help": "Los avisos web requieren HTTPS o localhost y una página abierta. Si están bloqueados, cambia los permisos del navegador o del sistema y vuelve aquí. El sonido nativo de escritorio lo controla el sistema operativo.",
   "settings.notifications_test_sent": "Notificación de prueba enviada. Los ajustes del sistema podrían ocultarla.",
-  "settings.notifications_test_failed": "No se pudo enviar la notificación. Revisa los permisos y la compatibilidad de la plataforma."
+  "settings.notifications_test_failed": "No se pudo enviar la notificación. Revisa los permisos y la compatibilidad de la plataforma.",
+  "terminal.title": "Terminal",
+  "terminal.open": "Abrir terminal",
+  "terminal.minimize": "Minimizar",
+  "terminal.terminate": "Finalizar",
+  "terminal.terminate_confirm_title": "¿Finalizar terminal?",
+  "terminal.terminate_confirm_message": "¿Estás seguro de que deseas finalizar esta sesión de terminal? Se detendrán todos los procesos en ejecución de la terminal de este proyecto.",
+  "terminal.terminate_confirm_button": "Finalizar",
+  "terminal.cancel": "Cancelar",
+  "terminal.retry": "Reintentar",
+  "terminal.connecting": "Conectando terminal...",
+  "terminal.error": "Error de conexión de terminal",
+  "terminal.process_exited": "El proceso finalizó con código {code}"
 }

@@ -296,9 +296,44 @@ test('architecture: backend commands monolith eliminated into modular domain tre
     'models.rs',
     'oauth.rs',
     'sessions.rs',
+    'terminal.rs',
     'workspace.rs',
   ];
 
   const actualEntries = fs.readdirSync(commandsDir).sort();
   assert.deepEqual(actualEntries, expectedSubmodules);
+
+  const modContent = fs.readFileSync(path.join(commandsDir, 'mod.rs'), 'utf8');
+  assert.match(
+    modContent,
+    /\bpub\s+mod\s+terminal\s*;/,
+    'commands/mod.rs must declare pub mod terminal;'
+  );
+  assert.match(
+    modContent,
+    /\bterminal_manager\s*:\s*Arc<crate::terminal::TerminalManager>/,
+    'AppState must include terminal_manager'
+  );
+
+  const libContent = fs.readFileSync(path.join(SRC_TAURI_DIR, 'lib.rs'), 'utf8');
+  const requiredCommands = [
+    'commands::terminal_open',
+    'commands::terminal_write',
+    'commands::terminal_resize',
+    'commands::terminal_close',
+    'commands::terminal_poll',
+    'commands::terminal_get',
+    'commands::terminal_list',
+  ];
+  for (const cmd of requiredCommands) {
+    assert.ok(
+      libContent.includes(cmd),
+      `lib.rs invoke_handler must register ${cmd}`
+    );
+  }
+  assert.match(
+    libContent,
+    /\bterminal\.dispose\(\)\.await\b/,
+    'lib.rs exit handler must dispose terminal sessions'
+  );
 });

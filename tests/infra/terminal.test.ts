@@ -9,11 +9,11 @@ import {
   terminalGet,
   terminalList,
   createTerminalPoller,
-} from '../../src/infra/terminal';
+} from '@infra/terminal';
 import type {
   TerminalSessionDto,
   TerminalPollResult,
-} from '../../src/core/terminal';
+} from '@core/terminal';
 
 test('S4.1: terminalOpen sends command with payload and args wrapper and returns session DTO', async () => {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
@@ -74,6 +74,19 @@ test('S4.1: terminalWrite, terminalResize, terminalClose send commands with payl
   await terminalClose({ id: 'term-1' }, fakeInvoke);
   assert.equal(calls[2].cmd, 'terminal_close');
   assert.equal((calls[2].args as any).payload.id, 'term-1');
+});
+
+test('S4.1: terminalPoll sends command with id, cursor, and timeoutMs', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const fakeInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return { id: 'term-p', data: 'hello', cursor: 5, running: true } as unknown as T;
+  };
+
+  const res = await terminalPoll({ id: 'term-p', cursor: 0, timeoutMs: 1000 }, fakeInvoke);
+  assert.equal(calls[0].cmd, 'terminal_poll');
+  assert.equal(res.data, 'hello');
+  assert.equal(res.cursor, 5);
 });
 
 test('S4.1: terminalGet and terminalList query active session status', async () => {

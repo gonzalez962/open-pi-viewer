@@ -21,6 +21,7 @@ import {
   decideRemoveProject,
   decideSelectProject,
   deriveProjectBasename,
+  findProjectByCwd,
   getProjectDisplayName,
   getProjectMonogram,
   isSameProjectPath,
@@ -1215,3 +1216,156 @@ test('useProjects: handleAddProject activates newly added project and guards can
   assert.strictEqual(appliedPath, null, 'Cancelled project pick must NOT call applyWorkingDirectory');
 });
 
+test('projects: addProject with activate: false preserves active selection when adding new project', () => {
+  const initialRegistry: ProjectsRegistry = {
+    projects: [
+      {
+        id: 'p-alpha',
+        path: '/workspace/alpha',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    activeProjectId: 'p-alpha',
+  };
+
+  const { registry, project, isNew } = addProject(
+    initialRegistry,
+    '/workspace/host-root',
+    'Host Root',
+    { activate: false }
+  );
+
+  assert.strictEqual(isNew, true);
+  assert.strictEqual(registry.projects.length, 2);
+  assert.strictEqual(registry.activeProjectId, 'p-alpha', 'activeProjectId must remain p-alpha and not be hijacked');
+  assert.strictEqual(project.path, normalizeProjectPath('/workspace/host-root'));
+});
+
+test('projects: addProject with activate: false preserves active selection when referencing existing project', () => {
+  const initialRegistry: ProjectsRegistry = {
+    projects: [
+      {
+        id: 'p-alpha',
+        path: '/workspace/alpha',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      },
+      {
+        id: 'p-beta',
+        path: '/workspace/beta',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastOpenedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    activeProjectId: 'p-alpha',
+  };
+
+  const { registry, project, isNew } = addProject(
+    initialRegistry,
+    '/workspace/beta',
+    undefined,
+    { activate: false }
+  );
+
+  assert.strictEqual(isNew, false);
+  assert.strictEqual(registry.projects.length, 2);
+  assert.strictEqual(registry.activeProjectId, 'p-alpha', 'activeProjectId must remain p-alpha when re-adding beta passively');
+  assert.strictEqual(project.id, 'p-beta');
+  assert.strictEqual(project.lastOpenedAt, '2026-01-01T00:00:00.000Z', 'lastOpenedAt must not be bumped without activation');
+});
+
+test('useProjects: addProjectForPath with activate: false preserves active selection in registry and storage', (t) => {
+  const fakeStorage = createMockStorage();
+  const initialRegistry: ProjectsRegistry = {
+    activeProjectId: 'p-alpha',
+    projects: [
+      { id: 'p-alpha', path: '/workspace/alpha', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'p-beta', path: '/workspace/beta', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+  fakeStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(initialRegistry));
+  (globalThis as any).window = { localStorage: fakeStorage };
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => {
+    delete (globalThis as any).window;
+    delete (globalThis as any).localStorage;
+  });
+
+  let activatedId: string | null = null;
+  let appliedPath: string | null = null;
+  let hookResult!: UseProjectsResult;
+
+  function Harness() {
+    hookResult = useProjects({
+      workingDirectory: '/workspace/alpha',
+      isBusy: false,
+      applyWorkingDirectory: (p) => { appliedPath = p; },
+      onActivateProject: (id: string) => { activatedId = id; },
+    } as UseProjectsOptions);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+
+  assert.strictEqual(hookResult.projectsRegistry.activeProjectId, 'p-alpha');
+
+  // Passive addition of host-root with activate: false
+  hookResult.addProjectForPath('/workspace/host-root', { activate: false });
+
+  assert.strictEqual(activatedId, null, 'Passive addProjectForPath must not trigger onActivateProject');
+  assert.strictEqual(appliedPath, null, 'Passive addProjectForPath must not trigger applyWorkingDirectory');
+
+  const saved = JSON.parse(fakeStorage.getItem(PROJECTS_STORAGE_KEY)!);
+  assert.strictEqual(
+    saved.activeProjectId,
+    'p-alpha',
+    'Passive addProjectForPath must not hijack activeProjectId in storage'
+  );
+  assert.strictEqual(saved.projects.length, 3);
+});
+
+test('regression: async connection completion for discovered project preserves user-selected project and terminal context', () => {
+  // Simulates App.tsx onConnectSuccess handling
+  const registry: ProjectsRegistry = {
+    activeProjectId: 'proj-alpha',
+    projects: [
+      { id: 'proj-alpha', path: '/workspace/alpha', customName: 'Project Alpha', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'proj-beta', path: '/workspace/beta', customName: 'Project Beta', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+
+  // User has active project Alpha selected
+  let currentRegistry = registry;
+  const addProjectForPath = (path: string, options?: { activate?: boolean }) => {
+    const outcome = addProject(currentRegistry, path, undefined, options);
+    currentRegistry = outcome.registry;
+    return outcome.project;
+  };
+
+  // Discovered host root connection completes in background
+  const res = { canonicalCwd: '/workspace/discovered-host-root' };
+
+  const matched = res.canonicalCwd
+    ? findProjectByCwd(currentRegistry.projects, res.canonicalCwd)
+    : undefined;
+  let targetProjectId = matched?.id;
+
+  if (!targetProjectId && res.canonicalCwd) {
+    // Passive connection completion must NOT activate or hijack active project
+    addProjectForPath(res.canonicalCwd, { activate: false });
+    const recheck = findProjectByCwd(currentRegistry.projects, res.canonicalCwd);
+    targetProjectId = recheck?.id ?? currentRegistry.activeProjectId ?? undefined;
+  }
+
+  // Active project MUST remain proj-alpha
+  assert.strictEqual(currentRegistry.activeProjectId, 'proj-alpha', 'Active project must remain proj-alpha');
+
+  // Terminal context derived from active project must still point to Alpha
+  const activeProj = currentRegistry.projects.find((p) => p.id === currentRegistry.activeProjectId);
+  assert.strictEqual(activeProj?.path, '/workspace/alpha', 'Active terminal cwd must remain /workspace/alpha');
+  assert.strictEqual(activeProj?.customName, 'Project Alpha');
+
+  // Target project for session hydration is correctly isolated to the discovered project
+  assert.ok(targetProjectId, 'targetProjectId must be identified for session hydration');
+  assert.notStrictEqual(targetProjectId, 'proj-alpha', 'Session payload must target discovered project, not alpha');
+});

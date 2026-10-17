@@ -160,6 +160,12 @@ Attach files using the attachment menu, drag and drop them onto the message hist
   - **Vision / Image Modalities**: Detects vision capabilities via input modalities, API capabilities, and keyword analysis, setting `input: ['text', 'image']`.
   - **Reference / Attribution**: The model classification and characteristics enrichment logic is adapted from the [cliproxyapi-dynamic-provider extension by @j0k3r-dev-rgl](https://github.com/j0k3r-dev-rgl/j0k3r-pi/blob/main/extensions/cliproxyapi-dynamic-provider.ts).
 
+### Persistent Project Terminal
+- **One Terminal Per Canonical Project Directory**: Interactive terminal sessions survive UI minimization, project switching, and client reconnection across Web and Desktop (Tauri) deployments without losing running shell processes or buffered output.
+- **Full-Window Responsive Overlay**: Built on `@xterm/xterm` and `@xterm/addon-fit`, filling the viewport on desktop and adapting dimensions to mobile viewports via `ResizeObserver`.
+- **Session Continuity & Explicit Close**: Minimizing or closing the overlay halts frontend polling while leaving the backend process running. Explicit termination requires user confirmation via an accessible dialog (`role="alertdialog"`), cleanly killing the targeted session and child process tree. Reopening after termination starts a fresh session.
+- **Security & Multi-Tenant Isolation**: Enforces loopback restrictions, anti-spoofing header policies, and same-origin validation without exposing shell output over shared SSE broadcasts. Documented in [docs/terminal.md](docs/terminal.md).
+
 ### Narrow Typed IPC
 Tauri IPC does not expose generic command execution or raw RPC pass-through. The frontend communicates exclusively through eight bounded, typed commands:
 
