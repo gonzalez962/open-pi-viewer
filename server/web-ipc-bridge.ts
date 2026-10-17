@@ -42,6 +42,14 @@ export {
 } from './bridge/engram';
 
 export {
+  getGithubAuthStatus,
+  cloneGithubRepository,
+  setProcessRunnerForTest,
+  parseGithubRepository,
+  buildChildGitEnv,
+} from './bridge/github';
+
+export {
   loadResourceActivationPolicy,
   saveResourceActivationPolicy,
   loadProjectResourceActivation,
@@ -120,6 +128,11 @@ import {
   handleEnrollEngramProject,
   handleGetEngramObservations,
 } from './bridge/engram';
+
+import {
+  getGithubAuthStatus,
+  cloneGithubRepository,
+} from './bridge/github';
 
 import {
   handleGetAvailableModels,
@@ -282,6 +295,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetBridgeState();
     case 'browse_filesystem':
       return handleBrowseFilesystem(args);
+    case 'get_github_auth_status':
+      return await getGithubAuthStatus();
+    case 'clone_github_repository':
+      return await cloneGithubRepository(args.payload || args);
     default:
       return null;
   }

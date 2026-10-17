@@ -81,11 +81,33 @@ pub mod connection;
 pub mod conversation_export;
 pub mod discovery;
 pub mod external;
+pub mod github;
 pub mod models;
 pub mod oauth;
 pub mod sessions;
 pub mod terminal;
 pub mod workspace;
+
+pub use github::{
+    get_github_auth_status,
+    __cmd__get_github_auth_status,
+    __tauri_command_name_get_github_auth_status,
+    clone_github_repository,
+    __cmd__clone_github_repository,
+    __tauri_command_name_clone_github_repository,
+    GithubAuthStatus,
+    CloneGithubRepositoryPayload,
+    CloneGithubRepositoryResult,
+    NormalizedRepo,
+    validate_and_normalize_github_repo,
+    reserve_destination_directory,
+    get_github_auth_status_impl,
+    clone_github_repository_impl,
+    build_child_git_env,
+    sanitize_error_message,
+    PROBE_TIMEOUT,
+    CLONE_TIMEOUT,
+};
 
 pub use conversation_export::{
     save_conversation_export,
