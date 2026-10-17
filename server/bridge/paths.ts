@@ -213,11 +213,34 @@ export function handleListWorkspaceDir(args: any = {}) {
   const payload = args.payload || {};
   const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
   const rel = payload.relativePath || '';
-  const fullDir = path.resolve(targetCwd, rel);
 
+  const normalizedRel = typeof rel === 'string' ? rel.replace(/\\/g, '/') : '';
+  if (normalizedRel.split('/').includes('..')) {
+    throw new Error(`Access denied: path traversal attempt detected ('..'): ${rel}`);
+  }
+
+  const resolvedRoot = path.resolve(targetCwd);
+  if (!fs.existsSync(resolvedRoot)) return [];
+  const canonicalRoot = fs.realpathSync(resolvedRoot);
+
+  const fullDir = path.resolve(canonicalRoot, rel);
   if (!fs.existsSync(fullDir)) return [];
 
-  const entries = fs.readdirSync(fullDir, { withFileTypes: true });
+  const canonicalTarget = fs.realpathSync(fullDir);
+
+  const rootPrefix = canonicalRoot.endsWith(path.sep) ? canonicalRoot : canonicalRoot + path.sep;
+  const isContained =
+    canonicalTarget === canonicalRoot ||
+    canonicalTarget.startsWith(rootPrefix) ||
+    (process.platform === 'win32' &&
+      (canonicalTarget.toLowerCase() === canonicalRoot.toLowerCase() ||
+        canonicalTarget.toLowerCase().startsWith(rootPrefix.toLowerCase())));
+
+  if (!isContained) {
+    throw new Error(`Access denied: path is outside workspace root: ${rel}`);
+  }
+
+  const entries = fs.readdirSync(canonicalTarget, { withFileTypes: true });
   const results: any[] = [];
 
   const normRel = typeof rel === 'string'
@@ -235,7 +258,7 @@ export function handleListWorkspaceDir(args: any = {}) {
 
     if (!isDir) {
       try {
-        const st = fs.statSync(path.join(fullDir, e.name));
+        const st = fs.statSync(path.join(canonicalTarget, e.name));
         size = st.size;
         ext = path.extname(e.name).slice(1) || null;
       } catch {}

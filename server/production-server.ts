@@ -22,6 +22,7 @@ function createMiddlewareApp() {
     },
   };
   const dispatch = (req: IncomingMessage, res: ServerResponse, fallback: () => void) => {
+    (req as IncomingMessage & { originalUrl?: string }).originalUrl ||= req.url || '/';
     let index = 0;
     const next = (error?: unknown) => {
       if (error) {

@@ -136,13 +136,41 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
   app.use("/api/engram-daemon", async (req, res) => {
     try {
       const queryOrPath = req.url || "";
+      if (queryOrPath !== "" && !queryOrPath.startsWith("/") && !queryOrPath.startsWith("?")) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Bad Request: invalid path" }));
+        return;
+      }
+
+      let decoded = queryOrPath;
+      try {
+        decoded = decodeURIComponent(queryOrPath);
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Bad Request: malformed URL encoding" }));
+        return;
+      }
+
+      const FORBIDDEN_PATTERN = /[@\\]|\.\.|[\x00-\x1F\x7F]/;
+      if (FORBIDDEN_PATTERN.test(queryOrPath) || FORBIDDEN_PATTERN.test(decoded)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Bad Request: forbidden characters in path" }));
+        return;
+      }
+
       const daemonUrl = `http://127.0.0.1:7437${queryOrPath}`;
+      const parsedUrl = new URL(daemonUrl);
+      if (parsedUrl.origin !== "http://127.0.0.1:7437") {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Bad Request: invalid target" }));
+        return;
+      }
+
       const proxyRes = await fetch(daemonUrl, {
         method: req.method || "GET",
       });
       res.writeHead(proxyRes.status, {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       });
       const text = await proxyRes.text();
@@ -150,7 +178,6 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     } catch (err: any) {
       res.writeHead(502, {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
       });
       res.end(JSON.stringify({ error: "Engram daemon unreachable", details: String(err) }));
     }
