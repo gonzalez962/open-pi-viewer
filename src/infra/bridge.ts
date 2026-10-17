@@ -1294,7 +1294,7 @@ export async function getMcpServersPi(
             enabled = true;
             hasProjectOverride = false;
           } else {
-            enabled = false;
+            enabled = s.enabled !== false && !s.disabled;
             hasProjectOverride = false;
           }
         } else {
@@ -1307,8 +1307,8 @@ export async function getMcpServersPi(
             enabled = true;
             hasProjectOverride = false;
           } else {
-            // Defaults off per project!
-            enabled = false;
+            // No explicit override: inherit the native configured state.
+            enabled = s.enabled !== false && !s.disabled;
             hasProjectOverride = false;
           }
         }
@@ -1773,9 +1773,9 @@ export async function getPiResources(
                   gCopy.hasProjectOverride = false;
                   gCopy.enabled = true;
                 } else {
-                  // Defaults off per project!
+                  // No explicit override: inherit the native configured state.
                   gCopy.hasProjectOverride = false;
-                  gCopy.enabled = false;
+                  gCopy.enabled = g.enabled;
                 }
               } else {
                 // Packages retain existing behavior
@@ -1819,7 +1819,7 @@ export async function getPiResources(
                 typeof policyOverride === 'boolean'
                   ? policyOverride
                   : isExt
-                    ? (p.hasProjectOverride ? p.enabled : (alwaysActive ? true : false))
+                    ? (alwaysActive ? true : p.enabled)
                     : p.enabled;
 
               merged.push({
@@ -1903,7 +1903,7 @@ export async function savePiResource(
     const enabled =
       payload.enabled ??
       (payload.kind === 'extension'
-        ? !payload.source.trim().startsWith('!')
+        ? !payload.source.trim().startsWith('!') && !payload.source.trim().startsWith('-')
         : true);
 
     const checkSource = payload.oldSource

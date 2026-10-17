@@ -35,6 +35,13 @@ export interface SetResourceActivationResult {
   success: boolean;
 }
 
+export const KNOWN_BUILTIN_EXTENSIONS = new Set([
+  'builtin:mcp',
+  'builtin:llama.cpp',
+  'builtin:codemode',
+  'builtin:tool-search',
+]);
+
 export function normalizeProjectCwd(cwd?: string | null): string {
   const resolved = resolveCrossPlatformCwd(cwd);
   let canonicalPath: string;
@@ -97,12 +104,15 @@ export function loadProjectResourceActivation(cwd: string): ProjectResourceActiv
     if (!parsed || typeof parsed !== 'object' || parsed.version !== 1) {
       throw new Error(`Invalid project resource activation schema or version at ${filePath}`);
     }
+    if (Array.isArray(parsed.extensions) || Array.isArray(parsed.mcpServers)) {
+      throw new Error(`Invalid project resource activation schema at ${filePath}: extensions and mcpServers must not be arrays`);
+    }
     return {
       version: 1,
-      extensions: parsed.extensions && typeof parsed.extensions === 'object' && !Array.isArray(parsed.extensions)
+      extensions: parsed.extensions && typeof parsed.extensions === 'object'
         ? parsed.extensions
         : {},
-      mcpServers: parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)
+      mcpServers: parsed.mcpServers && typeof parsed.mcpServers === 'object'
         ? parsed.mcpServers
         : {},
     };
@@ -117,6 +127,10 @@ export function saveProjectResourceActivation(
   cwd: string,
   data: ProjectResourceActivationFile
 ): void {
+  if (Array.isArray(data.extensions) || Array.isArray(data.mcpServers)) {
+    throw new Error('Invalid project resource activation schema: extensions and mcpServers must not be arrays');
+  }
+
   const filePath = getProjectResourceActivationPath(cwd);
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -222,7 +236,8 @@ export function isAlwaysActiveMcp(
 export function getEffectiveExtensionActivation(
   policy: ViewerResourceActivationPolicy,
   cwd?: string | null,
-  identity: string = ''
+  identity: string = '',
+  nativeDefaultEnabled: boolean = true
 ): boolean {
   if (cwd) {
     const local = loadProjectResourceActivation(cwd);
@@ -237,7 +252,10 @@ export function getEffectiveExtensionActivation(
           }
         }
       }
-      return isAlwaysActiveExtension(policy, identity);
+      if (isAlwaysActiveExtension(policy, identity)) {
+        return true;
+      }
+      return nativeDefaultEnabled;
     }
 
     const normCwd = normalizeProjectCwd(cwd);
@@ -258,13 +276,14 @@ export function getEffectiveExtensionActivation(
     return true;
   }
 
-  return false;
+  return nativeDefaultEnabled;
 }
 
 export function getEffectiveMcpActivation(
   policy: ViewerResourceActivationPolicy,
   cwd?: string | null,
-  name: string = ''
+  name: string = '',
+  nativeDefaultEnabled: boolean = true
 ): boolean {
   const trimmed = (name || '').trim();
 
@@ -274,7 +293,10 @@ export function getEffectiveMcpActivation(
       if (local.mcpServers && typeof local.mcpServers[trimmed] === 'boolean') {
         return local.mcpServers[trimmed];
       }
-      return isAlwaysActiveMcp(policy, trimmed);
+      if (isAlwaysActiveMcp(policy, trimmed)) {
+        return true;
+      }
+      return nativeDefaultEnabled;
     }
 
     const normCwd = normalizeProjectCwd(cwd);
@@ -290,7 +312,12 @@ export function getEffectiveMcpActivation(
     return true;
   }
 
-  return false;
+  return nativeDefaultEnabled;
+}
+
+export function getNativeProjectMcpPath(cwd: string): string {
+  const normCwd = resolveCrossPlatformCwd(cwd);
+  return path.join(normCwd, '.pi', 'mcp.json');
 }
 
 export function getSupportedProjectMcpPaths(cwd: string): string[] {
@@ -317,6 +344,32 @@ export async function setResourceActivation(
   }
 
   const identity = payload.identity.trim();
+  const isClearingGlobalException = !payload.cwd && !payload.enabled;
+
+  if (!isClearingGlobalException) {
+    if (payload.kind === 'mcp') {
+      const globalMcpFile = path.join(getPiAgentDir(), 'mcp.json');
+      const globalServers = readMcpServersFromFile(globalMcpFile, 'global');
+      let knownMcp = globalServers.some((s) => s.name === identity);
+      if (!knownMcp && payload.cwd) {
+        const projectMcpFile = getNativeProjectMcpPath(payload.cwd);
+        const projectServers = readMcpServersFromFile(projectMcpFile, 'project');
+        knownMcp = projectServers.some((s) => s.name === identity);
+      }
+      if (!knownMcp) {
+        throw new Error(`Unknown MCP server '${identity}'`);
+      }
+    } else {
+      let knownExt = KNOWN_BUILTIN_EXTENSIONS.has(identity);
+      if (!knownExt) {
+        const exts = discoverAllExtensions(payload.cwd);
+        knownExt = exts.some((e) => extensionIdentitiesMatch(e.source, identity));
+      }
+      if (!knownExt) {
+        throw new Error(`Unknown extension identity '${identity}'`);
+      }
+    }
+  }
 
   if (payload.cwd && payload.cwd.trim()) {
     const local = loadProjectResourceActivation(payload.cwd);
@@ -391,9 +444,9 @@ export async function setResourceActivation(
 export async function materializeProjectMcpEnforcement(cwd: string): Promise<void> {
   const normCwd = resolveCrossPlatformCwd(cwd);
   // Fail closed immediately if project resource activation exists but is malformed
-  loadProjectResourceActivation(normCwd);
+  const local = loadProjectResourceActivation(normCwd);
   const piDir = path.join(normCwd, '.pi');
-  const targetMcpFile = path.join(piDir, 'mcp.json');
+  const targetMcpFile = getNativeProjectMcpPath(normCwd);
 
   const policy = loadResourceActivationPolicy();
   const globalMcpFile = path.join(getPiAgentDir(), 'mcp.json');
@@ -408,103 +461,70 @@ export async function materializeProjectMcpEnforcement(cwd: string): Promise<voi
   }
   const globalServers = readMcpServersFromFile(globalMcpFile, 'global');
 
-  // Supported project candidates in priority order:
-  // 1. Native .pi/mcp.json
-  // 2. Alternate .mcp.json
-  // 3. Alternate .agents/mcp.json
-  // 4. Alternate mcp-adapter.json
-  const projectCandidates = getSupportedProjectMcpPaths(normCwd);
-
+  // Shallow MCP enforcement: only native .pi/mcp.json, ignore alternate files
   let nativeData: any = {};
-  let hadNativeFile = false;
-  let alternateMetadata: any = {};
 
-  const localProjectDefinitions = new Map<string, any>();
+  if (fs.existsSync(targetMcpFile)) {
+    try {
+      nativeData = JSON.parse(fs.readFileSync(targetMcpFile, 'utf8'));
+    } catch (e: any) {
+      throw new Error(
+        `Failed to enforce MCP resource activation: Cannot parse ${targetMcpFile}: ${e.message}`
+      );
+    }
+  }
 
-  for (const pFile of projectCandidates) {
-    if (fs.existsSync(pFile)) {
-      let content: any = {};
-      try {
-        const raw = fs.readFileSync(pFile, 'utf8');
-        content = JSON.parse(raw);
-      } catch (e: any) {
-        throw new Error(
-          `Failed to enforce MCP resource activation: Cannot parse ${pFile}: ${e.message}`
-        );
-      }
+  const normCwdKey = normalizeProjectCwd(normCwd);
+  const localOverrides = local?.mcpServers ?? policy.projects?.[normCwdKey]?.mcpServers ?? {};
 
-      if (pFile === targetMcpFile) {
-        nativeData = content;
-        hadNativeFile = true;
-      } else {
-        for (const [k, v] of Object.entries(content)) {
-          if (k !== 'mcpServers' && k !== 'servers' && alternateMetadata[k] === undefined) {
-            alternateMetadata[k] = v;
-          }
+  const sMap = nativeData.mcpServers || nativeData.servers || {};
+  let hasChanges = false;
+  const updatedServers: Record<string, any> = {};
+
+  // Preserve raw local definitions without synthetic enabled additions
+  for (const [name, def] of Object.entries<any>(sMap)) {
+    updatedServers[name] = { ...def };
+  }
+
+  // Only modify explicit overrides
+  for (const [name, overrideEnabled] of Object.entries(localOverrides)) {
+    if (typeof overrideEnabled === 'boolean') {
+      const existing = updatedServers[name];
+      if (existing) {
+        if (existing.enabled !== overrideEnabled) {
+          updatedServers[name] = { ...existing, enabled: overrideEnabled };
+          delete updatedServers[name].disabled;
+          hasChanges = true;
         }
-      }
-
-      const sMap = content.mcpServers || content.servers || {};
-      for (const [name, def] of Object.entries<any>(sMap)) {
-        if (!localProjectDefinitions.has(name)) {
-          localProjectDefinitions.set(name, { ...def });
-        } else {
-          const existing = localProjectDefinitions.get(name)!;
-          if (!existing.command && !existing.url && (def.command || def.url)) {
-            localProjectDefinitions.set(name, { ...def, ...existing });
-          }
+      } else {
+        const isGlobal = globalServers.some((g) => g.name === name);
+        if (isGlobal) {
+          updatedServers[name] = { enabled: overrideEnabled };
+          hasChanges = true;
         }
       }
     }
   }
 
-  const allServerNames = new Set([
-    ...Array.from(localProjectDefinitions.keys()),
-    ...globalServers.map((s) => s.name),
-  ]);
+  // Also check always positives from policy for existing or global servers if not already set
+  for (const alwaysName of policy.alwaysMcpServers) {
+    if (localOverrides[alwaysName] === undefined) {
+      const existing = updatedServers[alwaysName];
+      if (existing && existing.enabled === false) {
+        updatedServers[alwaysName] = { ...existing, enabled: true };
+        delete updatedServers[alwaysName].disabled;
+        hasChanges = true;
+      }
+    }
+  }
 
-  if (allServerNames.size === 0 && !hadNativeFile) {
+  // If no changes occurred (or no native file and no explicit overrides): return without writing
+  if (!hasChanges) {
     return;
   }
 
-  const updatedServers: Record<string, any> = {};
-
-  // For all local definitions (from native or alternate candidate files):
-  for (const [name, def] of localProjectDefinitions.entries()) {
-    const isEffective = getEffectiveMcpActivation(policy, normCwd, name);
-    const isGlobal = globalServers.some((g) => g.name === name);
-
-    if (isGlobal && !def.command && !def.url) {
-      // Partial override of a global server
-      updatedServers[name] = {
-        ...def,
-        enabled: isEffective,
-      };
-      delete updatedServers[name].disabled;
-    } else {
-      // Complete local server definition:
-      // Preserved in native file with native enabled
-      updatedServers[name] = {
-        ...def,
-        enabled: isEffective,
-      };
-      delete updatedServers[name].disabled;
-    }
-  }
-
-  // For global servers not present in local definitions:
-  for (const g of globalServers) {
-    if (!localProjectDefinitions.has(g.name)) {
-      const isEffective = getEffectiveMcpActivation(policy, normCwd, g.name);
-      updatedServers[g.name] = {
-        enabled: isEffective,
-      };
-    }
-  }
-
-  const baseData = { ...alternateMetadata, ...nativeData };
   const materializedData = {
-    ...baseData,
+    ...nativeData,
     mcpServers: updatedServers,
   };
   if (nativeData.servers && !nativeData.mcpServers) {
@@ -579,8 +599,13 @@ export function discoverAllExtensions(cwd?: string): DiscoveredExtension[] {
         for (const item of s.extensions) {
           const src = typeof item === 'string' ? item : item?.source || item?.path;
           if (src) {
-            const clean = src.replace(/^[!+]/, '').trim();
-            if (!clean.startsWith('builtin:')) {
+            const trimmed = src.trim();
+            if (trimmed.includes('*')) continue;
+            const clean = trimmed.replace(/^[!+-]/, '').trim();
+            if (!clean) continue;
+            if (clean.startsWith('builtin:')) {
+              addExt(clean, getPiAgentDir(), globalSettings, undefined, undefined);
+            } else {
               addExt(clean, getPiAgentDir(), globalSettings);
             }
           }
@@ -591,7 +616,7 @@ export function discoverAllExtensions(cwd?: string): DiscoveredExtension[] {
     }
   }
 
-  // 2. Global extensions directory
+  // 2. Global extensions directory: top-level files and folders as ONE root, no manifest traversal
   const globalExtDir = path.join(getPiAgentDir(), 'extensions');
   if (fs.existsSync(globalExtDir)) {
     try {
@@ -602,36 +627,8 @@ export function discoverAllExtensions(cwd?: string): DiscoveredExtension[] {
           const fullPath = path.join(globalExtDir, e.name);
           addExt(`extensions/${e.name}`, getPiAgentDir(), fullPath, fullPath, globalExtDir);
         } else if (e.isDirectory()) {
-          const subPackage = path.join(globalExtDir, e.name, 'package.json');
-          let foundManifest = false;
-          if (fs.existsSync(subPackage)) {
-            try {
-              const pkgData = JSON.parse(fs.readFileSync(subPackage, 'utf8'));
-              if (Array.isArray(pkgData.pi?.extensions)) {
-                for (const rel of pkgData.pi.extensions) {
-                  const cleanRel = rel.replace(/^[./\\]+/, '').replace(/\\/g, '/');
-                  const fullExt = path.join(globalExtDir, e.name, cleanRel);
-                  addExt(
-                    `extensions/${e.name}/${cleanRel}`,
-                    getPiAgentDir(),
-                    fullExt,
-                    fullExt,
-                    path.join(globalExtDir, e.name)
-                  );
-                  foundManifest = true;
-                }
-              }
-            } catch {}
-          }
-          if (!foundManifest) {
-            for (const idx of ['index.ts', 'index.js', 'index.mjs']) {
-              const fullIdx = path.join(globalExtDir, e.name, idx);
-              if (fs.existsSync(fullIdx)) {
-                addExt(`extensions/${e.name}/${idx}`, getPiAgentDir(), fullIdx, fullIdx, path.join(globalExtDir, e.name));
-                break;
-              }
-            }
-          }
+          const fullPath = path.join(globalExtDir, e.name);
+          addExt(`extensions/${e.name}`, getPiAgentDir(), fullPath, fullPath, fullPath);
         }
       }
     } catch {}
@@ -640,28 +637,28 @@ export function discoverAllExtensions(cwd?: string): DiscoveredExtension[] {
   // 3. Project settings and extensions (if cwd provided)
   if (cwd) {
     const normCwd = resolveCrossPlatformCwd(cwd);
-    const projectCandidates = [
-      path.join(normCwd, '.pi', 'settings.json'),
-      path.join(normCwd, '.pi.json'),
-    ];
-    for (const pFile of projectCandidates) {
-      if (fs.existsSync(pFile)) {
-        try {
-          const s = JSON.parse(fs.readFileSync(pFile, 'utf8'));
-          if (Array.isArray(s.extensions)) {
-            for (const item of s.extensions) {
-              const src = typeof item === 'string' ? item : item?.source || item?.path;
-              if (src) {
-                const clean = src.replace(/^[!+]/, '').trim();
-                if (!clean.startsWith('builtin:')) {
-                  addExt(clean, path.dirname(pFile), pFile);
-                }
+    const projectSettings = path.join(normCwd, '.pi', 'settings.json');
+    if (fs.existsSync(projectSettings)) {
+      try {
+        const s = JSON.parse(fs.readFileSync(projectSettings, 'utf8'));
+        if (Array.isArray(s.extensions)) {
+          for (const item of s.extensions) {
+            const src = typeof item === 'string' ? item : item?.source || item?.path;
+            if (src) {
+              const trimmed = src.trim();
+              if (trimmed.includes('*')) continue;
+              const clean = trimmed.replace(/^[!+-]/, '').trim();
+              if (!clean) continue;
+              if (clean.startsWith('builtin:')) {
+                addExt(clean, path.dirname(projectSettings), projectSettings, undefined, undefined);
+              } else {
+                addExt(clean, path.dirname(projectSettings), projectSettings);
               }
             }
           }
-        } catch (e: any) {
-          throw new Error(`Failed to discover extensions: Cannot parse settings at ${pFile}: ${e.message}`);
         }
+      } catch (e: any) {
+        throw new Error(`Failed to discover extensions: Cannot parse settings at ${projectSettings}: ${e.message}`);
       }
     }
 
@@ -675,67 +672,11 @@ export function discoverAllExtensions(cwd?: string): DiscoveredExtension[] {
             const fullPath = path.join(projectExtDir, e.name);
             addExt(`extensions/${e.name}`, path.join(normCwd, '.pi'), fullPath, fullPath, projectExtDir);
           } else if (e.isDirectory()) {
-            const subPackage = path.join(projectExtDir, e.name, 'package.json');
-            let foundManifest = false;
-            if (fs.existsSync(subPackage)) {
-              try {
-                const pkgData = JSON.parse(fs.readFileSync(subPackage, 'utf8'));
-                if (Array.isArray(pkgData.pi?.extensions)) {
-                  for (const rel of pkgData.pi.extensions) {
-                    const cleanRel = rel.replace(/^[./\\]+/, '').replace(/\\/g, '/');
-                    const fullExt = path.join(projectExtDir, e.name, cleanRel);
-                    addExt(
-                      `extensions/${e.name}/${cleanRel}`,
-                      path.join(normCwd, '.pi'),
-                      fullExt,
-                      fullExt,
-                      path.join(projectExtDir, e.name)
-                    );
-                    foundManifest = true;
-                  }
-                }
-              } catch {}
-            }
-            if (!foundManifest) {
-              for (const idx of ['index.ts', 'index.js', 'index.mjs']) {
-                const fullIdx = path.join(projectExtDir, e.name, idx);
-                if (fs.existsSync(fullIdx)) {
-                  addExt(`extensions/${e.name}/${idx}`, path.join(normCwd, '.pi'), fullIdx, fullIdx, path.join(projectExtDir, e.name));
-                  break;
-                }
-              }
-            }
+            const fullPath = path.join(projectExtDir, e.name);
+            addExt(`extensions/${e.name}`, path.join(normCwd, '.pi'), fullPath, fullPath, fullPath);
           }
         }
       } catch {}
-    }
-  }
-
-  // 4. Policy entries (in case extension is stored in policy but not yet on disk or in settings)
-  const policy = loadResourceActivationPolicy();
-  const allPolicyExts = [...policy.alwaysExtensions];
-  if (cwd) {
-    const local = loadProjectResourceActivation(cwd);
-    if (local !== null) {
-      if (local.extensions) {
-        allPolicyExts.push(...Object.keys(local.extensions));
-      }
-    } else {
-      const normCwdKey = normalizeProjectCwd(cwd);
-      const projExts = policy.projects?.[normCwdKey]?.extensions;
-      if (projExts) {
-        allPolicyExts.push(...Object.keys(projExts));
-      }
-    }
-  }
-  for (const polExt of allPolicyExts) {
-    const norm = normalizeExtensionIdentity(polExt);
-    if (!norm) continue;
-    if (!seenIdentities.has(norm)) {
-      const owningDir = cwd && fs.existsSync(path.join(cwd, polExt))
-        ? cwd
-        : getPiAgentDir();
-      addExt(polExt, owningDir, path.resolve(owningDir, polExt));
     }
   }
 
@@ -749,70 +690,138 @@ export function resolveExtensionRuntimePath(source: string, owningDir: string): 
   return path.resolve(owningDir, source);
 }
 
+export async function materializeProjectExtensionEnforcement(cwd: string): Promise<void> {
+  const normCwd = resolveCrossPlatformCwd(cwd);
+  const local = loadProjectResourceActivation(normCwd);
+  const policy = loadResourceActivationPolicy();
+  const normCwdKey = normalizeProjectCwd(normCwd);
+  const localOverrides = local?.extensions ?? policy.projects?.[normCwdKey]?.extensions ?? {};
+
+  // Merge applicable global always positives into overrides fallback true
+  const mergedOverrides: Record<string, boolean> = { ...localOverrides };
+  for (const alwaysExt of policy.alwaysExtensions) {
+    if (mergedOverrides[alwaysExt] === undefined) {
+      mergedOverrides[alwaysExt] = true;
+    }
+  }
+
+  const projectSettingsPath = path.join(normCwd, '.pi', 'settings.json');
+  let settings: any = {};
+  if (fs.existsSync(projectSettingsPath)) {
+    try {
+      settings = JSON.parse(fs.readFileSync(projectSettingsPath, 'utf8'));
+    } catch (e: any) {
+      throw new Error(`Failed to enforce extension activation: Cannot parse ${projectSettingsPath}: ${e.message}`);
+    }
+  }
+
+  const allExtensions = discoverAllExtensions(normCwd);
+  if (!Array.isArray(settings.extensions)) {
+    settings.extensions = [];
+  }
+  let hasChanges = false;
+
+  for (const [key, enabled] of Object.entries(mergedOverrides)) {
+    if (typeof enabled !== 'boolean') continue;
+
+    // Built-in handling: builtin:mcp, etc.
+    const cleanKey = key.replace(/^[!+-]/, '').trim();
+    if (cleanKey.startsWith('builtin:') && KNOWN_BUILTIN_EXTENSIONS.has(cleanKey)) {
+      const minus = `-${cleanKey}`;
+      const plus = `+${cleanKey}`;
+      if (!enabled) {
+        if (!settings.extensions.includes(minus)) {
+          settings.extensions = settings.extensions.filter((e: any) => e !== plus && e !== cleanKey);
+          settings.extensions.push(minus);
+          hasChanges = true;
+        }
+      } else {
+        if (!settings.extensions.includes(plus) && !settings.extensions.includes(cleanKey)) {
+          settings.extensions = settings.extensions.filter((e: any) => e !== minus);
+          settings.extensions.push(plus);
+          hasChanges = true;
+        }
+      }
+      continue;
+    }
+
+    // Skip hidden child paths and unknown policies: only match current top-level roots
+    const root = allExtensions.find((ext) => extensionIdentitiesMatch(ext.source, key));
+    if (!root) continue;
+
+    const runtimePath = root.extensionPath || resolveExtensionRuntimePath(root.source, root.owningDir);
+    let isFolder = false;
+    try {
+      isFolder = fs.existsSync(runtimePath) && fs.statSync(runtimePath).isDirectory();
+    } catch {}
+
+    if (isFolder) {
+      const posixDir = runtimePath.replace(/\\/g, '/');
+      const folderGlob = `!${posixDir}/**`;
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => e !== folderGlob);
+        if (!settings.extensions.includes(posixDir)) settings.extensions.push(posixDir);
+        if (!settings.extensions.includes(folderGlob)) settings.extensions.push(folderGlob);
+        hasChanges = true;
+      } else {
+        const hadGlob = settings.extensions.includes(folderGlob);
+        settings.extensions = settings.extensions.filter((e: any) => e !== folderGlob);
+        if (!settings.extensions.includes(posixDir)) {
+          settings.extensions.push(posixDir);
+          hasChanges = true;
+        } else if (hadGlob) {
+          hasChanges = true;
+        }
+      }
+    } else {
+      const posixPath = runtimePath.replace(/\\/g, '/');
+      const minus = `-${posixPath}`;
+      const cleanRel = root.source.replace(/^[!+-]/, '').trim().replace(/\\/g, '/');
+
+      if (!enabled) {
+        settings.extensions = settings.extensions.filter((e: any) => e !== `+${posixPath}` && e !== `+${cleanRel}`);
+        if (!settings.extensions.includes(posixPath)) settings.extensions.push(posixPath);
+        if (!settings.extensions.includes(minus)) settings.extensions.push(minus);
+        hasChanges = true;
+      } else {
+        const hadMinus = settings.extensions.some((e: any) => e === minus || e === `-${cleanRel}`);
+        settings.extensions = settings.extensions.filter((e: any) => e !== minus && e !== `-${cleanRel}`);
+        if (!settings.extensions.includes(posixPath)) {
+          settings.extensions.push(posixPath);
+          hasChanges = true;
+        } else if (hadMinus) {
+          hasChanges = true;
+        }
+      }
+    }
+  }
+
+  if (!hasChanges) {
+    return;
+  }
+
+  const piDir = path.join(normCwd, '.pi');
+  if (!fs.existsSync(piDir)) {
+    fs.mkdirSync(piDir, { recursive: true });
+  }
+
+  const tmpPath = `${projectSettingsPath}.tmp.${Date.now()}.${process.pid}`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+    fs.renameSync(tmpPath, projectSettingsPath);
+  } catch (err: any) {
+    try {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+    } catch {}
+    throw new Error(`Failed to write ${projectSettingsPath}: ${err.message}`);
+  }
+}
+
 export async function computeRpcStartupArgs(cwd: string): Promise<string[]> {
   const normCwd = resolveCrossPlatformCwd(cwd);
   // Fail closed immediately if project resource activation exists but is malformed
-  const local = loadProjectResourceActivation(normCwd);
-  const policy = loadResourceActivationPolicy();
-  const args: string[] = ['--no-extensions'];
-
-  // Discover all extensions and filter by effective activation
-  const allExtensions = discoverAllExtensions(normCwd);
-  const authorizedExtPaths = new Set<string>();
-
-  for (const ext of allExtensions) {
-    if (getEffectiveExtensionActivation(policy, normCwd, ext.source)) {
-      const runtimePath = ext.extensionPath || resolveExtensionRuntimePath(ext.source, ext.owningDir);
-      authorizedExtPaths.add(runtimePath);
-    }
-  }
-
-  for (const p of authorizedExtPaths) {
-    args.push('--extension', p);
-  }
-
-  // Check MCP servers
-  const globalMcpFile = path.join(getPiAgentDir(), 'mcp.json');
-  const globalServers = readMcpServersFromFile(globalMcpFile, 'global');
-  const projectCandidates = getSupportedProjectMcpPaths(normCwd);
-
-  const allServerNames = new Set<string>(globalServers.map((s) => s.name));
-  for (const pFile of projectCandidates) {
-    const pServers = readMcpServersFromFile(pFile, 'project');
-    for (const s of pServers) {
-      allServerNames.add(s.name);
-    }
-  }
-
-  // Also include any servers explicitly referenced in policy or local activation
-  for (const s of policy.alwaysMcpServers) {
-    allServerNames.add(s);
-  }
-  if (local !== null) {
-    if (local.mcpServers) {
-      for (const s of Object.keys(local.mcpServers)) {
-        allServerNames.add(s);
-      }
-    }
-  } else {
-    const normCwdKey = normalizeProjectCwd(normCwd);
-    const projMcp = policy.projects?.[normCwdKey]?.mcpServers;
-    if (projMcp) {
-      for (const s of Object.keys(projMcp)) {
-        allServerNames.add(s);
-      }
-    }
-  }
-
-  const hasAuthorizedMcp = Array.from(allServerNames).some((name) =>
-    getEffectiveMcpActivation(policy, normCwd, name)
-  );
-
-  if (hasAuthorizedMcp) {
-    args.push('--extension', 'builtin:mcp');
-  } else {
-    args.push('--no-mcp');
-  }
-
-  return args;
+  loadProjectResourceActivation(normCwd);
+  loadResourceActivationPolicy();
+  await materializeProjectExtensionEnforcement(normCwd);
+  return [];
 }

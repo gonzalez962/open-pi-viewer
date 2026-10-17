@@ -43,14 +43,24 @@ test('Resource policy: missing policy defaults off for extensions and MCP server
 
   const testProject = path.join(fakeAgentDir, 'my-project');
   assert.strictEqual(
-    getEffectiveExtensionActivation(policy, testProject, 'extensions/foo.ts'),
+    getEffectiveExtensionActivation(policy, testProject, 'extensions/foo.ts', false),
     false,
-    'Extensions must default inactive'
+    'Extensions must inherit inactive when configured false'
   );
   assert.strictEqual(
-    getEffectiveMcpActivation(policy, testProject, 'my-mcp'),
+    getEffectiveExtensionActivation(policy, testProject, 'extensions/foo.ts', true),
+    true,
+    'Extensions must inherit active when configured true'
+  );
+  assert.strictEqual(
+    getEffectiveMcpActivation(policy, testProject, 'my-mcp', false),
     false,
-    'MCP servers must default inactive'
+    'MCP servers must inherit inactive when configured false'
+  );
+  assert.strictEqual(
+    getEffectiveMcpActivation(policy, testProject, 'my-mcp', true),
+    true,
+    'MCP servers must inherit active when configured true'
   );
 });
 
@@ -62,6 +72,15 @@ test('Resource policy: project isolation ensures activation in Project A does no
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
   });
 
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['extensions/helper.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'db-server': { command: 'node' } } }, null, 2)
+  );
+
   const projectA = path.join(fakeAgentDir, 'project-a');
   const projectB = path.join(fakeAgentDir, 'project-b');
   fs.mkdirSync(projectA, { recursive: true });
@@ -70,29 +89,29 @@ test('Resource policy: project isolation ensures activation in Project A does no
   await setResourceActivation({
     kind: 'extension',
     identity: 'extensions/helper.ts',
-    enabled: true,
+    enabled: false,
     cwd: projectA,
   });
   await setResourceActivation({
     kind: 'mcp',
     identity: 'db-server',
-    enabled: true,
+    enabled: false,
     cwd: projectA,
   });
 
   const policy = loadResourceActivationPolicy();
-  assert.strictEqual(getEffectiveExtensionActivation(policy, projectA, 'extensions/helper.ts'), true);
-  assert.strictEqual(getEffectiveMcpActivation(policy, projectA, 'db-server'), true);
+  assert.strictEqual(getEffectiveExtensionActivation(policy, projectA, 'extensions/helper.ts', true), false);
+  assert.strictEqual(getEffectiveMcpActivation(policy, projectA, 'db-server', true), false);
 
   assert.strictEqual(
-    getEffectiveExtensionActivation(policy, projectB, 'extensions/helper.ts'),
-    false,
-    'Project B must remain inactive'
+    getEffectiveExtensionActivation(policy, projectB, 'extensions/helper.ts', true),
+    true,
+    'Project B must remain enabled'
   );
   assert.strictEqual(
-    getEffectiveMcpActivation(policy, projectB, 'db-server'),
-    false,
-    'Project B must remain inactive'
+    getEffectiveMcpActivation(policy, projectB, 'db-server', true),
+    true,
+    'Project B must remain enabled'
   );
 });
 
@@ -103,6 +122,15 @@ test('Resource policy: global Always activate exception enables resource across 
     setPiAgentDirForTest(null);
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['-extensions/global-tool.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'global-mcp': { command: 'node', enabled: false } } }, null, 2)
+  );
 
   const projectA = path.join(fakeAgentDir, 'project-a');
   const projectB = path.join(fakeAgentDir, 'project-b');
@@ -122,10 +150,10 @@ test('Resource policy: global Always activate exception enables resource across 
   assert.ok(policy.alwaysExtensions.includes('extensions/global-tool.ts'));
   assert.ok(policy.alwaysMcpServers.includes('global-mcp'));
 
-  assert.strictEqual(getEffectiveExtensionActivation(policy, projectA, 'extensions/global-tool.ts'), true);
-  assert.strictEqual(getEffectiveExtensionActivation(policy, projectB, 'extensions/global-tool.ts'), true);
-  assert.strictEqual(getEffectiveMcpActivation(policy, projectA, 'global-mcp'), true);
-  assert.strictEqual(getEffectiveMcpActivation(policy, projectB, 'global-mcp'), true);
+  assert.strictEqual(getEffectiveExtensionActivation(policy, projectA, 'extensions/global-tool.ts', false), true);
+  assert.strictEqual(getEffectiveExtensionActivation(policy, projectB, 'extensions/global-tool.ts', false), true);
+  assert.strictEqual(getEffectiveMcpActivation(policy, projectA, 'global-mcp', false), true);
+  assert.strictEqual(getEffectiveMcpActivation(policy, projectB, 'global-mcp', false), true);
 
   // Disable global exception
   await setResourceActivation({
@@ -140,8 +168,8 @@ test('Resource policy: global Always activate exception enables resource across 
   });
 
   const updatedPolicy = loadResourceActivationPolicy();
-  assert.strictEqual(getEffectiveExtensionActivation(updatedPolicy, projectA, 'extensions/global-tool.ts'), false);
-  assert.strictEqual(getEffectiveMcpActivation(updatedPolicy, projectA, 'global-mcp'), false);
+  assert.strictEqual(getEffectiveExtensionActivation(updatedPolicy, projectA, 'extensions/global-tool.ts', false), false);
+  assert.strictEqual(getEffectiveMcpActivation(updatedPolicy, projectA, 'global-mcp', false), false);
 });
 
 test('Resource policy: explicit project false override takes precedence over global always-on', async (t) => {
@@ -151,6 +179,15 @@ test('Resource policy: explicit project false override takes precedence over glo
     setPiAgentDirForTest(null);
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['extensions/omnipresent.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'omnipresent-mcp': { command: 'node' } } }, null, 2)
+  );
 
   const projectA = path.join(fakeAgentDir, 'project-a');
 
@@ -182,12 +219,12 @@ test('Resource policy: explicit project false override takes precedence over glo
 
   const policy = loadResourceActivationPolicy();
   assert.strictEqual(
-    getEffectiveExtensionActivation(policy, projectA, 'extensions/omnipresent.ts'),
+    getEffectiveExtensionActivation(policy, projectA, 'extensions/omnipresent.ts', true),
     false,
     'Explicit project override false must win over global always-on'
   );
   assert.strictEqual(
-    getEffectiveMcpActivation(policy, projectA, 'omnipresent-mcp'),
+    getEffectiveMcpActivation(policy, projectA, 'omnipresent-mcp', true),
     false,
     'Explicit project override false must win over global always-on'
   );
@@ -210,6 +247,15 @@ test('Resource policy: set_resource_activation IPC validates payload and returns
     setPiAgentDirForTest(null);
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['extensions/test.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'test-mcp': { command: 'node' } } }, null, 2)
+  );
 
   // Valid calls
   const res1: any = await handleIpcCommand('set_resource_activation', {
@@ -289,24 +335,24 @@ test('Listing outputs: get_mcp_servers reports alwaysActive and effective enable
   assert.strictEqual(g2.alwaysActive, true);
   assert.strictEqual(g1.enabled, true, 'Global config state preserved');
 
-  // Project listing: resources default inactive unless alwaysActive or overridden
+  // Project listing: resources inherit native enabled state unless alwaysActive or overridden
   const projList1 = getMcpServersImpl(projectDir);
   const p1 = projList1.servers.find((s: any) => s.name === 'global-server-1');
   const p2 = projList1.servers.find((s: any) => s.name === 'global-server-2');
-  assert.strictEqual(p1.enabled, false, 'Inactive by default');
-  assert.strictEqual(p1.disabled, true);
+  assert.strictEqual(p1.enabled, true, 'Inherits native enabled state');
+  assert.strictEqual(p1.disabled, false);
   assert.strictEqual(p2.enabled, true, 'Enabled via alwaysActive');
 
-  // Override p1 in project to enabled
+  // Override p1 in project to disabled
   await setResourceActivation({
     kind: 'mcp',
     identity: 'global-server-1',
-    enabled: true,
+    enabled: false,
     cwd: projectDir,
   });
   const projList2 = getMcpServersImpl(projectDir);
   const p1Updated = projList2.servers.find((s: any) => s.name === 'global-server-1');
-  assert.strictEqual(p1Updated.enabled, true);
+  assert.strictEqual(p1Updated.enabled, false);
 });
 
 test('Listing outputs: get_pi_resources reports alwaysActive and effective enabled for extensions', async (t) => {
@@ -348,7 +394,7 @@ test('Listing outputs: get_pi_resources reports alwaysActive and effective enabl
   assert.ok(extB);
   assert.ok(pkg);
 
-  assert.strictEqual(extA.enabled, false, 'Default inactive for project');
+  assert.strictEqual(extA.enabled, true, 'Inherits native active state for project');
   assert.strictEqual(extA.alwaysActive, false);
   assert.strictEqual(extB.enabled, true, 'Active via alwaysActive');
   assert.strictEqual(extB.alwaysActive, true);
@@ -362,6 +408,15 @@ test('Project toggles: toggle_mcp_server and toggle_pi_resource route to policy 
     setPiAgentDirForTest(null);
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['extensions/editor.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'custom-mcp': { command: 'node' } } }, null, 2)
+  );
 
   const projectDir = path.join(fakeAgentDir, 'proj');
   fs.mkdirSync(projectDir, { recursive: true });
@@ -383,7 +438,7 @@ test('Project toggles: toggle_mcp_server and toggle_pi_resource route to policy 
   assert.strictEqual(getEffectiveExtensionActivation(policy, projectDir, 'extensions/editor.ts'), true);
 });
 
-test('Startup enforcement: computeRpcStartupArgs includes --no-extensions, authorized -e, and builtin:mcp or --no-mcp', async (t) => {
+test('Startup enforcement: computeRpcStartupArgs returns empty args preserving native loading', async (t) => {
   const fakeAgentDir = createTempDir('pi-agent-test-');
   setPiAgentDirForTest(fakeAgentDir);
   t.after(() => {
@@ -399,12 +454,14 @@ test('Startup enforcement: computeRpcStartupArgs includes --no-extensions, autho
     path.join(fakeAgentDir, 'settings.json'),
     JSON.stringify({ extensions: ['./global-ext.ts'] }, null, 2)
   );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'any-server': { command: 'node' } } }, null, 2)
+  );
 
-  // Case 1: No resources active -> --no-extensions and --no-mcp, no builtin:mcp
+  // Case 1: No resources overridden -> startup args empty
   const args1 = await computeRpcStartupArgs(projectDir);
-  assert.ok(args1.includes('--no-extensions'));
-  assert.ok(args1.includes('--no-mcp'));
-  assert.ok(!args1.includes('builtin:mcp'));
+  assert.deepStrictEqual(args1, []);
 
   // Case 2: Authorize global-ext.ts and an MCP server
   await setResourceActivation({
@@ -421,17 +478,7 @@ test('Startup enforcement: computeRpcStartupArgs includes --no-extensions, autho
   });
 
   const args2 = await computeRpcStartupArgs(projectDir);
-  assert.ok(args2.includes('--no-extensions'));
-  assert.ok(args2.includes('--extension'));
-  assert.ok(!args2.includes('--no-mcp'));
-  assert.ok(args2.includes('builtin:mcp'));
-
-  // Extension runtime path is resolved relative to owning settings directory
-  const expectedPath = path.resolve(fakeAgentDir, './global-ext.ts');
-  assert.ok(
-    args2.some((arg) => path.resolve(arg) === expectedPath),
-    'Authorized extension runtime path must resolve relative to owning settings dir'
-  );
+  assert.deepStrictEqual(args2, [], 'Startup args must remain empty, removing blanket overrides');
 });
 
 test('Startup enforcement: materializeProjectMcpEnforcement writes atomic .pi/mcp.json preserving local definitions', async (t) => {
@@ -470,11 +517,11 @@ test('Startup enforcement: materializeProjectMcpEnforcement writes atomic .pi/mc
   };
   fs.writeFileSync(path.join(projectPiDir, 'mcp.json'), JSON.stringify(initialProjectMcp, null, 2));
 
-  // Policy: local-worker is authorized, global-api is NOT authorized
+  // Policy: override global-api to false
   await setResourceActivation({
     kind: 'mcp',
-    identity: 'local-worker',
-    enabled: true,
+    identity: 'global-api',
+    enabled: false,
     cwd: projectDir,
   });
 
@@ -527,12 +574,19 @@ test('Startup enforcement: NODE_TEST_CONTEXT environment variable cannot bypass 
     }
   });
 
+  await setResourceActivation({
+    kind: 'mcp',
+    identity: 'prod-server',
+    enabled: false,
+    cwd: projectDir,
+  });
+
   await materializeProjectMcpEnforcement(projectDir);
 
   const targetMcp = path.join(projectDir, '.pi', 'mcp.json');
   assert.ok(fs.existsSync(targetMcp), 'Enforcement must run and write .pi/mcp.json even when NODE_TEST_CONTEXT is present');
   const parsed = JSON.parse(fs.readFileSync(targetMcp, 'utf8'));
-  assert.strictEqual(parsed.mcpServers['prod-server'].enabled, false, 'Default inactive state must be enforced');
+  assert.strictEqual(parsed.mcpServers['prod-server'].enabled, false, 'Override inactive state must be enforced');
   assert.strictEqual(parsed.mcpServers['prod-server'].disabled, undefined);
 });
 
@@ -596,6 +650,17 @@ test('Startup enforcement: fail closed on policy errors when .pi/mcp.json cannot
 
   const projectDir = path.join(fakeAgentDir, 'proj-readonly');
   fs.mkdirSync(projectDir, { recursive: true });
+
+  const normCwd = normalizeProjectCwd(projectDir);
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'viewer-resource-activation.json'),
+    JSON.stringify({
+      version: 1,
+      alwaysExtensions: [],
+      alwaysMcpServers: [],
+      projects: { [normCwd]: { mcpServers: { s1: false } } },
+    }, null, 2)
+  );
 
   // Create .pi as a file so writing .pi/mcp.json fails
   fs.writeFileSync(path.join(projectDir, '.pi'), 'blocking file');
@@ -700,7 +765,7 @@ test('B1 regression: handleToggleMcpServer with cwd and global configPath preser
   );
 });
 
-test('B2 regression: discoverAllExtensions resolves relative paths against owning config directory (.pi.json ./root-tool.ts resolves to cwd/root-tool.ts)', async (t) => {
+test('B2 regression: discoverAllExtensions ignores .pi.json and resolves native .pi/settings.json', async (t) => {
   const fakeAgentDir = createTempDir('pi-agent-test-');
   setPiAgentDirForTest(fakeAgentDir);
   const projectDir = createTempDir('proj-b2-');
@@ -710,7 +775,7 @@ test('B2 regression: discoverAllExtensions resolves relative paths against ownin
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
-  // Write .pi.json at the workspace root
+  // Write unsupported .pi.json at workspace root
   fs.writeFileSync(
     path.join(projectDir, '.pi.json'),
     JSON.stringify({
@@ -718,29 +783,30 @@ test('B2 regression: discoverAllExtensions resolves relative paths against ownin
     }, null, 2)
   );
 
-  // Authorize ./root-tool.ts in project policy
-  await setResourceActivation({
-    kind: 'extension',
-    identity: './root-tool.ts',
-    enabled: true,
-    cwd: projectDir,
-  });
-
-  const startupArgs = await computeRpcStartupArgs(projectDir);
-  const expectedResolvedPath = path.resolve(projectDir, 'root-tool.ts');
-  const unexpectedWrongSubdirPath = path.resolve(projectDir, '.pi', 'root-tool.ts');
-
+  // Shallow discovery must ignore .pi.json
+  const exts1 = discoverAllExtensions(projectDir);
   assert.ok(
-    startupArgs.includes(expectedResolvedPath),
-    `Startup args must contain extension path resolved to cwd/root-tool.ts (${expectedResolvedPath})`
+    !exts1.some((e) => e.source.includes('root-tool')),
+    '.pi.json candidate must be ignored in shallow discovery'
   );
+
+  // Native .pi/settings.json must be discovered
+  fs.mkdirSync(path.join(projectDir, '.pi'), { recursive: true });
+  fs.writeFileSync(
+    path.join(projectDir, '.pi', 'settings.json'),
+    JSON.stringify({
+      extensions: ['./native-tool.ts'],
+    }, null, 2)
+  );
+
+  const exts2 = discoverAllExtensions(projectDir);
   assert.ok(
-    !startupArgs.includes(unexpectedWrongSubdirPath),
-    `Startup args must NOT contain wrong hardcoded .pi subdir path (${unexpectedWrongSubdirPath})`
+    exts2.some((e) => e.source.includes('native-tool')),
+    'Native .pi/settings.json must be discovered'
   );
 });
 
-test('B3 regression: materializeProjectMcpEnforcement merges alternate .mcp.json local servers (authorized complete preserved, unauthorized false in native file)', async (t) => {
+test('B3 regression: shallow MCP isolation preserves alternate .mcp.json without mutating or importing into .pi/mcp.json', async (t) => {
   const fakeAgentDir = createTempDir('pi-agent-test-');
   setPiAgentDirForTest(fakeAgentDir);
   const projectDir = createTempDir('proj-b3-');
@@ -760,67 +826,35 @@ test('B3 regression: materializeProjectMcpEnforcement merges alternate .mcp.json
     }, null, 2)
   );
 
-  // Alternate .mcp.json in workspace root (no .pi/mcp.json yet)
+  // Alternate .mcp.json in workspace root (no .pi/mcp.json)
   const altMcp = {
     metadata: { team: 'core', version: '2.0' },
     mcpServers: {
       'alt-authorized': {
         command: 'node',
         args: ['authorized.js'],
-        env: { API_KEY: 'xyz' },
-        headers: { 'X-Custom': 'val' },
-      },
-      'alt-unauthorized': {
-        command: 'python',
-        args: ['unauthorized.py'],
-        env: { DB: 'sqlite' },
       },
     },
   };
-  fs.writeFileSync(path.join(projectDir, '.mcp.json'), JSON.stringify(altMcp, null, 2));
+  const altPath = path.join(projectDir, '.mcp.json');
+  fs.writeFileSync(altPath, JSON.stringify(altMcp, null, 2));
 
-  // Authorize alt-authorized only
-  await setResourceActivation({
-    kind: 'mcp',
-    identity: 'alt-authorized',
-    enabled: true,
-    cwd: projectDir,
-  });
+  // Shallow listing must NOT discover alternate .mcp.json
+  const res = getMcpServersImpl(projectDir);
+  assert.ok(
+    !res.servers.some((s) => s.name === 'alt-authorized'),
+    'Alternate .mcp.json must not be discovered in shallow inventory'
+  );
 
+  // Materialization must NOT import alternate .mcp.json or create .pi/mcp.json
   await materializeProjectMcpEnforcement(projectDir);
-
-  const nativeMcpPath = path.join(projectDir, '.pi', 'mcp.json');
-  assert.ok(fs.existsSync(nativeMcpPath), 'Native .pi/mcp.json must be materialized');
-
-  const materialized = JSON.parse(fs.readFileSync(nativeMcpPath, 'utf8'));
-
-  // Unrelated metadata preserved from alternate file
-  assert.deepStrictEqual(materialized.metadata, { team: 'core', version: '2.0' });
-
-  // Authorized alternate server complete definition preserved with native enabled: true
-  const authSrv = materialized.mcpServers['alt-authorized'];
-  assert.ok(authSrv, 'Authorized alternate server must be present in native file');
-  assert.strictEqual(authSrv.command, 'node');
-  assert.deepStrictEqual(authSrv.args, ['authorized.js']);
-  assert.deepStrictEqual(authSrv.env, { API_KEY: 'xyz' });
-  assert.deepStrictEqual(authSrv.headers, { 'X-Custom': 'val' });
-  assert.strictEqual(authSrv.enabled, true);
-  assert.strictEqual(authSrv.disabled, undefined, 'Must not emit legacy disabled');
-
-  // Unauthorized alternate server emitted with enabled: false
-  const unauthSrv = materialized.mcpServers['alt-unauthorized'];
-  assert.ok(unauthSrv, 'Unauthorized alternate server must be present in native file');
-  assert.strictEqual(unauthSrv.enabled, false);
-  assert.strictEqual(unauthSrv.disabled, undefined, 'Must not emit legacy disabled');
-
-  // Global worker emitted with minimal enabled: false override
-  const globSrv = materialized.mcpServers['global-worker'];
-  assert.ok(globSrv);
-  assert.strictEqual(globSrv.enabled, false);
-  assert.strictEqual(globSrv.command, undefined, 'Must not duplicate global command');
+  assert.ok(
+    !fs.existsSync(path.join(projectDir, '.pi', 'mcp.json')),
+    'Alternate .mcp.json must not trigger materialization into .pi/mcp.json'
+  );
 });
 
-test('Advisory regression: corrupted supported alternate configs fail closed rather than swallow parsing', async (t) => {
+test('Advisory regression: corrupted supported alternate configs are ignored and do not block native MCP', async (t) => {
   const fakeAgentDir = createTempDir('pi-agent-test-');
   setPiAgentDirForTest(fakeAgentDir);
   const projectDir = createTempDir('proj-corrupt-alt-');
@@ -830,16 +864,22 @@ test('Advisory regression: corrupted supported alternate configs fail closed rat
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
-  // Corrupted .mcp.json
+  // Corrupted alternate .mcp.json
   fs.writeFileSync(path.join(projectDir, '.mcp.json'), '{ MALFORMED JSON');
 
-  await assert.rejects(
-    async () => {
-      await materializeProjectMcpEnforcement(projectDir);
-    },
-    /Failed to enforce MCP resource activation: Cannot parse/
-  );
+  // Ignored in shallow listing without throwing
+  assert.doesNotThrow(() => {
+    getMcpServersImpl(projectDir);
+  });
 
+  // Native materialization does not throw on alternate file
+  await assert.doesNotReject(async () => {
+    await materializeProjectMcpEnforcement(projectDir);
+  });
+
+  // Corrupted native file DOES fail closed
+  fs.mkdirSync(path.join(projectDir, '.pi'), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, '.pi', 'mcp.json'), '{ MALFORMED JSON');
   assert.throws(
     () => {
       getMcpServersImpl(projectDir);
@@ -869,38 +909,38 @@ test('MCP server identity: distinct foo-bar and foo_bar must not authorize each 
     }, null, 2)
   );
 
-  // Authorize only foo-bar in project policy
+  // Disable only foo-bar in project policy
   await setResourceActivation({
     kind: 'mcp',
     identity: 'foo-bar',
-    enabled: true,
+    enabled: false,
     cwd: projectDir,
   });
 
   const policy = loadResourceActivationPolicy();
-  assert.strictEqual(getEffectiveMcpActivation(policy, projectDir, 'foo-bar'), true);
+  assert.strictEqual(getEffectiveMcpActivation(policy, projectDir, 'foo-bar', true), false);
   assert.strictEqual(
-    getEffectiveMcpActivation(policy, projectDir, 'foo_bar'),
-    false,
-    'Distinct foo_bar must NOT be authorized when foo-bar is authorized'
+    getEffectiveMcpActivation(policy, projectDir, 'foo_bar', true),
+    true,
+    'Distinct foo_bar must remain enabled when foo-bar is disabled'
   );
 
-  // Listings must maintain separate cards
+  // Listings maintain separate cards
   const res = getMcpServersImpl(projectDir);
   assert.strictEqual(res.servers.length, 2, 'foo-bar and foo_bar must remain distinct cards');
   const sDash = res.servers.find((s: any) => s.name === 'foo-bar');
   const sUnder = res.servers.find((s: any) => s.name === 'foo_bar');
   assert.ok(sDash && sUnder);
-  assert.strictEqual(sDash.enabled, true);
+  assert.strictEqual(sDash.enabled, false);
   assert.strictEqual(sDash.hasProjectOverride, true);
-  assert.strictEqual(sUnder.enabled, false);
+  assert.strictEqual(sUnder.enabled, true);
   assert.strictEqual(sUnder.hasProjectOverride, false);
 
   // Materialize enforcement into .pi/mcp.json
   await materializeProjectMcpEnforcement(projectDir);
   const materialized = JSON.parse(fs.readFileSync(path.join(projectDir, '.pi', 'mcp.json'), 'utf8'));
-  assert.strictEqual(materialized.mcpServers['foo-bar'].enabled, true);
-  assert.strictEqual(materialized.mcpServers['foo_bar'].enabled, false);
+  assert.strictEqual(materialized.mcpServers['foo-bar'].enabled, false);
+  assert.strictEqual(materialized.mcpServers['foo_bar'], undefined);
 });
 
 test('normalizeProjectCwd: symlink/junction resolves to same canonical project policy target as realpath', async (t) => {
@@ -936,6 +976,11 @@ test('normalizeProjectCwd: symlink/junction resolves to same canonical project p
     'Symlink/junction alias must normalize to exact same project key as target'
   );
 
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['ext-sym.ts'] }, null, 2)
+  );
+
   // Authorize resource using aliasDir
   await setResourceActivation({
     kind: 'extension',
@@ -952,7 +997,7 @@ test('normalizeProjectCwd: symlink/junction resolves to same canonical project p
   );
 });
 
-test('MCP candidate parity: .agents/mcp.json candidate recognized, preserved across repeated startups', async (t) => {
+test('MCP candidate parity: .agents/mcp.json is ignored in shallow isolation', async (t) => {
   const fakeAgentDir = createTempDir('pi-agent-test-');
   setPiAgentDirForTest(fakeAgentDir);
   const projectDir = createTempDir('proj-agents-mcp-');
@@ -979,36 +1024,15 @@ test('MCP candidate parity: .agents/mcp.json candidate recognized, preserved acr
     }, null, 2)
   );
 
-  // Listing recognizes .agents/mcp.json
+  // Listing ignores .agents/mcp.json
   const listingBefore = getMcpServersImpl(projectDir);
   const agentSrv = listingBefore.servers.find((s: any) => s.name === 'agent-tool');
-  assert.ok(agentSrv, '.agents/mcp.json server must be discovered in listings');
-  assert.strictEqual(agentSrv.enabled, false, 'Defaults off');
+  assert.ok(!agentSrv, '.agents/mcp.json must not be discovered in shallow listing');
 
-  // Startup 1: Unauthorized by default -> materialized into .pi/mcp.json with enabled: false
+  // Startup does NOT materialize .agents/mcp.json
   await materializeProjectMcpEnforcement(projectDir);
   const nativePath = path.join(projectDir, '.pi', 'mcp.json');
-  assert.ok(fs.existsSync(nativePath));
-  let materialized = JSON.parse(fs.readFileSync(nativePath, 'utf8'));
-  assert.strictEqual(materialized.customMeta, 'agents-config', 'Metadata from .agents/mcp.json preserved');
-  assert.strictEqual(materialized.mcpServers['agent-tool'].enabled, false);
-  assert.strictEqual(materialized.mcpServers['agent-tool'].command, 'node', 'Full definition preserved');
-
-  // User authorizes agent-tool
-  await setResourceActivation({
-    kind: 'mcp',
-    identity: 'agent-tool',
-    enabled: true,
-    cwd: projectDir,
-  });
-
-  // Startup 2 (Repeated startup): Reads existing .pi/mcp.json and .agents/mcp.json -> materializes with enabled: true
-  await materializeProjectMcpEnforcement(projectDir);
-  materialized = JSON.parse(fs.readFileSync(nativePath, 'utf8'));
-  assert.strictEqual(materialized.customMeta, 'agents-config');
-  assert.strictEqual(materialized.mcpServers['agent-tool'].enabled, true, 'Updated to enabled: true on repeated startup');
-  assert.strictEqual(materialized.mcpServers['agent-tool'].command, 'node', 'Full definition still preserved');
-  assert.deepStrictEqual(materialized.mcpServers['agent-tool'].env, { AGENT: '1' });
+  assert.ok(!fs.existsSync(nativePath), '.agents/mcp.json must not trigger native materialization');
 });
 
 test('Extension override: relative ./ prefix in project settings matches global extension and marks hasProjectOverride', (t) => {
@@ -1049,6 +1073,20 @@ test('S6: bytes unchanged global on project toggle', async (t) => {
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['global-shared.ts'] }, null, 2)
+  );
+  fs.mkdirSync(path.join(projectDir, '.pi'), { recursive: true });
+  fs.writeFileSync(
+    path.join(projectDir, '.pi', 'settings.json'),
+    JSON.stringify({ extensions: ['project-local.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'local-mcp': { command: 'node' } } }, null, 2)
+  );
 
   // Set up global policy with an always-on exception and a legacy project entry
   await setResourceActivation({
@@ -1105,6 +1143,15 @@ test('S6: directory move with local overrides preserves project activation', asy
     } catch {}
   });
 
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['portable-ext.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'portable-mcp': { command: 'node' } } }, null, 2)
+  );
+
   // Set project activation on projectDir1
   await setResourceActivation({
     kind: 'extension',
@@ -1141,6 +1188,15 @@ test('S6: authoritative empty local masks legacy global overrides', async (t) =>
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
 
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['-legacy-tool.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({ mcpServers: { 'legacy-server': { command: 'node', enabled: false } } }, null, 2)
+  );
+
   const normCwd = normalizeProjectCwd(projectDir);
 
   // Write legacy global policy with project overrides
@@ -1162,8 +1218,8 @@ test('S6: authoritative empty local masks legacy global overrides', async (t) =>
 
   // Before local file exists: falls back to legacy
   let policy = loadResourceActivationPolicy();
-  assert.strictEqual(getEffectiveExtensionActivation(policy, projectDir, 'legacy-tool.ts'), true);
-  assert.strictEqual(getEffectiveMcpActivation(policy, projectDir, 'legacy-server'), true);
+  assert.strictEqual(getEffectiveExtensionActivation(policy, projectDir, 'legacy-tool.ts', false), true);
+  assert.strictEqual(getEffectiveMcpActivation(policy, projectDir, 'legacy-server', false), true);
 
   // Now create authoritative empty local file using saveProjectResourceActivation
   const emptyLocal = { version: 1 as const, extensions: {}, mcpServers: {} };
@@ -1179,12 +1235,12 @@ test('S6: authoritative empty local masks legacy global overrides', async (t) =>
   // Local file must be authoritative: absent keys must NOT resurrect stale global legacy overrides
   policy = loadResourceActivationPolicy();
   assert.strictEqual(
-    getEffectiveExtensionActivation(policy, projectDir, 'legacy-tool.ts'),
+    getEffectiveExtensionActivation(policy, projectDir, 'legacy-tool.ts', false),
     false,
     'Empty local extensions must mask legacy overrides'
   );
   assert.strictEqual(
-    getEffectiveMcpActivation(policy, projectDir, 'legacy-server'),
+    getEffectiveMcpActivation(policy, projectDir, 'legacy-server', false),
     false,
     'Empty local mcpServers must mask legacy overrides'
   );
@@ -1230,6 +1286,21 @@ test('S6: first-toggle seeding from legacy global without mutating global', asyn
     fs.rmSync(fakeAgentDir, { recursive: true, force: true });
     fs.rmSync(projectDir, { recursive: true, force: true });
   });
+
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'settings.json'),
+    JSON.stringify({ extensions: ['global-ext.ts', 'prior-ext.ts', 'new-added-ext.ts'] }, null, 2)
+  );
+  fs.writeFileSync(
+    path.join(fakeAgentDir, 'mcp.json'),
+    JSON.stringify({
+      mcpServers: {
+        'global-mcp': { command: 'node' },
+        'prior-mcp': { command: 'node' },
+        'new-mcp-server': { command: 'node' },
+      },
+    }, null, 2)
+  );
 
   const normCwd = normalizeProjectCwd(projectDir);
 

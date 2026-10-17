@@ -826,8 +826,24 @@ pub const VALID_THINKING_LEVELS: &[&str] = &[
     "off", "minimal", "low", "medium", "high", "xhigh", "max",
 ];
 
+#[cfg(test)]
+static SETTINGS_CONFIG_PATH_OVERRIDE: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+#[cfg(test)]
+pub fn set_settings_config_path_override_for_test(path: Option<PathBuf>) {
+    let mut guard = SETTINGS_CONFIG_PATH_OVERRIDE.write().unwrap();
+    *guard = path;
+}
+
 /// Resolves canonical path to `settings.json` under `$USERPROFILE` / `$HOME` / `.pi/agent/settings.json`.
 pub fn resolve_settings_config_path() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Ok(guard) = SETTINGS_CONFIG_PATH_OVERRIDE.read() {
+        if let Some(ref p) = *guard {
+            return Some(p.clone());
+        }
+    }
+
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)?;
@@ -1440,7 +1456,14 @@ pub async fn get_mcp_servers(cwd: Option<String>) -> Result<Value, String> {
     };
 
     let project_servers = match cwd_path {
-        Some(dir) => parse_project_mcp_servers_from_candidates(dir)?.0,
+        Some(dir) => {
+            let native_p = dir.join(".pi").join("mcp.json");
+            if native_p.exists() {
+                parse_mcp_servers_from_file(&native_p, "project")?
+            } else {
+                Vec::new()
+            }
+        }
         None => Vec::new(),
     };
 
@@ -1461,7 +1484,18 @@ pub async fn get_mcp_servers(cwd: Option<String>) -> Result<Value, String> {
                 let is_always = scoped.is_mcp_server_always_active(&name);
                 server["alwaysActive"] = Value::Bool(is_always);
 
-                let eff_enabled = scoped.is_mcp_effective_enabled(&name);
+                let native_eff = server.get("enabled").and_then(|v| v.as_bool())
+                    .or_else(|| server.get("disabled").and_then(|v| v.as_bool()).map(|d| !d))
+                    .unwrap_or(true);
+
+                let eff_enabled = if let Some(over) = scoped.get_mcp_override(&name) {
+                    over
+                } else if is_always {
+                    true
+                } else {
+                    native_eff
+                };
+
                 server["enabled"] = Value::Bool(eff_enabled);
                 server["disabled"] = Value::Bool(!eff_enabled);
 
@@ -1509,9 +1543,16 @@ pub async fn toggle_mcp_server(
         if trimmed.is_empty() {
             None
         } else {
-            resolve_project_mcp_config_path(Path::new(trimmed))
+            let cwd_path = Path::new(trimmed);
+            Some(cwd_path.join(".pi").join("mcp.json"))
         }
     });
+
+    let exists_in_global = global_path.as_deref().map_or(false, |p| server_exists_in_file(p, server_name));
+    let exists_in_project = project_path.as_deref().map_or(false, |p| server_exists_in_file(p, server_name));
+    if !exists_in_global && !exists_in_project {
+        return Err(format!("MCP server '{}' not found in configuration", server_name));
+    }
 
     if let Some(ref cwd_str) = cwd.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         if !is_global_scope {
@@ -1523,18 +1564,14 @@ pub async fn toggle_mcp_server(
                 Some(Path::new(cwd_str)),
             )?;
 
-            // If explicit project scope requested or server exists in project config,
-            // also update project config file
+            // If explicit project scope requested or server exists in project config or inherited from global,
+            // write partial override to project config file
             if let Some(ref p) = project_path {
-                if is_project_scope || server_exists_in_file(p, server_name) {
-                    let mut res = toggle_mcp_server_impl(p, server_name, enabled)?;
-                    res["enabled"] = Value::Bool(enabled);
-                    return Ok(res);
-                }
+                let mut res = toggle_mcp_server_impl(p, server_name, enabled)?;
+                res["enabled"] = Value::Bool(enabled);
+                return Ok(res);
             }
 
-            // Inherited global server or non-existing server in project scope:
-            // return policy early without writing to global file!
             return Ok(serde_json::json!({
                 "success": true,
                 "name": server_name,
@@ -1788,8 +1825,7 @@ pub async fn save_mcp_server(
             None
         } else {
             let cwd_path = Path::new(trimmed);
-            resolve_project_mcp_config_path(cwd_path)
-                .or_else(|| Some(cwd_path.join(".pi").join("mcp.json")))
+            Some(cwd_path.join(".pi").join("mcp.json"))
         }
     });
 
@@ -2276,11 +2312,21 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
         None => return Ok(Vec::new()),
     };
 
-    let mut resources = Vec::new();
+    let mut resources: Vec<Value> = Vec::new();
     let config_path_str = path.to_string_lossy().to_string();
 
     // 1. Extensions
     if let Some(exts) = root_obj.get("extensions").and_then(|v| v.as_array()) {
+        let filter_sources: Vec<String> = exts
+            .iter()
+            .filter_map(|item| item.as_str())
+            .map(str::trim)
+            .filter(|s| s.starts_with('!') || s.starts_with('-'))
+            .map(|s| s.to_string())
+            .collect();
+
+        let mut seen_identities = std::collections::HashSet::new();
+
         for item in exts {
             match item {
                 Value::String(s) => {
@@ -2288,17 +2334,69 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                     if s_trimmed.is_empty() {
                         continue;
                     }
-                    let (enabled, clean_source) = if s_trimmed.starts_with('!') {
-                        (false, s_trimmed[1..].trim().to_string())
-                    } else if s_trimmed.starts_with('+') {
-                        (true, s_trimmed[1..].trim().to_string())
+                    let is_neg_glob = s_trimmed.starts_with('!');
+                    let is_minus_exact = s_trimmed.starts_with('-');
+                    let is_plus_exact = s_trimmed.starts_with('+');
+                    let clean_source = if is_neg_glob || is_minus_exact || is_plus_exact {
+                        s_trimmed[1..].trim().to_string()
                     } else {
-                        (true, s_trimmed.to_string())
+                        s_trimmed.to_string()
                     };
                     if clean_source.is_empty() {
                         continue;
                     }
-                    let mut name = derive_resource_name("extension", &clean_source);
+
+                    let is_builtin = clean_source.starts_with("builtin:");
+
+                    // Check existence on disk or builtin
+                    let owning_dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+                    let candidate_rel = owning_dir.join(&clean_source);
+                    let clean_unprefixed = clean_source.strip_prefix("./").unwrap_or(&clean_source);
+                    let candidate_unpref = owning_dir.join(clean_unprefixed);
+                    let clean_trim_glob = clean_source.trim_end_matches("/**");
+                    let candidate_glob = owning_dir.join(clean_trim_glob);
+                    let _exists_on_disk = is_builtin
+                        || candidate_rel.exists()
+                        || candidate_unpref.exists()
+                        || candidate_glob.exists()
+                        || Path::new(&clean_source).exists()
+                        || Path::new(clean_trim_glob).exists();
+
+                    if (is_neg_glob || is_minus_exact) && clean_source.contains('*') {
+                        // Wildcard filter masks shouldn't fabricate phantom resources.
+                        continue;
+                    }
+
+                    let display_source = if is_neg_glob && clean_source.ends_with("/**") {
+                        clean_trim_glob.to_string()
+                    } else {
+                        clean_source.clone()
+                    };
+
+                    let norm_id = normalize_ext_for_matching(&display_source);
+                    if seen_identities.contains(&norm_id) {
+                        if is_neg_glob || is_minus_exact {
+                            // If plain declaration was already parsed, update its enabled state to false
+                            for r in resources.iter_mut() {
+                                if let Some(r_src) = r.get("source").and_then(|v| v.as_str()) {
+                                    if extension_sources_match(r_src, &display_source) {
+                                        r["enabled"] = Value::Bool(false);
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    seen_identities.insert(norm_id);
+
+                    // Check if matched by any filter in filter_sources
+                    let has_matching_filter = filter_sources.iter().any(|f| {
+                        let f_clean = f[1..].trim().trim_end_matches("/**");
+                        extension_sources_match(f_clean, &display_source)
+                    });
+                    let enabled = !is_neg_glob && !is_minus_exact && !has_matching_filter;
+
+                    let mut name = derive_resource_name("extension", &display_source);
                     if name == "index.ts" || name == "index.js" || name == "index.mjs" {
                         let parent_dir = if path.file_name().map_or(false, |f| f == "settings.json" || f == ".pi.json") {
                             if let Some(p) = path.parent() {
@@ -2317,13 +2415,19 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                             name = pname.to_string();
                         }
                     }
-                    let id = normalize_resource_id(scope, "extension", &clean_source);
-                    let ext_path = crate::resource_activation::resolve_extension_runtime_path(
-                        path.parent().unwrap_or(path),
-                        path,
-                        &clean_source,
-                    );
-                    let ext_dir = if ext_path.is_file() {
+                    let id = normalize_resource_id(scope, "extension", &display_source);
+                    let ext_path = if is_builtin {
+                        PathBuf::from(&display_source)
+                    } else {
+                        crate::resource_activation::resolve_extension_runtime_path(
+                            path.parent().unwrap_or(path),
+                            path,
+                            &display_source,
+                        )
+                    };
+                    let ext_dir = if is_builtin {
+                        PathBuf::new()
+                    } else if ext_path.is_file() {
                         ext_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ext_path.clone())
                     } else if ext_path.is_dir() {
                         ext_path.clone()
@@ -2334,7 +2438,7 @@ pub fn parse_pi_resources_from_file(path: &Path, scope: &str) -> Result<Vec<Valu
                         "id": id,
                         "name": name,
                         "kind": "extension",
-                        "source": clean_source,
+                        "source": display_source,
                         "scope": scope,
                         "enabled": enabled,
                         "configPath": config_path_str,
@@ -2555,88 +2659,66 @@ pub fn discover_extensions_in_dir(extensions_dir: &Path, scope: &str) -> Vec<Val
             }
         } else if entry_path.is_dir() {
             let dir_name = file_name;
-            let mut found_manifest_ext = false;
             let package_json_path = entry_path.join("package.json");
+            let mut manifest_name: Option<String> = None;
+            let mut manifest_main: Option<String> = None;
 
             if package_json_path.is_file() {
                 if let Ok(content) = std::fs::read_to_string(&package_json_path) {
                     if let Ok(manifest) = serde_json::from_str::<Value>(&content) {
-                        if let Some(ext_arr) = manifest
-                            .get("pi")
-                            .and_then(|p| p.get("extensions"))
-                            .and_then(|e| e.as_array())
-                        {
-                            let pkg_name = manifest
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or(&dir_name);
-
-                            for ext_val in ext_arr {
-                                if let Some(rel) = ext_val.as_str() {
-                                    let rel_norm = rel
-                                        .trim()
-                                        .trim_start_matches("./")
-                                        .trim_start_matches(".\\")
-                                        .replace('\\', "/");
-                                    if !rel_norm.is_empty() {
-                                        found_manifest_ext = true;
-                                        let source = format!("extensions/{}/{}", dir_name, rel_norm);
-                                        let id = normalize_resource_id(scope, "extension", &source);
-                                        let file_path = entry_path.join(&rel_norm);
-                                        let ext_path = dunce::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
-                                        let ext_dir = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
-                                        resources.push(serde_json::json!({
-                                            "id": id,
-                                            "name": pkg_name,
-                                            "kind": "extension",
-                                            "source": source,
-                                            "scope": scope,
-                                            "enabled": true,
-                                            "configPath": file_path.to_string_lossy().to_string(),
-                                            "extensionPath": ext_path.to_string_lossy().to_string(),
-                                            "extensionDir": ext_dir.to_string_lossy().to_string(),
-                                        }));
-                                    }
-                                }
+                        manifest_name = manifest.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                        if let Some(ext_arr) = manifest.get("pi").and_then(|p| p.get("extensions")).and_then(|e| e.as_array()) {
+                            if let Some(first_ext) = ext_arr.first().and_then(|v| v.as_str()) {
+                                manifest_main = Some(first_ext.to_string());
                             }
                         }
                     }
                 }
             }
 
-            if !found_manifest_ext {
-                let index_ts = entry_path.join("index.ts");
-                let index_js = entry_path.join("index.js");
-                let index_mjs = entry_path.join("index.mjs");
-                let index_filename = if index_ts.is_file() {
-                    Some("index.ts")
-                } else if index_js.is_file() {
-                    Some("index.js")
-                } else if index_mjs.is_file() {
-                    Some("index.mjs")
-                } else {
-                    None
-                };
+            let index_ts = entry_path.join("index.ts");
+            let index_js = entry_path.join("index.js");
+            let index_mjs = entry_path.join("index.mjs");
+            let index_filename = if index_ts.is_file() {
+                Some("index.ts")
+            } else if index_js.is_file() {
+                Some("index.js")
+            } else if index_mjs.is_file() {
+                Some("index.mjs")
+            } else {
+                None
+            };
 
-                if let Some(idx_name) = index_filename {
-                    let source = format!("extensions/{}/{}", dir_name, idx_name);
-                    let id = normalize_resource_id(scope, "extension", &source);
-                    let file_path = entry_path.join(idx_name);
-                    let ext_path = dunce::canonicalize(&file_path).unwrap_or_else(|_| file_path.clone());
-                    let ext_dir = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
-                    let name = dir_name;
-                    resources.push(serde_json::json!({
-                        "id": id,
-                        "name": name,
-                        "kind": "extension",
-                        "source": source,
-                        "scope": scope,
-                        "enabled": true,
-                        "configPath": file_path.to_string_lossy().to_string(),
-                        "extensionPath": ext_path.to_string_lossy().to_string(),
-                        "extensionDir": ext_dir.to_string_lossy().to_string(),
-                    }));
-                }
+            let (entry_file, config_file) = if let Some(idx_name) = index_filename {
+                let f = entry_path.join(idx_name);
+                (f.clone(), f)
+            } else if let Some(ref m_rel) = manifest_main {
+                let m_path = entry_path.join(m_rel.trim_start_matches("./").trim_start_matches(".\\"));
+                (m_path, package_json_path.clone())
+            } else if package_json_path.is_file() {
+                (package_json_path.clone(), package_json_path.clone())
+            } else {
+                (entry_path.clone(), entry_path.clone())
+            };
+
+            let has_valid_entry = index_filename.is_some() || package_json_path.is_file();
+            if has_valid_entry {
+                let source = format!("extensions/{}", dir_name);
+                let name = manifest_name.unwrap_or(dir_name);
+                let id = normalize_resource_id(scope, "extension", &source);
+                let ext_path = dunce::canonicalize(&entry_file).unwrap_or_else(|_| entry_file.clone());
+                let ext_dir = dunce::canonicalize(&entry_path).unwrap_or_else(|_| entry_path.clone());
+                resources.push(serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "kind": "extension",
+                    "source": source,
+                    "scope": scope,
+                    "enabled": true,
+                    "configPath": config_file.to_string_lossy().to_string(),
+                    "extensionPath": ext_path.to_string_lossy().to_string(),
+                    "extensionDir": ext_dir.to_string_lossy().to_string(),
+                }));
             }
         }
     }
@@ -2983,110 +3065,101 @@ pub fn toggle_pi_resource_impl(
     };
 
     let mut found_idx: Option<usize> = None;
-    let mut was_exclusion = false;
 
     for (idx, item) in arr.iter().enumerate() {
         if let Some(item_src) = extract_entry_source(&kind, item) {
             if resource_identities_match(&kind, &clean_target, item_src) {
                 found_idx = Some(idx);
-                if kind == "extension" {
-                    match item {
-                        Value::String(s) => {
-                            let s_trimmed = s.trim();
-                            if s_trimmed.starts_with('!') || s_trimmed.starts_with('-') {
-                                was_exclusion = true;
-                            }
-                        }
-                        Value::Object(obj) => {
-                            if obj.get("disabled") == Some(&Value::Bool(true))
-                                || obj.get("enabled") == Some(&Value::Bool(false))
-                                || obj.get("autoload") == Some(&Value::Bool(false))
-                            {
-                                was_exclusion = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
                 break;
             }
         }
     }
 
-    if let Some(idx) = found_idx {
-        if kind == "extension" {
-            if scope == "project" && is_auto && enabled && was_exclusion {
-                arr.remove(idx);
-            } else {
-                let item = &mut arr[idx];
-                match item {
-                    Value::String(_) => {
-                        if enabled {
-                            *item = Value::String(target_clean.clone());
-                        } else {
-                            *item = Value::String(format!("!{}", target_clean));
-                        }
+    if kind == "package" {
+        if !enabled {
+            return Err("Package entries are atomic and cannot be disabled in-place. Remove the package from packages to disable it.".to_string());
+        }
+        if found_idx.is_some() {
+            let id = normalize_resource_id(scope, &kind, &clean_target);
+            return Ok(serde_json::json!({
+                "success": true,
+                "id": id,
+                "kind": kind,
+                "source": clean_target,
+                "scope": scope,
+                "enabled": true,
+                "configPath": target_path.to_string_lossy().to_string(),
+                "requiresReload": true,
+            }));
+        }
+    }
+
+    let owning_dir = if target_path.is_dir() { target_path } else { target_path.parent().unwrap_or(target_path) };
+    let candidate_dir = owning_dir.join(&clean_target);
+    let is_folder = candidate_dir.is_dir()
+        || owning_dir.join(clean_target.strip_prefix("./").unwrap_or(&clean_target)).is_dir()
+        || clean_target.ends_with("/**");
+
+    let abs_posix = if is_folder {
+        dunce::canonicalize(&candidate_dir)
+            .unwrap_or(candidate_dir)
+            .to_string_lossy()
+            .replace('\\', "/")
+    } else {
+        String::new()
+    };
+
+    let filter_str = if is_folder {
+        format!("!{}/**", abs_posix)
+    } else {
+        format!("-{}", target_clean)
+    };
+
+    if kind == "extension" {
+        if enabled {
+            arr.retain(|item| {
+                if let Some(s) = item.as_str() {
+                    let s_trimmed = s.trim();
+                    if s_trimmed.starts_with('-') || s_trimmed.starts_with('!') {
+                        let mask_inner = s_trimmed[1..].trim().trim_end_matches("/**");
+                        !resource_identities_match(&kind, &clean_target, mask_inner)
+                    } else {
+                        true // retain plain declarations!
                     }
-                    Value::Object(obj) => {
-                        if enabled {
-                            obj.remove("autoload");
-                            obj.remove("disabled");
-                            obj.insert("enabled".to_string(), Value::Bool(true));
-                        } else {
-                            obj.insert("autoload".to_string(), Value::Bool(false));
-                            obj.insert("enabled".to_string(), Value::Bool(false));
-                        }
-                    }
-                    _ => {}
+                } else {
+                    true
                 }
+            });
+
+            let has_plain = arr.iter().any(|item| {
+                if let Some(s) = item.as_str() {
+                    let s_trimmed = s.trim();
+                    !s_trimmed.starts_with('-') && !s_trimmed.starts_with('!')
+                        && resource_identities_match(&kind, &clean_target, s_trimmed)
+                } else {
+                    false
+                }
+            });
+            if !has_plain && (scope == "project" || scope == "global") {
+                arr.push(Value::String(target_clean.clone()));
             }
         } else {
-            // Package
-            let item = &mut arr[idx];
-            match item {
-                Value::String(_) => {
-                    if enabled {
-                        *item = Value::String(clean_target.clone());
-                    } else {
-                        let mut map = serde_json::Map::new();
-                        map.insert("source".to_string(), Value::String(clean_target.clone()));
-                        map.insert("autoload".to_string(), Value::Bool(false));
-                        *item = Value::Object(map);
-                    }
+            let mask_already_present = arr.iter().any(|item| {
+                if let Some(s) = item.as_str() {
+                    let s_trimmed = s.trim();
+                    (s_trimmed.starts_with('-') || s_trimmed.starts_with('!'))
+                        && resource_identities_match(&kind, &clean_target, s_trimmed[1..].trim().trim_end_matches("/**"))
+                } else {
+                    false
                 }
-                Value::Object(obj) => {
-                    if enabled {
-                        obj.remove("autoload");
-                        obj.remove("disabled");
-                        obj.insert("enabled".to_string(), Value::Bool(true));
-                    } else {
-                        obj.insert("autoload".to_string(), Value::Bool(false));
-                        obj.insert("enabled".to_string(), Value::Bool(false));
-                    }
-                }
-                _ => {}
+            });
+            if !mask_already_present {
+                arr.push(Value::String(filter_str.clone()));
             }
         }
     } else {
-        if scope == "project" {
-            // Inherited global or auto-discovered being overridden in project settings
-            if kind == "extension" {
-                if enabled {
-                    arr.push(Value::String(target_clean.clone()));
-                } else {
-                    arr.push(Value::String(format!("!{}", target_clean)));
-                }
-            } else {
-                // Package
-                if enabled {
-                    arr.push(Value::String(clean_target.clone()));
-                } else {
-                    let mut map = serde_json::Map::new();
-                    map.insert("source".to_string(), Value::String(clean_target.clone()));
-                    map.insert("autoload".to_string(), Value::Bool(false));
-                    arr.push(Value::Object(map));
-                }
-            }
+        if scope == "project" || scope == "global" {
+            arr.push(Value::String(clean_target.clone()));
         } else {
             return Err(format!("Resource '{}' not found in '{}'", source, array_key));
         }
@@ -3340,7 +3413,10 @@ pub async fn get_pi_resources(cwd: Option<String>) -> Result<Value, String> {
                     let is_always = scoped.is_extension_always_active(&source);
                     resource["alwaysActive"] = Value::Bool(is_always);
 
-                    let eff_enabled = scoped.is_extension_effective_enabled(&source);
+                    let native_enabled = resource.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                    let eff_enabled = scoped.get_extension_override(&source)
+                        .or_else(|| if is_always { Some(true) } else { None })
+                        .unwrap_or(native_enabled);
                     resource["enabled"] = Value::Bool(eff_enabled);
 
                     if scoped.has_extension_project_override(&source) {
@@ -3466,6 +3542,35 @@ pub async fn toggle_pi_resource(
     source: String,
     enabled: bool,
 ) -> Result<Value, String> {
+    if let Some(ref cwd_str) = cwd {
+        let trimmed_cwd = cwd_str.trim();
+        if !trimmed_cwd.is_empty() {
+            crate::resource_activation::load_scoped_policy(Path::new(trimmed_cwd))?;
+        }
+    } else {
+        crate::resource_activation::load_resource_activation_state()?;
+    }
+
+    let global_path_check = resolve_settings_config_path();
+    let workspace_res = get_pi_resources_for_workspace(
+        global_path_check.as_deref(),
+        cwd.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(Path::new),
+    )?;
+    let is_known_builtin = matches!(
+        source.trim(),
+        "builtin:mcp" | "builtin:llama.cpp" | "builtin:codemode" | "builtin:tool-search"
+    );
+    let exists = is_known_builtin || workspace_res.get("resources").and_then(|v| v.as_array()).map_or(false, |arr| {
+        arr.iter().any(|r| {
+            let r_kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let r_src = r.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            r_kind.eq_ignore_ascii_case(&kind) && resource_identities_match(&kind, &source, r_src)
+        })
+    });
+    if !exists {
+        return Err(format!("Resource '{}' not found in workspace inventory", source));
+    }
+
     let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
     let (target_path, final_scope) = match requested_scope.as_deref() {
         Some("project") => {
@@ -3499,7 +3604,87 @@ pub async fn toggle_pi_resource(
         }
     };
 
-    let res = toggle_pi_resource_impl(&target_path, &kind, &source, enabled, final_scope)?;
+    let matched_resource = workspace_res
+        .get("resources")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter().find(|r| {
+                let r_kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                let r_src = r.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                r_kind.eq_ignore_ascii_case(&kind) && resource_identities_match(&kind, &source, r_src)
+            })
+        });
+
+    let effective_target_source = if let Some(m) = matched_resource {
+        if final_scope == "project" && kind.eq_ignore_ascii_case("extension") {
+            let is_builtin = source.starts_with("builtin:");
+            if is_builtin {
+                source.clone()
+            } else {
+                let ep = m.get("extensionPath").and_then(|v| v.as_str()).unwrap_or("");
+                let ed = m.get("extensionDir").and_then(|v| v.as_str()).unwrap_or("");
+                let p_obj = Path::new(ep);
+                let d_obj = Path::new(ed);
+                let is_dir = (d_obj.is_dir() && !p_obj.is_file()) || p_obj.is_dir();
+                let canon = if is_dir {
+                    dunce::canonicalize(d_obj).unwrap_or_else(|_| d_obj.to_path_buf())
+                } else {
+                    dunce::canonicalize(p_obj).unwrap_or_else(|_| p_obj.to_path_buf())
+                };
+                canon.to_string_lossy().replace('\\', "/")
+            }
+        } else {
+            source.clone()
+        }
+    } else {
+        source.clone()
+    };
+
+    let is_inherited_global = matched_resource
+        .and_then(|m| m.get("scope").and_then(|s| s.as_str()))
+        .map_or(false, |s| s.eq_ignore_ascii_case("global"))
+        || source.trim().starts_with("builtin:");
+
+    if final_scope == "project" && kind.eq_ignore_ascii_case("extension") && is_inherited_global {
+        if !enabled {
+            if target_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&target_path) {
+                    if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                        if let Some(arr) = val.get_mut("extensions").and_then(|v| v.as_array_mut()) {
+                            let has_it = arr.iter().any(|v| v.as_str() == Some(&effective_target_source));
+                            if !has_it {
+                                arr.push(Value::String(effective_target_source.clone()));
+                                let _ = std::fs::write(&target_path, serde_json::to_string_pretty(&val).unwrap_or_default());
+                            }
+                        }
+                    }
+                }
+            } else {
+                let init = serde_json::json!({
+                    "extensions": [effective_target_source.clone()]
+                });
+                if let Some(parent) = target_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&target_path, serde_json::to_string_pretty(&init).unwrap_or_default());
+            }
+        }
+    }
+
+    let res = toggle_pi_resource_impl(&target_path, &kind, &effective_target_source, enabled, final_scope)?;
+
+    if final_scope == "project" && kind.eq_ignore_ascii_case("extension") && is_inherited_global && enabled {
+        if target_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&target_path) {
+                if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                    if let Some(arr) = val.get_mut("extensions").and_then(|v| v.as_array_mut()) {
+                        arr.retain(|v| v.as_str() != Some(&effective_target_source));
+                        let _ = std::fs::write(&target_path, serde_json::to_string_pretty(&val).unwrap_or_default());
+                    }
+                }
+            }
+        }
+    }
 
     if kind.trim().eq_ignore_ascii_case("extension") {
         if let Some(ref cwd_str) = cwd {
@@ -3542,6 +3727,39 @@ pub async fn set_resource_activation(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(Path::new);
+
+    // Validate actual current native inventory before atomic_update (except clearing stale always exception allowed without config)
+    let is_clearing_always = !enabled && cwd_path.is_none();
+    if !is_clearing_always {
+        if clean_kind == "mcp" {
+            let global_path = resolve_global_mcp_config_path();
+            let project_path = cwd_path.and_then(|c| resolve_project_mcp_config_path(c));
+            let exists_g = global_path.as_deref().map_or(false, |p| server_exists_in_file(p, trimmed_id));
+            let exists_p = project_path.as_deref().map_or(false, |p| server_exists_in_file(p, trimmed_id));
+            if !exists_g && !exists_p {
+                return Err(format!("Unknown MCP server '{}'", trimmed_id));
+            }
+        } else if clean_kind == "extension" {
+            let is_known_builtin = matches!(
+                trimmed_id,
+                "builtin:mcp" | "builtin:llama.cpp" | "builtin:codemode" | "builtin:tool-search"
+            );
+            if !is_known_builtin {
+                let global_path = resolve_settings_config_path();
+                let workspace_res = get_pi_resources_for_workspace(global_path.as_deref(), cwd_path)?;
+                let exists = workspace_res.get("resources").and_then(|v| v.as_array()).map_or(false, |arr| {
+                    arr.iter().any(|r| {
+                        let r_kind = r.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+                        let r_src = r.get("source").and_then(|v| v.as_str()).unwrap_or("");
+                        r_kind.eq_ignore_ascii_case("extension") && resource_identities_match("extension", trimmed_id, r_src)
+                    })
+                });
+                if !exists {
+                    return Err(format!("Unknown extension '{}'", trimmed_id));
+                }
+            }
+        }
+    }
 
     crate::resource_activation::atomic_update_activation(
         &clean_kind,
@@ -7546,7 +7764,22 @@ mod tests {
         assert!(err_no_cwd.is_err());
         assert!(err_no_cwd.unwrap_err().contains("no valid cwd provided"));
 
-        // 3. Toggle with project scope and cwd -> creates project config
+        // 2b. Seed custom-tool server so it exists in project configuration
+        let server_def = serde_json::json!({
+            "command": "node",
+            "args": ["server.js"]
+        });
+        save_mcp_server(
+            "custom-tool".to_string(),
+            None,
+            server_def,
+            Some(temp_str.clone()),
+            Some("project".to_string()),
+        )
+        .await
+        .unwrap();
+
+        // 3. Toggle with project scope and cwd -> updates project config
         let toggle_res = toggle_mcp_server(
             "custom-tool".to_string(),
             true,
@@ -7600,8 +7833,8 @@ mod tests {
 
         let global_path = temp_dir.join("global_mcp.json");
         let project_dir = temp_dir.join("project");
-        std::fs::create_dir_all(&project_dir).unwrap();
-        let project_path = project_dir.join(".mcp.json");
+        let project_path = project_dir.join(".pi").join("mcp.json");
+        std::fs::create_dir_all(project_path.parent().unwrap()).unwrap();
 
         let global_json = serde_json::json!({
             "mcpServers": {
@@ -8092,6 +8325,11 @@ mod tests {
         std::fs::create_dir_all(&temp_dir).unwrap();
         let config_path = temp_dir.join("settings.json");
 
+        std::fs::write(temp_dir.join("active-ext.ts"), "//").unwrap();
+        std::fs::write(temp_dir.join("disabled-ext.ts"), "//").unwrap();
+        std::fs::write(temp_dir.join("obj-disabled.ts"), "//").unwrap();
+        std::fs::write(temp_dir.join("obj-enabled.ts"), "//").unwrap();
+
         let settings_data = serde_json::json!({
             "unrelatedTopLevel": "keep-me",
             "extensions": [
@@ -8248,17 +8486,17 @@ mod tests {
         });
         std::fs::write(&config_path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
 
-        // 1. Toggle extension to disabled (should prepend '!')
+        // 1. Toggle extension to disabled (should add native minus mask while retaining plain)
         let ext_res = toggle_pi_resource_impl(&config_path, "extension", "./my-extension.ts", false, "project").unwrap();
         assert_eq!(ext_res["success"], true);
         assert_eq!(ext_res["enabled"], false);
         assert_eq!(ext_res["requiresReload"], true);
 
         let on_disk_1: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        assert_eq!(on_disk_1["extensions"], serde_json::json!(["!./my-extension.ts"]));
+        assert_eq!(on_disk_1["extensions"], serde_json::json!(["./my-extension.ts", "-./my-extension.ts"]));
         assert_eq!(on_disk_1["unrelatedSetting"], "preserved");
 
-        // 2. Toggle extension back to enabled (should remove '!')
+        // 2. Toggle extension back to enabled (should remove exact companion minus mask, retaining plain)
         let ext_res_2 = toggle_pi_resource_impl(&config_path, "extension", "./my-extension.ts", true, "project").unwrap();
         assert_eq!(ext_res_2["success"], true);
         assert_eq!(ext_res_2["enabled"], true);
@@ -8266,35 +8504,9 @@ mod tests {
         let on_disk_2: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
         assert_eq!(on_disk_2["extensions"], serde_json::json!(["./my-extension.ts"]));
 
-        // 3. Toggle string package to disabled (should convert to object with autoload: false)
-        let pkg_res = toggle_pi_resource_impl(&config_path, "package", "npm:simple-pkg", false, "project").unwrap();
-        assert_eq!(pkg_res["success"], true);
-        assert_eq!(pkg_res["enabled"], false);
-
-        let on_disk_3: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        let simple_entry = &on_disk_3["packages"][0];
-        assert_eq!(simple_entry["source"], "npm:simple-pkg");
-        assert_eq!(simple_entry["autoload"], false);
-
-        // 4. Toggle filtered package to disabled (preserves skills filter and sets autoload: false)
-        let filtered_res = toggle_pi_resource_impl(&config_path, "package", "npm:filtered-pkg", false, "project").unwrap();
-        assert_eq!(filtered_res["success"], true);
-
-        let on_disk_4: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        let filtered_entry = &on_disk_4["packages"][1];
-        assert_eq!(filtered_entry["source"], "npm:filtered-pkg");
-        assert_eq!(filtered_entry["autoload"], false);
-        assert_eq!(filtered_entry["skills"], serde_json::json!(["skills/review.md"]));
-
-        // 5. Toggle filtered package back to enabled (removes autoload, keeps skills filter)
-        let filtered_res_2 = toggle_pi_resource_impl(&config_path, "package", "npm:filtered-pkg", true, "project").unwrap();
-        assert_eq!(filtered_res_2["success"], true);
-
-        let on_disk_5: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
-        let filtered_entry_enabled = &on_disk_5["packages"][1];
-        assert_eq!(filtered_entry_enabled["source"], "npm:filtered-pkg");
-        assert!(filtered_entry_enabled.get("autoload").is_none() || filtered_entry_enabled.get("autoload") == Some(&Value::Bool(true)));
-        assert_eq!(filtered_entry_enabled["skills"], serde_json::json!(["skills/review.md"]));
+        // 3. Package entries are atomic: attempting to disable package in-place fails explicitly
+        assert!(toggle_pi_resource_impl(&config_path, "package", "npm:simple-pkg", false, "project").is_err());
+        assert!(toggle_pi_resource_impl(&config_path, "package", "npm:filtered-pkg", false, "project").is_err());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -8444,9 +8656,9 @@ mod tests {
         assert_eq!(ext_override["success"], true);
         assert_eq!(ext_override["enabled"], false);
 
-        // Verify project file now has `!./global-helper.ts`
+        // Verify project file now has native minus mask `-./global-helper.ts`
         let proj_disk: Value = serde_json::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
-        assert_eq!(proj_disk["extensions"], serde_json::json!(["!./global-helper.ts"]));
+        assert_eq!(proj_disk["extensions"], serde_json::json!(["-./global-helper.ts"]));
 
         // Verify global file was not mutated
         let glob_disk: Value = serde_json::from_str(&std::fs::read_to_string(&global_file).unwrap()).unwrap();
@@ -8461,28 +8673,10 @@ mod tests {
         assert_eq!(ext_card["enabled"], false);
         assert_eq!(ext_card["scope"], "global");
 
-        // 3. Toggle global package to disabled in project scope
-        let pkg_override = toggle_pi_resource_impl(&project_file, "package", "npm:@pi/code-review", false, "project").unwrap();
-        assert_eq!(pkg_override["success"], true);
-        assert_eq!(pkg_override["enabled"], false);
+        // 3. Toggle global package to disabled in project scope fails explicitly (package is atomic)
+        assert!(toggle_pi_resource_impl(&project_file, "package", "npm:@pi/code-review", false, "project").is_err());
 
-        // Verify project file has autoload: false
-        let proj_disk_2: Value = serde_json::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
-        let pkg_entry = &proj_disk_2["packages"][0];
-        assert_eq!(pkg_entry["source"], "npm:@pi/code-review");
-        assert_eq!(pkg_entry["autoload"], false);
-
-        // 4. Query merged resources again
-        let merged_2 = get_pi_resources_impl(Some(&global_file), Some(&project_file)).unwrap();
-        let res_2 = merged_2["resources"].as_array().unwrap();
-        assert_eq!(res_2.len(), 2);
-        let pkg_card = res_2.iter().find(|r| r["name"] == "@pi/code-review").unwrap();
-        assert_eq!(pkg_card["hasProjectOverride"], true);
-        assert_eq!(pkg_card["globalEnabled"], true);
-        assert_eq!(pkg_card["enabled"], false);
-        assert_eq!(pkg_card["autoload"], false);
-
-        // 5. Delete project override for extension - should revert to global inheritance
+        // 4. Delete project override for extension - should revert to global inheritance
         let del_override = delete_pi_resource_impl(&project_file, "extension", "./global-helper.ts", "project").unwrap();
         assert_eq!(del_override["success"], true);
 
@@ -8707,11 +8901,11 @@ mod tests {
         assert_eq!(tool_ext["kind"], "extension");
         assert_eq!(tool_ext["scope"], "global");
 
-        let switcher_ext = discovered.iter().find(|e| e["source"] == "extensions/cpamc-auto-switcher/index.ts").unwrap();
+        let switcher_ext = discovered.iter().find(|e| e["source"] == "extensions/cpamc-auto-switcher").unwrap();
         assert_eq!(switcher_ext["name"], "cpamc-auto-switcher");
         assert_eq!(switcher_ext["enabled"], true);
 
-        let pkg_ext = discovered.iter().find(|e| e["source"] == "extensions/manifest-pkg/entry.js").unwrap();
+        let pkg_ext = discovered.iter().find(|e| e["source"] == "extensions/manifest-pkg").unwrap();
         assert_eq!(pkg_ext["name"], "cool-extension-pkg");
         assert_eq!(pkg_ext["enabled"], true);
 
@@ -8752,7 +8946,7 @@ mod tests {
         assert_eq!(helper_card["globalEnabled"], true);
         assert_eq!(helper_card["hasProjectOverride"], false);
 
-        let switcher_card = initial_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher/index.ts").unwrap();
+        let switcher_card = initial_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher").unwrap();
         assert_eq!(switcher_card["name"], "cpamc-auto-switcher");
         assert_eq!(switcher_card["enabled"], true);
         assert_eq!(switcher_card["hasProjectOverride"], false);
@@ -8761,7 +8955,7 @@ mod tests {
         let toggle_res = toggle_pi_resource_impl(
             &project_settings,
             "extension",
-            "extensions/cpamc-auto-switcher/index.ts",
+            "extensions/cpamc-auto-switcher",
             false,
             "project",
         ).unwrap();
@@ -8770,14 +8964,17 @@ mod tests {
 
         // Verify project settings file now contains exclusion
         let proj_disk: Value = serde_json::from_str(&std::fs::read_to_string(&project_settings).unwrap()).unwrap();
-        assert_eq!(proj_disk["extensions"], serde_json::json!(["!extensions/cpamc-auto-switcher/index.ts"]));
+        assert!(proj_disk["extensions"].as_array().unwrap().iter().any(|v| {
+            let s = v.as_str().unwrap_or("");
+            s.contains("cpamc-auto-switcher") && (s.starts_with('-') || s.starts_with('!'))
+        }));
 
         // 3. Query merged resources: cpamc-auto-switcher should be disabled with hasProjectOverride == true
         let overridden_res = get_pi_resources_impl(Some(&global_settings), Some(&project_settings)).unwrap();
         let overridden_arr = overridden_res["resources"].as_array().unwrap();
         assert_eq!(overridden_arr.len(), 2); // No duplicate cards!
 
-        let overridden_switcher = overridden_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher/index.ts").unwrap();
+        let overridden_switcher = overridden_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher").unwrap();
         assert_eq!(overridden_switcher["name"], "cpamc-auto-switcher");
         assert_eq!(overridden_switcher["enabled"], false);
         assert_eq!(overridden_switcher["globalEnabled"], true);
@@ -8787,7 +8984,7 @@ mod tests {
         let toggle_re_enable = toggle_pi_resource_impl(
             &project_settings,
             "extension",
-            "extensions/cpamc-auto-switcher/index.ts",
+            "extensions/cpamc-auto-switcher",
             true,
             "project",
         ).unwrap();
@@ -8796,15 +8993,15 @@ mod tests {
 
         let proj_disk_re_enabled: Value = serde_json::from_str(&std::fs::read_to_string(&project_settings).unwrap()).unwrap();
         let exts_arr = proj_disk_re_enabled["extensions"].as_array().unwrap();
-        assert!(exts_arr.is_empty(), "Exclusion should be removed when re-enabling auto-discovered extension");
+        assert!(!exts_arr.iter().any(|v| v.as_str().map_or(false, |s| s.starts_with('-') || s.starts_with('!'))), "No negative masks upon re-enabling");
+        assert!(exts_arr.iter().any(|v| v.as_str() == Some("extensions/cpamc-auto-switcher")), "Plain top-level extensions/cpamc-auto-switcher remains");
 
         // 5. Query merged resources: reverts to default enabled
         let reverted_res = get_pi_resources_impl(Some(&global_settings), Some(&project_settings)).unwrap();
         let reverted_arr = reverted_res["resources"].as_array().unwrap();
         assert_eq!(reverted_arr.len(), 2);
-        let reverted_switcher = reverted_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher/index.ts").unwrap();
+        let reverted_switcher = reverted_arr.iter().find(|r| r["source"] == "extensions/cpamc-auto-switcher").unwrap();
         assert_eq!(reverted_switcher["enabled"], true);
-        assert_eq!(reverted_switcher["hasProjectOverride"], false);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -10138,5 +10335,141 @@ Local daemon: not running
         let res_whitespace = enroll_engram_project_impl("   ", None).await;
         assert!(res_whitespace.is_err());
         assert!(res_whitespace.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn test_blocker_3_toggle_pi_resource_enable_removes_companion_negative_mask_preserving_plain() {
+        let temp_dir = std::env::temp_dir().join(format!("test_b3_companion_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config_path = temp_dir.join("settings.json");
+
+        // Settings initially contains plain declaration AND companion minus mask
+        let initial = serde_json::json!({
+            "extensions": ["./my-tool.ts", "-./my-tool.ts"]
+        });
+        std::fs::write(&config_path, serde_json::to_string_pretty(&initial).unwrap()).unwrap();
+
+        // Enable: must retain plain declaration and remove ONLY exact companion mask
+        let res = toggle_pi_resource_impl(&config_path, "extension", "./my-tool.ts", true, "project").unwrap();
+        assert_eq!(res["success"], true);
+        assert_eq!(res["enabled"], true);
+
+        let on_disk: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(on_disk["extensions"], serde_json::json!(["./my-tool.ts"]));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_blocker_5_project_override_inherited_global_writes_abs_posix_plain_and_mask() {
+        let temp_dir = std::env::temp_dir().join(format!("test_b5_abs_posix_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let global_dir = temp_dir.join("global").join(".pi").join("agent");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        let global_settings = global_dir.join("settings.json");
+        std::fs::write(&global_settings, serde_json::to_string(&serde_json::json!({
+            "extensions": ["./global-ext.ts"]
+        })).unwrap()).unwrap();
+        let ext_file = global_dir.join("global-ext.ts");
+        std::fs::write(&ext_file, "// global ext").unwrap();
+
+        let proj_dir = temp_dir.join("project");
+        std::fs::create_dir_all(&proj_dir).unwrap();
+        let proj_settings = proj_dir.join(".pi").join("settings.json");
+
+        struct ResetOverride;
+        impl Drop for ResetOverride {
+            fn drop(&mut self) {
+                set_settings_config_path_override_for_test(None);
+            }
+        }
+        let _reset = ResetOverride;
+
+        set_settings_config_path_override_for_test(Some(global_settings.clone()));
+
+        // Toggle inherited global extension in project scope to disabled
+        let toggle_res = toggle_pi_resource(
+            Some(proj_dir.to_string_lossy().to_string()),
+            Some("project".to_string()),
+            "extension".to_string(),
+            "./global-ext.ts".to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(toggle_res["success"], true);
+        assert_eq!(toggle_res["enabled"], false);
+
+        // Project file must contain absolute POSIX path plain entry AND mask, NOT raw relative -./global-ext.ts
+        let on_disk: Value = serde_json::from_str(&std::fs::read_to_string(&proj_settings).unwrap()).unwrap();
+        let ext_arr = on_disk["extensions"].as_array().unwrap();
+        let ext_file_canon = dunce::canonicalize(&ext_file).unwrap_or(ext_file);
+        let abs_posix = ext_file_canon.to_string_lossy().replace('\\', "/");
+
+        assert!(ext_arr.iter().any(|v| v.as_str() == Some(&abs_posix)), "Must contain plain abs POSIX declaration");
+        assert!(ext_arr.iter().any(|v| v.as_str() == Some(&format!("-{}", abs_posix))), "Must contain mask -abs POSIX");
+
+        // Builtin special case: literal builtin name
+        let toggle_builtin = toggle_pi_resource(
+            Some(proj_dir.to_string_lossy().to_string()),
+            Some("project".to_string()),
+            "extension".to_string(),
+            "builtin:mcp".to_string(),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(toggle_builtin["success"], true);
+
+        let on_disk_builtin: Value = serde_json::from_str(&std::fs::read_to_string(&proj_settings).unwrap()).unwrap();
+        let builtin_arr = on_disk_builtin["extensions"].as_array().unwrap();
+        assert!(builtin_arr.iter().any(|v| v.as_str() == Some("builtin:mcp")), "Must contain literal builtin:mcp plain");
+        assert!(builtin_arr.iter().any(|v| v.as_str() == Some("-builtin:mcp")), "Must contain literal -builtin:mcp mask");
+
+        set_settings_config_path_override_for_test(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_blocker_6_save_mcp_server_writes_native_pi_mcp_json_visible_in_inventory() {
+        let temp_dir = std::env::temp_dir().join(format!("test_b6_native_mcp_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let proj_str = temp_dir.to_string_lossy().to_string();
+        let server_def = serde_json::json!({
+            "command": "node",
+            "args": ["server.js"]
+        });
+
+        // Save server in project scope when .pi directory does not exist yet
+        let save_res = save_mcp_server(
+            "native-tool".to_string(),
+            None,
+            server_def,
+            Some(proj_str.clone()),
+            Some("project".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(save_res["success"], true);
+
+        // Crucial invariant: must write to <cwd>/.pi/mcp.json, not root .mcp.json
+        let native_file = temp_dir.join(".pi").join("mcp.json");
+        assert!(native_file.exists(), ".pi/mcp.json must be created");
+        assert!(!temp_dir.join(".mcp.json").exists(), "Root .mcp.json must not be created");
+
+        // Visible in native inventory
+        let list_res = get_mcp_servers(Some(proj_str)).await.unwrap();
+        let servers = list_res["servers"].as_array().unwrap();
+        let found = servers.iter().find(|s| s["name"] == "native-tool");
+        assert!(found.is_some(), "Saved server must be visible in native inventory");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

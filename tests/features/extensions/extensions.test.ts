@@ -98,6 +98,8 @@ test('extensions domain: normalizeTargetSource and normalizeResourceId reject ba
   assert.throws(() => normalizeTargetSource('extension', '!'), /bare marker/);
   assert.throws(() => normalizeTargetSource('extension', '!   '), /bare marker/);
   assert.throws(() => normalizeTargetSource('extension', '+'), /bare marker/);
+  assert.throws(() => normalizeTargetSource('extension', '-'), /bare marker/);
+  assert.throws(() => normalizeTargetSource('extension', '-   '), /bare marker/);
   assert.throws(() => normalizeTargetSource('extension', ''), /empty/);
   assert.throws(() => normalizeTargetSource('extension', '   '), /empty/);
   assert.throws(() => normalizeTargetSource('package', ''), /empty/);
@@ -105,10 +107,13 @@ test('extensions domain: normalizeTargetSource and normalizeResourceId reject ba
 
   assert.throws(() => normalizeResourceId('global', 'extension', '!'), /bare marker/);
   assert.throws(() => normalizeResourceId('global', 'extension', '!   '), /bare marker/);
+  assert.throws(() => normalizeResourceId('global', 'extension', '-'), /bare marker/);
+  assert.throws(() => normalizeResourceId('global', 'extension', '-   '), /bare marker/);
   assert.throws(() => normalizeResourceId('project', 'extension', ''), /empty/);
 
   assert.equal(normalizeTargetSource('extension', '!./my-tool.ts'), './my-tool.ts');
   assert.equal(normalizeTargetSource('extension', '+./my-tool.ts'), './my-tool.ts');
+  assert.equal(normalizeTargetSource('extension', '-./my-tool.ts'), './my-tool.ts');
   assert.equal(normalizeTargetSource('package', 'npm:pkg'), 'npm:pkg');
 });
 
