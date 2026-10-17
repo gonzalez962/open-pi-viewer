@@ -16,6 +16,7 @@ import '@features/providers/providers.css';
 import '@features/mcp/mcp.css';
 import '@features/extensions/extensions.css';
 import '@features/profiles/profiles.css';
+import '@features/terminal/terminal.css';
 
 const rootElement = document.getElementById('root');
 

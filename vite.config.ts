@@ -51,6 +51,12 @@ export default defineConfig(({ mode = "development" }) => {
         },
       },
     },
+    optimizeDeps: {
+      exclude: ['node-pty'],
+    },
+    ssr: {
+      external: ['node-pty'],
+    },
     server: {
       host: "0.0.0.0",
       port: Number(mergedEnv.PORT || process.env.PORT) || 5173,

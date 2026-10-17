@@ -35,8 +35,10 @@ export interface UseProjectsResult {
    * new working directory into the form; now that the registry setter is encapsulated
    * here, this mirrors that exact inline block (addProject + save + setProjectsRegistry,
    * no applyWorkingDirectory call - the settings panel drives its own connection apply).
+   * Supports an optional `options.activate` flag (defaults to true) to prevent background
+   * discovery/connection from hijacking the active project selection.
    */
-  addProjectForPath: (path: string) => void;
+  addProjectForPath: (path: string, options?: { activate?: boolean }) => ProjectItem;
 }
 
 /**
@@ -134,12 +136,18 @@ export function useProjects({
   );
 
   const addProjectForPath = useCallback(
-    (path: string) => {
+    (path: string, options?: { activate?: boolean }) => {
       const currentRegistry = projectsRegistryRef.current;
-      const { registry: nextRegistry } = addProject(currentRegistry, path);
+      const { registry: nextRegistry, project: addedProj } = addProject(
+        currentRegistry,
+        path,
+        undefined,
+        options
+      );
       saveProjectsRegistry(nextRegistry);
       projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
+      return addedProj;
     },
     []
   );

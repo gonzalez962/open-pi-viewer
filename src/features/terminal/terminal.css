@@ -1,0 +1,214 @@
+/* Persistent Project Terminal (T3) Styles */
+@import '@xterm/xterm/css/xterm.css';
+
+.terminal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  width: 100vw;
+  height: 100vh;
+  background-color: #0d1117;
+  color: #c9d1d9;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 16px;
+  background-color: var(--bg-subtle, #161b22);
+  border-bottom: 1px solid var(--border-default, #30363d);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.terminal-header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-default, #c9d1d9);
+  min-width: 0;
+}
+
+.terminal-icon {
+  color: var(--fg-accent, #58a6ff);
+  flex-shrink: 0;
+}
+
+.terminal-title-text {
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.terminal-project-badge {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 12px;
+  background-color: var(--bg-muted, #21262d);
+  border: 1px solid var(--border-muted, #30363d);
+  color: var(--fg-muted, #8b949e);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-pid-badge {
+  padding: 2px 6px;
+  font-size: 10px;
+  font-family: var(--font-mono, Consolas, monospace);
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.15);
+  color: #58a6ff;
+  border: 1px solid rgba(88, 166, 255, 0.3);
+  flex-shrink: 0;
+}
+
+.terminal-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-terminal-minimize,
+.btn-terminal-terminate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted, #30363d);
+  background-color: var(--bg-subtle, #21262d);
+  color: var(--fg-default, #c9d1d9);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-terminal-minimize:hover {
+  background-color: var(--bg-muted, #30363d);
+  border-color: var(--border-default, #484f58);
+}
+
+.btn-terminal-terminate:hover {
+  background-color: rgba(248, 81, 73, 0.2);
+  border-color: rgba(248, 81, 73, 0.6);
+  color: #ff7b72;
+}
+
+.terminal-error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background-color: rgba(248, 81, 73, 0.15);
+  border-bottom: 1px solid rgba(248, 81, 73, 0.4);
+  color: #f85149;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.btn-terminal-retry {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  background-color: #f85149;
+  color: #ffffff;
+  border: none;
+  cursor: pointer;
+}
+
+.terminal-exit-banner {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  background-color: rgba(210, 153, 34, 0.15);
+  border-bottom: 1px solid rgba(210, 153, 34, 0.4);
+  color: #d29922;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.terminal-body {
+  flex: 1;
+  min-height: 0;
+  background-color: #0d1117;
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-screen-container {
+  width: 100%;
+  height: 100%;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.terminal-screen-container .xterm {
+  height: 100%;
+}
+
+.terminate-project-name {
+  margin-top: 6px;
+  font-family: var(--font-mono, Consolas, monospace);
+  font-size: 12px;
+  color: var(--fg-muted, #8b949e);
+}
+
+/* Header Launch Button */
+.btn-terminal-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default, #30363d);
+  background-color: var(--bg-subtle, #161b22);
+  color: var(--fg-default, #c9d1d9);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-terminal-toggle:hover {
+  background-color: var(--bg-muted, #21262d);
+  border-color: var(--border-muted, #484f58);
+}
+
+.btn-terminal-toggle.is-active {
+  background-color: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.4);
+  color: #58a6ff;
+}
+
+/* Responsive mobile adaptations */
+@media (max-width: 768px) {
+  .terminal-overlay.is-mobile .btn-terminal-minimize .btn-label,
+  .terminal-overlay.is-mobile .btn-terminal-terminate .btn-label {
+    display: none;
+  }
+
+  .terminal-overlay.is-mobile .terminal-header {
+    height: 38px;
+    padding: 0 10px;
+  }
+
+  .terminal-overlay.is-mobile .terminal-project-badge {
+    max-width: 130px;
+  }
+
+  .btn-terminal-toggle .terminal-toggle-text {
+    display: none;
+  }
+}

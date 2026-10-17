@@ -35,6 +35,7 @@ export const ZEN_FLOATING_EXIT_CLASS = 'btn-zen-floating-exit';
 
 export const MODAL_OR_POPUP_SELECTORS = [
   '.modal-overlay',
+  '.terminal-overlay',
   '.file-viewer-overlay',
   '.folder-picker-overlay',
   '.extension-dialog-overlay',

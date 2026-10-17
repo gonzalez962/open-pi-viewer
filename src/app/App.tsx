@@ -50,6 +50,11 @@ import {
   type ProfileActivationEventDetail,
 } from '@core/types/profiles';
 import { useProfiles } from '@features/profiles/hooks/useProfiles';
+import {
+  TerminalOverlay,
+  TerminateConfirmationModal,
+  useTerminal,
+} from '@features/terminal';
 
 const SettingsView = React.lazy(() =>
   import('@features/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
@@ -227,7 +232,8 @@ export const App: React.FC = () => {
       let targetProjectId = matched?.id;
 
       if (!targetProjectId && res.canonicalCwd) {
-        addProjectForPath(res.canonicalCwd);
+        const shouldActivate = !projectsRegistryRef.current.activeProjectId;
+        addProjectForPath(res.canonicalCwd, { activate: shouldActivate });
         const recheck = findProjectByCwd(
           projectsRegistryRef.current.projects,
           res.canonicalCwd
@@ -1081,6 +1087,11 @@ export const App: React.FC = () => {
   );
   const activeProjectName = activeProject ? getProjectDisplayName(activeProject) : undefined;
 
+  const terminal = useTerminal({
+    activeProjectCwd: activeProject?.path ?? config.workingDirectory ?? null,
+    activeProjectName: activeProjectName || 'Project',
+  });
+
   // Localized presentation mappings preserving reducer contracts
   const localizedStatusLabel = formatLocalizedStatus(
     state.connectionStatus,
@@ -1190,6 +1201,31 @@ export const App: React.FC = () => {
               {t('action.retry')}
             </button>
           )}
+
+          <button
+            type="button"
+            className={`btn-terminal-toggle ${terminal.isOpen ? 'is-active' : ''}`}
+            onClick={terminal.isOpen ? terminal.minimizeTerminal : terminal.openTerminal}
+            title={terminal.isOpen ? t('terminal.minimize') : t('terminal.open')}
+            aria-label={t('terminal.title')}
+            aria-pressed={terminal.isOpen}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span className="terminal-toggle-text">{t('terminal.title')}</span>
+          </button>
 
           <button
             ref={zenToggleRef}
@@ -1978,6 +2014,32 @@ export const App: React.FC = () => {
         onAccept={webPushPrompt.accept}
         onDecline={webPushPrompt.decline}
         t={t}
+      />
+
+      <TerminalOverlay
+        isOpen={terminal.isOpen}
+        projectName={activeProjectName || 'Project'}
+        projectCwd={activeProject?.path ?? config.workingDirectory ?? ''}
+        session={terminal.currentSession}
+        locale={preferences.language}
+        status={terminal.status}
+        errorMessage={terminal.errorMessage}
+        exitCode={terminal.exitCode}
+        isMobile={checkIsMobileViewport()}
+        onMinimize={terminal.minimizeTerminal}
+        onTerminate={terminal.requestTerminate}
+        onRetry={terminal.retryConnection}
+        onInput={terminal.handleInput}
+        onResize={terminal.handleResize}
+        terminalInstanceRef={terminal.terminalInstanceRef}
+      />
+
+      <TerminateConfirmationModal
+        isOpen={terminal.isTerminateConfirmOpen}
+        projectName={activeProjectName || 'Project'}
+        locale={preferences.language}
+        onConfirm={terminal.confirmTerminate}
+        onCancel={terminal.cancelTerminate}
       />
     </div>
   );
