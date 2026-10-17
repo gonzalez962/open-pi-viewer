@@ -1,4 +1,5 @@
 import { getModelStatsKey } from '../prompt-controls-utils';
+import type { SubagentTask } from '../types/agent-activity';
 import type { ChatMessage } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
 import type { ModelInfo } from '../types/models';
@@ -25,7 +26,8 @@ export type ConnectionAction =
       };
     }
   | { type: 'PROCESS_EXIT'; payload: { error?: string } }
-  | { type: 'CLEAR_ERROR' };
+  | { type: 'CLEAR_ERROR' }
+  | { type: 'UPDATE_SUBAGENT_ACTIVITY'; payload: { tasks: SubagentTask[] } };
 
 /**
  * Finalize any in-flight streaming messages by clearing their isStreaming flag.
@@ -125,11 +127,15 @@ export function connectionReducer(
         availableModels: [],
         sessionStats: null,
         modelStats: {},
+        subagents: [],
         messages: finalizeStreamingMessages(state.messages),
       };
     }
 
     case 'SESSION_READY': {
+      const isNewSession = Boolean(
+        action.payload.sessionId && state.sessionId && action.payload.sessionId !== state.sessionId
+      );
       return {
         ...state,
         connectionStatus: 'connected',
@@ -145,6 +151,7 @@ export function connectionReducer(
         statusLabel: 'Connected',
         statusDetail: action.payload.detail || 'Conversation ready',
         lastError: null,
+        subagents: isNewSession ? [] : (state.subagents ?? []),
       };
     }
 
@@ -164,6 +171,7 @@ export function connectionReducer(
         pendingApprovals: [],
         availableModels: [],
         sessionStats: null,
+        subagents: [],
         messages: finalizeStreamingMessages(state.messages),
       };
     }
@@ -172,6 +180,13 @@ export function connectionReducer(
       return {
         ...state,
         lastError: null,
+      };
+    }
+
+    case 'UPDATE_SUBAGENT_ACTIVITY': {
+      return {
+        ...state,
+        subagents: action.payload.tasks,
       };
     }
 

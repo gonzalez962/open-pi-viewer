@@ -119,6 +119,7 @@ import { ExportToast } from '@features/chat/components/ExportToast';
 import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
+import { getAgentWorkingStatus } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
 import { useMcpServers } from '@features/mcp/hooks/useMcpServers';
 import { usePiResources } from '@features/extensions/hooks/usePiResources';
@@ -326,6 +327,12 @@ export const App: React.FC = () => {
     appearanceController,
     t,
   } = usePreferences();
+
+  const derivedWorkingStatus = getAgentWorkingStatus(state, preferences.language);
+  const workingStatusText = isBusy
+    ? (derivedWorkingStatus ?? t('agent_working_status.fallback'))
+    : derivedWorkingStatus;
+  const isIndicatorActive = Boolean(workingStatusText);
 
   // Subscribes to effective appearance via central controller for live background & working animation
   const [effectiveAppearance, setEffectiveAppearance] = useState<AppearancePreferences>(() =>
@@ -1727,10 +1734,7 @@ export const App: React.FC = () => {
           <div className="prompt-field-group">
             <div className="prompt-header-row">
               <div className="prompt-label-wrapper">
-                <label htmlFor="prompt-input" className="prompt-label">
-                  {t('prompt.label')}
-                </label>
-                {isBusy && (
+                {isIndicatorActive && (
                   <span
                     className={runtimeWorkStyles.className}
                     style={runtimeWorkStyles.style as React.CSSProperties}
@@ -1745,7 +1749,7 @@ export const App: React.FC = () => {
                         />
                       ))}
                     </span>
-                    <span className="working-text">Working</span>
+                    <span className="working-text">{workingStatusText}</span>
                     <span className="loader">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
@@ -1814,6 +1818,7 @@ export const App: React.FC = () => {
             <textarea
               id="prompt-input"
               name="prompt"
+              aria-label={t('prompt.label')}
               className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}

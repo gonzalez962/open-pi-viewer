@@ -1,3 +1,4 @@
+import type { SubagentTask } from './agent-activity';
 import type { ConnectionState } from './connection';
 import type { AgentActivity, ChatMessage } from './messages';
 import type { ModelInfo, SessionStats, ThinkingLevel } from './models';
@@ -32,4 +33,5 @@ export interface ChatSessionState {
   isSwitchingSession: boolean;
   isSidebarOpen: boolean;
   pendingApprovals?: unknown[];
+  subagents: SubagentTask[];
 }
