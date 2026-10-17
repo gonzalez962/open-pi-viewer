@@ -234,6 +234,36 @@ pub struct LogoutOAuthProviderPayload {
     pub provider_id: String,
 }
 
+/// Allowlisted safe catalog model metadata projected to frontend
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinCatalogModel {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    pub reasoning: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<Vec<String>>,
+    #[serde(rename = "input_modalities", skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
+    #[serde(rename = "reasoningEfforts", skip_serializing_if = "Option::is_none")]
+    pub reasoning_efforts: Option<Vec<String>>,
+    #[serde(rename = "thinkingLevelMap", skip_serializing_if = "Option::is_none")]
+    pub thinking_level_map: Option<HashMap<String, Option<String>>>,
+}
+
+/// Payload for querying built-in provider model catalog
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GetBuiltinCatalogPayload {
+    #[serde(alias = "providerId", alias = "provider_id", alias = "provider")]
+    pub provider_id: String,
+}
+
 /// Result returned from `logout_oauth_provider`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -1113,6 +1143,32 @@ pub async fn get_builtin_oauth_providers_impl(
         .map_err(|e| format!("Failed to deserialize provider list: {e}"))
 }
 
+/// Pure implementation for querying built-in provider model catalog via helper subprocess
+pub async fn get_builtin_provider_catalog_impl(
+    node_path: &Path,
+    helper_path: &Path,
+    entrypoint: &Path,
+    effective_home: &Path,
+    provider_id: &str,
+) -> Result<Vec<BuiltinCatalogModel>, String> {
+    let parsed = run_oauth_helper_json(
+        node_path,
+        helper_path,
+        "catalog",
+        entrypoint,
+        effective_home,
+        &[("--provider", provider_id)],
+    )
+    .await?;
+
+    let models_val = parsed
+        .get("models")
+        .ok_or_else(|| "OAuth helper response missing 'models' field".to_string())?;
+
+    serde_json::from_value(models_val.clone())
+        .map_err(|e| format!("Failed to deserialize catalog models: {e}"))
+}
+
 /// Pure implementation for logging out of an OAuth provider via helper subprocess
 pub async fn logout_oauth_provider_impl(
     node_path: &Path,
@@ -1442,6 +1498,34 @@ pub async fn get_builtin_oauth_providers(
     get_builtin_oauth_providers_impl(&node_path, &helper_path, &entrypoint, &effective_home).await
 }
 
+/// Tauri command to query read-only model catalog for a specific built-in provider
+#[tauri::command]
+pub async fn get_builtin_provider_catalog(
+    payload: GetBuiltinCatalogPayload,
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+) -> Result<Vec<BuiltinCatalogModel>, String> {
+    let provider_id = payload.provider_id.trim();
+    if provider_id.is_empty() {
+        return Err("Provider ID is required".to_string());
+    }
+
+    let (node_path, entrypoint, effective_home) = resolve_oauth_execution_environment(&state)
+        .await
+        .map_err(|e| redact_absolute_paths(&e))?;
+    let helper_path = resolve_oauth_helper_path(Some(&app_handle))
+        .map_err(|e| redact_absolute_paths(&e))?;
+
+    get_builtin_provider_catalog_impl(
+        &node_path,
+        &helper_path,
+        &entrypoint,
+        &effective_home,
+        provider_id,
+    )
+    .await
+}
+
 /// Tauri command to start an interactive OAuth sign-in flow.
 /// Ensures atomic session registration while holding the lock across check and process spawn.
 #[tauri::command]
@@ -1765,6 +1849,53 @@ mod tests {
         }
         assert_eq!(validate_provider_id("  anthropic  ").unwrap(), "anthropic");
         assert_eq!(validate_provider_id("custom_test-123").unwrap(), "custom_test-123");
+    }
+
+    #[test]
+    fn test_catalog_model_projection_deserializes_safe_metadata_only() {
+        let json_data = serde_json::json!({
+            "id": "claude-3-5-sonnet",
+            "name": "Claude 3.5 Sonnet",
+            "provider": "anthropic",
+            "contextWindow": 200000,
+            "maxTokens": 8192,
+            "reasoning": true,
+            "input": ["text", "image"],
+            "input_modalities": ["text", "image"],
+            "reasoningEfforts": ["low", "medium", "high"],
+            "thinkingLevelMap": { "off": null, "high": "high" },
+            // Extra dangerous fields that must be ignored by serde
+            "baseUrl": "https://api.anthropic.com",
+            "apiKey": "sk-ant-secret",
+            "cost": { "input": 3, "output": 15 }
+        });
+
+        let model: BuiltinCatalogModel = serde_json::from_value(json_data).unwrap();
+        assert_eq!(model.id, "claude-3-5-sonnet");
+        assert_eq!(model.name, "Claude 3.5 Sonnet");
+        assert_eq!(model.provider, "anthropic");
+        assert_eq!(model.context_window, Some(200000));
+        assert_eq!(model.max_tokens, Some(8192));
+        assert!(model.reasoning);
+        assert_eq!(model.input, Some(vec!["text".to_string(), "image".to_string()]));
+
+        let serialized = serde_json::to_string(&model).unwrap();
+        assert!(!serialized.contains("baseUrl"));
+        assert!(!serialized.contains("apiKey"));
+        assert!(!serialized.contains("cost"));
+        assert!(!serialized.contains("sk-ant-secret"));
+    }
+
+    #[test]
+    fn test_catalog_payload_deserializes_flexible_field_names() {
+        let payload1: GetBuiltinCatalogPayload = serde_json::from_str(r#"{"providerId":"anthropic"}"#).unwrap();
+        assert_eq!(payload1.provider_id, "anthropic");
+
+        let payload2: GetBuiltinCatalogPayload = serde_json::from_str(r#"{"provider_id":"openai-codex"}"#).unwrap();
+        assert_eq!(payload2.provider_id, "openai-codex");
+
+        let payload3: GetBuiltinCatalogPayload = serde_json::from_str(r#"{"provider":"openai"}"#).unwrap();
+        assert_eq!(payload3.provider_id, "openai");
     }
 
     #[test]

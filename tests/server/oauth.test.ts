@@ -76,6 +76,32 @@ export class ModelRuntime {
     return undefined;
   }
 
+  getModels(providerId) {
+    if (providerId === 'fake-oauth') {
+      return [
+        {
+          id: 'fake-model-alpha',
+          name: 'Fake Model Alpha',
+          provider: 'fake-oauth',
+          contextWindow: 64000,
+          maxTokens: 2048,
+          reasoning: true,
+          input: ['text', 'image'],
+          baseUrl: 'https://secret-leak.com',
+          apiKey: 'super-secret-key-123456789012345678',
+          cost: { input: 1, output: 2 },
+        },
+      ];
+    }
+    if (providerId === 'openai') {
+      return [{ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', reasoning: false }];
+    }
+    if (providerId === 'openai-codex') {
+      return [{ id: 'codex-mini', name: 'Codex Mini', provider: 'openai-codex', reasoning: true }];
+    }
+    return [];
+  }
+
   async logout(providerId) {
     const scenarioFile = path.join(path.dirname(this.authPath), 'scenario.json');
     if (fs.existsSync(scenarioFile)) {
@@ -684,6 +710,66 @@ test('T1 S1/S3: EPIPE regression: helper closing stdin results in callback-based
     assert.ok(resp.message, 'Message should describe write failure');
 
     // Dispose after helper closed input must cleanly shut down without unhandled error
+    await manager.dispose();
+  } finally {
+    cleanupTestEnvironment(rootDir);
+  }
+});
+
+test('T1 S1/S2: catalog queries models for provider and projects allowlisted safe metadata', async () => {
+  const { rootDir, entrypoint, homeDir } = setupTestEnvironment();
+  try {
+    const manager = createOAuthManager({
+      helperPath: HELPER_PATH,
+      nodePath: process.execPath,
+      entrypoint,
+      agentHome: homeDir,
+      timeouts: { shortCommandMs: 10_000, loginMs: 10_000, killGraceMs: 300 },
+    });
+
+    const models = await manager.catalog('fake-oauth');
+    assert.ok(Array.isArray(models));
+    assert.equal(models.length, 1);
+    const m = models[0];
+    assert.equal(m.id, 'fake-model-alpha');
+    assert.equal(m.name, 'Fake Model Alpha');
+    assert.equal(m.provider, 'fake-oauth');
+    assert.equal(m.contextWindow, 64000);
+    assert.equal(m.maxTokens, 2048);
+    assert.equal(m.reasoning, true);
+    assert.deepEqual(m.input, ['text', 'image']);
+    // Extra sensitive fields MUST never be projected (S2.2)
+    assert.equal((m as any).baseUrl, undefined);
+    assert.equal((m as any).apiKey, undefined);
+    assert.equal((m as any).cost, undefined);
+
+    await manager.dispose();
+  } finally {
+    cleanupTestEnvironment(rootDir);
+  }
+});
+
+test('T1 S2.1: catalog keeps openai and openai-codex distinct', async () => {
+  const { rootDir, entrypoint, homeDir } = setupTestEnvironment();
+  try {
+    const manager = createOAuthManager({
+      helperPath: HELPER_PATH,
+      nodePath: process.execPath,
+      entrypoint,
+      agentHome: homeDir,
+      timeouts: { shortCommandMs: 10_000, loginMs: 10_000, killGraceMs: 300 },
+    });
+
+    const openaiModels = await manager.catalog('openai');
+    assert.equal(openaiModels.length, 1);
+    assert.equal(openaiModels[0].provider, 'openai');
+    assert.equal(openaiModels[0].id, 'gpt-4o');
+
+    const codexModels = await manager.catalog('openai-codex');
+    assert.equal(codexModels.length, 1);
+    assert.equal(codexModels[0].provider, 'openai-codex');
+    assert.equal(codexModels[0].id, 'codex-mini');
+
     await manager.dispose();
   } finally {
     cleanupTestEnvironment(rootDir);

@@ -229,8 +229,22 @@ export interface OAuthManagerOptions {
   onDispose?: () => void;
 }
 
+export interface BuiltinCatalogModel {
+  id: string;
+  name: string;
+  provider: string;
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning: boolean;
+  input?: string[];
+  input_modalities?: string[];
+  reasoningEfforts?: string[];
+  thinkingLevelMap?: Record<string, string | null>;
+}
+
 export interface OAuthManager {
   list(owner?: string): Promise<BuiltinOAuthProviderStatus[]>;
+  catalog(providerId: string, owner?: string): Promise<BuiltinCatalogModel[]>;
   start(owner: string, payload: StartOAuthLoginPayload): Promise<StartOAuthLoginResult>;
   cancel(owner: string, payload?: CancelOAuthLoginPayload): Promise<CancelOAuthLoginResult>;
   respond(owner: string, payload: SendOAuthPromptResponsePayload): Promise<SendOAuthPromptResponseResult>;
@@ -500,6 +514,199 @@ class DefaultOAuthManager implements OAuthManager {
           }
         } catch {
           reject(new Error('Malformed response from OAuth helper'));
+        }
+      });
+    });
+  }
+
+  public async catalog(providerId: string, _owner?: string): Promise<BuiltinCatalogModel[]> {
+    void _owner;
+    if (this.isDisposed) {
+      throw new Error('OAuth manager is disposed');
+    }
+
+    const cleanProviderId = (providerId || '').trim();
+    if (!cleanProviderId) {
+      throw new Error('Provider ID is required to query configuration catalog');
+    }
+
+    const { nodeExecutable, entrypointPath, effectiveHome } = this.resolveExecutionEnvironment();
+
+    if (!fs.existsSync(this.helperPath)) {
+      throw new Error('Pi OAuth helper script was not found');
+    }
+
+    return new Promise<BuiltinCatalogModel[]>((resolve, reject) => {
+      let resolved = false;
+      let totalBytes = 0;
+      let stdoutAcc = '';
+
+      const child = spawn(
+        nodeExecutable,
+        [
+          this.helperPath,
+          'catalog',
+          '--entrypoint',
+          entrypointPath,
+          '--home',
+          effectiveHome,
+          '--provider',
+          cleanProviderId,
+        ],
+        {
+          shell: false,
+          stdio: ['ignore', 'pipe', 'ignore'], // Stderr never forwarded
+          env: {
+            ...process.env,
+            PI_CODING_AGENT_DIR: effectiveHome,
+          },
+        }
+      );
+
+      let resolveDone!: () => void;
+      const donePromise = new Promise<void>((r) => {
+        resolveDone = r;
+      });
+
+      const inFlightEntry: InFlightHelper = {
+        child,
+        abort: (reason: Error) => {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+            reject(reason);
+          }
+        },
+        donePromise,
+      };
+      this.inFlightHelpers.add(inFlightEntry);
+
+      const cleanupInFlight = () => {
+        this.inFlightHelpers.delete(inFlightEntry);
+        resolveDone();
+      };
+
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          cleanupInFlight();
+          try {
+            child.kill('SIGKILL');
+          } catch {}
+          reject(new Error('OAuth catalog operation timed out'));
+        }
+      }, this.timeouts.shortCommandMs);
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        totalBytes += chunk.length;
+        if (totalBytes > MAX_TOTAL_OUTPUT_BYTES) {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            cleanupInFlight();
+            try {
+              child.kill('SIGKILL');
+            } catch {}
+            reject(new Error('OAuth helper output exceeded maximum bounded size'));
+          }
+          return;
+        }
+        stdoutAcc += chunk.toString('utf8');
+      });
+
+      child.on('error', (err) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          cleanupInFlight();
+          reject(new Error(`Failed to execute OAuth helper: ${sanitizeError(err)}`));
+        }
+      });
+
+      child.on('close', (code) => {
+        if (resolved) {
+          cleanupInFlight();
+          return;
+        }
+        resolved = true;
+        clearTimeout(timer);
+        cleanupInFlight();
+
+        if (this.isDisposed) {
+          reject(new Error('OAuth manager is disposed'));
+          return;
+        }
+
+        const lines = stdoutAcc
+          .split('\n')
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const lastLine = lines[lines.length - 1];
+
+        if (!lastLine) {
+          reject(new Error(`OAuth helper exited with code ${code} without output`));
+          return;
+        }
+
+        try {
+          const parsed = JSON.parse(lastLine);
+          if (parsed.status === 'ok' && Array.isArray(parsed.models)) {
+            const results: BuiltinCatalogModel[] = [];
+            for (const m of parsed.models) {
+              if (!m || typeof m !== 'object' || !m.id) continue;
+              const id = sanitizeText(String(m.id));
+              const name = m.name ? sanitizeText(String(m.name)) : id;
+              const provider = m.provider ? sanitizeText(String(m.provider)) : cleanProviderId;
+              const contextWindow = typeof m.contextWindow === 'number' ? m.contextWindow : undefined;
+              const maxTokens = typeof m.maxTokens === 'number' ? m.maxTokens : undefined;
+              const reasoning = Boolean(m.reasoning);
+
+              let input: string[] | undefined;
+              if (Array.isArray(m.input)) {
+                input = m.input.filter((item: any) => typeof item === 'string').map((s: string) => sanitizeText(s));
+              }
+
+              let reasoningEfforts: string[] | undefined;
+              if (Array.isArray(m.reasoningEfforts)) {
+                reasoningEfforts = m.reasoningEfforts.filter((item: any) => typeof item === 'string').map((s: string) => sanitizeText(s));
+              }
+
+              let thinkingLevelMap: Record<string, string | null> | undefined;
+              if (m.thinkingLevelMap && typeof m.thinkingLevelMap === 'object') {
+                thinkingLevelMap = {};
+                for (const [k, v] of Object.entries(m.thinkingLevelMap)) {
+                  if (typeof v === 'string' || v === null) {
+                    thinkingLevelMap[sanitizeText(k)] = typeof v === 'string' ? sanitizeText(v) : null;
+                  }
+                }
+              }
+
+              const safeModel: BuiltinCatalogModel = {
+                id,
+                name,
+                provider,
+                reasoning,
+              };
+              if (contextWindow !== undefined) safeModel.contextWindow = contextWindow;
+              if (maxTokens !== undefined) safeModel.maxTokens = maxTokens;
+              if (input !== undefined) {
+                safeModel.input = input;
+                safeModel.input_modalities = input;
+              }
+              if (reasoningEfforts !== undefined) safeModel.reasoningEfforts = reasoningEfforts;
+              if (thinkingLevelMap !== undefined) safeModel.thinkingLevelMap = thinkingLevelMap;
+
+              results.push(safeModel);
+            }
+            resolve(results);
+          } else {
+            reject(new Error(sanitizeError(parsed.error || 'Failed to query provider catalog')));
+          }
+        } catch {
+          reject(new Error('Failed to parse OAuth helper catalog response'));
         }
       });
     });
@@ -1301,6 +1508,9 @@ export function getOAuthManager(): OAuthManager {
 export const oauthManager: OAuthManager = {
   list(owner?: string) {
     return getOAuthManager().list(owner);
+  },
+  catalog(providerId: string, owner?: string) {
+    return getOAuthManager().catalog(providerId, owner);
   },
   start(owner: string, payload: StartOAuthLoginPayload) {
     return getOAuthManager().start(owner, payload);

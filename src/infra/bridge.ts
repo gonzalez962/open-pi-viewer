@@ -2908,6 +2908,33 @@ export async function getBuiltinOAuthProvidersPi(
 }
 
 /**
+ * Retrieve complete model catalog for a specific built-in provider directly from Pi runtime.
+ * Dedicated read-only configuration catalog command, independent of chat session and authentication.
+ */
+export async function getBuiltinProviderCatalogPi(
+  providerId: string,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<ModelInfo[]> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return [];
+  }
+  const cleanId = (providerId || '').trim();
+  if (!cleanId) {
+    return [];
+  }
+  try {
+    const res = await invokeFn<ModelInfo[]>('get_builtin_provider_catalog', {
+      payload: { providerId: cleanId },
+      providerId: cleanId,
+    });
+    return res ?? [];
+  } catch (err) {
+    console.error(`Failed to query configuration catalog for provider '${cleanId}':`, err);
+    throw err;
+  }
+}
+
+/**
  * Start an interactive OAuth sign-in flow for a built-in provider.
  * The backend manages spawning the isolated helper process and opens the browser.
  */

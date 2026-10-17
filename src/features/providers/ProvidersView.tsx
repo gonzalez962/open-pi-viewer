@@ -3,7 +3,7 @@ import type { SupportedLocale, TranslationKey } from '@shared/i18n';
 import type { BuiltinOAuthProviderStatus } from '@core/types/oauth';
 import type { CustomProviderConfig } from '@core/types/providers';
 import type { ModelInfo } from '@core/types/models';
-import { getAvailableModelsPi } from '@infra/bridge';
+import { getBuiltinProviderCatalogPi } from '@infra/bridge';
 import { useProvidersData } from './hooks/useProvidersData';
 import { useProviderModalForm } from './hooks/useProviderModalForm';
 import { useBuiltinOAuthAccounts } from './hooks/useBuiltinOAuthAccounts';
@@ -44,10 +44,7 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
   const handleOpenEditBuiltinModels = async (provider: BuiltinOAuthProviderStatus) => {
     let catalogModels: ModelInfo[] = [];
     try {
-      const all = await getAvailableModelsPi();
-      catalogModels = all.filter(
-        (m) => (m.provider || '').toLowerCase() === provider.id.toLowerCase()
-      );
+      catalogModels = await getBuiltinProviderCatalogPi(provider.id);
     } catch {
       // Proceed with empty catalog fallback
     }

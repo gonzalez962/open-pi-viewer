@@ -88,6 +88,32 @@ export class ModelRuntime {
     return undefined;
   }
 
+  getModels(providerId) {
+    if (providerId === 'fake') {
+      return [
+        {
+          id: 'fake-model-1',
+          name: 'Fake Model 1',
+          provider: 'fake',
+          contextWindow: 128000,
+          maxTokens: 4096,
+          reasoning: true,
+          input: ['text', 'image'],
+          baseUrl: 'https://secret.api.com',
+          apiKey: 'sk-secret-123456789012345678',
+          cost: { input: 1, output: 2 },
+        },
+      ];
+    }
+    if (providerId === 'openai') {
+      return [{ id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', reasoning: false }];
+    }
+    if (providerId === 'openai-codex') {
+      return [{ id: 'codex-mini', name: 'Codex Mini', provider: 'openai-codex', reasoning: true }];
+    }
+    return [];
+  }
+
   async login(providerId, type, interaction, options) {
     if (providerId === 'openai') {
       const deviceId = options?.getDeviceId?.();
@@ -149,6 +175,26 @@ function runHelperLogin(
     stdout = execFileSync(
       process.execPath,
       [HELPER_PATH, 'login', '--entrypoint', entrypoint, '--home', home, '--provider', provider],
+      {
+        encoding: 'utf8',
+      },
+    );
+  } catch (err) {
+    stdout = String((err as { stdout?: string }).stdout ?? '');
+  }
+  return JSON.parse(stdout.trim().split('\n').pop() ?? '{}');
+}
+
+function runHelperCatalog(
+  entrypoint: string,
+  home: string,
+  provider: string,
+): { status: string; providerId?: string; models?: any[]; error?: string } {
+  let stdout: string;
+  try {
+    stdout = execFileSync(
+      process.execPath,
+      [HELPER_PATH, 'catalog', '--entrypoint', entrypoint, '--home', home, '--provider', provider],
       {
         encoding: 'utf8',
       },
@@ -313,5 +359,68 @@ test('S1.2: device identity is flushed and persists even when login fails after 
       settings.deviceId,
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
+  });
+});
+
+test('S1.1: helper catalog returns runtime models with allowlisted metadata for specific provider', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const result = runHelperCatalog(entrypoint, path.join(dir, 'home'), 'fake');
+
+    assert.equal(result.status, 'ok', result.error ?? '');
+    assert.equal(result.providerId, 'fake');
+    assert.equal(result.models?.length, 1);
+    const model = result.models?.[0];
+    assert.equal(model.id, 'fake-model-1');
+    assert.equal(model.name, 'Fake Model 1');
+    assert.equal(model.provider, 'fake');
+    assert.equal(model.contextWindow, 128000);
+    assert.equal(model.maxTokens, 4096);
+    assert.equal(model.reasoning, true);
+    assert.deepEqual(model.input, ['text', 'image']);
+    // Sensitive/internal fields MUST be excluded (S2.2)
+    assert.equal(model.baseUrl, undefined);
+    assert.equal(model.apiKey, undefined);
+    assert.equal(model.cost, undefined);
+  });
+});
+
+test('S1.1: helper catalog keeps openai vs openai-codex models distinct', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const openaiResult = runHelperCatalog(entrypoint, path.join(dir, 'home'), 'openai');
+    assert.equal(openaiResult.status, 'ok', openaiResult.error ?? '');
+    assert.equal(openaiResult.models?.[0]?.provider, 'openai');
+
+    const codexResult = runHelperCatalog(entrypoint, path.join(dir, 'home'), 'openai-codex');
+    assert.equal(codexResult.status, 'ok', codexResult.error ?? '');
+    assert.equal(codexResult.models?.[0]?.provider, 'openai-codex');
+    assert.notEqual(openaiResult.models?.[0]?.id, codexResult.models?.[0]?.id);
+  });
+});
+
+test('S1.2 / S2.2: helper catalog does not create agent directory or auth file if missing', () => {
+  withTempDir((dir) => {
+    const sdkDir = path.join(dir, 'pi-coding-agent');
+    writeFakeSdkPackage(sdkDir);
+    const entrypoint = path.join(sdkDir, 'dist', 'bundle', 'cli.js');
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true });
+    fs.writeFileSync(entrypoint, '');
+
+    const nonExistentHome = path.join(dir, 'non-existent-agent-dir');
+    const result = runHelperCatalog(entrypoint, nonExistentHome, 'fake');
+
+    assert.equal(result.status, 'ok', result.error ?? '');
+    assert.equal(fs.existsSync(nonExistentHome), false, 'Effective home must not be created for catalog action');
   });
 });

@@ -101,6 +101,7 @@ pub fn run() {
             commands::discover_environment,
             commands::detect_gentle_shell,
             commands::get_builtin_oauth_providers,
+            commands::get_builtin_provider_catalog,
             commands::start_oauth_login,
             commands::cancel_oauth_login,
             commands::send_oauth_prompt_response,

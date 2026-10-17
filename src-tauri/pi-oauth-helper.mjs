@@ -170,6 +170,56 @@ function projectSafePrompt(prompt, promptId) {
   };
 }
 
+function projectSafeCatalogModel(model) {
+  if (!model || typeof model !== 'object') return null;
+  const id = typeof model.id === 'string' ? model.id.trim() : '';
+  if (!id) return null;
+  const name = typeof model.name === 'string' ? model.name.trim() : id;
+  const provider = typeof model.provider === 'string' ? model.provider.trim() : '';
+  const contextWindow = typeof model.contextWindow === 'number' ? model.contextWindow : undefined;
+  const maxTokens = typeof model.maxTokens === 'number' ? model.maxTokens : undefined;
+  const reasoning = Boolean(model.reasoning);
+
+  let input;
+  if (Array.isArray(model.input)) {
+    input = model.input.filter((item) => typeof item === 'string');
+  } else if (Array.isArray(model.input_modalities)) {
+    input = model.input_modalities.filter((item) => typeof item === 'string');
+  }
+
+  let reasoningEfforts;
+  if (Array.isArray(model.reasoningEfforts)) {
+    reasoningEfforts = model.reasoningEfforts.filter((item) => typeof item === 'string');
+  }
+
+  let thinkingLevelMap;
+  if (model.thinkingLevelMap && typeof model.thinkingLevelMap === 'object') {
+    thinkingLevelMap = {};
+    for (const [k, v] of Object.entries(model.thinkingLevelMap)) {
+      if (typeof v === 'string' || v === null) {
+        thinkingLevelMap[k] = v;
+      }
+    }
+  }
+
+  const result = {
+    id,
+    name,
+    provider,
+    reasoning,
+  };
+  if (contextWindow !== undefined) result.contextWindow = contextWindow;
+  if (maxTokens !== undefined) result.maxTokens = maxTokens;
+  if (input !== undefined) {
+    result.input = input;
+    result.input_modalities = input;
+  }
+  if (reasoningEfforts !== undefined) result.reasoningEfforts = reasoningEfforts;
+  if (thinkingLevelMap !== undefined) result.thinkingLevelMap = thinkingLevelMap;
+
+  return result;
+}
+
 function parseCliArgs() {
   const args = process.argv.slice(2);
   let action = null;
@@ -246,11 +296,13 @@ async function main() {
     ? path.resolve(home)
     : path.join(process.env.USERPROFILE || process.env.HOME || '.', '.pi', 'agent');
 
-  try {
-    if (!fs.existsSync(effectiveHome)) {
-      fs.mkdirSync(effectiveHome, { recursive: true });
-    }
-  } catch (_) {}
+  if (action !== 'catalog') {
+    try {
+      if (!fs.existsSync(effectiveHome)) {
+        fs.mkdirSync(effectiveHome, { recursive: true });
+      }
+    } catch (_) {}
+  }
 
   process.env.PI_CODING_AGENT_DIR = effectiveHome;
   const authPath = path.join(effectiveHome, 'auth.json');
@@ -263,6 +315,43 @@ async function main() {
     process.exit(1);
   }
   const { ModelRuntime, SettingsManager } = sdk;
+
+  if (action === 'catalog') {
+    if (!provider) {
+      writeJson({ status: 'error', error: 'Missing provider for catalog' });
+      process.exit(1);
+    }
+    try {
+      const dummyCredentials = {
+        read: async () => undefined,
+        list: async () => [],
+        modify: async () => undefined,
+        delete: async () => {},
+      };
+      const runtime = await ModelRuntime.create({
+        credentials: dummyCredentials,
+        modelsPath: null,
+        refreshOnCreate: false,
+      });
+
+      const rawModels = runtime.getModels ? runtime.getModels(provider) : [];
+      const models = [];
+      for (const m of rawModels) {
+        if (m && typeof m === 'object' && (!m.provider || m.provider === provider)) {
+          const safe = projectSafeCatalogModel(m);
+          if (safe) {
+            models.push(safe);
+          }
+        }
+      }
+
+      writeJson({ status: 'ok', providerId: provider, models });
+      process.exit(0);
+    } catch (err) {
+      writeJson({ status: 'error', error: sanitizeError(err) });
+      process.exit(1);
+    }
+  }
 
   if (action === 'list') {
     try {
