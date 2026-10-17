@@ -259,6 +259,52 @@ export function getPiResourcesImpl(cwd?: string) {
             extensionDir: meta.extensionDir,
             raw: item,
           });
+        } else if (e.isDirectory()) {
+          const subPkg = path.join(globalExtensionsDir, e.name, 'package.json');
+          let handled = false;
+          if (fs.existsSync(subPkg)) {
+            try {
+              const pData = JSON.parse(fs.readFileSync(subPkg, 'utf8'));
+              if (Array.isArray(pData.pi?.extensions)) {
+                for (const rel of pData.pi.extensions) {
+                  const relNorm = rel.replace(/^[./\\]+/, '').replace(/\\/g, '/');
+                  const fullExt = path.resolve(globalExtensionsDir, e.name, relNorm);
+                  addOrMergeResource({
+                    id: `ext-${e.name}-${relNorm.replace(/[\/@:]/g, '-')}`,
+                    name: pData.name || e.name,
+                    kind: 'extension',
+                    source: `extensions/${e.name}/${relNorm}`,
+                    scope: 'global',
+                    enabled: true,
+                    configPath: fullExt,
+                    extensionPath: fullExt,
+                    extensionDir: path.resolve(globalExtensionsDir, e.name),
+                  });
+                  handled = true;
+                }
+              }
+            } catch {}
+          }
+          if (!handled) {
+            for (const idx of ['index.ts', 'index.js', 'index.mjs']) {
+              const fullIdx = path.join(globalExtensionsDir, e.name, idx);
+              if (fs.existsSync(fullIdx)) {
+                const resolvedIdx = path.resolve(fullIdx);
+                addOrMergeResource({
+                  id: `ext-${e.name}`,
+                  name: e.name,
+                  kind: 'extension',
+                  source: `extensions/${e.name}/${idx}`,
+                  scope: 'global',
+                  enabled: true,
+                  configPath: resolvedIdx,
+                  extensionPath: resolvedIdx,
+                  extensionDir: path.resolve(globalExtensionsDir, e.name),
+                });
+                break;
+              }
+            }
+          }
         }
       }
     } catch {}
