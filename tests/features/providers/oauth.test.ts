@@ -284,7 +284,7 @@ function createMockOAuthState(overrides: Partial<Parameters<typeof BuiltinOAuthA
   return { ...defaultState, ...overrides };
 }
 
-test('BuiltinOAuthAccounts markup: renders section header, provider cards, and status badges', () => {
+test('BuiltinOAuthAccounts markup: renders section header, provider cards, and compact actions', () => {
   const oauth = createMockOAuthState();
   const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t }));
 
@@ -293,12 +293,9 @@ test('BuiltinOAuthAccounts markup: renders section header, provider cards, and s
   assert.ok(html.includes('GitHub Copilot'));
   assert.ok(html.includes('Google Gemini'));
   assert.ok(html.includes('Subscription / Pro'));
-  assert.ok(html.includes('Environment API Key Active'));
-  assert.ok(html.includes('Connected'));
-  assert.ok(html.includes('Not Connected'));
-  assert.ok(html.includes('Sign in with GitHub'));
+  assert.ok(html.includes('OAuth'));
   assert.ok(html.includes('Disconnect'));
-  assert.ok(html.includes('Reconnect'));
+  assert.ok(html.includes('Connect'));
 });
 
 test('BuiltinOAuthAccounts markup: renders empty state when accounts list is empty', () => {

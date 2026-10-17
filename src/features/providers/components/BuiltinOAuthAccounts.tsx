@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import type { TranslationKey } from '@shared/i18n';
-import { openExternalUrl } from '@infra/opener';
 import { isOAuthUnauthorizedError } from '@infra/web-oauth-access';
-import { isSafeVerificationUri } from '../hooks/useBuiltinOAuthAccounts';
 import type { useBuiltinOAuthAccounts } from '../hooks/useBuiltinOAuthAccounts';
+import { BuiltinOAuthModal } from './BuiltinOAuthModal';
 
 export interface BuiltinOAuthAccountsProps {
   oauth: ReturnType<typeof useBuiltinOAuthAccounts>;
@@ -43,62 +42,24 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
     dismissAccountsError,
   } = oauth;
 
-  const [copiedCode, setCopiedCode] = useState<boolean>(false);
-  const [copiedUri, setCopiedUri] = useState<boolean>(false);
-  const [promptInputValue, setPromptInputValue] = useState<string>('');
-
-  // Clear secret / manual code React input on cancel, dismiss, or completion
-  useEffect(() => {
-    setPromptInputValue('');
-  }, [pendingPrompt?.promptId, activeProviderId]);
-
-  const handleCopyCode = async (code: string) => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
-    } catch {
-      // Fallback if clipboard API unavailable
-      setCopiedCode(true);
-      setTimeout(() => setCopiedCode(false), 2000);
-    }
-  };
-
-  const handleCopyUri = async (uri: string) => {
-    try {
-      await navigator.clipboard.writeText(uri);
-      setCopiedUri(true);
-      setTimeout(() => setCopiedUri(false), 2000);
-    } catch {
-      setCopiedUri(true);
-      setTimeout(() => setCopiedUri(false), 2000);
-    }
-  };
-
-  const handleOpenUri = (e: React.MouseEvent, uri: string) => {
-    e.preventDefault();
-    if (isSafeVerificationUri(uri)) {
-      void openExternalUrl(uri);
-    }
-  };
-
-  const handlePromptSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!promptInputValue.trim()) return;
-    respondToPrompt(promptInputValue.trim());
-  };
-
-  const handleSelectOption = (optionId: string) => {
-    respondToPrompt(optionId);
-  };
-
   const handleCancelLogin = (providerId?: string) => {
     if (isStarting) {
       return;
     }
-    setPromptInputValue('');
     cancelLogin(providerId);
   };
+
+  const activeProvider =
+    accounts.find((p) => p.id === activeProviderId) ||
+    (activeProviderId ? ({ id: activeProviderId, name: activeProviderId } as any) : null);
+
+  const confirmLogoutProvider =
+    accounts.find((p) => p.id === confirmLogoutId) ||
+    (confirmLogoutId ? ({ id: confirmLogoutId, name: confirmLogoutId } as any) : null);
+
+  const modalProvider = activeProviderId ? activeProvider : confirmLogoutProvider;
+  const modalMode = activeProviderId ? 'login' : confirmLogoutId ? 'disconnect' : null;
+  const isModalOpen = Boolean(modalMode);
 
   return (
     <section className="builtin-oauth-section" aria-labelledby="builtin-oauth-heading">
@@ -119,7 +80,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
             type="button"
             className="btn btn-secondary btn-sm"
             onClick={refreshAccounts}
-            disabled={isLoading || Boolean(activeProviderId) || isCancelling || isLoggingOut || isBusy}
+            disabled={isLoading || Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
             title={t('providers.oauth.reload')}
           >
             <svg
@@ -260,8 +221,10 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
         <div className="builtin-oauth-grid">
           {accounts.map((provider) => {
             const isActive = activeProviderId === provider.id;
-            const isConfirmedLogout = confirmLogoutId === provider.id;
             const isConnected = provider.oauthReady || provider.hasStoredOAuth;
+            const typeLabel = provider.isSubscription
+              ? t('providers.oauth.status_subscription')
+              : 'OAuth';
 
             return (
               <div
@@ -272,341 +235,55 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
                 data-provider-id={provider.id}
               >
                 <div className="builtin-oauth-card-header">
-                  <div className="builtin-oauth-provider-info">
-                    <span className="builtin-oauth-provider-name">{provider.name}</span>
-                    <span className="builtin-oauth-provider-id">({provider.id})</span>
-                    {provider.isSubscription && (
-                      <span className="badge badge-primary builtin-oauth-badge-sub">
-                        {t('providers.oauth.status_subscription')}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="builtin-oauth-card-status">
-                    {isConnected ? (
-                      <span className="status-badge connected">
-                        <span className="status-dot green" />
-                        {t('providers.oauth.status_connected')}
-                      </span>
-                    ) : (
-                      <span className="status-badge disconnected">
-                        <span className="status-dot gray" />
-                        {t('providers.oauth.status_not_connected')}
-                      </span>
-                    )}
-                  </div>
+                  <span className="builtin-oauth-provider-name">{provider.name}</span>
+                  <span className="builtin-oauth-provider-type">{typeLabel}</span>
                 </div>
 
-                {provider.ambientApiKey && (
-                  <div className="builtin-oauth-ambient-notice">
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      aria-hidden="true"
+                <div className="builtin-oauth-card-actions">
+                  {isConnected ? (
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm builtin-oauth-action-btn builtin-oauth-disconnect-btn"
+                      onClick={() => confirmLogout(provider.id)}
+                      disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
                     >
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="12" y1="16" x2="12" y2="12" />
-                      <line x1="12" y1="8" x2="12.01" y2="8" />
-                    </svg>
-                    <span>{t('providers.oauth.status_ambient_key')}</span>
-                  </div>
-                )}
-
-                {/* Active In-Flight Flow */}
-                {isActive && (
-                  <div className="builtin-oauth-active-panel" role="region" aria-live="polite">
-                    <div className="builtin-oauth-active-header">
-                      <div className="spinner-sm" />
-                      <span className="builtin-oauth-status-text">
-                        {statusMessage || t('providers.oauth.signing_in')}
-                      </span>
-                    </div>
-
-                    {/* Device Code Flow */}
-                    {deviceCodeInfo && (
-                      <div className="builtin-oauth-device-code-block">
-                        <p className="builtin-oauth-device-code-instructions">
-                          {t('providers.oauth.device_code_prompt')}
-                        </p>
-                        <div className="builtin-oauth-code-row">
-                          <code className="builtin-oauth-user-code">
-                            {deviceCodeInfo.userCode}
-                          </code>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => handleCopyCode(deviceCodeInfo.userCode)}
-                          >
-                            {copiedCode
-                              ? t('providers.oauth.device_code_copied')
-                              : t('providers.oauth.device_code_copy')}
-                          </button>
-                        </div>
-                        {deviceCodeInfo.verificationUri && (
-                          <div className="builtin-oauth-verify-link">
-                            <span className="builtin-oauth-verify-uri">
-                              {deviceCodeInfo.verificationUri}
-                            </span>
-                            <div className="builtin-oauth-verify-actions">
-                              {isSafeVerificationUri(deviceCodeInfo.verificationUri) && (
-                                <button
-                                  type="button"
-                                  className="btn btn-secondary btn-sm builtin-oauth-open-link-btn"
-                                  onClick={(e) => handleOpenUri(e, deviceCodeInfo.verificationUri)}
-                                  title={t('providers.oauth.device_code_open_link')}
-                                >
-                                  <svg
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    aria-hidden="true"
-                                  >
-                                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                                    <polyline points="15 3 21 3 21 9" />
-                                    <line x1="10" y1="14" x2="21" y2="3" />
-                                  </svg>
-                                  <span>{t('providers.oauth.device_code_open_link')}</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm builtin-oauth-copy-uri-btn"
-                                onClick={() => handleCopyUri(deviceCodeInfo.verificationUri)}
-                                title={t('action.copy')}
-                              >
-                                <span>
-                                  {copiedUri
-                                    ? t('providers.oauth.device_code_copied')
-                                    : t('action.copy')}
-                                </span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {Boolean(deviceCodeInfo.expiresInSeconds) && (
-                          <span className="builtin-oauth-expires-text">
-                            {t('providers.oauth.device_code_expires', {
-                              seconds: deviceCodeInfo.expiresInSeconds ?? 0,
-                            })}
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Interactive Prompt Flow */}
-                    {pendingPrompt && (
-                      <div className="builtin-oauth-prompt-block">
-                        <h4 className="builtin-oauth-prompt-title">
-                          {t('providers.oauth.prompt_title')}
-                        </h4>
-                        <p className="builtin-oauth-prompt-message">{pendingPrompt.message}</p>
-
-                        {pendingPrompt.promptType === 'select' && (
-                          (!pendingPrompt.options || pendingPrompt.options.length === 0) ? (
-                            <div className="builtin-oauth-prompt-empty-select" role="alert">
-                              <p className="builtin-oauth-prompt-empty-error">
-                                {t('providers.oauth.select_no_options')}
-                              </p>
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => handleCancelLogin(provider.id)}
-                                disabled={isStarting || isCancelling}
-                              >
-                                {t('providers.oauth.btn_cancel')}
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="builtin-oauth-select-options">
-                              {pendingPrompt.options.map((opt) => (
-                                <button
-                                  key={opt.id}
-                                  type="button"
-                                  className="btn btn-secondary btn-sm builtin-oauth-option-btn"
-                                  onClick={() => handleSelectOption(opt.id)}
-                                >
-                                  <span className="builtin-oauth-option-label">{opt.label}</span>
-                                  {opt.description && (
-                                    <span className="builtin-oauth-option-desc">
-                                      {opt.description}
-                                    </span>
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          )
-                        )}
-
-                        {pendingPrompt.promptType === 'manual_code' && (
-                          <form onSubmit={handlePromptSubmit} className="builtin-oauth-prompt-form">
-                            <input
-                              type="text"
-                              className="input-sm builtin-oauth-prompt-input"
-                              placeholder={
-                                pendingPrompt.placeholder ||
-                                t('providers.oauth.manual_code_placeholder')
-                              }
-                              value={promptInputValue}
-                              onChange={(e) => setPromptInputValue(e.target.value)}
-                              autoFocus
-                            />
-                            <button
-                              type="submit"
-                              className="btn btn-primary btn-sm"
-                              disabled={!promptInputValue.trim()}
-                            >
-                              {t('providers.oauth.prompt_submit')}
-                            </button>
-                          </form>
-                        )}
-
-                        {pendingPrompt.promptType === 'secret' && (
-                          <form onSubmit={handlePromptSubmit} className="builtin-oauth-prompt-form">
-                            <input
-                              type="password"
-                              className="input-sm builtin-oauth-prompt-input"
-                              placeholder={
-                                pendingPrompt.placeholder || t('providers.oauth.text_placeholder')
-                              }
-                              value={promptInputValue}
-                              onChange={(e) => setPromptInputValue(e.target.value)}
-                              autoFocus
-                            />
-                            <button
-                              type="submit"
-                              className="btn btn-primary btn-sm"
-                              disabled={!promptInputValue.trim()}
-                            >
-                              {t('providers.oauth.prompt_submit')}
-                            </button>
-                          </form>
-                        )}
-
-                        {pendingPrompt.promptType !== 'select' &&
-                          pendingPrompt.promptType !== 'manual_code' &&
-                          pendingPrompt.promptType !== 'secret' && (
-                            <form onSubmit={handlePromptSubmit} className="builtin-oauth-prompt-form">
-                              <input
-                                type="text"
-                                className="input-sm builtin-oauth-prompt-input"
-                                placeholder={
-                                  pendingPrompt.placeholder ||
-                                  t('providers.oauth.text_placeholder')
-                                }
-                                value={promptInputValue}
-                                onChange={(e) => setPromptInputValue(e.target.value)}
-                                autoFocus
-                              />
-                              <button
-                                type="submit"
-                                className="btn btn-primary btn-sm"
-                                disabled={!promptInputValue.trim()}
-                              >
-                                {t('providers.oauth.prompt_submit')}
-                              </button>
-                            </form>
-                          )}
-                      </div>
-                    )}
-
-                    <div className="builtin-oauth-active-actions">
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => handleCancelLogin(provider.id)}
-                        disabled={isStarting || isCancelling}
-                      >
-                        {isCancelling
-                          ? t('providers.oauth.cancelling')
-                          : t('providers.oauth.btn_cancel')}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Normal Actions / Confirmation */}
-                {!isActive && (
-                  <div className="builtin-oauth-card-actions">
-                    {isConfirmedLogout ? (
-                      <div className="builtin-oauth-confirm-box" role="alertdialog">
-                        <div className="builtin-oauth-confirm-content">
-                          <span className="builtin-oauth-confirm-text">
-                            {t('providers.oauth.confirm_disconnect_title', {
-                              provider: provider.name,
-                            })}
-                          </span>
-                          <p className="builtin-oauth-confirm-message">
-                            {t('providers.oauth.confirm_disconnect_message', {
-                              provider: provider.name,
-                            })}
-                          </p>
-                        </div>
-                        <div className="builtin-oauth-confirm-buttons">
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            onClick={() => logoutProvider(provider.id)}
-                            disabled={isLoggingOut || isBusy}
-                          >
-                            {isLoggingOut
-                              ? t('providers.oauth.logging_out')
-                              : t('providers.oauth.btn_confirm_disconnect')}
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={cancelConfirmLogout}
-                            disabled={isLoggingOut}
-                          >
-                            {t('providers.oauth.btn_cancel')}
-                          </button>
-                        </div>
-                      </div>
-                    ) : isConnected ? (
-                      <div className="builtin-oauth-action-row">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => confirmLogout(provider.id)}
-                          disabled={Boolean(activeProviderId) || isCancelling || isLoggingOut || isBusy}
-                        >
-                          {t('providers.oauth.btn_disconnect')}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => startLogin(provider.id)}
-                          disabled={Boolean(activeProviderId) || isCancelling || isLoggingOut || isBusy}
-                        >
-                          {t('providers.oauth.btn_reconnect')}
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-primary btn-sm builtin-oauth-connect-btn"
-                        onClick={() => startLogin(provider.id)}
-                        disabled={Boolean(activeProviderId) || isStarting || isCancelling || isBusy}
-                      >
-                        {provider.loginLabel || t('providers.oauth.btn_connect')}
-                      </button>
-                    )}
-                  </div>
-                )}
+                      {t('providers.oauth.btn_disconnect')}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm builtin-oauth-action-btn builtin-oauth-connect-btn"
+                      onClick={() => startLogin(provider.id)}
+                      disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isStarting || isCancelling || isBusy}
+                    >
+                      {t('providers.oauth.btn_connect')}
+                    </button>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
       )}
+
+      {/* Accessible modal outside the grid for active sign-in flow and disconnect confirmation */}
+      <BuiltinOAuthModal
+        isOpen={isModalOpen}
+        mode={modalMode}
+        provider={modalProvider}
+        statusMessage={statusMessage}
+        deviceCodeInfo={deviceCodeInfo}
+        pendingPrompt={pendingPrompt}
+        isStarting={isStarting}
+        isCancelling={isCancelling}
+        isLoggingOut={isLoggingOut}
+        isBusy={isBusy}
+        onCancelLogin={handleCancelLogin}
+        onCancelConfirmLogout={cancelConfirmLogout}
+        onConfirmLogout={logoutProvider}
+        onRespondToPrompt={respondToPrompt}
+        t={t}
+      />
     </section>
   );
 };
