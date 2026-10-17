@@ -46,13 +46,18 @@ export function classifyAgentOutcome(value: unknown): AgentOutcome {
 /** Per-turn state, keyed by origin + native session identity, shared by both transports. */
 export class AgentOutcomeTracker {
   private readonly turns = new Map<string, unknown>();
+  private readonly settled = new Set<string>();
 
   observe(event: { type: string; [key: string]: unknown }): AgentOutcome | undefined {
     const key = JSON.stringify([event.cwd ?? '', event.sessionId ?? event.sessionFile ?? '']);
-    if (event.type === 'agent_start') this.turns.delete(key);
+    if (event.type === 'agent_start') {
+      this.turns.delete(key);
+      this.settled.delete(key);
+    }
     if (event.type === 'message_end' && (event.message as { role?: string })?.role === 'assistant') {
       // Bound abandoned turns (disconnects, session switches) without a lifecycle event.
       if (this.turns.size >= 256 && !this.turns.has(key)) this.turns.delete(this.turns.keys().next().value!);
+      this.settled.delete(key);
       this.turns.set(key, event.message);
     }
     if (event.type === 'agent_end' || event.type === 'agent_settled') {
@@ -62,7 +67,11 @@ export class AgentOutcomeTracker {
       }
     }
     if (event.type !== 'agent_settled') return undefined;
+    if (this.settled.has(key)) return null;
+    if (this.settled.size >= 256) this.settled.delete(this.settled.values().next().value!);
     const outcome = classifyAgentOutcome(this.turns.get(key));
+    // Retain failed settlement identity so a duplicate cannot become a success.
+    if (outcome === 'error') this.settled.add(key);
     this.turns.delete(key);
     return outcome;
   }
