@@ -345,17 +345,38 @@ export function enrollEngramProjectImpl(project?: string) {
   }
 }
 
-export function getEngramObservationsImpl(project?: string, limit = 20) {
-  const dbPath = path.join(HOME_DIR, '.engram', 'engram.db');
-  if (!fs.existsSync(dbPath)) return [];
+export type SqliteExecutor = (bin: string, args: string[], options: any) => string;
+let customSqliteExecutor: SqliteExecutor | null = null;
+let customSqliteDbPath: string | null = null;
+
+export function setSqliteExecutorForTest(
+  executor: SqliteExecutor | null,
+  dbPath: string | null = null
+): void {
+  customSqliteExecutor = executor;
+  customSqliteDbPath = dbPath;
+}
+
+export function getEngramObservationsImpl(project?: string, limit: number | string = 20) {
+  const safeLimit = Math.max(1, Math.min(100, Number.parseInt(String(limit), 10) || 20));
+  const dbPath = customSqliteDbPath || path.join(HOME_DIR, '.engram', 'engram.db');
+  if (!customSqliteExecutor && !fs.existsSync(dbPath)) return [];
   try {
     const pClause = project ? `AND project = '${project.replace(/'/g, "''")}'` : '';
-    const sql = `SELECT json_group_array(json_object('id', id, 'title', title, 'type', type, 'content', content, 'project', project, 'scope', scope, 'created_at', created_at)) FROM (SELECT * FROM observations WHERE deleted_at IS NULL ${pClause} ORDER BY id DESC LIMIT ${limit});`;
-    const out = execFileSync('sqlite3', [dbPath, sql], {
-      encoding: 'utf8',
-      timeout: 2000,
-      env: getAgnosticExecEnv(),
-    }).trim();
+    const sql = `SELECT json_group_array(json_object('id', id, 'title', title, 'type', type, 'content', content, 'project', project, 'scope', scope, 'created_at', created_at)) FROM (SELECT * FROM observations WHERE deleted_at IS NULL ${pClause} ORDER BY id DESC LIMIT ${safeLimit});`;
+    const out = (
+      customSqliteExecutor
+        ? customSqliteExecutor('sqlite3', [dbPath, sql], {
+            encoding: 'utf8',
+            timeout: 2000,
+            env: getAgnosticExecEnv(),
+          })
+        : execFileSync('sqlite3', [dbPath, sql], {
+            encoding: 'utf8',
+            timeout: 2000,
+            env: getAgnosticExecEnv(),
+          })
+    ).trim();
     if (out) return JSON.parse(out);
   } catch {}
   return [];
@@ -380,5 +401,6 @@ export function handleEnrollEngramProject(args: any = {}) {
 export function handleGetEngramObservations(args: any = {}) {
   const project = args.payload?.project ?? args.project;
   const limit = args.payload?.limit ?? args.limit ?? 20;
-  return getEngramObservationsImpl(project, limit);
+  const safeLimit = Math.max(1, Math.min(100, Number.parseInt(String(limit), 10) || 20));
+  return getEngramObservationsImpl(project, safeLimit);
 }

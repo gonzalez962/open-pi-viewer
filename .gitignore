@@ -48,3 +48,6 @@ server/config.json
 nul
 /.playwright-mcp
 .workspace-*
+/.agents/skills
+/.claude/skills
+skills-lock.json
