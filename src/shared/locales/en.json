@@ -406,6 +406,8 @@
   "prompt_controls.file_type_documents_desc": "Text, code, Markdown, config",
   "prompt_controls.file_type_all": "All Files",
   "prompt_controls.file_type_all_desc": "Any file type (*.*)",
+  "prompt_controls.files_rejected": "Files not supported by this model: {files}",
+  "prompt_controls.files_failed": "Could not read files: {files}",
   "prompt_controls.remove_attachment": "Remove attachment",
   "prompt_controls.select_profile_title": "Active Profile — Click to switch profile",
   "prompt_controls.default_profile": "Default profile",

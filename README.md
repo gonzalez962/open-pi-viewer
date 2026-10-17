@@ -90,6 +90,10 @@ Pi Viewer follows a layered hexagonal architecture. Detailed design documentatio
 - **Mechanical Boundary Checks**: `npm run check:arch` automatically validates layer import restrictions, cross-feature isolation, absence of test files in `src/`, and elimination of flat root files.
 - **Modular Rust Backend**: IPC commands are decomposed into domain modules (`connection`, `models`, `config_files`, `sessions`, `workspace`, `external`) under `src-tauri/src/commands/` with inline unit tests.
 
+## Prompt file attachments
+
+Attach files using the attachment menu, drag and drop them onto the message history or prompt, or paste files/images from the clipboard while the prompt is focused. All paths validate the selected model's input capabilities: images, audio, and video require their corresponding modality; text/code documents are read as text; binary documents require file input support. Unsupported or unreadable files are listed without discarding accepted files. Ordinary text paste remains unchanged. Attachments are unavailable while disconnected, changing models, or while the agent is busy.
+
 ## Core Features & Design
 
 ### UI Localization & Theme Customization

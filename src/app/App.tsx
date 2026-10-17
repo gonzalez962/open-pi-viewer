@@ -1521,6 +1521,7 @@ export const App: React.FC = () => {
           </aside>
         )}
 
+        <div className="chat-file-drop-zone" data-file-drop-zone>
         {/* Chat History Viewport */}
         <div className="chat-container">
           <section
@@ -1905,6 +1906,7 @@ export const App: React.FC = () => {
         </form>
           )}
       </footer>
+        </div>
             </>
           )}
         </main>
