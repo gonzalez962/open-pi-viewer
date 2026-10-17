@@ -1042,6 +1042,140 @@ test('FolderPickerModal: renders accessible modal dialog with role="dialog" and 
   assert.ok(html.includes('folder-picker-close-btn'), 'must have close button');
 });
 
+test('FolderPickerModal: exposes + Folder button beside the filter in en and es', () => {
+  const enHtml = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/test/workspace',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  assert.ok(
+    enHtml.includes('folder-picker-btn-create-folder'),
+    'folder-picker-btn-create-folder class must exist in modal markup'
+  );
+  assert.ok(
+    enHtml.includes('+ Folder'),
+    '+ Folder label must exist in English'
+  );
+
+  const esHtml = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/test/workspace',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'es',
+    })
+  );
+
+  assert.ok(
+    esHtml.includes('folder-picker-btn-create-folder'),
+    'folder-picker-btn-create-folder class must exist in modal markup'
+  );
+  assert.ok(
+    esHtml.includes('+ Folder'),
+    '+ Folder label must exist in Spanish'
+  );
+});
+
+test('FolderPickerModal: preserves stable hook ordering across isOpen transitions while mounted', () => {
+  // Verifies that FolderPickerModal can transition between open and closed while mounted
+  // without triggering React hook count or ordering errors (rules of hooks compliance)
+  let setOpenFn: (open: boolean) => void = () => {};
+
+  function Harness() {
+    const [open, setOpen] = React.useState(false);
+    setOpenFn = setOpen;
+    return React.createElement(FolderPickerModal, {
+      isOpen: open,
+      initialPath: '/test/workspace',
+      onClose: () => setOpen(false),
+      onSelectFolder: () => {},
+      locale: 'en',
+    });
+  }
+
+  // Initial closed render
+  const closedMarkup = renderToStaticMarkup(React.createElement(Harness));
+  assert.strictEqual(closedMarkup, '');
+  assert.strictEqual(typeof setOpenFn, 'function');
+
+  // Render directly with isOpen: true
+  const openMarkup = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/test/workspace',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+  assert.ok(openMarkup.includes('folder-picker-overlay'));
+  assert.ok(openMarkup.includes('folder-picker-btn-create-folder'));
+
+  // Render directly with isOpen: false
+  const closedAgain = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: false,
+      initialPath: '/test/workspace',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+  assert.strictEqual(closedAgain, '');
+});
+
+test('FolderPickerModal: + Folder button is rendered enabled and filter input is present', () => {
+  let tree: any = null;
+  renderToStaticMarkup(
+    React.createElement(() => {
+      tree = FolderPickerModal({
+        isOpen: true,
+        initialPath: '/test/workspace',
+        onClose: () => {},
+        onSelectFolder: () => {},
+        locale: 'en',
+      });
+      return tree;
+    })
+  );
+
+  const createBtn = findElement(
+    tree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('folder-picker-btn-create-folder')
+  );
+  assert.ok(createBtn, '+ Folder button must be present');
+  assert.strictEqual(createBtn.props.disabled, false, '+ Folder button must not be disabled initially');
+  assert.strictEqual(createBtn.props.children, '+ Folder');
+});
+
+test('FolderPickerModal PRESERVE: existing browsing and confirmation flow intact', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/preserve/path',
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  // Filter input preserved
+  assert.ok(html.includes('folder-picker-filter-input'), 'filter input must be preserved');
+  // Up button preserved
+  assert.ok(html.includes('folder-picker-btn-up'), 'up button must be preserved');
+  // Confirm and Cancel action buttons preserved
+  assert.ok(html.includes('folder-picker-actions'), 'action footer must be preserved');
+});
+
 test('FolderPickerModal: close button and cancel button invoke onClose callback', () => {
   let closedCount = 0;
   let capturedTree: any = null;

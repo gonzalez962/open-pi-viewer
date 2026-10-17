@@ -8,6 +8,7 @@ import {
   handleReadWorkspaceFile,
   handleListWorkspaceDir,
   handleGetWorkspaceGitStatus,
+  handleCreateWorkspaceDir,
 } from '@server/bridge/paths';
 import { execSync } from 'node:child_process';
 import {
@@ -472,6 +473,91 @@ test('server bridge: handleGetWorkspaceGitStatus classifies merge conflicts in m
       status.modifiedFiles.includes('conflict.txt'),
       'Merge conflict (UU) must be classified in modifiedFiles'
     );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir creates a folder in workspace root', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-'));
+  try {
+    const entry = handleCreateWorkspaceDir({
+      payload: {
+        workingDirectory: tempDir,
+        name: 'test-folder',
+      },
+    });
+
+    assert.strictEqual(entry.name, 'test-folder');
+    assert.strictEqual(entry.relativePath, 'test-folder');
+    assert.strictEqual(entry.isDir, true);
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'test-folder')), true);
+    assert.strictEqual(fs.statSync(path.join(tempDir, 'test-folder')).isDirectory(), true);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects empty or whitespace name', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-err-'));
+  try {
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '' } }),
+      /Folder name must be a non-empty string/i
+    );
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '   ' } }),
+      /Folder name must be a non-empty string/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects traversal segments and path separators', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-trav-'));
+  try {
+    // 1. .. traversal
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '..' } }),
+      /traversal|separator|invalid/i
+    );
+    // 2. nested slash / traversal
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '../escaped' } }),
+      /traversal|separator|invalid/i
+    );
+    // 3. forward slash
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub/dir' } }),
+      /separator|invalid/i
+    );
+    // 4. backslash
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub\\dir' } }),
+      /separator|invalid/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects existing destinations without corrupting data', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-exist-'));
+  try {
+    const existingFolder = path.join(tempDir, 'existing-folder');
+    fs.mkdirSync(existingFolder);
+    const existingFileInFolder = path.join(existingFolder, 'file.txt');
+    fs.writeFileSync(existingFileInFolder, 'untouched data');
+
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'existing-folder' } }),
+      /already exists/i
+    );
+
+    // Existing data must remain untouched
+    assert.strictEqual(fs.existsSync(existingFileInFolder), true);
+    assert.strictEqual(fs.readFileSync(existingFileInFolder, 'utf8'), 'untouched data');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

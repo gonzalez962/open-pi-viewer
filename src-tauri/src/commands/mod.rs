@@ -358,6 +358,9 @@ pub use sessions::{
 };
 
 pub use workspace::{
+    create_workspace_dir,
+    __cmd__create_workspace_dir,
+    __tauri_command_name_create_workspace_dir,
     get_workspace_file_diff,
     __cmd__get_workspace_file_diff,
     __tauri_command_name_get_workspace_file_diff,
@@ -373,6 +376,8 @@ pub use workspace::{
     compute_relative_posix_path,
     resolve_canonical_workspace_root,
     validate_and_resolve_child_path,
+    validate_new_dir_name,
+    CreateWorkspaceDirPayload,
     GetWorkspaceFileDiffPayload,
     GetWorkspaceGitStatusPayload,
     ListWorkspaceDirPayload,

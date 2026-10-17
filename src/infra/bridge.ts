@@ -21,6 +21,7 @@ import type {
   WorkspaceEntry,
   WorkspaceFileContent,
   ReadWorkspaceFilePayload,
+  CreateWorkspaceDirPayload,
   WorkspaceGitStatus,
   WorkspaceFileDiff,
 } from '@core/types/workspace';
@@ -495,6 +496,20 @@ export async function readWorkspaceFilePi(
   };
 
   return await invokeFn<WorkspaceFileContent>('read_workspace_file', { payload });
+}
+
+/**
+ * Create a new directory directly in the workspace root via Tauri IPC.
+ */
+export async function createWorkspaceDirPi(
+  payload: CreateWorkspaceDirPayload,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<WorkspaceEntry> {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
+    throw new Error('Desktop runtime unavailable: cannot create directory outside Tauri');
+  }
+
+  return await invokeFn<WorkspaceEntry>('create_workspace_dir', { payload });
 }
 
 /**

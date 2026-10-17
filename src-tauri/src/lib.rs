@@ -67,6 +67,7 @@ pub fn run() {
             commands::delete_session,
             commands::rename_session,
             commands::list_workspace_dir,
+            commands::create_workspace_dir,
             commands::read_workspace_file,
             commands::get_workspace_git_status,
             commands::get_workspace_file_diff,

@@ -75,6 +75,11 @@
   "file_tree.git_untracked": "Untracked",
   "file_tree.git_changed_count": "{count} changed",
   "file_tree.git_dir_changes": "{count} changed files inside",
+  "file_tree.create_folder": "+ Folder",
+  "file_tree.folder_name_placeholder": "Folder name...",
+  "file_tree.create_folder_submit": "Create",
+  "file_tree.create_folder_cancel": "Cancel",
+  "file_tree.folder_name_required": "Folder name is required",
 
   "file_viewer.binary_title": "Binary File",
   "file_viewer.binary_desc": "This file contains binary content and cannot be displayed as text.",

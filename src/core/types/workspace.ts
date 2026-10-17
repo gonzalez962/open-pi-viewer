@@ -30,6 +30,11 @@ export interface ReadWorkspaceFilePayload {
   relativePath: string;
 }
 
+export interface CreateWorkspaceDirPayload {
+  workingDirectory?: string;
+  name: string;
+}
+
 export interface WorkspaceGitStatus {
   isRepo: boolean;
   repoName?: string | null;
