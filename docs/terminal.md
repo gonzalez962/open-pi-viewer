@@ -7,7 +7,7 @@ The Persistent Project Terminal feature provides an interactive terminal session
 ## Architecture
 
 - **Web Backend (T1)**: Implemented in Node.js via `node-pty` and `TerminalManager` (`server/terminal/**`). Exposes terminal lifecycle over authenticated IPC and dedicated poll transport.
-- **Native Backend (T2 - Planned)**: Planned native Rust backend to be managed via `portable-pty` in `src-tauri/src/terminal.rs`, exposing matching Tauri commands.
+- **Native Backend (T2)**: Implemented in native Rust via `portable-pty` and `TerminalManager` (`src-tauri/src/terminal.rs`), exposing matching Tauri IPC commands registered in `src-tauri/src/lib.rs`.
 - **UI / Frontend (T3 - Planned)**: Planned full-window responsive terminal overlay using `xterm.js` (`src/features/terminal/**`), attaching to backend sessions and handling desktop/mobile resizing.
 
 ## Lifecycle & Isolation
@@ -32,7 +32,7 @@ The Persistent Project Terminal feature provides an interactive terminal session
 
 ## Public Command Contract
 
-Web contract implemented in `server/web-api.ts` (T1), with shared types in `src/core/terminal.ts`. Desktop (`src-tauri/`, T2) and Frontend (`src/features/terminal/`, T3) bindings are planned.
+Web contract implemented in `server/web-api.ts` (T1), desktop contract implemented in `src-tauri/src/commands/terminal.rs` (T2), with shared types in `src/core/terminal.ts`. Frontend (`src/features/terminal/`, T3) bindings are planned.
 
 ### 1. `terminal_open`
 Opens or attaches to an interactive shell for the specified working directory using the platform default shell.
