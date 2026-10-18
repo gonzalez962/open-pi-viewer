@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import enJson from '@shared/locales/en.json';
 import esJson from '@shared/locales/es.json';
-import { createWorkspaceDirPi } from '@infra/bridge';
+import { createWorkspaceDirPi, deleteWorkspaceDirPi } from '@infra/bridge';
 import { CreateFolderForm } from '@features/workspace/components/CreateFolderForm';
 import { FileTree } from '@features/workspace/FileTree';
 import type { WorkspaceEntry } from '@core/types/workspace';
@@ -113,4 +113,50 @@ test('S1.4 PRESERVE: FileTree controls preserve search input and refresh button 
   assert.ok(markup.includes('btn-tree-refresh'), 'Refresh button must remain');
   // Create folder button
   assert.ok(markup.includes('btn-tree-create-folder'), 'Create folder button must be present beside filter');
+});
+
+// S1: Delete folder locale dictionary entries for both en and es
+test('S1: locale dictionaries contain delete folder keys for both en and es', () => {
+  assert.ok((enJson as any)['projects.delete_folder'], 'Must contain projects.delete_folder in en');
+  assert.ok((esJson as any)['projects.delete_folder'], 'Must contain projects.delete_folder in es');
+  assert.ok((enJson as any)['projects.delete_folder_warning'], 'Must contain projects.delete_folder_warning in en');
+  assert.ok((esJson as any)['projects.delete_folder_warning'], 'Must contain projects.delete_folder_warning in es');
+  assert.ok((enJson as any)['projects.delete_folder_confirm_button'], 'Must contain projects.delete_folder_confirm_button in en');
+  assert.ok((esJson as any)['projects.delete_folder_confirm_button'], 'Must contain projects.delete_folder_confirm_button in es');
+});
+
+// S1.1: Bridge invocation for folder deletion
+test('S1.1: Bridge: deleteWorkspaceDirPi invokes delete_workspace_dir with payload', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult = {
+    success: true,
+    name: 'obsolete-folder',
+    relativePath: 'obsolete-folder',
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await deleteWorkspaceDirPi(
+    {
+      workingDirectory: 'C:/project',
+      name: 'obsolete-folder',
+      confirmationName: 'obsolete-folder',
+    },
+    mockInvoke
+  );
+
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'delete_workspace_dir');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: {
+      workingDirectory: 'C:/project',
+      name: 'obsolete-folder',
+      confirmationName: 'obsolete-folder',
+    },
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.name, 'obsolete-folder');
 });

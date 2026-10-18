@@ -140,7 +140,7 @@ src-tauri/src/
     models.rs       Model switching, thinking levels, session stats, and RPC helpers
     config_files.rs Custom providers (models.json) & thinking levels (settings.json) I/O
     sessions.rs     Session persistence checks, .jsonl parsing, listing, switching, deletion
-    workspace.rs    File tree traversal, folder creation, file preview, git status, and unified diff
+    workspace.rs    File tree traversal, folder creation/deletion, file preview, git status, and unified diff
     external.rs     External URL validation, opener coordinator, and directory picker
   framing.rs        LF-delimited JSONL stream decoder with UTF-8 boundary preservation
   process.rs        Subprocess spawning, process lifecycle monitor, and stdin/stdout channels
@@ -152,7 +152,7 @@ src-tauri/src/
 
 In Tauri 2, `tauri::generate_handler![commands::connect, ...]` relies on macro-generated symbols (`__cmd__*` and `__tauri_command_name_*`).
 
-`src-tauri/src/commands/mod.rs` re-exports both the command functions and their corresponding macro symbols for all 28 commands. As a result, `src-tauri/src/lib.rs` registers the complete command surface without requiring any changes when commands are moved across domain submodules.
+`src-tauri/src/commands/mod.rs` re-exports both the command functions and their corresponding macro symbols for all 29 commands. As a result, `src-tauri/src/lib.rs` registers the complete command surface without requiring any changes when commands are moved across domain submodules.
 
 ### Rust Unit Testing Convention
 

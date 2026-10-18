@@ -3,6 +3,7 @@ import {
   browseFilesystemPi,
   pickDirectoryPi,
   createWorkspaceDirPi,
+  deleteWorkspaceDirPi,
   type BrowseFolderItem,
   type BrowseShortcutItem,
 } from '@infra/bridge';
@@ -14,6 +15,8 @@ import { translate, type SupportedLocale } from '@shared/i18n';
 export interface FolderPickerModalProps {
   isOpen: boolean;
   initialPath?: string;
+  initialFolders?: BrowseFolderItem[];
+  initialFolderToDelete?: BrowseFolderItem | null;
   onClose: () => void;
   onSelectFolder: (folderPath: string, customName?: string) => void;
   locale: SupportedLocale;
@@ -22,6 +25,8 @@ export interface FolderPickerModalProps {
 export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   isOpen,
   initialPath,
+  initialFolders,
+  initialFolderToDelete,
   onClose,
   onSelectFolder,
   locale,
@@ -30,7 +35,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const [pathInput, setPathInput] = useState<string>(initialPath || '');
   const [selectedFolder, setSelectedFolder] = useState<string>(initialPath || '');
   const [parentPath, setParentPath] = useState<string | null>(null);
-  const [folders, setFolders] = useState<BrowseFolderItem[]>([]);
+  const [folders, setFolders] = useState<BrowseFolderItem[]>(initialFolders || []);
   const [shortcuts, setshortcuts] = useState<BrowseShortcutItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [searchFilter, setSearchFilter] = useState<string>('');
@@ -41,14 +46,25 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
   const [createFolderError, setCreateFolderError] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState<string>('');
 
+  // Folder deletion state
+  const [folderToDelete, setFolderToDelete] = useState<BrowseFolderItem | null>(
+    initialFolderToDelete || null
+  );
+  const [deleteConfirmationName, setDeleteConfirmationName] = useState<string>('');
+  const [isDeletingFolder, setIsDeletingFolder] = useState<boolean>(false);
+  const [deleteFolderError, setDeleteFolderError] = useState<string | null>(null);
+
   const cardRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const isCreatingFolderRef = useRef<boolean>(false);
   isCreatingFolderRef.current = isCreatingFolder;
+  const folderToDeleteRef = useRef<BrowseFolderItem | null>(null);
+  folderToDeleteRef.current = folderToDelete;
   const activePathRef = useRef<string>(currentPath);
   activePathRef.current = currentPath;
   const folderNameInputRef = useRef<HTMLInputElement>(null);
+  const deleteNameInputRef = useRef<HTMLInputElement>(null);
 
   // Focus management, focus trap, and Escape key handling
   useEffect(() => {
@@ -68,6 +84,13 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
+        if (folderToDeleteRef.current) {
+          setFolderToDelete(null);
+          setDeleteConfirmationName('');
+          setIsDeletingFolder(false);
+          setDeleteFolderError(null);
+          return;
+        }
         if (isCreatingFolderRef.current) {
           setIsCreatingFolder(false);
           setIsSubmittingFolder(false);
@@ -141,6 +164,16 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
     }
   }, [isCreatingFolder]);
 
+  // Autofocus confirmation input when delete folder confirmation modal opens
+  useEffect(() => {
+    if (folderToDelete) {
+      const timer = setTimeout(() => {
+        deleteNameInputRef.current?.focus();
+      }, 30);
+      return () => clearTimeout(timer);
+    }
+  }, [folderToDelete]);
+
   // Session / request generation token to guard async lifecycle and prevent stale completions
   const generationRef = useRef<number>(0);
   const isOpenRef = useRef<boolean>(isOpen);
@@ -152,11 +185,15 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
     // Invalidate prior generations synchronously at navigation start
     const navGen = ++generationRef.current;
 
-    // Synchronously reset folder creation and submission state on navigation
+    // Synchronously reset folder creation and deletion state on navigation
     setIsCreatingFolder(false);
     setIsSubmittingFolder(false);
     setCreateFolderError(null);
     setNewFolderName('');
+    setFolderToDelete(null);
+    setDeleteConfirmationName('');
+    setIsDeletingFolder(false);
+    setDeleteFolderError(null);
     setIsLoading(true);
 
     try {
@@ -172,7 +209,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       setPathInput(res.windowsPath || res.currentPath);
       setSelectedFolder(res.windowsPath || res.currentPath);
       setParentPath(res.parentPath);
-      setFolders(res.folders || []);
+      setFolders(res.folders && res.folders.length > 0 ? res.folders : (initialFolders || []));
       if (res.shortcuts && res.shortcuts.length > 0) {
         setshortcuts(res.shortcuts);
       }
@@ -182,7 +219,7 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
         setIsLoading(false);
       }
     }
-  }, []);
+  }, [initialFolders]);
 
   useEffect(() => {
     if (isOpen) {
@@ -191,6 +228,10 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       setIsSubmittingFolder(false);
       setCreateFolderError(null);
       setNewFolderName('');
+      setFolderToDelete(null);
+      setDeleteConfirmationName('');
+      setIsDeletingFolder(false);
+      setDeleteFolderError(null);
       void loadDirectory(initialPath || '');
     } else {
       generationRef.current++;
@@ -198,6 +239,10 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
       setIsSubmittingFolder(false);
       setCreateFolderError(null);
       setNewFolderName('');
+      setFolderToDelete(null);
+      setDeleteConfirmationName('');
+      setIsDeletingFolder(false);
+      setDeleteFolderError(null);
     }
     return () => {
       generationRef.current++;
@@ -318,10 +363,125 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
         const msg = err instanceof Error ? err.message : String(err);
         setCreateFolderError(msg);
       } finally {
-        setIsSubmittingFolder(false);
+        if (generationRef.current === createGen) {
+          setIsSubmittingFolder(false);
+        }
       }
     },
     [currentPath, isSubmittingFolder, newFolderName, locale]
+  );
+
+  const handleOpenDeleteConfirmation = (folder: BrowseFolderItem) => {
+    setFolderToDelete(folder);
+    setDeleteConfirmationName('');
+    setDeleteFolderError(null);
+    setIsDeletingFolder(false);
+  };
+
+  const handleCancelDeleteFolder = useCallback(() => {
+    setFolderToDelete(null);
+    setDeleteConfirmationName('');
+    setDeleteFolderError(null);
+    setIsDeletingFolder(false);
+  }, []);
+
+  const handleConfirmDeleteFolder = useCallback(
+    async (e?: React.FormEvent) => {
+      if (e) {
+        e.preventDefault();
+      }
+      if (isDeletingFolder || !folderToDelete) return;
+
+      const trimmedConfirm = deleteConfirmationName.trim();
+      if (trimmedConfirm !== folderToDelete.name) {
+        setDeleteFolderError(
+          translate(locale, 'projects.delete_folder_mismatch_error') ||
+            'Folder name does not match confirmation'
+        );
+        return;
+      }
+
+      const targetDir = currentPath;
+      const targetFolderName = folderToDelete.name;
+      const targetFolderPath = folderToDelete.windowsPath || folderToDelete.fullPath;
+      const deleteGen = generationRef.current;
+      setIsDeletingFolder(true);
+      setDeleteFolderError(null);
+
+      try {
+        await deleteWorkspaceDirPi({
+          workingDirectory: targetDir,
+          name: targetFolderName,
+          confirmationName: trimmedConfirm,
+        });
+
+        // Guard against navigation or close while delete was in flight
+        if (
+          generationRef.current !== deleteGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+
+        setFolderToDelete(null);
+        setDeleteConfirmationName('');
+        setDeleteFolderError(null);
+
+        // Clear stale selection if deleted folder was selected
+        if (
+          selectedFolder === targetFolderPath ||
+          selectedFolder === folderToDelete.fullPath ||
+          (folderToDelete.windowsPath && selectedFolder === folderToDelete.windowsPath) ||
+          pathInput === targetFolderPath
+        ) {
+          setSelectedFolder('');
+          setPathInput(targetDir);
+        }
+
+        // Reload current directory
+        const res = await browseFilesystemPi(targetDir);
+        if (
+          generationRef.current !== deleteGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+
+        setCurrentPath(res.currentPath);
+        currentPathRef.current = res.currentPath;
+        setParentPath(res.parentPath);
+        const newFolders = res.folders || [];
+        setFolders(newFolders);
+        if (res.shortcuts && res.shortcuts.length > 0) {
+          setshortcuts(res.shortcuts);
+        }
+      } catch (err) {
+        if (
+          generationRef.current !== deleteGen ||
+          !isOpenRef.current ||
+          currentPathRef.current !== targetDir
+        ) {
+          return;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        setDeleteFolderError(msg);
+      } finally {
+        if (generationRef.current === deleteGen) {
+          setIsDeletingFolder(false);
+        }
+      }
+    },
+    [
+      currentPath,
+      isDeletingFolder,
+      folderToDelete,
+      deleteConfirmationName,
+      selectedFolder,
+      pathInput,
+      locale,
+    ]
   );
 
   const handleConfirm = () => {
@@ -536,6 +696,19 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
                     role="button"
                     tabIndex={0}
                   >
+                    <button
+                      type="button"
+                      className="folder-item-trash-btn"
+                      title={`${translate(locale, 'projects.delete_folder') || 'Delete folder'}: ${folder.name}`}
+                      aria-label={`${translate(locale, 'projects.delete_folder') || 'Delete folder'} ${folder.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenDeleteConfirmation(folder);
+                      }}
+                      disabled={isLoading || isDeletingFolder || isSubmittingFolder}
+                    >
+                      🗑️
+                    </button>
                     <div className="folder-item-icon" aria-hidden="true">📁</div>
                     <span className="folder-item-name" title={folder.name}>{folder.name}</span>
                   </div>
@@ -563,6 +736,112 @@ export const FolderPickerModal: React.FC<FolderPickerModalProps> = ({
             ✓ {translate(locale, 'projects.folder_picker_confirm')}
           </button>
         </div>
+
+        {/* Delete Folder Confirmation Dialog */}
+        {folderToDelete && (
+          <div
+            className="folder-picker-delete-overlay"
+            onClick={handleCancelDeleteFolder}
+            role="presentation"
+          >
+            <div
+              className="folder-picker-delete-modal"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label={translate(locale, 'projects.delete_folder_title') || 'Delete folder permanently'}
+            >
+              <div className="folder-picker-delete-header">
+                <span className="delete-modal-warning-icon" aria-hidden="true">⚠️</span>
+                <h4 className="folder-picker-delete-title">
+                  {translate(locale, 'projects.delete_folder_title') || 'Delete folder permanently'}
+                </h4>
+              </div>
+
+              <div className="folder-picker-delete-body">
+                <p className="delete-folder-warning-text">
+                  {translate(locale, 'projects.delete_folder_warning') ||
+                    'Warning: This action is permanent and irreversible. All files and subfolders inside will be permanently deleted.'}
+                </p>
+
+                <div className="delete-folder-info-card">
+                  <div className="delete-info-row">
+                    <span className="delete-info-label">Folder:</span>
+                    <span className="delete-folder-name" title={folderToDelete.name}>
+                      {folderToDelete.name}
+                    </span>
+                  </div>
+                  <div className="delete-info-row">
+                    <span className="delete-info-label">
+                      {translate(locale, 'projects.delete_folder_path') || 'Path'}:
+                    </span>
+                    <span
+                      className="delete-folder-path"
+                      title={folderToDelete.windowsPath || folderToDelete.fullPath}
+                    >
+                      {folderToDelete.windowsPath || folderToDelete.fullPath}
+                    </span>
+                  </div>
+                </div>
+
+                <form
+                  className="folder-picker-delete-form"
+                  onSubmit={handleConfirmDeleteFolder}
+                  role="form"
+                  aria-label="Confirm folder deletion form"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleCancelDeleteFolder();
+                    }
+                  }}
+                >
+                  <label htmlFor="delete-folder-confirm-input" className="delete-folder-prompt-label">
+                    {translate(locale, 'projects.delete_folder_confirm_prompt', {
+                      name: folderToDelete.name,
+                    }) || `Type "${folderToDelete.name}" to confirm deletion:`}
+                  </label>
+                  <input
+                    id="delete-folder-confirm-input"
+                    ref={deleteNameInputRef}
+                    type="text"
+                    className="delete-folder-input"
+                    value={deleteConfirmationName}
+                    onChange={(e) => setDeleteConfirmationName(e.target.value)}
+                    placeholder={folderToDelete.name}
+                    disabled={isDeletingFolder}
+                    autoFocus
+                  />
+
+                  {deleteFolderError && (
+                    <div className="delete-folder-error" role="alert">
+                      {deleteFolderError}
+                    </div>
+                  )}
+
+                  <div className="folder-picker-delete-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-delete-folder-cancel"
+                      onClick={handleCancelDeleteFolder}
+                      disabled={isDeletingFolder}
+                    >
+                      {translate(locale, 'projects.delete_folder_cancel_button') || 'Cancel'}
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-danger btn-delete-folder-confirm"
+                      disabled={isDeletingFolder || deleteConfirmationName.trim() !== folderToDelete.name}
+                    >
+                      {translate(locale, 'projects.delete_folder_confirm_button') || 'Permanently Delete'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1232,6 +1232,159 @@ test('FolderPickerModal: closed state renders null', () => {
   assert.strictEqual(html, '');
 });
 
+// S1: Folder cards expose accessible trash button
+test('FolderPickerModal S1: folder cards render accessible trash button with localized label', () => {
+  const mockFolder = {
+    name: 'test-folder',
+    fullPath: '/workspace/test-folder',
+    windowsPath: 'C:\\workspace\\test-folder',
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/workspace',
+      initialFolders: [mockFolder],
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  assert.ok(html.includes('folder-item-trash-btn'), 'Must render trash button on folder card');
+  assert.ok(html.includes('Delete folder test-folder'), 'Must have accessible aria-label identifying folder');
+});
+
+// S1.1: Clicking trash button opens confirmation dialog with name, full path, and permanent warning
+test('FolderPickerModal S1.1: activating trash button opens confirmation dialog with name, full path, and permanent warning', () => {
+  const mockFolder = {
+    name: 'target-dir',
+    fullPath: '/workspace/target-dir',
+    windowsPath: 'C:\\workspace\\target-dir',
+  };
+
+  // Render modal with initialFolderToDelete to test confirmation dialog contents directly
+  const html = renderToStaticMarkup(
+    React.createElement(FolderPickerModal, {
+      isOpen: true,
+      initialPath: '/workspace',
+      initialFolders: [mockFolder],
+      initialFolderToDelete: mockFolder,
+      onClose: () => {},
+      onSelectFolder: () => {},
+      locale: 'en',
+    })
+  );
+
+  assert.ok(html.includes('folder-picker-delete-modal'), 'Delete confirmation modal must be open');
+  assert.ok(html.includes('target-dir'), 'Must display target folder name');
+  assert.ok(
+    html.includes('C:\\workspace\\target-dir') || html.includes('/workspace/target-dir'),
+    'Must display target full path'
+  );
+  assert.ok(html.includes('permanent and irreversible'), 'Must display permanent deletion warning');
+  assert.ok(html.includes('btn-delete-folder-confirm'), 'Must render confirm button');
+  assert.ok(html.includes('btn-delete-folder-cancel'), 'Must render cancel button');
+});
+
+// S1: Trash button click stops propagation to prevent folder selection
+test('FolderPickerModal S1: trash button click stops propagation to prevent folder selection', () => {
+  let tree: any = null;
+  const mockFolder = {
+    name: 'target-dir',
+    fullPath: '/workspace/target-dir',
+  };
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      tree = FolderPickerModal({
+        isOpen: true,
+        initialPath: '/workspace',
+        initialFolders: [mockFolder],
+        onClose: () => {},
+        onSelectFolder: () => {},
+        locale: 'en',
+      });
+      return tree;
+    })
+  );
+
+  const trashBtn = findElement(
+    tree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('folder-item-trash-btn')
+  );
+  assert.ok(trashBtn, 'Trash button must be rendered on folder item');
+
+  let propagationStopped = false;
+  trashBtn.props.onClick({
+    stopPropagation: () => {
+      propagationStopped = true;
+    },
+    preventDefault: () => {},
+  });
+  assert.strictEqual(propagationStopped, true, 'Trash button click must stop propagation');
+});
+
+// S2.2: Delete confirm button starts disabled until exact folder name is typed
+test('FolderPickerModal S2.2: delete confirm button starts disabled until exact folder name is typed', () => {
+  let tree: any = null;
+  const mockFolder = {
+    name: 'important-data',
+    fullPath: '/workspace/important-data',
+  };
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      tree = FolderPickerModal({
+        isOpen: true,
+        initialPath: '/workspace',
+        initialFolders: [mockFolder],
+        initialFolderToDelete: mockFolder,
+        onClose: () => {},
+        onSelectFolder: () => {},
+        locale: 'en',
+      });
+      return tree;
+    })
+  );
+
+  const confirmBtn = findElement(
+    tree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('btn-delete-folder-confirm')
+  );
+  assert.ok(confirmBtn, 'Confirm button must be rendered');
+  assert.strictEqual(
+    confirmBtn.props.disabled,
+    true,
+    'Confirm button must be disabled when confirmation name is empty'
+  );
+
+  const input = findElement(
+    tree,
+    (el) =>
+      el?.type === 'input' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('delete-folder-input')
+  );
+  assert.ok(input, 'Confirmation input must be present');
+  assert.strictEqual(input.props.placeholder, 'important-data', 'Input placeholder must match folder name');
+
+  const cancelBtn = findElement(
+    tree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('btn-delete-folder-cancel')
+  );
+  assert.ok(cancelBtn, 'Cancel button must be rendered');
+});
+
 test('projects: browseFilesystemPi returns result from mock invoke', async () => {
   const mockResult: BrowseFilesystemResult = {
     currentPath: '/test/workspace',

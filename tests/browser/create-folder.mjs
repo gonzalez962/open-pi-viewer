@@ -502,6 +502,139 @@ export async function runCreateFolderBrowserTests(options = {}) {
     await page.waitForTimeout(500);
 
     // =========================================================================
+    // S1, S1.1, S2.1, S2.2: Folder Deletion in FolderPickerModal
+    // =========================================================================
+    console.log('\n[Browser Test Delete S1/S2] Testing Folder Deletion in FolderPickerModal...');
+
+    // 1. Create a target folder with nested content using + Folder in modal
+    await modalCreateFolderBtn.click();
+    await modalForm.waitFor({ state: 'visible', timeout: 5000 });
+    await modalInput.fill('gamma-delete-folder');
+    await modalSubmitBtn.click();
+    await modalForm.waitFor({ state: 'hidden', timeout: 8000 });
+
+    const gammaDiskPath = path.join(fixtures.projectDir, 'gamma-delete-folder');
+    if (!fs.existsSync(gammaDiskPath)) {
+      throw new Error(`Delete Setup FAIL: Folder was not created: ${gammaDiskPath}`);
+    }
+
+    // Add isolated nested files and subfolder inside gamma-delete-folder
+    const nestedSubDir = path.join(gammaDiskPath, 'nested-child');
+    fs.mkdirSync(nestedSubDir, { recursive: true });
+    fs.writeFileSync(path.join(gammaDiskPath, 'nested-file.txt'), 'nested content');
+    fs.writeFileSync(path.join(nestedSubDir, 'deep-file.txt'), 'deep content');
+
+    // Folder card must be visible in modal grid
+    const gammaCard = modalContent.locator('.folder-picker-item').filter({ hasText: 'gamma-delete-folder' });
+    await gammaCard.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Select the folder to test selection reset upon deletion
+    await gammaCard.click();
+    if (!(await gammaCard.getAttribute('class'))?.includes('is-selected')) {
+      throw new Error('Delete Setup FAIL: Folder card did not become selected');
+    }
+
+    // S1: Verify accessible trash button on folder card
+    console.log('[Browser Test S1] Verifying trash button on folder card...');
+    const trashBtn = gammaCard.locator('.folder-item-trash-btn');
+    await trashBtn.waitFor({ state: 'visible', timeout: 5000 });
+    const trashLabel = await trashBtn.getAttribute('aria-label');
+    if (!trashLabel || !trashLabel.includes('gamma-delete-folder')) {
+      throw new Error(`S1 FAIL: Trash button missing accessible label: "${trashLabel}"`);
+    }
+    console.log(`[Browser Test S1] PASS: Trash button visible with label: "${trashLabel}".`);
+
+    // S1.1: Activating trash button opens confirmation dialog
+    console.log('[Browser Test S1.1] Activating trash button opens confirmation dialog...');
+    await trashBtn.click();
+
+    const deleteModal = modalContent.locator('.folder-picker-delete-modal');
+    await deleteModal.waitFor({ state: 'visible', timeout: 5000 });
+
+    const modalText = await deleteModal.innerText();
+    if (!modalText.includes('gamma-delete-folder')) {
+      throw new Error('S1.1 FAIL: Delete confirmation modal does not show folder name');
+    }
+    const pathText = await deleteModal.locator('.delete-folder-path').innerText();
+    if (!pathText.includes('gamma-delete-folder')) {
+      throw new Error('S1.1 FAIL: Delete confirmation modal does not show full path');
+    }
+    console.log('[Browser Test S1.1] PASS: Confirmation displays name, full path, and warning.');
+
+    // S2.2: Escape cancels deletion without touching data; outer modal remains open
+    console.log('[Browser Test S2.2] Testing Escape key cancels deletion...');
+    await page.keyboard.press('Escape');
+    await deleteModal.waitFor({ state: 'hidden', timeout: 5000 });
+
+    if (!(await modalContent.isVisible())) {
+      throw new Error('S2.2 FAIL: Escape inside delete confirmation closed the entire folder picker modal');
+    }
+    if (!fs.existsSync(gammaDiskPath) || !fs.existsSync(path.join(nestedSubDir, 'deep-file.txt'))) {
+      throw new Error('S2.2 FAIL: Data was deleted despite Escape cancellation');
+    }
+    console.log('[Browser Test S2.2] PASS: Escape dismissed confirmation without touching data.');
+
+    // S2.2: Cancel button dismisses confirmation without touching data
+    console.log('[Browser Test S2.2] Testing Cancel button dismisses confirmation...');
+    await trashBtn.click();
+    await deleteModal.waitFor({ state: 'visible', timeout: 5000 });
+    const deleteCancelBtn = deleteModal.locator('.btn-delete-folder-cancel');
+    await deleteCancelBtn.click();
+    await deleteModal.waitFor({ state: 'hidden', timeout: 5000 });
+
+    if (!fs.existsSync(gammaDiskPath)) {
+      throw new Error('S2.2 FAIL: Data was deleted despite Cancel button click');
+    }
+    console.log('[Browser Test S2.2] PASS: Cancel button dismissed confirmation without touching data.');
+
+    // S2: Mismatched confirmation input keeps delete button disabled
+    console.log('[Browser Test S2] Testing mismatched confirmation name...');
+    await trashBtn.click();
+    await deleteModal.waitFor({ state: 'visible', timeout: 5000 });
+
+    const deleteInput = deleteModal.locator('.delete-folder-input');
+    await deleteInput.fill('wrong-folder-name');
+    const deleteConfirmBtn = deleteModal.locator('.btn-delete-folder-confirm');
+    if (!(await deleteConfirmBtn.isDisabled())) {
+      throw new Error('S2 FAIL: Delete confirm button is enabled for mismatched name');
+    }
+    console.log('[Browser Test S2] PASS: Confirm button remains disabled for mismatched input.');
+
+    // S2.1: Type exact confirmation name and confirm deletion
+    console.log('[Browser Test S2.1] Testing exact confirmation and recursive deletion...');
+    await deleteInput.fill('gamma-delete-folder');
+    if (await deleteConfirmBtn.isDisabled()) {
+      throw new Error('S2.1 FAIL: Delete confirm button is disabled despite exact name match');
+    }
+
+    await deleteConfirmBtn.click();
+    await deleteModal.waitFor({ state: 'hidden', timeout: 8000 });
+
+    // Verify folder and nested files are completely deleted from disk
+    if (fs.existsSync(gammaDiskPath)) {
+      throw new Error('S2.1 FAIL: Folder still exists on disk after confirmed deletion');
+    }
+
+    // Verify sibling folders remain intact
+    const siblingAlphaPath = path.join(fixtures.projectDir, 'alpha-folder');
+    if (!fs.existsSync(siblingAlphaPath)) {
+      throw new Error('S2.1 FAIL: Sibling folder alpha-folder was erroneously deleted');
+    }
+
+    // Verify folder disappeared from modal grid
+    await gammaCard.waitFor({ state: 'hidden', timeout: 8000 });
+
+    // Verify stale selection was cleared
+    const selectedItem = modalContent.locator('.folder-picker-item.is-selected');
+    if (await selectedItem.count() > 0) {
+      const selectedName = (await selectedItem.innerText()).trim();
+      if (selectedName.includes('gamma-delete-folder')) {
+        throw new Error('S2.1 FAIL: Stale selection of deleted folder was not cleared');
+      }
+    }
+    console.log('[Browser Test S2.1] PASS: Folder recursively deleted, siblings untouched, UI refreshed, selection cleared.');
+
+    // =========================================================================
     // Close modal dialog and test mounted isOpen toggle transition
     // =========================================================================
     console.log('[Browser Test T3/S1 Close] Verifying modal closes on Escape when form is closed...');
