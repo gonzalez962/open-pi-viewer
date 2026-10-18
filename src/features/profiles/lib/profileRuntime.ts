@@ -130,7 +130,9 @@ export class ProfileRuntimeCoordinator {
   private activeRunId = 0;
   private inFlightKey: string | null = null;
   private inFlightPromise: Promise<boolean> | null = null;
-  private currentContextKey: string | null = null;
+  private lastActiveContextKey: string | null = null;
+  private lastIsConnected = false;
+  private lastIsSessionInitialized = false;
 
   public getContextKey(cwd?: string, sessionId?: string | null): string {
     return createProfileRuntimeContextKey(cwd, sessionId);
@@ -186,7 +188,23 @@ export class ProfileRuntimeCoordinator {
       this.inFlightPromise = null;
       this.state.isRestoring = false;
     }
-    this.currentContextKey = contextKey;
+
+    // Recover on real lifecycle events:
+    // 1) Context reactivation: user switched back to this project/session from another context
+    const isContextChanged =
+      this.lastActiveContextKey !== null && this.lastActiveContextKey !== contextKey;
+    // 2) Reconnection: connection or session initialization re-established after disconnect/uninitialized
+    const isReconnected =
+      (!this.lastIsConnected && params.isConnected) ||
+      (!this.lastIsSessionInitialized && params.isSessionInitialized);
+
+    if (isContextChanged || isReconnected) {
+      this.resetFailure(params.cwd, params.sessionId);
+    }
+
+    this.lastActiveContextKey = contextKey;
+    this.lastIsConnected = params.isConnected;
+    this.lastIsSessionInitialized = params.isSessionInitialized;
 
     // Deduplicate concurrent in-flight restore calls for the same context key
     if (this.inFlightKey === contextKey && this.inFlightPromise) {

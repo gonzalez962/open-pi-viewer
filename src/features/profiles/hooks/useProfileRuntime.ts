@@ -46,7 +46,26 @@ export function useProfileRuntime(options: UseProfileRuntimeOptions): UseProfile
     onSelectThinkingLevel,
   } = options;
 
+  const prevContextKeyRef = useRef<string | null>(null);
+  const prevConnectedRef = useRef<boolean>(isConnected);
+  const prevInitializedRef = useRef<boolean>(isSessionInitialized);
+
   useEffect(() => {
+    const currentKey = coordinator.getContextKey(cwd, sessionId);
+    const isContextChanged =
+      prevContextKeyRef.current !== null && prevContextKeyRef.current !== currentKey;
+    const isReconnected =
+      (!prevConnectedRef.current && isConnected) ||
+      (!prevInitializedRef.current && isSessionInitialized);
+
+    if (isContextChanged || isReconnected) {
+      coordinator.resetFailure(cwd, sessionId);
+    }
+
+    prevContextKeyRef.current = currentKey;
+    prevConnectedRef.current = isConnected;
+    prevInitializedRef.current = isSessionInitialized;
+
     void coordinator.restore({
       cwd,
       sessionId,

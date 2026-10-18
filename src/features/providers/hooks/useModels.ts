@@ -6,7 +6,6 @@ import {
   getEnabledModelsPi,
   getModelThinkingLevelsPi,
   getSessionStatsPi,
-  setModelPi,
   setThinkingLevelPi,
 } from '@infra/bridge';
 import {
