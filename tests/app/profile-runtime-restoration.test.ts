@@ -8,16 +8,9 @@ import {
   type ProfileSummary,
 } from '@core/types/profiles';
 import type { ModelInfo } from '@core/types/models';
-
-type ProfileRuntimeModule = typeof import('@features/profiles/lib/profileRuntime');
-
-async function loadProfileRuntimeModule(): Promise<ProfileRuntimeModule | null> {
-  try {
-    return await import('@features/profiles/lib/profileRuntime');
-  } catch {
-    return null;
-  }
-}
+import {
+  ProfileRuntimeCoordinator,
+} from '@features/profiles/lib/profileRuntime';
 
 const catalog: ModelInfo[] = [
   { id: 'gpt-4o', provider: 'openai', reasoning: false },
@@ -26,8 +19,6 @@ const catalog: ModelInfo[] = [
 ];
 
 test('S1.1: profile model and effort restored after view reload and initialization without being overwritten', async () => {
-  const mod = await loadProfileRuntimeModule();
-
   const activeProfile: ProfileSummary = {
     name: 'claude-coding',
     scope: 'project',
@@ -37,10 +28,10 @@ test('S1.1: profile model and effort restored after view reload and initializati
     default_effort: 'high',
   };
 
-  const connectTimeModel = 'openai/gpt-4o';
-  let currentModel = connectTimeModel;
-  let currentEffort: string | null = null;
+  const coordinator = new ProfileRuntimeCoordinator();
 
+  let currentModel = 'openai/gpt-4o';
+  let currentEffort: string | null = null;
   const onSelectModel = async (provider: string, modelId: string) => {
     currentModel = `${provider}/${modelId}`;
   };
@@ -48,63 +39,65 @@ test('S1.1: profile model and effort restored after view reload and initializati
     currentEffort = level;
   };
 
-  if (!mod) {
-    // RED: The coordinator module does not exist yet. View reload currently relies on connect-time
-    // session defaults and never restores the effective profile.
-    assert.strictEqual(
-      currentModel,
-      activeProfile.default_model,
-      'Runtime model must match active profile after view reload and initialization (not connect-time model)'
-    );
-    assert.strictEqual(
-      currentEffort,
-      activeProfile.default_effort,
-      'Runtime effort must match active profile after view reload and initialization'
-    );
-    return;
-  }
-
-  // GREEN: Production coordinator enforces deterministic sequencing:
-  const coordinator = new mod.ProfileRuntimeCoordinator();
-
-  // 1. Before session initialization completes (useModels is still loading parameters), restoration does not run.
+  // 1. Session begins connecting and useModels is in-flight:
+  // Before session initialization completes, coordinator must not restore.
   const beforeInitRestored = await coordinator.restore({
     cwd: '/workspace/project-alpha',
     sessionId: 'session-alpha-1',
     isConnected: true,
     isBusy: false,
-    isSessionInitialized: false, // useModels in-flight
-    effectiveProfile: activeProfile,
+    isSessionInitialized: false, // useModels still loading
+    isProfilesLoaded: false,
+    effectiveProfile: null,
     availableModels: catalog,
     onSelectModel,
     onSelectThinkingLevel,
   });
   assert.strictEqual(beforeInitRestored, false);
-  assert.strictEqual(currentModel, 'openai/gpt-4o', 'Model must remain connect-time model before initialization completes');
+  assert.strictEqual(currentModel, 'openai/gpt-4o', 'Model must remain connect-time default before init');
 
-  // 2. Once session initialization completes, coordinator restores the effective profile.
-  const afterInitRestored = await coordinator.restore({
+  // 2. useModels finishes first, but profile metadata is still loading from disk (effectiveProfile is null, isProfilesLoaded: false).
+  // CRITICAL REGRESSION: A null profile while metadata is still loading must NOT permanently latch the context as "no_profile"!
+  const duringLoadingRestored = await coordinator.restore({
     cwd: '/workspace/project-alpha',
     sessionId: 'session-alpha-1',
     isConnected: true,
     isBusy: false,
-    isSessionInitialized: true, // useModels finished
+    isSessionInitialized: true, // session init finished
+    isProfilesLoaded: false, // metadata still loading!
+    effectiveProfile: null,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(duringLoadingRestored, false);
+
+  // 3. Profile metadata finishes loading: coordinator MUST restore the effective profile now!
+  // In buggy code that latched on null during loading, this call returns false and never restores.
+  const afterMetadataLoadedRestored = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: activeProfile,
     availableModels: catalog,
     onSelectModel,
     onSelectThinkingLevel,
   });
-  assert.strictEqual(afterInitRestored, true);
+  assert.strictEqual(afterMetadataLoadedRestored, true, 'Profile must be restored once metadata arrives');
   assert.strictEqual(currentModel, 'openrouter/anthropic/claude-3.5-sonnet');
   assert.strictEqual(currentEffort, 'high');
 
-  // 3. Subsequent calls (rerenders or repeated effects) do not re-run restoration or overwrite the runtime.
+  // 4. Subsequent re-renders / re-evaluations must not re-run restoration or overwrite the runtime.
   const subsequentRestored = await coordinator.restore({
     cwd: '/workspace/project-alpha',
     sessionId: 'session-alpha-1',
     isConnected: true,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: activeProfile,
     availableModels: catalog,
     onSelectModel,
@@ -114,15 +107,13 @@ test('S1.1: profile model and effort restored after view reload and initializati
   assert.strictEqual(currentModel, 'openrouter/anthropic/claude-3.5-sonnet');
   assert.strictEqual(currentEffort, 'high');
 
-  // Verify App.tsx wiring includes the coordinator hook and uses isSessionInitialized
+  // Supplemental structural wiring checks: App.tsx must integrate useProfileRuntime and keyed readiness
   const appSource = fs.readFileSync(path.resolve('src/app/App.tsx'), 'utf8');
   assert.match(appSource, /useProfileRuntime/, 'App.tsx must use useProfileRuntime hook');
   assert.match(appSource, /isSessionInitialized/, 'App.tsx must connect isSessionInitialized from useModels');
 });
 
 test('S2.1: destination profile applied after project switch and late source-project results cannot replace them', async () => {
-  const mod = await loadProfileRuntimeModule();
-
   const profileA: ProfileSummary = {
     name: 'profile-a',
     scope: 'project',
@@ -141,96 +132,101 @@ test('S2.1: destination profile applied after project switch and late source-pro
     default_effort: 'high',
   };
 
-  if (!mod) {
-    // RED: The request tracker and coordinator do not exist yet. Switching projects currently allows
-    // late asynchronous completions to overwrite destination state and does not restore destination profile.
-    let appliedModel = profileA.default_model;
-    const staleCompletion = async () => {
-      // In unpatched code without request tagging, Project A's late resolution replaces Project B
-      appliedModel = profileA.default_model;
-    };
-    await staleCompletion();
-    assert.strictEqual(
-      appliedModel,
-      profileB.default_model,
-      'Destination profile model must be applied after project switch, not stale source profile'
-    );
-    return;
-  }
-
-  // GREEN: Production ProjectProfileRequestTracker and ProfileRuntimeCoordinator:
-  const tracker = new mod.ProjectProfileRequestTracker();
-  const coordinator = new mod.ProfileRuntimeCoordinator();
+  const coordinator = new ProfileRuntimeCoordinator();
 
   let runtimeModel = 'openai/gpt-4o';
-  let runtimeEffort: string | null = 'low';
+  let runtimeEffort: string | null = null;
+  const appliedEfforts: string[] = [];
 
+  let resolveProjectAModelRpc: () => void = () => {};
+  const modelRpcPromiseA = new Promise<void>((resolve) => {
+    resolveProjectAModelRpc = resolve;
+  });
+
+  let delayProjectA = true;
   const onSelectModel = async (provider: string, modelId: string) => {
     runtimeModel = `${provider}/${modelId}`;
+    if (delayProjectA && provider === 'openai' && modelId === 'gpt-4o') {
+      delayProjectA = false;
+      await modelRpcPromiseA;
+    }
   };
+
   const onSelectThinkingLevel = async (level: string) => {
     runtimeEffort = level;
+    appliedEfforts.push(level);
   };
 
-  // 1. Initial Project A restores profile A
-  const reqA = tracker.beginRequest('/workspace/project-a');
-  await coordinator.restore({
-    cwd: '/workspace/project-a',
-    sessionId: 'session-a',
-    isConnected: true,
-    isBusy: false,
-    isSessionInitialized: true,
-    effectiveProfile: profileA,
-    availableModels: catalog,
-    onSelectModel,
-    onSelectThinkingLevel,
-  });
-  assert.strictEqual(runtimeModel, 'openai/gpt-4o');
+  let restorePromiseA: Promise<boolean> | undefined;
+  try {
+    // 1. Project A begins restoration (slow model RPC in flight)
+    restorePromiseA = coordinator.restore({
+      cwd: '/workspace/project-a',
+      sessionId: 'session-a',
+      isConnected: true,
+      isBusy: false,
+      isSessionInitialized: true,
+      isProfilesLoaded: true,
+      effectiveProfile: profileA,
+      availableModels: catalog,
+      onSelectModel,
+      onSelectThinkingLevel,
+    });
 
-  // 2. User switches to Project B
-  const reqB = tracker.beginRequest('/workspace/project-b');
+    // 2. User switches to Project B before Project A's model RPC settles
+    // Case A: Stale cwd guard: Project B has cwd '/workspace/project-b', but profile in state is still tagged with loadedCwd '/workspace/project-a'.
+    // Coordinator must NOT restore Project A's profile into Project B!
+    const staleCwdRestored = await coordinator.restore({
+      cwd: '/workspace/project-b',
+      sessionId: 'session-b',
+      isConnected: true,
+      isBusy: false,
+      isSessionInitialized: true,
+      isProfilesLoaded: true,
+      loadedCwd: '/workspace/project-a', // stale profile from source project!
+      effectiveProfile: profileA,
+      availableModels: catalog,
+      onSelectModel,
+      onSelectThinkingLevel,
+    });
+    assert.strictEqual(staleCwdRestored, false, 'Stale previous cwd profile must not restore to destination');
 
-  // 3. Stale completion from Project A resolves late
-  const isStaleAValid = tracker.isCurrent(reqA, '/workspace/project-a');
-  assert.strictEqual(isStaleAValid, false, 'Stale source project response must be invalidated');
+    // Case B: Destination Project B receives its own profile and initializes
+    const destRestored = await coordinator.restore({
+      cwd: '/workspace/project-b',
+      sessionId: 'session-b',
+      isConnected: true,
+      isBusy: false,
+      isSessionInitialized: true,
+      isProfilesLoaded: true,
+      loadedCwd: '/workspace/project-b',
+      effectiveProfile: profileB,
+      availableModels: catalog,
+      onSelectModel,
+      onSelectThinkingLevel,
+    });
+    assert.strictEqual(destRestored, true, 'Destination profile must be restored for destination project');
+    assert.strictEqual(runtimeModel, 'openrouter/anthropic/claude-3.5-sonnet');
+    assert.strictEqual(runtimeEffort, 'high');
 
-  // If a stale source response tried to restore, the context key mismatch prevents mutation
-  const lateSourceRestored = await coordinator.restore({
-    cwd: '/workspace/project-a', // stale cwd
-    sessionId: 'session-a',
-    isConnected: true,
-    isBusy: false,
-    isSessionInitialized: true,
-    effectiveProfile: profileA,
-    availableModels: catalog,
-    onSelectModel,
-    onSelectThinkingLevel,
-  });
-  assert.strictEqual(lateSourceRestored, false);
+    // 3. Now slow in-flight model RPC for Project A finally settles!
+    resolveProjectAModelRpc();
+    await restorePromiseA;
 
-  // 4. Destination Project B initialization completes
-  const isDestValid = tracker.isCurrent(reqB, '/workspace/project-b');
-  assert.strictEqual(isDestValid, true);
-
-  const destRestored = await coordinator.restore({
-    cwd: '/workspace/project-b',
-    sessionId: 'session-b',
-    isConnected: true,
-    isBusy: false,
-    isSessionInitialized: true,
-    effectiveProfile: profileB,
-    availableModels: catalog,
-    onSelectModel,
-    onSelectThinkingLevel,
-  });
-  assert.strictEqual(destRestored, true);
-  assert.strictEqual(runtimeModel, 'openrouter/anthropic/claude-3.5-sonnet');
-  assert.strictEqual(runtimeEffort, 'high');
+    // CRITICAL REGRESSION: Project A's continuation must NOT continue to call onSelectThinkingLevel('low')!
+    // In buggy code that does not invalidate continuations, Project A continues and executes effort RPC ('low'),
+    // overwriting Project B's 'high' effort!
+    assert.strictEqual(runtimeEffort, 'high', 'Late Project A continuation must not overwrite Project B effort');
+    assert.strictEqual(appliedEfforts[appliedEfforts.length - 1], 'high', 'Last applied effort must be Project B high, not stale Project A low');
+  } finally {
+    resolveProjectAModelRpc();
+    if (restorePromiseA) {
+      await restorePromiseA.catch(() => {});
+    }
+  }
 });
 
 test('S3.1: manual model selection in initialized context is preserved across rerenders and explicit activation still applies', async () => {
-  const mod = await loadProfileRuntimeModule();
-
   const restoredProfile: ProfileSummary = {
     name: 'project-base',
     scope: 'project',
@@ -249,9 +245,8 @@ test('S3.1: manual model selection in initialized context is preserved across re
     default_effort: 'medium',
   };
 
-  let runtimeModel = 'openrouter/anthropic/claude-3.5-sonnet';
-  let runtimeEffort: string | null = 'high';
-
+  let runtimeModel = 'openai/gpt-4o';
+  let runtimeEffort: string | null = null;
   const onSelectModel = async (provider: string, modelId: string) => {
     runtimeModel = `${provider}/${modelId}`;
   };
@@ -259,57 +254,39 @@ test('S3.1: manual model selection in initialized context is preserved across re
     runtimeEffort = level;
   };
 
-  if (!mod) {
-    // Existing behavior in RED: user manually selects a model; ordinary rerenders do not alter it
-    runtimeModel = 'openai/gpt-4o';
-    runtimeEffort = 'low';
+  const coordinator = new ProfileRuntimeCoordinator();
 
-    // Rerender occurs
-    assert.strictEqual(runtimeModel, 'openai/gpt-4o');
-
-    // Explicit profile activation applies newly requested profile
-    await applyProfileRuntime(explicitlyActivatedProfile, {
-      isConnected: true,
-      availableModels: catalog,
-      onSelectModel,
-      onSelectThinkingLevel,
-    });
-    assert.strictEqual(runtimeModel, 'google/gemini-1.5-pro');
-    assert.strictEqual(runtimeEffort, 'medium');
-    return;
-  }
-
-  // GREEN: Coordinator explicitly models manual selection tracking:
-  const coordinator = new mod.ProfileRuntimeCoordinator();
-
-  // Profile initially restored
+  // 1. Profile initially restored
   await coordinator.restore({
     cwd: '/workspace/project-manual',
     sessionId: 'session-manual-1',
     isConnected: true,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: restoredProfile,
     availableModels: catalog,
     onSelectModel,
     onSelectThinkingLevel,
   });
   assert.strictEqual(runtimeModel, 'openrouter/anthropic/claude-3.5-sonnet');
+  assert.strictEqual(runtimeEffort, 'high');
 
-  // User manually selects a different model in this context
+  // 2. User manually selects a different model in this context
   coordinator.recordManualSelection('/workspace/project-manual', 'session-manual-1');
   await onSelectModel('openai', 'gpt-4o');
   await onSelectThinkingLevel('low');
   assert.strictEqual(runtimeModel, 'openai/gpt-4o');
   assert.strictEqual(runtimeEffort, 'low');
 
-  // Ordinary rerenders / restoration triggers run again in this context
+  // 3. Ordinary rerenders / restoration triggers run again in this context: MUST NOT OVERWRITE
   const reRestored = await coordinator.restore({
     cwd: '/workspace/project-manual',
     sessionId: 'session-manual-1',
     isConnected: true,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: restoredProfile,
     availableModels: catalog,
     onSelectModel,
@@ -319,7 +296,7 @@ test('S3.1: manual model selection in initialized context is preserved across re
   assert.strictEqual(runtimeModel, 'openai/gpt-4o', 'Manual selection must not be overwritten by restoration');
   assert.strictEqual(runtimeEffort, 'low');
 
-  // Explicit profile activation clears prior manual selection and applies the activated profile
+  // 4. Explicit profile activation clears prior manual selection and applies the activated profile
   coordinator.resetManualSelection('/workspace/project-manual', 'session-manual-1');
   await applyProfileRuntime(explicitlyActivatedProfile, {
     isConnected: true,
@@ -332,8 +309,6 @@ test('S3.1: manual model selection in initialized context is preserved across re
 });
 
 test('S3.2: inheriting global profile applies global profile and leaves model unchanged when none, disconnected or busy sessions not mutated', async () => {
-  const mod = await loadProfileRuntimeModule();
-
   const globalProfile: ProfileSummary = {
     name: 'global-default',
     scope: 'global',
@@ -345,7 +320,6 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
 
   let runtimeModel = 'openai/gpt-4o';
   let runtimeEffort: string | null = null;
-
   const onSelectModel = async (provider: string, modelId: string) => {
     runtimeModel = `${provider}/${modelId}`;
   };
@@ -353,40 +327,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     runtimeEffort = level;
   };
 
-  if (!mod) {
-    // Existing behavior in RED:
-    // 1. Inherited global profile applies global profile
-    await applyProfileRuntime(globalProfile, {
-      isConnected: true,
-      availableModels: catalog,
-      onSelectModel,
-      onSelectThinkingLevel,
-    });
-    assert.strictEqual(runtimeModel, 'google/gemini-1.5-pro');
-
-    // 2. No effective profile leaves model unchanged
-    const modelBefore = runtimeModel;
-    await applyProfileRuntime(null, {
-      isConnected: true,
-      availableModels: catalog,
-      onSelectModel,
-      onSelectThinkingLevel,
-    });
-    assert.strictEqual(runtimeModel, modelBefore);
-
-    // 3. Disconnected session: applyProfileRuntime returns false and does not mutate
-    const disconnectedResult = await applyProfileRuntime(globalProfile, {
-      isConnected: false,
-      availableModels: catalog,
-      onSelectModel,
-      onSelectThinkingLevel,
-    });
-    assert.strictEqual(disconnectedResult, false);
-    return;
-  }
-
-  // GREEN: Coordinator checks:
-  const coordinator = new mod.ProfileRuntimeCoordinator();
+  const coordinator = new ProfileRuntimeCoordinator();
 
   // 1. Project inheriting global profile
   await coordinator.restore({
@@ -395,6 +336,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     isConnected: true,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: globalProfile,
     availableModels: catalog,
     onSelectModel,
@@ -403,7 +345,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
   assert.strictEqual(runtimeModel, 'google/gemini-1.5-pro');
   assert.strictEqual(runtimeEffort, 'medium');
 
-  // 2. Project with NO effective profile leaves model unchanged
+  // 2. Project with NO effective profile (metadata loaded, but no active profile exists) leaves model unchanged
   const prevModel = runtimeModel;
   const noProfileRestored = await coordinator.restore({
     cwd: '/workspace/project-none',
@@ -411,6 +353,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     isConnected: true,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: null,
     availableModels: catalog,
     onSelectModel,
@@ -426,6 +369,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     isConnected: false,
     isBusy: false,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: globalProfile,
     availableModels: catalog,
     onSelectModel,
@@ -440,6 +384,7 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     isConnected: true,
     isBusy: true,
     isSessionInitialized: true,
+    isProfilesLoaded: true,
     effectiveProfile: globalProfile,
     availableModels: catalog,
     onSelectModel,
