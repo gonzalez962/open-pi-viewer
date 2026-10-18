@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   getGitHubAuthStatusPi,
   cloneGitHubRepositoryPi,
+  listGitHubRepositoriesPi,
   type CloneGitHubRepositoryPayload,
 } from '@infra/bridge';
 import {
@@ -94,6 +95,44 @@ test('bridge: cloneGitHubRepositoryPi invokes clone_github_repository with paylo
   assert.strictEqual(invokedCmd, 'clone_github_repository');
   assert.deepStrictEqual(invokedArgs, { payload });
   assert.strictEqual(res.path, '/path/to/cloned/repo');
+});
+
+test('bridge: listGitHubRepositoriesPi invokes list_github_repositories with payload', async () => {
+  let invokedCmd = '';
+  let invokedArgs: Record<string, unknown> | undefined;
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    invokedCmd = cmd;
+    invokedArgs = args;
+    return {
+      groups: [
+        {
+          owner: 'octocat',
+          isCurrentUser: true,
+          repositories: [
+            {
+              id: 1,
+              name: 'hello-world',
+              fullName: 'octocat/hello-world',
+              owner: 'octocat',
+              isPrivate: false,
+              htmlUrl: 'https://github.com/octocat/hello-world',
+              cloneUrl: 'https://github.com/octocat/hello-world.git',
+              fork: false,
+            },
+          ],
+        },
+      ],
+      total: 1,
+      currentUser: 'octocat',
+    } as T;
+  };
+
+  const res = await listGitHubRepositoriesPi({ token: 'ghp_test' }, mockInvoke);
+  assert.strictEqual(invokedCmd, 'list_github_repositories');
+  assert.deepStrictEqual(invokedArgs, { payload: { token: 'ghp_test' } });
+  assert.strictEqual(res.total, 1);
+  assert.strictEqual(res.groups[0].owner, 'octocat');
 });
 
 test('bridge: getGitHubAuthStatusPi returns uninstalled/unauthenticated fallback in browser preview with default invoke', async () => {
@@ -828,3 +867,136 @@ test('sanitizeCloneErrorMessage: maps destination directory permission errors to
     'projects.github_clone.error_destination_permission'
   );
 });
+
+// 5. Repository browsing and categorization controller tests
+test('github-clone controller: loadRepositories fetches and groups repositories by owner', async () => {
+  let listCalled = false;
+  const mockGroups: any[] = [
+    {
+      owner: 'octocat',
+      isCurrentUser: true,
+      repositories: [
+        {
+          id: 1,
+          name: 'octo-project',
+          fullName: 'octocat/octo-project',
+          owner: 'octocat',
+          isPrivate: false,
+        },
+      ],
+    },
+    {
+      owner: 'acme-corp',
+      isCurrentUser: false,
+      ownerType: 'Organization',
+      repositories: [
+        {
+          id: 2,
+          name: 'acme-sdk',
+          fullName: 'acme-corp/acme-sdk',
+          owner: 'acme-corp',
+          isPrivate: true,
+        },
+      ],
+    },
+  ];
+
+  const controller = createGitHubCloneController({
+    getAuthStatus: async () => ({ installed: true, authenticated: true, username: 'octocat' }),
+    listRepositories: async () => {
+      listCalled = true;
+      return {
+        groups: mockGroups,
+        total: 2,
+        currentUser: 'octocat',
+      };
+    },
+  });
+
+  await controller.loadAuthStatus();
+  await controller.loadRepositories();
+
+  assert.strictEqual(listCalled, true, 'listRepositories must be called');
+  const repoState = controller.getState().repositories;
+  assert.strictEqual(repoState.loading, false);
+  assert.strictEqual(repoState.total, 2);
+  assert.strictEqual(repoState.groups.length, 2);
+  assert.strictEqual(repoState.groups[0].owner, 'octocat');
+  assert.strictEqual(repoState.groups[0].isCurrentUser, true);
+  assert.strictEqual(repoState.groups[1].owner, 'acme-corp');
+  assert.strictEqual(repoState.groups[1].isCurrentUser, false);
+
+  // Test selecting a repository
+  controller.selectRepository(mockGroups[1].repositories[0]);
+  assert.strictEqual(controller.getState().repository, 'acme-corp/acme-sdk');
+  assert.strictEqual(controller.getState().repositories.selectedRepo?.name, 'acme-sdk');
+});
+
+test('github-clone controller: loadRepositories sets error when user is unauthenticated', async () => {
+  const controller = createGitHubCloneController({
+    getAuthStatus: async () => ({ installed: false, authenticated: false }),
+  });
+
+  await controller.loadAuthStatus();
+  await controller.loadRepositories();
+
+  const repoState = controller.getState().repositories;
+  assert.strictEqual(repoState.loading, false);
+  assert.strictEqual(repoState.error, 'projects.github_clone.auth_required_browse');
+  assert.strictEqual(repoState.groups.length, 0);
+});
+
+test('GitHubCloneModal: renders browse tabs and categorized repository groups', () => {
+  const mockGroups: any[] = [
+    {
+      owner: 'testuser',
+      isCurrentUser: true,
+      repositories: [
+        {
+          id: 1,
+          name: 'my-repo',
+          fullName: 'testuser/my-repo',
+          owner: 'testuser',
+          isPrivate: false,
+          description: 'My cool repository',
+        },
+      ],
+    },
+    {
+      owner: 'external-org',
+      isCurrentUser: false,
+      ownerType: 'Organization',
+      repositories: [
+        {
+          id: 2,
+          name: 'org-tool',
+          fullName: 'external-org/org-tool',
+          owner: 'external-org',
+          isPrivate: true,
+          description: 'External team tool',
+        },
+      ],
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'en',
+      initialAuthStatus: { loading: false, installed: true, authenticated: true, username: 'testuser' },
+      listRepositories: async () => ({
+        groups: mockGroups,
+        total: 2,
+        currentUser: 'testuser',
+      }),
+      onClose: () => {},
+      onCloneSuccess: () => {},
+    })
+  );
+
+  assert.ok(html.includes('Browse Repositories'), 'Must render Browse Repositories tab');
+  assert.ok(html.includes('Manual URL'), 'Must render Manual URL tab');
+  assert.ok(html.includes('github-clone-tabs'), 'Must render tabs bar');
+});
+

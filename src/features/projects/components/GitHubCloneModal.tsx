@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   createGitHubCloneController,
   getSavedGitHubPat,
@@ -11,6 +11,9 @@ import type {
   GitHubAuthStatus,
   CloneGitHubRepositoryPayload,
   CloneGitHubRepositoryResult,
+  ListGitHubRepositoriesResult,
+  GitHubOwnerGroup,
+  GitHubRepositorySummary,
 } from '@infra/bridge';
 
 export interface GitHubCloneModalProps {
@@ -30,6 +33,7 @@ export interface GitHubCloneModalProps {
   onOpenLocalFolder?: () => void;
   getAuthStatus?: () => Promise<GitHubAuthStatus>;
   cloneRepository?: (payload: CloneGitHubRepositoryPayload) => Promise<CloneGitHubRepositoryResult>;
+  listRepositories?: (payload?: { token?: string }) => Promise<ListGitHubRepositoriesResult>;
 }
 
 export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
@@ -44,7 +48,9 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
   onOpenLocalFolder,
   getAuthStatus,
   cloneRepository,
+  listRepositories,
 }) => {
+  const [activeTab, setActiveTab] = useState<'browse' | 'manual'>('browse');
   const [repository, setRepository] = useState('');
   const [destinationPath, setDestinationPath] = useState(initialDestinationPath);
   const [token, setToken] = useState(() => getSavedGitHubPat(storage));
@@ -60,6 +66,19 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     installed: false,
     authenticated: false,
   });
+  const [repoState, setRepoState] = useState<{
+    loading: boolean;
+    error: string | null;
+    groups: GitHubOwnerGroup[];
+    total: number;
+    selectedRepo?: GitHubRepositorySummary;
+  }>({
+    loading: false,
+    error: null,
+    groups: [],
+    total: 0,
+  });
+  const [searchQuery, setSearchQuery] = useState('');
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [isDestinationPickerOpen, setIsDestinationPickerOpen] = useState(false);
 
@@ -74,6 +93,8 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
   getAuthStatusRef.current = getAuthStatus;
   const cloneRepositoryRef = useRef(cloneRepository);
   cloneRepositoryRef.current = cloneRepository;
+  const listRepositoriesRef = useRef(listRepositories);
+  listRepositoriesRef.current = listRepositories;
 
   // Initialize or update controller
   useEffect(() => {
@@ -82,6 +103,7 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
       storage,
       getAuthStatus: getAuthStatus ? () => getAuthStatusRef.current!() : undefined,
       cloneRepository: cloneRepository ? (p) => cloneRepositoryRef.current!(p) : undefined,
+      listRepositories: listRepositories ? (p) => listRepositoriesRef.current!(p) : undefined,
       onSuccess: (clonedPath) => {
         onCloneSuccessRef.current(clonedPath);
       },
@@ -91,6 +113,7 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
         setPatUser(state.patUser);
         setErrorKey(state.error);
         setToken((prev) => (prev !== state.token ? state.token : prev));
+        setRepoState(state.repositories);
       },
     });
     controllerRef.current = ctrl;
@@ -111,9 +134,12 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
         setToken(saved);
         controllerRef.current?.setToken(saved);
       }
-      void controllerRef.current?.loadAuthStatus();
+      void controllerRef.current?.loadAuthStatus().then(() => {
+        void controllerRef.current?.loadRepositories();
+      });
     } else {
       setErrorKey(null);
+      setSearchQuery('');
     }
   }, [isOpen, initialDestinationPath, storage]);
 
@@ -132,7 +158,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     }, 25);
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // If nested destination picker is open, let it handle its own keys
       if (isDestinationPickerOpen) return;
 
       if (e.key === 'Escape') {
@@ -228,6 +253,16 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     controllerRef.current?.setToken(val);
   };
 
+  const handleSelectRepository = (repo: GitHubRepositorySummary) => {
+    setRepository(repo.fullName);
+    setErrorKey(null);
+    controllerRef.current?.selectRepository(repo);
+  };
+
+  const handleRefreshRepos = () => {
+    void controllerRef.current?.loadRepositories();
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -239,6 +274,37 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
       await controllerRef.current.submit();
     }
   };
+
+  // Filter groups and repositories based on search query
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return repoState.groups;
+
+    return repoState.groups
+      .map((group) => {
+        const matchesOwner = group.owner.toLowerCase().includes(q);
+        const matchingRepos = group.repositories.filter(
+          (repo) =>
+            repo.name.toLowerCase().includes(q) ||
+            repo.fullName.toLowerCase().includes(q) ||
+            (repo.description && repo.description.toLowerCase().includes(q))
+        );
+
+        if (matchesOwner) {
+          return group;
+        }
+
+        if (matchingRepos.length > 0) {
+          return {
+            ...group,
+            repositories: matchingRepos,
+          };
+        }
+
+        return null;
+      })
+      .filter((g): g is GitHubOwnerGroup => g !== null);
+  }, [repoState.groups, searchQuery]);
 
   if (!isOpen) return null;
 
@@ -369,26 +435,221 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                 </div>
               )}
 
-              {/* Repository Field */}
-              <div className="github-clone-field">
-                <label htmlFor="github-clone-repo-input" className="github-clone-label">
-                  {translate(locale, 'projects.github_clone.repo_label')}
-                </label>
-                <input
-                  id="github-clone-repo-input"
-                  type="text"
-                  className="github-clone-input"
-                  value={repository}
-                  onChange={handleRepoChange}
-                  placeholder={translate(locale, 'projects.github_clone.repo_placeholder')}
+              {/* Tabs for Browse Repositories vs Manual URL */}
+              <div className="github-clone-tabs" role="tablist">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'browse'}
+                  className={`github-clone-tab ${activeTab === 'browse' ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab('browse')}
                   disabled={isSubmitting}
-                  required
-                  autoFocus
-                />
-                <span className="github-clone-hint">
-                  {translate(locale, 'projects.github_clone.repo_hint')}
-                </span>
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="8" y1="6" x2="21" y2="6" />
+                    <line x1="8" y1="12" x2="21" y2="12" />
+                    <line x1="8" y1="18" x2="21" y2="18" />
+                    <line x1="3" y1="6" x2="3.01" y2="6" />
+                    <line x1="3" y1="12" x2="3.01" y2="12" />
+                    <line x1="3" y1="18" x2="3.01" y2="18" />
+                  </svg>
+                  <span>{translate(locale, 'projects.github_clone.tab_browse')}</span>
+                  {repoState.total > 0 && (
+                    <span className="github-clone-tab-badge">{repoState.total}</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'manual'}
+                  className={`github-clone-tab ${activeTab === 'manual' ? 'is-active' : ''}`}
+                  onClick={() => setActiveTab('manual')}
+                  disabled={isSubmitting}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                  <span>{translate(locale, 'projects.github_clone.tab_manual')}</span>
+                </button>
               </div>
+
+              {/* Tab 1: Browse Repositories Categorized by Owner */}
+              {activeTab === 'browse' && (
+                <div className="github-clone-browse-section">
+                  <div className="github-clone-browse-search-row">
+                    <input
+                      type="text"
+                      className="github-clone-input github-clone-search-input"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={translate(locale, 'projects.github_clone.search_repos')}
+                      disabled={isSubmitting || repoState.loading}
+                    />
+                    <button
+                      type="button"
+                      className="github-clone-refresh-btn"
+                      onClick={handleRefreshRepos}
+                      disabled={isSubmitting || repoState.loading}
+                      title={translate(locale, 'projects.github_clone.refresh_repos')}
+                      aria-label={translate(locale, 'projects.github_clone.refresh_repos')}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className={repoState.loading ? 'is-spinning' : ''}
+                        aria-hidden="true"
+                      >
+                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  {repoState.loading ? (
+                    <div className="github-clone-repos-loading">
+                      <span className="github-clone-spinner" aria-hidden="true" />
+                      <span>{translate(locale, 'projects.github_clone.loading_repos')}</span>
+                    </div>
+                  ) : repoState.error ? (
+                    <div className="github-clone-repos-empty">
+                      <span>{translate(locale, repoState.error as any)}</span>
+                    </div>
+                  ) : filteredGroups.length === 0 ? (
+                    <div className="github-clone-repos-empty">
+                      <span>{translate(locale, 'projects.github_clone.no_repos_found')}</span>
+                    </div>
+                  ) : (
+                    <div className="github-clone-owner-groups">
+                      {filteredGroups.map((group) => (
+                        <div key={group.owner} className="github-clone-owner-group">
+                          <div className="github-clone-owner-header">
+                            {group.ownerAvatarUrl ? (
+                              <img
+                                src={group.ownerAvatarUrl}
+                                alt={group.owner}
+                                className="github-clone-owner-avatar"
+                              />
+                            ) : (
+                              <div className="github-clone-owner-avatar-placeholder">
+                                {group.owner.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="github-clone-owner-meta">
+                              <span className="github-clone-owner-name">{group.owner}</span>
+                              <span className="github-clone-owner-badge">
+                                {group.isCurrentUser
+                                  ? translate(locale, 'projects.github_clone.my_repos')
+                                  : translate(locale, 'projects.github_clone.org_repos')}
+                              </span>
+                            </div>
+                            <span className="github-clone-owner-count">
+                              {group.repositories.length}
+                            </span>
+                          </div>
+
+                          <div className="github-clone-repo-list">
+                            {group.repositories.map((repo) => {
+                              const isSelected = repository === repo.fullName;
+                              return (
+                                <div
+                                  key={repo.id || repo.fullName}
+                                  role="button"
+                                  tabIndex={0}
+                                  className={`github-clone-repo-item ${isSelected ? 'is-selected' : ''}`}
+                                  onClick={() => handleSelectRepository(repo)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault();
+                                      handleSelectRepository(repo);
+                                    }
+                                  }}
+                                >
+                                  <div className="github-clone-repo-item-main">
+                                    <div className="github-clone-repo-title-row">
+                                      <span className="github-clone-repo-name">{repo.name}</span>
+                                      <span
+                                        className={`github-clone-repo-visibility-badge ${
+                                          repo.isPrivate ? 'is-private' : 'is-public'
+                                        }`}
+                                      >
+                                        {repo.isPrivate
+                                          ? translate(locale, 'projects.github_clone.private_badge')
+                                          : translate(locale, 'projects.github_clone.public_badge')}
+                                      </span>
+                                      {repo.archived && (
+                                        <span className="github-clone-repo-archived-badge">
+                                          {translate(locale, 'projects.github_clone.archived_badge')}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {repo.description && (
+                                      <span className="github-clone-repo-desc" title={repo.description}>
+                                        {repo.description}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="github-clone-repo-check" aria-hidden="true">
+                                    {isSelected ? '✓' : ''}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab 2: Manual Repository URL Input */}
+              {activeTab === 'manual' && (
+                <div className="github-clone-field">
+                  <label htmlFor="github-clone-repo-input" className="github-clone-label">
+                    {translate(locale, 'projects.github_clone.repo_label')}
+                  </label>
+                  <input
+                    id="github-clone-repo-input"
+                    type="text"
+                    className="github-clone-input"
+                    value={repository}
+                    onChange={handleRepoChange}
+                    placeholder={translate(locale, 'projects.github_clone.repo_placeholder')}
+                    disabled={isSubmitting}
+                    required
+                    autoFocus
+                  />
+                  <span className="github-clone-hint">
+                    {translate(locale, 'projects.github_clone.repo_hint')}
+                  </span>
+                </div>
+              )}
 
               {/* Destination Field */}
               <div className="github-clone-field">
