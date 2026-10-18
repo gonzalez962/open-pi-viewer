@@ -1,7 +1,7 @@
 # Restore the active profile after project changes and reloads
 
 Objective: Keep the runtime model aligned with the effective profile on view initialization.
-Branch: fix/github-modal-clone-permissions
+Branch: fix/profile-runtime-restoration
 Trigger: risk item 4 (asynchronous session initialization and profile restoration ordering)
 Scope in: Initial profile model/effort restoration on reload and project switch; preserve manual selection and activation.
 Scope out: Backend profile formats, provider policy, session history, publishing.
@@ -11,7 +11,7 @@ Base: 99da61e29c7244fd206d8182faaa51895884b4a1
 
 ## Expected files
 
-- T1: `src/app/App.tsx`, `src/features/providers/hooks/useModels.ts`, `src/features/profiles/hooks/useProfiles.ts`, `src/features/profiles/hooks/useProfileRuntime.ts`, `src/features/profiles/lib/profileRuntime.ts`, `tests/app/profile-runtime-restoration.test.ts`, `tests/app/profiles-activation.test.ts`, `docs/profile-runtime-restoration.md`
+- T1: `src/app/App.tsx`, `src/features/providers/hooks/useModels.ts`, `src/features/profiles/hooks/useProfiles.ts`, `src/features/profiles/hooks/useProfileRuntime.ts`, `src/features/profiles/lib/profileRuntime.ts`, `tests/app/profile-runtime-restoration.test.ts`, `tests/app/profiles-activation.test.ts`, `docs/profile-runtime-restoration.md`, `src/core/types/profiles.ts`, `tests/core/profiles.test.ts`, `src/features/providers/lib/modelSelection.ts`, `tests/app/profile-model-selection.test.ts`
 
 ## Specs
 
@@ -49,6 +49,7 @@ Base: 99da61e29c7244fd206d8182faaa51895884b4a1
 - **L2** User authorized reading spec-guard SKILL.md and template.md outside the project.
 - **L3** User selected "Autorizar pruebas y commits locales": behavior classification and local tests/correction commits authorized; no push/PR.
 - **L4** Verification rejected the initial implementation: delayed metadata is latched as no-profile, stale cwd profile and session readiness are observable, in-flight restores overlap and continue effort updates across context changes, manual selection is dropped during restoration. Initial RED is synthetic and invalid. Gate exit 2 because this spec is ignored and absent from HEAD.
+- **L6** User reports: "aun esta el bug que se cambia el modelo principal al cambiar de proyecto o recargar, no respeta la config del perfil seleccionado". User authorized a new bounded attempt: "si arregla". No push or PR. Corrective RED d31665d and GREEN 5f55374 passed mechanical gate but independent recheck reproduced stale effort continuation while destination is loading or has no profile. Static investigation additionally found that handleSelectModel swallows RPC failure and coordinator latches success. Catalog/casing causes remain hypotheses until reproduced. New attempt MUST exercise actual selection handlers/RPC outcomes and project routing, not only coordinator callbacks that assign variables. Preserve pending Rust fixes and Cargo.toml changes; no edits/commits of those files.
 - **L5** User: "arregla". User explicitly selected "Sí, abandonar y corregir". Native abandonment of review-9dfd0d251cdd3cff committed (operator_disposition, actor pi), followed by inspect; no source commits deleted. Do not restart the unchanged abandoned candidate.
 - **D4 — Corrective attempt and real evidence.** Choice: append a fresh tests-only RED commit exercising current production code, then implement and independently verify once; preserve initial commits and mark their evidence invalid. Include this exact spec with force-add (only this file, no ignore-rule changes) to make the mandatory gate executable. Alternatives: rewrite initial history or skip gate; rejected. All correction work stays within existing expected surfaces plus this spec. New RED must run the same tests that turn GREEN, with no conditional missing-module assertions or private-state mutation. Meaningful integration coverage must test metadata/session readiness and runtime coordination, not a test-only request tracker.
 - **D1 — Sequence restoration after session initialization.** Choice: expose readiness for the current session context and coordinate one-time profile application with profile loading. Alternatives: blindly apply on every profile refresh, or fix backend defaults. Rationale: App.tsx:855-912 applies only manual events; useModels.ts:160-248 asynchronously restores defaults; independent effects can overwrite one another. Keep the fix frontend-scoped and reject stale project loads.

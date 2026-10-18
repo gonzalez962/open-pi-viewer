@@ -778,6 +778,8 @@ export const App: React.FC = () => {
   } = useModels({
     connectionStatus: state.connectionStatus,
     sessionId: state.sessionId,
+    projectId: projectsRegistry.activeProjectId ?? undefined,
+    cwd: config.workingDirectory,
     modelInfo: state.modelInfo,
     availableModels: state.availableModels,
     dispatch,
@@ -847,7 +849,11 @@ export const App: React.FC = () => {
   const handleManualSelectModel = useCallback(
     async (provider: string, modelId: string) => {
       profileRuntime.recordManualSelection();
-      await handleSelectModel(provider, modelId);
+      try {
+        await handleSelectModel(provider, modelId);
+      } catch (err) {
+        console.warn('Manual model selection failed:', err);
+      }
     },
     [profileRuntime, handleSelectModel]
   );
@@ -894,12 +900,16 @@ export const App: React.FC = () => {
 
       if (isConnected && !isBusy) {
         profileRuntime.resetManualSelection();
-        await applyProfileRuntime(activatedProfile, {
-          isConnected,
-          availableModels: state.availableModels,
-          onSelectModel: handleSelectModel,
-          onSelectThinkingLevel: handleSelectThinkingLevel,
-        });
+        try {
+          await applyProfileRuntime(activatedProfile, {
+            isConnected,
+            availableModels: state.availableModels,
+            onSelectModel: handleSelectModel,
+            onSelectThinkingLevel: handleSelectThinkingLevel,
+          });
+        } catch (err) {
+          console.warn('Profile activation failed to apply runtime model:', err);
+        }
       }
 
       void profilesHook.refreshProfiles();
@@ -916,12 +926,16 @@ export const App: React.FC = () => {
             data.profiles.find((p) => p.name === globalName && p.scope === 'global') ||
             data.profiles.find((p) => p.name === globalName);
           if (globalProf) {
-            await applyProfileRuntime(globalProf, {
-              isConnected,
-              availableModels: state.availableModels,
-              onSelectModel: handleSelectModel,
-              onSelectThinkingLevel: handleSelectThinkingLevel,
-            });
+            try {
+              await applyProfileRuntime(globalProf, {
+                isConnected,
+                availableModels: state.availableModels,
+                onSelectModel: handleSelectModel,
+                onSelectThinkingLevel: handleSelectThinkingLevel,
+              });
+            } catch (err) {
+              console.warn('Fallback profile activation failed to apply runtime model:', err);
+            }
           }
         }
       }

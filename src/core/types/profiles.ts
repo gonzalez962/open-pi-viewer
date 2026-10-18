@@ -510,12 +510,21 @@ export function resolveProfileModel(
       if (qualified === trimmed || `${m.provider}/${m.id}` === trimmed) {
         return { provider: m.provider, modelId: m.id };
       }
+      if (
+        qualified.toLowerCase() === trimmed.toLowerCase() ||
+        `${m.provider}/${m.id}`.toLowerCase() === trimmed.toLowerCase()
+      ) {
+        return { provider: m.provider, modelId: m.id };
+      }
     }
   }
 
   // 1b. Check if m.id directly matches
   for (const m of availableModels) {
     if (m.id && m.id === trimmed) {
+      return { provider: m.provider || '', modelId: m.id };
+    }
+    if (m.id && m.id.toLowerCase() === trimmed.toLowerCase()) {
       return { provider: m.provider || '', modelId: m.id };
     }
   }

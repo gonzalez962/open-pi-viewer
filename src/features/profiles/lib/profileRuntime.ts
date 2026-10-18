@@ -24,6 +24,7 @@ export interface RestorationDecisionInput {
   cwd?: string;
   currentContextKey: string;
   lastRestoredContextKey: string | null;
+  lastFailedContextKey?: string | null;
   manualSelectionContextKey: string | null;
   effectiveProfile: ProfileSummary | null;
 }
@@ -36,6 +37,7 @@ export type RestorationDecisionReason =
   | 'stale_cwd'
   | 'manual_selection_preserved'
   | 'already_restored'
+  | 'restore_failed'
   | 'no_profile'
   | 'ready';
 
@@ -59,6 +61,9 @@ export function decideProfileRestoration(input: RestorationDecisionInput): Resto
   }
   if (input.lastRestoredContextKey === input.currentContextKey) {
     return { shouldRestore: false, reason: 'already_restored' };
+  }
+  if (input.lastFailedContextKey === input.currentContextKey) {
+    return { shouldRestore: false, reason: 'restore_failed' };
   }
   if (input.loadedCwd !== undefined && input.cwd !== undefined && input.loadedCwd !== input.cwd) {
     return { shouldRestore: false, reason: 'stale_cwd' };
@@ -109,6 +114,7 @@ export async function restoreProfileRuntime(
 
 export interface ProfileRuntimeCoordinatorState {
   lastRestoredContextKey: string | null;
+  lastFailedContextKey: string | null;
   manualSelectionContextKey: string | null;
   isRestoring: boolean;
 }
@@ -116,6 +122,7 @@ export interface ProfileRuntimeCoordinatorState {
 export class ProfileRuntimeCoordinator {
   private state: ProfileRuntimeCoordinatorState = {
     lastRestoredContextKey: null,
+    lastFailedContextKey: null,
     manualSelectionContextKey: null,
     isRestoring: false,
   };
@@ -123,6 +130,7 @@ export class ProfileRuntimeCoordinator {
   private activeRunId = 0;
   private inFlightKey: string | null = null;
   private inFlightPromise: Promise<boolean> | null = null;
+  private currentContextKey: string | null = null;
 
   public getContextKey(cwd?: string, sessionId?: string | null): string {
     return createProfileRuntimeContextKey(cwd, sessionId);
@@ -131,6 +139,7 @@ export class ProfileRuntimeCoordinator {
   public recordManualSelection(cwd?: string, sessionId?: string | null): void {
     const key = this.getContextKey(cwd, sessionId);
     this.state.manualSelectionContextKey = key;
+    this.state.lastFailedContextKey = null;
     // Invalidate any active in-flight restoration continuation so effort is not set
     this.activeRunId++;
   }
@@ -139,6 +148,14 @@ export class ProfileRuntimeCoordinator {
     const key = this.getContextKey(cwd, sessionId);
     if (this.state.manualSelectionContextKey === key) {
       this.state.manualSelectionContextKey = null;
+    }
+    this.state.lastFailedContextKey = null;
+  }
+
+  public resetFailure(cwd?: string, sessionId?: string | null): void {
+    const key = this.getContextKey(cwd, sessionId);
+    if (this.state.lastFailedContextKey === key) {
+      this.state.lastFailedContextKey = null;
     }
   }
 
@@ -161,6 +178,16 @@ export class ProfileRuntimeCoordinator {
   }): Promise<boolean> {
     const contextKey = this.getContextKey(params.cwd, params.sessionId);
 
+    // Cancel in-flight restoration from an obsolete context whenever context changes,
+    // even if destination is loading metadata or has no profile.
+    if (this.inFlightKey !== null && this.inFlightKey !== contextKey) {
+      this.activeRunId++;
+      this.inFlightKey = null;
+      this.inFlightPromise = null;
+      this.state.isRestoring = false;
+    }
+    this.currentContextKey = contextKey;
+
     // Deduplicate concurrent in-flight restore calls for the same context key
     if (this.inFlightKey === contextKey && this.inFlightPromise) {
       return this.inFlightPromise;
@@ -175,6 +202,7 @@ export class ProfileRuntimeCoordinator {
       cwd: params.cwd,
       currentContextKey: contextKey,
       lastRestoredContextKey: this.state.lastRestoredContextKey,
+      lastFailedContextKey: this.state.lastFailedContextKey,
       manualSelectionContextKey: this.state.manualSelectionContextKey,
       effectiveProfile: params.effectiveProfile,
     });
@@ -189,6 +217,7 @@ export class ProfileRuntimeCoordinator {
         params.isProfilesLoaded !== false
       ) {
         this.state.lastRestoredContextKey = contextKey;
+        this.state.lastFailedContextKey = null;
       }
       return false;
     }
@@ -234,7 +263,14 @@ export class ProfileRuntimeCoordinator {
         }
 
         this.state.lastRestoredContextKey = contextKey;
+        this.state.lastFailedContextKey = null;
         return modelApplied;
+      } catch (err) {
+        // Record failure for this context if still active to avoid spinning infinite retries
+        if (this.activeRunId === runId) {
+          this.state.lastFailedContextKey = contextKey;
+        }
+        return false;
       } finally {
         if (this.inFlightKey === contextKey) {
           this.inFlightKey = null;
