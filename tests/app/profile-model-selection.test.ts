@@ -4,7 +4,6 @@ import test from 'node:test';
 import { executeModelSelection } from '@features/providers/lib/modelSelection';
 import {
   multiProjectChatReducer,
-  createInitialMultiProjectState,
   type MultiProjectChatState,
 } from '@core/reducer/multi-project';
 import type { ModelInfo, ThinkingLevel } from '@core/types/models';

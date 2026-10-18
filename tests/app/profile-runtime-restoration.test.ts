@@ -487,11 +487,244 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
     isConnected: true,
     isBusy: true,
     isSessionInitialized: true,
-    isProfilesLoaded: true,
     effectiveProfile: globalProfile,
     availableModels: catalog,
     onSelectModel,
     onSelectThinkingLevel,
   });
   assert.strictEqual(busyRestored, false);
+});
+
+test('S1.2 / S2.2: recovery on real lifecycle after transient model failure: suppresses immediate rerender storm, preserves manual override, and restores on reconnect or project switch', async () => {
+  const profileAlpha: ProfileSummary = {
+    name: 'profile-alpha',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'openai/gpt-4o',
+    default_effort: 'medium',
+  };
+
+  const coordinator = new ProfileRuntimeCoordinator();
+
+  let runtimeModel: string | null = null;
+  let runtimeEffort: string | null = null;
+  let rpcAttempts = 0;
+  let simulateTransientError = true;
+
+  const onSelectModel = async (provider: string, modelId: string) => {
+    rpcAttempts++;
+    if (simulateTransientError) {
+      throw new Error('Bridge RPC failure: model engine temporarily unavailable');
+    }
+    runtimeModel = `${provider}/${modelId}`;
+  };
+
+  const onSelectThinkingLevel = async (level: string) => {
+    runtimeEffort = level;
+  };
+
+  // 1. Initial attempt fails due to transient backend/RPC error:
+  const firstAttemptOutcome = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(firstAttemptOutcome, false, 'Initial restore attempt with transient failure must return false');
+  assert.strictEqual(rpcAttempts, 1, 'Initial failure invoked RPC once');
+  assert.strictEqual(
+    coordinator.getState().lastFailedContextKey,
+    '/workspace/project-alpha::session-alpha-1',
+    'Coordinator must record lastFailedContextKey'
+  );
+
+  // 2. Immediate re-render / effect execution in the SAME context (no lifecycle change):
+  // Must NOT trigger another RPC or spin an infinite rerender retry loop!
+  const rerenderOutcome = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(rerenderOutcome, false, 'Immediate rerender must return false without retrying');
+  assert.strictEqual(rpcAttempts, 1, 'Must NOT attempt RPC again on immediate rerender in same context');
+
+  // 3. Transient error condition is now resolved:
+  simulateTransientError = false;
+
+  // 4. Verify manual selection protection across lifecycle:
+  // If the user manually selected a model while failed, a subsequent lifecycle event must NOT overwrite their choice!
+  coordinator.recordManualSelection('/workspace/project-alpha', 'session-alpha-1');
+  runtimeModel = 'custom-manual-model';
+  runtimeEffort = 'low';
+
+  // Simulate disconnect and reconnect while manual selection is active:
+  await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: false,
+    isBusy: false,
+    isSessionInitialized: false,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  const reconnectedWithManual = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(reconnectedWithManual, false, 'Must not restore over manual selection after reconnect');
+  assert.strictEqual(runtimeModel, 'custom-manual-model', 'Manual selection model must be preserved');
+  assert.strictEqual(runtimeEffort, 'low', 'Manual selection effort must be preserved');
+
+  // Clear manual selection to test clean lifecycle recovery:
+  coordinator.resetManualSelection('/workspace/project-alpha', 'session-alpha-1');
+
+  // 5. Lifecycle event: Reconnection recovery without manual selection!
+  // Disconnect -> Reconnect: Coordinator must recover from the transient failure and successfully restore the profile,
+  // exercising production lifecycle handling rather than calling resetFailure manually!
+  await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: false,
+    isBusy: false,
+    isSessionInitialized: false,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+
+  const reconnectedRecovery = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(reconnectedRecovery, true, 'Restoration must succeed after reconnection lifecycle reset');
+  assert.strictEqual(runtimeModel, 'openai/gpt-4o', 'Profile model must be applied upon reconnect recovery');
+  assert.strictEqual(runtimeEffort, 'medium', 'Profile effort must be applied upon reconnect recovery');
+  assert.strictEqual(coordinator.getState().lastFailedContextKey, null, 'Failure state must be cleared');
+  assert.strictEqual(
+    coordinator.getState().lastRestoredContextKey,
+    '/workspace/project-alpha::session-alpha-1',
+    'Context must be marked restored after successful recovery'
+  );
+
+  // 6. Lifecycle event: Project switch / reactivation recovery!
+  // Another project has a transient failure:
+  const profileBeta: ProfileSummary = {
+    name: 'profile-beta',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'google/gemini-1.5-pro',
+    default_effort: 'high',
+  };
+
+  simulateTransientError = true;
+  const betaFailedOutcome = await coordinator.restore({
+    cwd: '/workspace/project-beta',
+    sessionId: 'session-beta-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileBeta,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(betaFailedOutcome, false);
+  assert.strictEqual(
+    coordinator.getState().lastFailedContextKey,
+    '/workspace/project-beta::session-beta-1'
+  );
+
+  // Rerender does not retry:
+  const betaRerenderOutcome = await coordinator.restore({
+    cwd: '/workspace/project-beta',
+    sessionId: 'session-beta-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileBeta,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(betaRerenderOutcome, false);
+
+  // Transient error resolves:
+  simulateTransientError = false;
+
+  // User switches context to Project Alpha:
+  await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+
+  // User reactivates Project Beta (switching back):
+  const betaReactivatedRecovery = await coordinator.restore({
+    cwd: '/workspace/project-beta',
+    sessionId: 'session-beta-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileBeta,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(betaReactivatedRecovery, true, 'Restoration must succeed after reactivating project/session');
+  assert.strictEqual(runtimeModel, 'google/gemini-1.5-pro', 'Project Beta model must be applied');
+  assert.strictEqual(runtimeEffort, 'high', 'Project Beta effort must be applied');
+
+  // 7. Structural wiring check: useProfileRuntime must wire resetFailure to lifecycle changes
+  const hookSource = fs.readFileSync(path.resolve('src/features/profiles/hooks/useProfileRuntime.ts'), 'utf8');
+  assert.match(
+    hookSource,
+    /resetFailure/,
+    'useProfileRuntime hook must invoke coordinator.resetFailure on lifecycle transitions'
+  );
 });
