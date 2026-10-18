@@ -34,6 +34,7 @@ export interface UseModelsResult {
   handleSelectModel: (provider: string, modelId: string) => Promise<void>;
   handleSelectThinkingLevel: (level: ThinkingLevel) => Promise<void>;
   handleRefreshModels: () => Promise<void>;
+  isSessionInitialized: boolean;
 }
 
 /**
@@ -51,6 +52,7 @@ export function useModels({
   dispatch,
 }: UseModelsOptions): UseModelsResult {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
+  const [isSessionInitialized, setIsSessionInitialized] = useState<boolean>(false);
   const enabledModelsRef = useRef<string[] | undefined>(undefined);
 
   const handleSelectModel = useCallback(
@@ -157,8 +159,12 @@ export function useModels({
 
   // Fetch available models, thinking levels, and session stats when connected.
   useEffect(() => {
-    if (connectionStatus !== 'connected') return;
+    if (connectionStatus !== 'connected') {
+      setIsSessionInitialized(false);
+      return;
+    }
 
+    setIsSessionInitialized(false);
     let isSubscribed = true;
 
     const loadSessionParams = async () => {
@@ -236,6 +242,10 @@ export function useModels({
           if (!isSubscribed) return;
           dispatch({ type: 'SET_THINKING_LEVEL', payload: { level: defaultEffort } });
         }
+
+        if (isSubscribed) {
+          setIsSessionInitialized(true);
+        }
       } catch (err) {
         console.warn('Failed to load session parameters:', err);
       }
@@ -253,5 +263,6 @@ export function useModels({
     handleSelectModel,
     handleSelectThinkingLevel,
     handleRefreshModels,
+    isSessionInitialized,
   };
 }

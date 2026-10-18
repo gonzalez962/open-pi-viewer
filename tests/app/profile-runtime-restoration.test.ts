@@ -5,17 +5,15 @@ import path from 'node:path';
 
 import {
   applyProfileRuntime,
-  PROFILE_ACTIVATED_EVENT,
   type ProfileSummary,
-  type ProfileActivationEventDetail,
-} from '../../src/core/types/profiles';
-import type { ModelInfo } from '../../src/core/types/models';
+} from '@core/types/profiles';
+import type { ModelInfo } from '@core/types/models';
 
-type ProfileRuntimeModule = typeof import('../../src/features/profiles/lib/profileRuntime');
+type ProfileRuntimeModule = typeof import('@features/profiles/lib/profileRuntime');
 
 async function loadProfileRuntimeModule(): Promise<ProfileRuntimeModule | null> {
   try {
-    return await import('../../src/features/profiles/lib/profileRuntime.js');
+    return await import('@features/profiles/lib/profileRuntime');
   } catch {
     return null;
   }

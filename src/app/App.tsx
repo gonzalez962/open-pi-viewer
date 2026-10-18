@@ -7,6 +7,7 @@ import {
   deleteMcpServerPi,
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
+import type { ThinkingLevel } from '@core/types/models';
 import { mapProvidersToArray, resolveModelDefaultThinkingLevel } from '@features/providers/providers';
 import { isConfigReady, validateConnectConfig } from '@features/settings/config';
 import { canRetryConnection, shouldShowHeaderStatus } from '@features/settings/connection';
@@ -50,6 +51,7 @@ import {
   type ProfileActivationEventDetail,
 } from '@core/types/profiles';
 import { useProfiles } from '@features/profiles/hooks/useProfiles';
+import { useProfileRuntime } from '@features/profiles/hooks/useProfileRuntime';
 import {
   TerminalOverlay,
   TerminateConfirmationModal,
@@ -772,6 +774,7 @@ export const App: React.FC = () => {
     handleSelectModel,
     handleSelectThinkingLevel,
     handleRefreshModels,
+    isSessionInitialized,
   } = useModels({
     connectionStatus: state.connectionStatus,
     sessionId: state.sessionId,
@@ -827,6 +830,34 @@ export const App: React.FC = () => {
     availableModels: state.availableModels,
   });
 
+  const profileRuntime = useProfileRuntime({
+    cwd: config.workingDirectory,
+    sessionId: state.sessionId,
+    isConnected,
+    isBusy,
+    isSessionInitialized,
+    effectiveProfile: profilesHook.effectiveProfile,
+    availableModels: state.availableModels,
+    onSelectModel: handleSelectModel,
+    onSelectThinkingLevel: handleSelectThinkingLevel,
+  });
+
+  const handleManualSelectModel = useCallback(
+    async (provider: string, modelId: string) => {
+      profileRuntime.recordManualSelection();
+      await handleSelectModel(provider, modelId);
+    },
+    [profileRuntime, handleSelectModel]
+  );
+
+  const handleManualSelectThinkingLevel = useCallback(
+    async (level: ThinkingLevel) => {
+      profileRuntime.recordManualSelection();
+      await handleSelectThinkingLevel(level);
+    },
+    [profileRuntime, handleSelectThinkingLevel]
+  );
+
   // Engram project detection for current working directory
   const {
     engramProject,
@@ -860,6 +891,7 @@ export const App: React.FC = () => {
       if (!activatedProfile) return;
 
       if (isConnected && !isBusy) {
+        profileRuntime.resetManualSelection();
         await applyProfileRuntime(activatedProfile, {
           isConnected,
           availableModels: state.availableModels,
@@ -1963,8 +1995,8 @@ export const App: React.FC = () => {
               attachedFiles={attachedFiles}
               onAttachFiles={addAttachedFiles}
               onAbort={handleAbort}
-              onSelectModel={handleSelectModel}
-              onSelectThinkingLevel={handleSelectThinkingLevel}
+              onSelectModel={handleManualSelectModel}
+              onSelectThinkingLevel={handleManualSelectThinkingLevel}
               mcpServers={projectMcp.servers}
               mcpActiveCount={projectMcp.activeCount}
               mcpTotalCount={projectMcp.totalCount}
