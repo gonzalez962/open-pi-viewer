@@ -85,6 +85,8 @@ import {
   handlePickDirectory,
   handleBrowseFilesystem,
   handleListWorkspaceDir,
+  handleCreateWorkspaceDir,
+  handleDeleteWorkspaceDir,
   handleReadWorkspaceFile,
   handleGetWorkspaceGitStatus,
   handleGetWorkspaceFileDiff,
@@ -277,6 +279,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetEngramObservations(args);
     case 'list_workspace_dir':
       return handleListWorkspaceDir(args);
+    case 'create_workspace_dir':
+      return handleCreateWorkspaceDir(args);
+    case 'delete_workspace_dir':
+      return handleDeleteWorkspaceDir(args);
     case 'read_workspace_file':
       return handleReadWorkspaceFile(args);
     case 'get_workspace_git_status':

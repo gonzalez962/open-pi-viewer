@@ -8,6 +8,8 @@ import {
   handleReadWorkspaceFile,
   handleListWorkspaceDir,
   handleGetWorkspaceGitStatus,
+  handleCreateWorkspaceDir,
+  handleDeleteWorkspaceDir,
 } from '@server/bridge/paths';
 import { execSync } from 'node:child_process';
 import {
@@ -471,6 +473,369 @@ test('server bridge: handleGetWorkspaceGitStatus classifies merge conflicts in m
     assert.ok(
       status.modifiedFiles.includes('conflict.txt'),
       'Merge conflict (UU) must be classified in modifiedFiles'
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir creates a folder in workspace root', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-'));
+  try {
+    const entry = handleCreateWorkspaceDir({
+      payload: {
+        workingDirectory: tempDir,
+        name: 'test-folder',
+      },
+    });
+
+    assert.strictEqual(entry.name, 'test-folder');
+    assert.strictEqual(entry.relativePath, 'test-folder');
+    assert.strictEqual(entry.isDir, true);
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'test-folder')), true);
+    assert.strictEqual(fs.statSync(path.join(tempDir, 'test-folder')).isDirectory(), true);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects empty or whitespace name', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-err-'));
+  try {
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '' } }),
+      /Folder name must be a non-empty string/i
+    );
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '   ' } }),
+      /Folder name must be a non-empty string/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects traversal segments and path separators', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-trav-'));
+  try {
+    // 1. .. traversal
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '..' } }),
+      /traversal|separator|invalid/i
+    );
+    // 2. nested slash / traversal
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: '../escaped' } }),
+      /traversal|separator|invalid/i
+    );
+    // 3. forward slash
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub/dir' } }),
+      /separator|invalid/i
+    );
+    // 4. backslash
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub\\dir' } }),
+      /separator|invalid/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: handleCreateWorkspaceDir rejects existing destinations without corrupting data', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-mkdir-exist-'));
+  try {
+    const existingFolder = path.join(tempDir, 'existing-folder');
+    fs.mkdirSync(existingFolder);
+    const existingFileInFolder = path.join(existingFolder, 'file.txt');
+    fs.writeFileSync(existingFileInFolder, 'untouched data');
+
+    assert.throws(
+      () => handleCreateWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'existing-folder' } }),
+      /already exists/i
+    );
+
+    // Existing data must remain untouched
+    assert.strictEqual(fs.existsSync(existingFileInFolder), true);
+    assert.strictEqual(fs.readFileSync(existingFileInFolder, 'utf8'), 'untouched data');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.1: Recursive deletion of directory and nested contents with valid confirmation
+test('server bridge S2.1: handleDeleteWorkspaceDir recursively deletes folder with nested files when confirmed', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-valid-'));
+  try {
+    const targetFolder = path.join(tempDir, 'to-delete');
+    const nestedSubdir = path.join(targetFolder, 'nested-sub');
+    fs.mkdirSync(nestedSubdir, { recursive: true });
+    fs.writeFileSync(path.join(targetFolder, 'root-file.txt'), 'file1');
+    fs.writeFileSync(path.join(nestedSubdir, 'child-file.txt'), 'file2');
+
+    const siblingFolder = path.join(tempDir, 'sibling-folder');
+    fs.mkdirSync(siblingFolder);
+    fs.writeFileSync(path.join(siblingFolder, 'sibling-file.txt'), 'keep me');
+
+    const result = handleDeleteWorkspaceDir({
+      payload: {
+        workingDirectory: tempDir,
+        name: 'to-delete',
+        confirmationName: 'to-delete',
+      },
+    });
+
+    assert.strictEqual(result.success, true);
+    assert.strictEqual(result.name, 'to-delete');
+    assert.strictEqual(fs.existsSync(targetFolder), false, 'Target folder must be completely deleted');
+    assert.strictEqual(fs.existsSync(siblingFolder), true, 'Sibling folder must remain untouched');
+    assert.strictEqual(
+      fs.readFileSync(path.join(siblingFolder, 'sibling-file.txt'), 'utf8'),
+      'keep me',
+      'Sibling files must remain intact'
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.2: Rejects when confirmation name does not match
+test('server bridge S2.2: handleDeleteWorkspaceDir rejects when confirmationName does not match name', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-mismatch-'));
+  try {
+    const targetFolder = path.join(tempDir, 'protected-folder');
+    fs.mkdirSync(targetFolder);
+    const secretFile = path.join(targetFolder, 'data.txt');
+    fs.writeFileSync(secretFile, 'preserve this data');
+
+    assert.throws(
+      () => {
+        handleDeleteWorkspaceDir({
+          payload: {
+            workingDirectory: tempDir,
+            name: 'protected-folder',
+            confirmationName: 'wrong-name',
+          },
+        });
+      },
+      /confirmation.*match/i,
+      'Must reject when confirmation name does not match'
+    );
+
+    assert.strictEqual(fs.existsSync(targetFolder), true);
+    assert.strictEqual(fs.existsSync(secretFile), true);
+    assert.strictEqual(fs.readFileSync(secretFile, 'utf8'), 'preserve this data');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.3: Rejects missing workingDirectory (no fallback to active cwd or process.cwd)
+test('server bridge S2.3: handleDeleteWorkspaceDir requires explicit workingDirectory and rejects empty/omitted parent', () => {
+  assert.throws(
+    () => {
+      handleDeleteWorkspaceDir({
+        payload: {
+          name: 'some-folder',
+          confirmationName: 'some-folder',
+        },
+      });
+    },
+    /workingDirectory|parent/i,
+    'Must reject missing workingDirectory'
+  );
+
+  assert.throws(
+    () => {
+      handleDeleteWorkspaceDir({
+        payload: {
+          workingDirectory: '   ',
+          name: 'some-folder',
+          confirmationName: 'some-folder',
+        },
+      });
+    },
+    /workingDirectory|parent/i,
+    'Must reject whitespace workingDirectory'
+  );
+});
+
+// S2.3: Rejects missing or non-directory parent
+test('server bridge S2.3: handleDeleteWorkspaceDir rejects non-existent parent or parent that is a file', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-parent-'));
+  try {
+    const dummyFile = path.join(tempDir, 'file.txt');
+    fs.writeFileSync(dummyFile, 'not a dir');
+
+    assert.throws(
+      () => {
+        handleDeleteWorkspaceDir({
+          payload: {
+            workingDirectory: path.join(tempDir, 'non-existent-parent'),
+            name: 'sub',
+            confirmationName: 'sub',
+          },
+        });
+      },
+      /not exist/i
+    );
+
+    assert.throws(
+      () => {
+        handleDeleteWorkspaceDir({
+          payload: {
+            workingDirectory: dummyFile,
+            name: 'sub',
+            confirmationName: 'sub',
+          },
+        });
+      },
+      /not a directory/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.3: Rejects invalid names, traversal, and path separators
+test('server bridge S2.3: handleDeleteWorkspaceDir rejects path separators, traversal, and invalid characters', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-invalid-'));
+  try {
+    // 1. Empty name
+    assert.throws(
+      () => handleDeleteWorkspaceDir({ payload: { workingDirectory: tempDir, name: '', confirmationName: '' } }),
+      /non-empty/i
+    );
+    // 2. Traversal ..
+    assert.throws(
+      () => handleDeleteWorkspaceDir({ payload: { workingDirectory: tempDir, name: '..', confirmationName: '..' } }),
+      /traversal|separator|invalid/i
+    );
+    // 3. Embedded traversal
+    assert.throws(
+      () => handleDeleteWorkspaceDir({ payload: { workingDirectory: tempDir, name: '../escaped', confirmationName: '../escaped' } }),
+      /traversal|separator|invalid/i
+    );
+    // 4. Forward slash
+    assert.throws(
+      () => handleDeleteWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub/dir', confirmationName: 'sub/dir' } }),
+      /separator|invalid/i
+    );
+    // 5. Backslash
+    assert.throws(
+      () => handleDeleteWorkspaceDir({ payload: { workingDirectory: tempDir, name: 'sub\\dir', confirmationName: 'sub\\dir' } }),
+      /separator|invalid/i
+    );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.3: Rejects when target is not a directory or target is missing
+test('server bridge S2.3: handleDeleteWorkspaceDir rejects when target does not exist or target is a file', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-target-'));
+  try {
+    const regularFile = path.join(tempDir, 'regular.txt');
+    fs.writeFileSync(regularFile, 'just a file');
+
+    // Missing target
+    assert.throws(
+      () => {
+        handleDeleteWorkspaceDir({
+          payload: {
+            workingDirectory: tempDir,
+            name: 'does-not-exist',
+            confirmationName: 'does-not-exist',
+          },
+        });
+      },
+      /not exist/i
+    );
+
+    // File target
+    assert.throws(
+      () => {
+        handleDeleteWorkspaceDir({
+          payload: {
+            workingDirectory: tempDir,
+            name: 'regular.txt',
+            confirmationName: 'regular.txt',
+          },
+        });
+      },
+      /not a directory/i
+    );
+    assert.strictEqual(fs.existsSync(regularFile), true, 'File must not be deleted');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+// S2.3: Rejects target symlink/junction and preserves external symlink targets
+test('server bridge S2.3: handleDeleteWorkspaceDir rejects symlink/junction target and preserves external symlink target contents', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-rmdir-symlink-'));
+  try {
+    const externalDir = path.join(tempDir, 'external-dir');
+    fs.mkdirSync(externalDir);
+    fs.writeFileSync(path.join(externalDir, 'external-file.txt'), 'precious external data');
+
+    const folderToDelete = path.join(tempDir, 'folder-to-delete');
+    fs.mkdirSync(folderToDelete);
+    fs.writeFileSync(path.join(folderToDelete, 'local-file.txt'), 'local file');
+
+    const symlinkType = process.platform === 'win32' ? 'junction' : 'dir';
+
+    // 1. Target itself is a symlink/junction -> MUST be rejected
+    const targetSymlink = path.join(tempDir, 'symlink-target');
+    let symlinkCreated = false;
+    try {
+      fs.symlinkSync(externalDir, targetSymlink, symlinkType);
+      symlinkCreated = true;
+    } catch {
+      // If OS environment does not permit symlink/junction creation, skip symlink creation check
+    }
+
+    if (symlinkCreated) {
+      assert.throws(
+        () => {
+          handleDeleteWorkspaceDir({
+            payload: {
+              workingDirectory: tempDir,
+              name: 'symlink-target',
+              confirmationName: 'symlink-target',
+            },
+          });
+        },
+        /symbolic link|junction/i,
+        'Must reject deletion of symlink/junction target'
+      );
+      assert.strictEqual(fs.existsSync(path.join(externalDir, 'external-file.txt')), true);
+    }
+
+    // 2. Symlink inside folderToDelete pointing to externalDir
+    // Deleting folderToDelete must delete the symlink without deleting externalDir contents!
+    const internalSymlink = path.join(folderToDelete, 'symlink-inside');
+    try {
+      fs.symlinkSync(externalDir, internalSymlink, symlinkType);
+    } catch {}
+
+    const delResult = handleDeleteWorkspaceDir({
+      payload: {
+        workingDirectory: tempDir,
+        name: 'folder-to-delete',
+        confirmationName: 'folder-to-delete',
+      },
+    });
+
+    assert.strictEqual(delResult.success, true);
+    assert.strictEqual(fs.existsSync(folderToDelete), false);
+    // External directory and its files must be completely untouched!
+    assert.strictEqual(fs.existsSync(externalDir), true);
+    assert.strictEqual(
+      fs.readFileSync(path.join(externalDir, 'external-file.txt'), 'utf8'),
+      'precious external data',
+      'External symlink target contents must be completely preserved!'
     );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

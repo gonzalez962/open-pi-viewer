@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
-import type { WorkspaceGitStatus, WorkspaceFileDiff } from '../../src/core/types/workspace';
+import type { WorkspaceGitStatus, WorkspaceFileDiff, WorkspaceEntry, DeleteWorkspaceDirResult } from '../../src/core/types/workspace';
 import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
@@ -279,6 +279,200 @@ export function handleListWorkspaceDir(args: any = {}) {
   });
 
   return results;
+}
+
+/**
+ * Creates a directory directly in the active workspace root.
+ * Enforces containment, path safety, and prevents overwriting existing paths.
+ */
+export function handleCreateWorkspaceDir(args: any = {}): WorkspaceEntry {
+  const payload = args.payload || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const name = payload.name;
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    throw new Error('Folder name must be a non-empty string');
+  }
+
+  const trimmedName = name.trim();
+
+  // Validate folder name: reject path separators and traversal segments
+  if (trimmedName.includes('/') || trimmedName.includes('\\')) {
+    throw new Error(`Invalid folder name: path separators are not permitted: ${name}`);
+  }
+
+  if (trimmedName === '.' || trimmedName === '..' || trimmedName.includes('..')) {
+    throw new Error(`Path traversal attempt detected in folder name: ${name}`);
+  }
+
+  // Windows invalid filename characters: < > : " / \ | ? * and null bytes
+  if (/[\x00-\x1f<>:"/\\|?*]/.test(trimmedName)) {
+    throw new Error(`Invalid characters in folder name: ${name}`);
+  }
+
+  const resolvedRoot = path.resolve(targetCwd);
+  if (!fs.existsSync(resolvedRoot)) {
+    throw new Error(`Workspace root does not exist: ${targetCwd}`);
+  }
+  const canonicalRoot = fs.realpathSync(resolvedRoot);
+
+  const fullDir = path.resolve(canonicalRoot, trimmedName);
+
+  // Containment check
+  const rootPrefix = canonicalRoot.endsWith(path.sep) ? canonicalRoot : canonicalRoot + path.sep;
+  const isContained =
+    fullDir.startsWith(rootPrefix) ||
+    (process.platform === 'win32' && fullDir.toLowerCase().startsWith(rootPrefix.toLowerCase()));
+
+  if (!isContained) {
+    throw new Error(`Access denied: path is outside workspace root: ${name}`);
+  }
+
+  if (fs.existsSync(fullDir)) {
+    throw new Error(`Destination already exists: ${trimmedName}`);
+  }
+
+  fs.mkdirSync(fullDir);
+
+  return {
+    name: trimmedName,
+    relativePath: trimmedName,
+    isDir: true,
+    size: null,
+    extension: null,
+  };
+}
+
+/**
+ * Recursively deletes entries without following symbolic links or junctions into external directories.
+ */
+function safeRemoveDirAll(targetPath: string): void {
+  const stat = fs.lstatSync(targetPath);
+  if (stat.isSymbolicLink()) {
+    if (process.platform === 'win32' && stat.isDirectory()) {
+      fs.rmdirSync(targetPath);
+    } else {
+      fs.unlinkSync(targetPath);
+    }
+    return;
+  }
+
+  if (stat.isDirectory()) {
+    const entries = fs.readdirSync(targetPath);
+    for (const entry of entries) {
+      const entryPath = path.join(targetPath, entry);
+      const entryStat = fs.lstatSync(entryPath);
+      if (entryStat.isSymbolicLink()) {
+        if (process.platform === 'win32' && entryStat.isDirectory()) {
+          fs.rmdirSync(entryPath);
+        } else {
+          fs.unlinkSync(entryPath);
+        }
+      } else if (entryStat.isDirectory()) {
+        safeRemoveDirAll(entryPath);
+      } else {
+        fs.unlinkSync(entryPath);
+      }
+    }
+    fs.rmdirSync(targetPath);
+  } else {
+    fs.unlinkSync(targetPath);
+  }
+}
+
+/**
+ * Recursively deletes a directory directly within an explicit parent directory.
+ * Enforces explicit parent directory, single child name, backend confirmation match,
+ * rejects symlink/junction targets, and preserves external symlink targets.
+ */
+export function handleDeleteWorkspaceDir(args: any = {}): DeleteWorkspaceDirResult {
+  const payload = args.payload || {};
+  const workingDirectory = payload.workingDirectory;
+  const name = payload.name;
+  const confirmationName = payload.confirmationName;
+
+  if (!workingDirectory || typeof workingDirectory !== 'string' || !workingDirectory.trim()) {
+    throw new Error('Explicit parent workingDirectory is required');
+  }
+
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    throw new Error('Folder name must be a non-empty string');
+  }
+
+  const trimmedName = name.trim();
+
+  // Validate folder name: reject path separators and traversal segments
+  if (trimmedName.includes('/') || trimmedName.includes('\\')) {
+    throw new Error(`Invalid folder name: path separators are not permitted: ${name}`);
+  }
+
+  if (trimmedName === '.' || trimmedName === '..' || trimmedName.includes('..')) {
+    throw new Error(`Path traversal attempt detected in folder name: ${name}`);
+  }
+
+  // Windows invalid filename characters: < > : " / \ | ? * and null bytes
+  if (/[\x00-\x1f<>:"/\\|?*]/.test(trimmedName)) {
+    throw new Error(`Invalid characters in folder name: ${name}`);
+  }
+
+  // Backend confirmation name validation
+  if (typeof confirmationName !== 'string' || confirmationName.trim() !== trimmedName) {
+    throw new Error(`Confirmation name does not match the target folder name: expected "${trimmedName}", got "${confirmationName}"`);
+  }
+
+  const resolvedCrossParent = resolveCrossPlatformCwd(workingDirectory.trim());
+  const resolvedParent = path.resolve(resolvedCrossParent);
+  if (!fs.existsSync(resolvedParent)) {
+    throw new Error(`Parent directory does not exist: ${workingDirectory}`);
+  }
+
+  const parentStat = fs.statSync(resolvedParent);
+  if (!parentStat.isDirectory()) {
+    throw new Error(`Parent path is not a directory: ${workingDirectory}`);
+  }
+
+  const canonicalParent = fs.realpathSync(resolvedParent);
+  const targetDir = path.resolve(canonicalParent, trimmedName);
+
+  // Containment check
+  if (targetDir === canonicalParent || path.dirname(targetDir) !== canonicalParent) {
+    throw new Error(`Access denied: invalid target path: ${name}`);
+  }
+
+  const parentPrefix = canonicalParent.endsWith(path.sep) ? canonicalParent : canonicalParent + path.sep;
+  const isContained =
+    targetDir.startsWith(parentPrefix) ||
+    (process.platform === 'win32' && targetDir.toLowerCase().startsWith(parentPrefix.toLowerCase()));
+
+  if (!isContained) {
+    throw new Error(`Access denied: path is outside parent directory: ${name}`);
+  }
+
+  let lstat: fs.Stats;
+  try {
+    lstat = fs.lstatSync(targetDir);
+  } catch (err: any) {
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) {
+      throw new Error(`Target folder does not exist: ${trimmedName}`);
+    }
+    throw err;
+  }
+
+  if (lstat.isSymbolicLink()) {
+    throw new Error(`Deletion rejected: target is a symbolic link or junction`);
+  }
+
+  if (!lstat.isDirectory()) {
+    throw new Error(`Target path is not a directory: ${trimmedName}`);
+  }
+
+  safeRemoveDirAll(targetDir);
+
+  return {
+    success: true,
+    name: trimmedName,
+    relativePath: trimmedName,
+  };
 }
 
 /** Return a unified patch for the web file viewer without changing Git state. */

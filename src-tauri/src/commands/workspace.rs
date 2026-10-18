@@ -55,6 +55,32 @@ pub struct ReadWorkspaceFilePayload {
     pub relative_path: String,
 }
 
+/// Payload for creating a new directory in the workspace root
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceDirPayload {
+    pub working_directory: Option<String>,
+    pub name: String,
+}
+
+/// Payload for deleting a directory under an explicit parent directory
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteWorkspaceDirPayload {
+    pub working_directory: String,
+    pub name: String,
+    pub confirmation_name: String,
+}
+
+/// Result of deleting a workspace directory
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteWorkspaceDirResult {
+    pub success: bool,
+    pub name: String,
+    pub relative_path: String,
+}
+
 /// Content and metadata of a workspace file
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -275,6 +301,29 @@ pub fn validate_and_resolve_child_path(
     Ok(canonical_child)
 }
 
+/// Validates a candidate new directory name for the workspace root
+pub fn validate_new_dir_name(name: &str) -> Result<String, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Folder name must be a non-empty string".to_string());
+    }
+
+    if trimmed == "." || trimmed == ".." || trimmed.contains("..") {
+        return Err(format!("Path traversal attempt detected in folder name: {}", name));
+    }
+
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Err(format!("Invalid folder name: path separators are not permitted: {}", name));
+    }
+
+    const INVALID_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+    if trimmed.chars().any(|c| INVALID_CHARS.contains(&c) || (c as u32) < 32) {
+        return Err(format!("Invalid characters in folder name: {}", name));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// List files and subdirectories of a workspace directory
 #[tauri::command]
 pub async fn list_workspace_dir(
@@ -476,6 +525,153 @@ pub async fn read_workspace_file(
         kind: Some("text".to_string()),
         mime_type: None,
         media_data_url: None,
+    })
+}
+
+/// Creates a new directory directly under the active workspace root.
+#[tauri::command]
+pub async fn create_workspace_dir(
+    payload: CreateWorkspaceDirPayload,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceEntry, String> {
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+    let sanitized_name = validate_new_dir_name(&payload.name)?;
+
+    let target_dir = canonical_root.join(&sanitized_name);
+
+    if !target_dir.starts_with(&canonical_root) {
+        return Err("Access denied: path is outside workspace root".to_string());
+    }
+
+    if target_dir.exists() {
+        return Err(format!("Destination already exists: {}", sanitized_name));
+    }
+
+    std::fs::create_dir(&target_dir)
+        .map_err(|e| format!("Failed to create directory '{}': {e}", sanitized_name))?;
+
+    Ok(WorkspaceEntry {
+        name: sanitized_name.clone(),
+        relative_path: sanitized_name,
+        is_dir: true,
+        size: None,
+        extension: None,
+    })
+}
+
+/// Recursively removes directory entries without following symbolic links into external targets.
+pub fn safe_remove_dir_all(path: &Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.is_symlink() {
+        #[cfg(windows)]
+        {
+            if meta.is_dir() {
+                std::fs::remove_dir(path)?;
+            } else {
+                std::fs::remove_file(path)?;
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::remove_file(path)?;
+        }
+        return Ok(());
+    }
+
+    if meta.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            let entry_meta = entry.file_type()?;
+            if entry_meta.is_symlink() {
+                #[cfg(windows)]
+                {
+                    if entry_path.is_dir() {
+                        std::fs::remove_dir(&entry_path)?;
+                    } else {
+                        std::fs::remove_file(&entry_path)?;
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    std::fs::remove_file(&entry_path)?;
+                }
+            } else if entry_meta.is_dir() {
+                safe_remove_dir_all(&entry_path)?;
+            } else {
+                std::fs::remove_file(&entry_path)?;
+            }
+        }
+        std::fs::remove_dir(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+/// Recursively deletes a directory directly within an explicit parent directory.
+/// Enforces explicit parent directory, single child name, backend confirmation match,
+/// rejects symlink/junction targets, and preserves external symlink targets.
+#[tauri::command]
+pub async fn delete_workspace_dir(
+    payload: DeleteWorkspaceDirPayload,
+    _state: State<'_, AppState>,
+) -> Result<DeleteWorkspaceDirResult, String> {
+    let parent_str = payload.working_directory.trim();
+    if parent_str.is_empty() {
+        return Err("Explicit parent workingDirectory is required".to_string());
+    }
+
+    let raw_parent = Path::new(parent_str);
+    if !raw_parent.exists() {
+        return Err(format!("Parent directory does not exist: {}", raw_parent.display()));
+    }
+    if !raw_parent.is_dir() {
+        return Err(format!("Parent path is not a directory: {}", raw_parent.display()));
+    }
+
+    let canonical_parent = dunce::canonicalize(raw_parent)
+        .map_err(|e| format!("Failed to canonicalize parent path '{}': {e}", raw_parent.display()))?;
+
+    let sanitized_name = validate_new_dir_name(&payload.name)?;
+
+    if payload.confirmation_name.trim() != sanitized_name {
+        return Err(format!(
+            "Confirmation name does not match the target folder name: expected \"{}\", got \"{}\"",
+            sanitized_name,
+            payload.confirmation_name.trim()
+        ));
+    }
+
+    let target_dir = canonical_parent.join(&sanitized_name);
+
+    if !target_dir.starts_with(&canonical_parent) || target_dir == canonical_parent {
+        return Err("Access denied: path is outside parent directory".to_string());
+    }
+
+    let symlink_meta = match std::fs::symlink_metadata(&target_dir) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("Target folder does not exist: {}", sanitized_name));
+        }
+        Err(e) => return Err(format!("Failed to read target metadata: {e}")),
+    };
+
+    if symlink_meta.is_symlink() {
+        return Err("Deletion rejected: target is a symbolic link or junction".to_string());
+    }
+
+    if !symlink_meta.is_dir() {
+        return Err(format!("Target path is not a directory: {}", sanitized_name));
+    }
+
+    safe_remove_dir_all(&target_dir)
+        .map_err(|e| format!("Failed to delete directory '{}': {e}", sanitized_name))?;
+
+    Ok(DeleteWorkspaceDirResult {
+        success: true,
+        name: sanitized_name.clone(),
+        relative_path: sanitized_name,
     })
 }
 
@@ -841,6 +1037,52 @@ mod tests {
         assert!(file_diff_json.contains("\"diff\":\"+fn main() {}\\n\""));
         let deserialized_diff: WorkspaceFileDiff = serde_json::from_str(&file_diff_json).unwrap();
         assert_eq!(deserialized_diff, file_diff);
+
+        // 10. Folder creation validation tests
+        assert!(validate_new_dir_name("").is_err());
+        assert!(validate_new_dir_name("   ").is_err());
+        assert!(validate_new_dir_name("..").is_err());
+        assert!(validate_new_dir_name("../escape").is_err());
+        assert!(validate_new_dir_name("nested/folder").is_err());
+        assert!(validate_new_dir_name("nested\\folder").is_err());
+        assert!(validate_new_dir_name("bad:name").is_err());
+        assert!(validate_new_dir_name("bad*name").is_err());
+        assert_eq!(validate_new_dir_name("valid-folder").unwrap(), "valid-folder");
+        assert_eq!(validate_new_dir_name("  trimmed  ").unwrap(), "trimmed");
+
+        // Payload serde test
+        let create_payload = CreateWorkspaceDirPayload {
+            working_directory: Some("C:/test".to_string()),
+            name: "new-dir".to_string(),
+        };
+        let payload_json = serde_json::to_string(&create_payload).unwrap();
+        assert!(payload_json.contains("\"workingDirectory\":\"C:/test\""));
+        assert!(payload_json.contains("\"name\":\"new-dir\""));
+        let deserialized_create: CreateWorkspaceDirPayload = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(deserialized_create, create_payload);
+
+        // Delete payload & result serde test
+        let delete_payload = DeleteWorkspaceDirPayload {
+            working_directory: "C:/test".to_string(),
+            name: "target-dir".to_string(),
+            confirmation_name: "target-dir".to_string(),
+        };
+        let delete_payload_json = serde_json::to_string(&delete_payload).unwrap();
+        assert!(delete_payload_json.contains("\"workingDirectory\":\"C:/test\""));
+        assert!(delete_payload_json.contains("\"name\":\"target-dir\""));
+        assert!(delete_payload_json.contains("\"confirmationName\":\"target-dir\""));
+        let deserialized_del_payload: DeleteWorkspaceDirPayload = serde_json::from_str(&delete_payload_json).unwrap();
+        assert_eq!(deserialized_del_payload, delete_payload);
+
+        let delete_result = DeleteWorkspaceDirResult {
+            success: true,
+            name: "target-dir".to_string(),
+            relative_path: "target-dir".to_string(),
+        };
+        let delete_result_json = serde_json::to_string(&delete_result).unwrap();
+        assert!(delete_result_json.contains("\"success\":true"));
+        let deserialized_del_res: DeleteWorkspaceDirResult = serde_json::from_str(&delete_result_json).unwrap();
+        assert_eq!(deserialized_del_res, delete_result);
     }
 
 }

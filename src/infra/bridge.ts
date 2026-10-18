@@ -21,6 +21,9 @@ import type {
   WorkspaceEntry,
   WorkspaceFileContent,
   ReadWorkspaceFilePayload,
+  CreateWorkspaceDirPayload,
+  DeleteWorkspaceDirPayload,
+  DeleteWorkspaceDirResult,
   WorkspaceGitStatus,
   WorkspaceFileDiff,
 } from '@core/types/workspace';
@@ -495,6 +498,35 @@ export async function readWorkspaceFilePi(
   };
 
   return await invokeFn<WorkspaceFileContent>('read_workspace_file', { payload });
+}
+
+/**
+ * Create a new directory directly in the workspace root via Tauri IPC.
+ */
+export async function createWorkspaceDirPi(
+  payload: CreateWorkspaceDirPayload,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<WorkspaceEntry> {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
+    throw new Error('Desktop runtime unavailable: cannot create directory outside Tauri');
+  }
+
+  return await invokeFn<WorkspaceEntry>('create_workspace_dir', { payload });
+}
+
+/**
+ * Recursively delete a directory directly inside an explicit parent directory via Tauri/web IPC.
+ * Enforces containment, path safety, and explicit confirmation match.
+ */
+export async function deleteWorkspaceDirPi(
+  payload: DeleteWorkspaceDirPayload,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<DeleteWorkspaceDirResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
+    throw new Error('Desktop runtime unavailable: cannot delete directory outside Tauri');
+  }
+
+  return await invokeFn<DeleteWorkspaceDirResult>('delete_workspace_dir', { payload });
 }
 
 /**
