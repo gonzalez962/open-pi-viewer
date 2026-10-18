@@ -441,3 +441,47 @@ test('T2 S5: clone failure cleans up only reserved destination and sanitizes err
     setProcessRunnerForTest(null);
   }
 });
+
+test('T2 S5: clone with authenticated gh falls back to anonymous git clone if gh fails (e.g. Linux SSH/keyring issues)', async (t) => {
+  const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-fallback-test-'));
+  t.after(() => {
+    fs.rmSync(parentDir, { recursive: true, force: true });
+  });
+
+  let ghCalled = false;
+  let gitFallbackCalled = false;
+
+  setProcessRunnerForTest(async (file, args, _options) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      // Authenticated gh CLI
+      return { stdout: 'Logged in to github.com as testuser', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('repo') && args.includes('clone')) {
+      ghCalled = true;
+      // Simulate Linux gh failure (e.g. SSH permission denied or keyring failure)
+      return { stdout: '', stderr: 'git@github.com: Permission denied (publickey).', exitCode: 1 };
+    }
+    if (file === 'git' && args.includes('clone')) {
+      gitFallbackCalled = true;
+      // Fallback succeeds anonymously for public repository
+      return { stdout: 'Cloned successfully via anonymous HTTPS', stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    const res = await cloneGithubRepository({
+      repository: 'octocat/Hello-World',
+      parentPath: parentDir,
+    });
+
+    assert.ok(ghCalled, 'Must have attempted gh repo clone first');
+    assert.ok(gitFallbackCalled, 'Must have fallen back to anonymous git clone');
+    assert.strictEqual(res.path, path.join(parentDir, 'Hello-World'));
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});

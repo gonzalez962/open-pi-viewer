@@ -188,10 +188,24 @@ export function sanitizeCloneErrorMessage(err: unknown): string {
     if (message.includes('timeout') || message.includes('timed out')) {
       return 'projects.github_clone.error_timeout';
     }
+    if (
+      message.includes('destination directory') ||
+      message.includes('cannot create directory') ||
+      message.includes('destination permission denied')
+    ) {
+      return 'projects.github_clone.error_destination_permission';
+    }
   } else if (typeof err === 'string') {
     const message = err.toLowerCase();
     if (message.includes('timeout') || message.includes('timed out')) {
       return 'projects.github_clone.error_timeout';
+    }
+    if (
+      message.includes('destination directory') ||
+      message.includes('cannot create directory') ||
+      message.includes('destination permission denied')
+    ) {
+      return 'projects.github_clone.error_destination_permission';
     }
   }
   return 'projects.github_clone.error_failed';

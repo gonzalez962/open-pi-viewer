@@ -246,7 +246,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     <>
       <div
         className="github-clone-overlay"
-        onClick={isSubmitting ? undefined : handleClose}
         role="dialog"
         aria-modal="true"
         aria-labelledby="github-clone-title"

@@ -787,6 +787,7 @@
   "projects.github_clone.error_repo_required": "Proporciona una identidad de repositorio de GitHub válida.",
   "projects.github_clone.error_repo_invalid": "Formato de repositorio inválido. Usa owner/repo o https://github.com/owner/repo.",
   "projects.github_clone.error_destination_required": "Por favor elige un directorio de destino.",
+  "projects.github_clone.error_destination_permission": "Permiso denegado en el directorio de destino. Por favor elige un directorio donde tengas permisos de escritura.",
   "projects.github_clone.error_failed": "Error al clonar el repositorio. Verifica el nombre del repositorio y los permisos.",
   "projects.github_clone.error_timeout": "La operación de clonación agotó el tiempo de espera. Inténtalo de nuevo.",
   "projects.github_clone.error_generic": "Ocurrió un error al clonar el repositorio.",

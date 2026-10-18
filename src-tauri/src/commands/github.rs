@@ -189,7 +189,13 @@ pub fn reserve_destination_directory(
         return Err("Invalid destination directory".into());
     }
     let target = canonical_parent.join(repo_name);
-    std::fs::create_dir(&target).map_err(|_| "Destination unavailable or already exists".to_string())?;
+    std::fs::create_dir(&target).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            "Permission denied: cannot create directory".to_string()
+        } else {
+            "Destination unavailable or already exists".to_string()
+        }
+    })?;
     Ok(target)
 }
 
@@ -218,6 +224,7 @@ pub fn build_child_git_env(
     let mut configs = vec![
         ("credential.helper", String::new()), ("http.followRedirects", "false".into()),
         ("init.templateDir", String::new()),
+        ("safe.directory", "*".into()),
     ];
     if let Some(t) = token.filter(|t| !t.trim().is_empty()) {
         let encoded = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{}", t.trim()));
@@ -237,9 +244,18 @@ pub fn build_child_git_env(
 pub fn sanitize_error_message(raw_message: &str, token: Option<&str>) -> String {
     let _ = token;
     let message = raw_message.to_lowercase();
-    if message.contains("timed out") { "Cloning timed out after 120 seconds".into() }
-    else if message.contains("authentication") || message.contains("repository not found") { "Repository not found or access denied".into() }
-    else { "Clone operation failed".into() }
+    if message.contains("cannot write to destination directory")
+        || message.contains("cannot create directory")
+        || (message.contains("permission denied") && (message.contains("destination") || message.contains("mkdir") || message.contains("work tree")))
+    {
+        "Permission denied on destination directory".into()
+    } else if message.contains("timed out") {
+        "Cloning timed out after 120 seconds".into()
+    } else if message.contains("authentication") || message.contains("repository not found") || message.contains("permission denied") {
+        "Repository not found or access denied".into()
+    } else {
+        "Clone operation failed".into()
+    }
 }
 
 pub fn parse_gh_username(output: &str) -> Option<String> {
@@ -294,7 +310,36 @@ pub async fn clone_github_repository_impl(
         vec!["clone".into(), "--".into(), repo.clone_url, target.to_string_lossy().into_owned()]
     };
     let spec = CommandSpec { program: if auth.authenticated { "gh" } else { "git" }.into(), args, envs, env_removes, timeout: CLONE_TIMEOUT };
-    match runner.run_command(spec).await {
+    let mut run_result = runner.run_command(spec).await;
+
+    // Fallback: If gh repo clone failed and no explicit token was provided, attempt anonymous
+    // git clone directly over HTTPS. In Linux, gh CLI frequently fails in headless/daemon
+    // environments or due to SSH/keyring configs, but public repositories can always be cloned
+    // cleanly without credentials via git clone.
+    if auth.authenticated && token.is_none() && run_result.as_ref().map_or(true, |o| !o.success) {
+        if let Ok(entries) = std::fs::read_dir(&target) {
+            for entry in entries.flatten() {
+                let _ = std::fs::remove_dir_all(entry.path()).or_else(|_| std::fs::remove_file(entry.path()));
+            }
+        }
+        if let Ok((mut fallback_envs, fallback_removes)) = build_child_git_env(None, true) {
+            fallback_envs.push(("GIT_CEILING_DIRECTORIES".into(), parent.to_string_lossy().into_owned()));
+            fallback_envs.push(("GIT_CLONE_CWD".into(), target.to_string_lossy().into_owned()));
+            let fallback_spec = CommandSpec {
+                program: "git".into(),
+                args: vec!["clone".into(), "--".into(), repo.clone_url.clone(), target.to_string_lossy().into_owned()],
+                envs: fallback_envs,
+                env_removes: fallback_removes,
+                timeout: CLONE_TIMEOUT,
+            };
+            let fallback_result = runner.run_command(fallback_spec).await;
+            if fallback_result.as_ref().map_or(false, |o| o.success) {
+                run_result = fallback_result;
+            }
+        }
+    }
+
+    match run_result {
         Ok(output) if output.success => Ok(CloneGithubRepositoryResult { path: target.to_string_lossy().into_owned() }),
         result => {
             let _ = std::fs::remove_dir_all(&target);

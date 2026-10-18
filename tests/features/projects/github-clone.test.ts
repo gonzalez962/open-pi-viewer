@@ -14,6 +14,7 @@ import {
   getSavedGitHubPat,
   saveGitHubPat,
   clearSavedGitHubPat,
+  sanitizeCloneErrorMessage,
   GITHUB_PAT_STORAGE_KEY,
 } from '@features/projects/github-clone';
 import { GitHubCloneModal } from '@features/projects/components/GitHubCloneModal';
@@ -780,4 +781,50 @@ test('GitHubCloneModal: modal overlay ignores click during pending submission', 
     overlay.props.onClick();
   }
   assert.strictEqual(closed, false, 'Clicking overlay during submission must not trigger onClose');
+});
+
+test('GitHubCloneModal: clicking modal overlay when idle does not trigger onClose', () => {
+  let closed = false;
+  let capturedTree: any;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = GitHubCloneModal({
+        isOpen: true,
+        initialIsSubmitting: false,
+        locale: 'en',
+        onClose: () => {
+          closed = true;
+        },
+        onCloneSuccess: () => {},
+      });
+      return capturedTree;
+    })
+  );
+
+  const overlay = findElement(
+    capturedTree,
+    (el) =>
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('github-clone-overlay')
+  );
+
+  assert.ok(overlay, 'Overlay must exist');
+  assert.strictEqual(overlay.props.onClick, undefined, 'Overlay must not have onClick to avoid accidental dismissal');
+  assert.strictEqual(closed, false, 'Modal must remain open when clicking outside/overlay');
+});
+
+test('sanitizeCloneErrorMessage: maps destination directory permission errors to localized destination permission key', () => {
+  assert.strictEqual(
+    sanitizeCloneErrorMessage(new Error('Permission denied on destination directory')),
+    'projects.github_clone.error_destination_permission'
+  );
+  assert.strictEqual(
+    sanitizeCloneErrorMessage('Permission denied: cannot create directory "/opt/repo"'),
+    'projects.github_clone.error_destination_permission'
+  );
+  assert.strictEqual(
+    sanitizeCloneErrorMessage('destination permission denied'),
+    'projects.github_clone.error_destination_permission'
+  );
 });
