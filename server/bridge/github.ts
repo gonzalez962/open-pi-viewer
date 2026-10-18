@@ -2,6 +2,7 @@ import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
+import { getAgnosticExecEnv } from '../config';
 
 // ---------------------------------------------------------------------------
 // Authorization & Security Boundary
@@ -341,7 +342,7 @@ export function buildChildGitEnv(
   token?: string,
   options: BuildChildGitEnvOptions = {}
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...getAgnosticExecEnv() };
 
   // 1. Scrub inherited GIT_CONFIG_*, GIT_TRACE*, GIT_DIR, GIT_WORK_TREE, and other repo overrides
   // to prevent ambient overrides and prevent PAT leakage via Git trace diagnostics
@@ -405,6 +406,8 @@ export function buildChildGitEnv(
     { key: 'init.templateDir', value: '' },
     // Neutralize ambient URL rewrites (e.g. url.*.insteadOf rewriting https to ssh or evil URLs)
     { key: 'url.https://github.com/.insteadOf', value: 'https://github.com/' },
+    // Prevent dubious ownership failures on Linux/WSL/Docker shared directories
+    { key: 'safe.directory', value: '*' },
   ];
 
   // If PAT is provided, inject url-scoped HTTP Basic extraheader
@@ -455,6 +458,14 @@ export function sanitizeErrorMessage(rawMessage: string, token?: string): string
   // Normalize common git/gh error patterns to clean generic messages
   const lower = sanitized.toLowerCase();
   if (
+    lower.includes('cannot write to destination directory') ||
+    lower.includes('cannot create directory') ||
+    lower.includes('destination permission denied') ||
+    (lower.includes('permission denied') && (lower.includes('destination') || lower.includes('mkdir') || lower.includes('work tree')))
+  ) {
+    return 'Permission denied on destination directory';
+  }
+  if (
     lower.includes('repository not found') ||
     lower.includes('could not read username') ||
     lower.includes('authentication failed') ||
@@ -492,10 +503,12 @@ export function parseGhUsername(output: string): string | undefined {
 
 export async function getGithubAuthStatus(): Promise<GithubAuthStatus> {
   const runner = getRunner();
+  const env = getAgnosticExecEnv();
 
   // 1. Probe gh binary existence
   try {
     const versionRes = await runner('gh', ['--version'], {
+      env,
       timeout: PROBE_TIMEOUT_MS,
     });
     if (versionRes.exitCode !== 0) {
@@ -508,6 +521,7 @@ export async function getGithubAuthStatus(): Promise<GithubAuthStatus> {
   // 2. Probe gh authentication status
   try {
     const authRes = await runner('gh', ['auth', 'status'], {
+      env,
       timeout: PROBE_TIMEOUT_MS,
     });
     const authenticated = authRes.exitCode === 0;
@@ -550,7 +564,16 @@ export async function cloneGithubRepository(
     if (!parentStat.isDirectory()) {
       throw new Error(`Parent path "${resolvedParent}" is not a directory`);
     }
+    // Check write permissions on parent directory
+    try {
+      fs.accessSync(resolvedParent, fs.constants.W_OK);
+    } catch {
+      throw new Error(`Permission denied: cannot write to destination directory "${resolvedParent}"`);
+    }
   } catch (err: any) {
+    if (err.message?.includes('Permission denied')) {
+      throw err;
+    }
     if (err.code === 'ENOENT' || err.message?.includes('not a directory')) {
       throw new Error(`Parent directory does not exist or is not a directory: "${resolvedParent}"`);
     }
@@ -583,6 +606,9 @@ export async function cloneGithubRepository(
   } catch (err: any) {
     if (err.code === 'EEXIST') {
       throw new Error(`Destination path already exists: "${targetDir}"`);
+    }
+    if (err.code === 'EACCES' || err.code === 'EPERM') {
+      throw new Error(`Permission denied: cannot create directory "${targetDir}"`);
     }
     throw err;
   }
@@ -629,11 +655,40 @@ export async function cloneGithubRepository(
       }
     }
 
-    const runResult = await runner(tool, toolArgs, {
+    let runResult = await runner(tool, toolArgs, {
       cwd: targetDir,
       env: childEnv,
       timeout: CLONE_TIMEOUT_MS,
     });
+
+    // Fallback: If gh repo clone failed and no explicit PAT was given, attempt anonymous
+    // git clone directly over HTTPS. In Linux, gh CLI frequently fails in headless/daemon
+    // environments, missing keyrings, or when git_protocol is set to ssh, but public repositories
+    // can always be cloned cleanly without credentials via git clone.
+    if (runResult.exitCode !== 0 && tool === 'gh' && !hasExplicitToken) {
+      try {
+        const entries = fs.readdirSync(targetDir);
+        for (const entry of entries) {
+          fs.rmSync(path.join(targetDir, entry), { recursive: true, force: true });
+        }
+      } catch {}
+
+      const fallbackEnv = buildChildGitEnv(undefined, {
+        isAnonymous: true,
+        isolateConfig: true,
+        ceilingDir,
+      });
+
+      const fallbackResult = await runner('git', ['clone', '--', canonicalHttpsUrl, targetDir], {
+        cwd: targetDir,
+        env: fallbackEnv,
+        timeout: CLONE_TIMEOUT_MS,
+      });
+
+      if (fallbackResult.exitCode === 0) {
+        runResult = fallbackResult;
+      }
+    }
 
     if (runResult.exitCode !== 0) {
       const combinedOutput = `${runResult.stderr}\n${runResult.stdout}`;
