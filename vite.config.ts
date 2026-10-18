@@ -39,6 +39,16 @@ export default defineConfig(({ mode = "development" }) => {
     build: {
       chunkSizeWarningLimit: 600,
       rollupOptions: {
+        onwarn(warning, warn) {
+          // Suppress xterm ESM interop warnings caused by CJS/ESM dual exports
+          if (
+            (warning.code === 'MISSING_EXPORT' || warning.code === 'NON_EXISTENT_EXPORT') &&
+            /@xterm[\\/](xterm|addon-fit)/.test(warning.message || warning.loc?.file || '')
+          ) {
+            return;
+          }
+          warn(warning);
+        },
         output: {
           manualChunks(id) {
             if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {

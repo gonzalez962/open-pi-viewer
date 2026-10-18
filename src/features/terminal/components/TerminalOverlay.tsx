@@ -8,9 +8,9 @@ import type { TerminalStatus } from '../types';
 
 // Resolve CJS/ESM interop safely for Node tests and browser bundling
 const XTermConstructor =
-  (xtermModule as any).Terminal || (xtermModule as any).default?.Terminal;
+  (xtermModule as Record<string, any>).Terminal || (xtermModule as Record<string, any>)['default']?.Terminal || (xtermModule as Record<string, any>)['default'];
 const FitAddonConstructor =
-  (fitModule as any).FitAddon || (fitModule as any).default?.FitAddon;
+  (fitModule as Record<string, any>).FitAddon || (fitModule as Record<string, any>)['default']?.FitAddon || (fitModule as Record<string, any>)['default'];
 
 export interface TerminalOverlayProps {
   isOpen: boolean;
