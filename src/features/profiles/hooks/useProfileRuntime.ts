@@ -11,6 +11,8 @@ export interface UseProfileRuntimeOptions {
   isConnected: boolean;
   isBusy: boolean;
   isSessionInitialized: boolean;
+  isProfilesLoaded?: boolean;
+  loadedCwd?: string;
   effectiveProfile: ProfileSummary | null;
   availableModels: ModelInfo[];
   onSelectModel: (provider: string, modelId: string) => Promise<void>;
@@ -36,6 +38,8 @@ export function useProfileRuntime(options: UseProfileRuntimeOptions): UseProfile
     isConnected,
     isBusy,
     isSessionInitialized,
+    isProfilesLoaded,
+    loadedCwd,
     effectiveProfile,
     availableModels,
     onSelectModel,
@@ -49,6 +53,8 @@ export function useProfileRuntime(options: UseProfileRuntimeOptions): UseProfile
       isConnected,
       isBusy,
       isSessionInitialized,
+      isProfilesLoaded,
+      loadedCwd,
       effectiveProfile,
       availableModels,
       onSelectModel,
@@ -61,6 +67,8 @@ export function useProfileRuntime(options: UseProfileRuntimeOptions): UseProfile
     isConnected,
     isBusy,
     isSessionInitialized,
+    isProfilesLoaded,
+    loadedCwd,
     effectiveProfile,
     availableModels,
     onSelectModel,

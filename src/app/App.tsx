@@ -836,6 +836,8 @@ export const App: React.FC = () => {
     isConnected,
     isBusy,
     isSessionInitialized,
+    isProfilesLoaded: profilesHook.isProfilesLoaded,
+    loadedCwd: profilesHook.loadedCwd,
     effectiveProfile: profilesHook.effectiveProfile,
     availableModels: state.availableModels,
     onSelectModel: handleSelectModel,

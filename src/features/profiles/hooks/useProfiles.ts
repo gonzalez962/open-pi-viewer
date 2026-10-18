@@ -49,6 +49,8 @@ export interface UseProfilesResult {
   effectiveActiveProfile: string | null;
   effectiveProfile: ProfileSummary | null;
   effectiveScope: 'project' | 'global' | null;
+  loadedCwd: string | undefined;
+  isProfilesLoaded: boolean;
   categories: AgentCategory[];
   allAgents: string[];
   agentMeta: Record<string, DiscoveredAgentMeta>;
@@ -279,6 +281,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
   const customProvidersRef = useRef<CustomProvidersMap>({});
   const requestIdRef = useRef(0);
+  const [loadedCwd, setLoadedCwd] = useState<string | undefined>(undefined);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -331,6 +334,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       setAllAgents(profilesData.allAgents || []);
       setAgentMeta(profilesData.agentMeta || {});
       setAvailableModels(enrichedModels);
+      setLoadedCwd(requestCwd);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -672,7 +676,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   );
 
   const effectiveProfile = useMemo(() => {
-    if (!effectiveActiveProfile) return null;
+    if (!effectiveActiveProfile || loadedCwd !== cwd) return null;
     return (
       profiles.find(
         (p) =>
@@ -682,7 +686,9 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       profiles.find((p) => p.name === effectiveActiveProfile) ||
       null
     );
-  }, [profiles, effectiveActiveProfile, effectiveScope]);
+  }, [profiles, effectiveActiveProfile, effectiveScope, loadedCwd, cwd]);
+
+  const isProfilesLoaded = !isLoading && loadedCwd === cwd;
 
   return {
     profiles,
@@ -691,6 +697,8 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
     effectiveActiveProfile,
     effectiveProfile,
     effectiveScope,
+    loadedCwd,
+    isProfilesLoaded,
     categories,
     allAgents,
     agentMeta,
