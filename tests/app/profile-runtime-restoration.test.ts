@@ -107,6 +107,51 @@ test('S1.1: profile model and effort restored after view reload and initializati
   assert.strictEqual(currentModel, 'openrouter/anthropic/claude-3.5-sonnet');
   assert.strictEqual(currentEffort, 'high');
 
+  // 5. Model selection failure must NOT latch success, and must not spin infinite retries
+  const failingCoordinator = new ProfileRuntimeCoordinator();
+  let rpcAttempts = 0;
+  const failingOnSelectModel = async () => {
+    rpcAttempts++;
+    throw new Error('Bridge RPC failure: set_model failed');
+  };
+  const failingOnSelectThinkingLevel = async () => {};
+
+  const failedOutcome = await failingCoordinator.restore({
+    cwd: '/workspace/project-fail',
+    sessionId: 'session-fail-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: activeProfile,
+    availableModels: catalog,
+    onSelectModel: failingOnSelectModel,
+    onSelectThinkingLevel: failingOnSelectThinkingLevel,
+  });
+  assert.strictEqual(failedOutcome, false, 'Failed restoration must return false');
+  assert.strictEqual(
+    failingCoordinator.getState().lastRestoredContextKey,
+    null,
+    'Failed restoration must not latch context as restored'
+  );
+  assert.strictEqual(rpcAttempts, 1, 'Initial failure attempted once');
+
+  // Re-evaluation on subsequent render must NOT retry indefinitely
+  const retryOutcome = await failingCoordinator.restore({
+    cwd: '/workspace/project-fail',
+    sessionId: 'session-fail-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: activeProfile,
+    availableModels: catalog,
+    onSelectModel: failingOnSelectModel,
+    onSelectThinkingLevel: failingOnSelectThinkingLevel,
+  });
+  assert.strictEqual(retryOutcome, false);
+  assert.strictEqual(rpcAttempts, 1, 'Restoration must not spin infinite effect/RPC retries after failure');
+
   // Supplemental structural wiring checks: App.tsx must integrate useProfileRuntime and keyed readiness
   const appSource = fs.readFileSync(path.resolve('src/app/App.tsx'), 'utf8');
   assert.match(appSource, /useProfileRuntime/, 'App.tsx must use useProfileRuntime hook');
@@ -224,6 +269,64 @@ test('S2.1: destination profile applied after project switch and late source-pro
       await restorePromiseA.catch(() => {});
     }
   }
+
+  // 4. Coordinator cancellation when destination is LOADING or has NO profile
+  // Even if destination Project C is loading or has no profile (so destination restore returns false),
+  // in-flight restoration from Project A must be cancelled immediately and not leak effort into destination.
+  const coordinatorCancelTest = new ProfileRuntimeCoordinator();
+  let leakedEffort: string | null = null;
+  let resolveCancelModel: () => void = () => {};
+  const cancelModelPromise = new Promise<void>((resolve) => {
+    resolveCancelModel = resolve;
+  });
+
+  const inFlightA = coordinatorCancelTest.restore({
+    cwd: '/workspace/project-src',
+    sessionId: 'session-src',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileA,
+    availableModels: catalog,
+    onSelectModel: async () => {
+      await cancelModelPromise;
+    },
+    onSelectThinkingLevel: async (level) => {
+      leakedEffort = level;
+    },
+  });
+
+  // Switch context to Project C which is loading metadata (isProfilesLoaded: false)
+  const destLoadingResult = await coordinatorCancelTest.restore({
+    cwd: '/workspace/project-loading',
+    sessionId: 'session-loading',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: false,
+    effectiveProfile: null,
+    availableModels: catalog,
+    onSelectModel: async () => {},
+    onSelectThinkingLevel: async () => {},
+  });
+  assert.strictEqual(destLoadingResult, false);
+
+  // Now source Project A resolves its model RPC
+  resolveCancelModel();
+  const outcomeA = await inFlightA;
+  assert.strictEqual(outcomeA, false, 'In-flight source restore must return false when cancelled by context change');
+  assert.strictEqual(leakedEffort, null, 'Source effort must not leak into destination while destination is loading');
+  assert.strictEqual(
+    coordinatorCancelTest.getState().lastRestoredContextKey,
+    null,
+    'Cancelled source run must not latch lastRestoredContextKey'
+  );
+  assert.strictEqual(
+    coordinatorCancelTest.getState().isRestoring,
+    false,
+    'isRestoring must be reset to false after cancelled run settles'
+  );
 });
 
 test('S3.1: manual model selection in initialized context is preserved across rerenders and explicit activation still applies', async () => {
