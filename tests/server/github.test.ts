@@ -8,6 +8,9 @@ import {
   buildChildGitEnv,
   getGithubAuthStatus,
   cloneGithubRepository,
+  listGithubRepositories,
+  groupRepositoriesByOwner,
+  parsePaginatedJsonArrays,
   setProcessRunnerForTest,
 } from '@server/bridge/github';
 
@@ -481,6 +484,187 @@ test('T2 S5: clone with authenticated gh falls back to anonymous git clone if gh
     assert.ok(ghCalled, 'Must have attempted gh repo clone first');
     assert.ok(gitFallbackCalled, 'Must have fallen back to anonymous git clone');
     assert.strictEqual(res.path, path.join(parentDir, 'Hello-World'));
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 6. List Repositories and Categorization by Owner
+// ---------------------------------------------------------------------------
+
+test('T6 S1: parsePaginatedJsonArrays handles single and concatenated arrays from --paginate', () => {
+  const single = '[{"name":"repo1"},{"name":"repo2"}]';
+  const multi = '[{"name":"repo1"}][{"name":"repo2"},{"name":"repo3"}]';
+  assert.deepStrictEqual(parsePaginatedJsonArrays(single), [{ name: 'repo1' }, { name: 'repo2' }]);
+  assert.deepStrictEqual(parsePaginatedJsonArrays(multi), [
+    { name: 'repo1' },
+    { name: 'repo2' },
+    { name: 'repo3' },
+  ]);
+  assert.deepStrictEqual(parsePaginatedJsonArrays(''), []);
+});
+
+test('T6 S2: groupRepositoriesByOwner categorizes repos by owner, places current user first, and handles deduplication', () => {
+  const sampleRepos: any[] = [
+    {
+      id: 1,
+      name: 'widget-core',
+      fullName: 'acme-corp/widget-core',
+      owner: 'acme-corp',
+      ownerType: 'Organization',
+      ownerAvatarUrl: 'https://avatars.example.com/acme',
+      isPrivate: true,
+      pushedAt: '2026-03-01T00:00:00Z',
+    },
+    {
+      id: 2,
+      name: 'personal-site',
+      fullName: 'alice/personal-site',
+      owner: 'alice',
+      ownerType: 'User',
+      ownerAvatarUrl: 'https://avatars.example.com/alice',
+      isPrivate: false,
+      pushedAt: '2026-04-01T00:00:00Z',
+    },
+    {
+      id: 3,
+      name: 'dotfiles',
+      fullName: 'alice/dotfiles',
+      owner: 'alice',
+      ownerType: 'User',
+      isPrivate: true,
+      pushedAt: '2026-02-01T00:00:00Z',
+    },
+    {
+      id: 4,
+      name: 'collab-repo',
+      fullName: 'bob/collab-repo',
+      owner: 'bob',
+      ownerType: 'User',
+      isPrivate: true,
+      pushedAt: '2026-01-01T00:00:00Z',
+    },
+    {
+      // Duplicate ID test
+      id: 2,
+      name: 'personal-site-dupe',
+      fullName: 'alice/personal-site',
+      owner: 'alice',
+    },
+  ];
+
+  const groups = groupRepositoriesByOwner(sampleRepos, 'alice');
+
+  // Should have 3 groups: alice (current user), acme-corp, bob
+  assert.strictEqual(groups.length, 3);
+
+  // Group 0 must be current user 'alice'
+  assert.strictEqual(groups[0].owner, 'alice');
+  assert.strictEqual(groups[0].isCurrentUser, true);
+  assert.strictEqual(groups[0].repositories.length, 2);
+  // In alice's group, personal-site (Apr) comes before dotfiles (Feb)
+  assert.strictEqual(groups[0].repositories[0].name, 'personal-site');
+  assert.strictEqual(groups[0].repositories[1].name, 'dotfiles');
+
+  // Next groups sorted alphabetically: acme-corp, bob
+  assert.strictEqual(groups[1].owner, 'acme-corp');
+  assert.strictEqual(groups[1].isCurrentUser, false);
+  assert.strictEqual(groups[1].ownerType, 'Organization');
+  assert.strictEqual(groups[1].repositories.length, 1);
+
+  assert.strictEqual(groups[2].owner, 'bob');
+  assert.strictEqual(groups[2].isCurrentUser, false);
+  assert.strictEqual(groups[2].repositories.length, 1);
+});
+
+test('T6 S3: listGithubRepositories via gh CLI parses paginated output and returns grouped result', async () => {
+  setProcessRunnerForTest(async (file, args, _options) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      return { stdout: 'Logged in to github.com account octocat (keyring)', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('api')) {
+      const page1 = JSON.stringify([
+        {
+          id: 101,
+          name: 'octo-lib',
+          full_name: 'octocat/octo-lib',
+          owner: { login: 'octocat', type: 'User', avatar_url: 'https://avatars.com/octocat' },
+          private: false,
+          description: 'Official octo library',
+          default_branch: 'main',
+          updated_at: '2026-05-01T00:00:00Z',
+          pushed_at: '2026-05-01T00:00:00Z',
+          html_url: 'https://github.com/octocat/octo-lib',
+          clone_url: 'https://github.com/octocat/octo-lib.git',
+          fork: false,
+          archived: false,
+        },
+      ]);
+      const page2 = JSON.stringify([
+        {
+          id: 202,
+          name: 'external-tool',
+          full_name: 'acme/external-tool',
+          owner: { login: 'acme', type: 'Organization', avatar_url: 'https://avatars.com/acme' },
+          private: true,
+          description: 'Acme external tool',
+          default_branch: 'master',
+          updated_at: '2026-04-01T00:00:00Z',
+          pushed_at: '2026-04-01T00:00:00Z',
+          html_url: 'https://github.com/acme/external-tool',
+          clone_url: 'https://github.com/acme/external-tool.git',
+          fork: false,
+          archived: false,
+        },
+      ]);
+      return { stdout: `${page1}${page2}`, stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    const result = await listGithubRepositories();
+    assert.strictEqual(result.total, 2);
+    assert.strictEqual(result.currentUser, 'octocat');
+    assert.strictEqual(result.groups.length, 2);
+
+    // Current user group
+    const userGroup = result.groups.find((g) => g.isCurrentUser);
+    assert.ok(userGroup, 'Must have current user group');
+    assert.strictEqual(userGroup.owner, 'octocat');
+    assert.strictEqual(userGroup.repositories[0].name, 'octo-lib');
+
+    // Organization group
+    const orgGroup = result.groups.find((g) => g.owner === 'acme');
+    assert.ok(orgGroup, 'Must have acme org group');
+    assert.strictEqual(orgGroup.ownerType, 'Organization');
+    assert.strictEqual(orgGroup.repositories[0].name, 'external-tool');
+    assert.strictEqual(orgGroup.repositories[0].isPrivate, true);
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+test('T6 S4: listGithubRepositories throws error when not authenticated and no token', async () => {
+  setProcessRunnerForTest(async (file, args, _options) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      return { stdout: '', stderr: 'You are not logged into any GitHub hosts', exitCode: 1 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    await assert.rejects(
+      async () => listGithubRepositories(),
+      /authentication required/i
+    );
   } finally {
     setProcessRunnerForTest(null);
   }

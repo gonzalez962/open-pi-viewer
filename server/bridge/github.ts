@@ -35,6 +35,48 @@ export interface GithubAuthStatus {
   username?: string;
 }
 
+export interface GithubRepositorySummary {
+  id: number;
+  name: string;
+  fullName: string;
+  owner: string;
+  ownerType?: 'User' | 'Organization';
+  ownerAvatarUrl?: string;
+  isPrivate: boolean;
+  description?: string | null;
+  defaultBranch?: string;
+  updatedAt?: string;
+  pushedAt?: string;
+  htmlUrl: string;
+  cloneUrl: string;
+  sshUrl?: string;
+  fork: boolean;
+  archived?: boolean;
+  permissions?: {
+    admin: boolean;
+    push: boolean;
+    pull: boolean;
+  };
+}
+
+export interface GithubOwnerGroup {
+  owner: string;
+  ownerType?: 'User' | 'Organization';
+  ownerAvatarUrl?: string;
+  isCurrentUser: boolean;
+  repositories: GithubRepositorySummary[];
+}
+
+export interface ListGithubRepositoriesResult {
+  groups: GithubOwnerGroup[];
+  total: number;
+  currentUser?: string;
+}
+
+export interface ListGithubRepositoriesOptions {
+  token?: string;
+}
+
 export interface CloneGithubRepositoryArgs {
   repository: string;
   parentPath: string;
@@ -58,12 +100,14 @@ export type ProcessRunner = (
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     timeout?: number;
+    maxBuffer?: number;
   }
 ) => Promise<ProcessRunResult>;
 
 const PROBE_TIMEOUT_MS = 5_000;
 const CLONE_TIMEOUT_MS = 120_000;
-const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MB buffer limit per stream
+const LIST_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MB default buffer limit per stream
 
 let customProcessRunner: ProcessRunner | null = null;
 
@@ -78,8 +122,10 @@ export async function defaultProcessRunner(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     timeout?: number;
+    maxBuffer?: number;
   }
 ): Promise<ProcessRunResult> {
+  const maxBytes = options.maxBuffer ?? DEFAULT_MAX_OUTPUT_BYTES;
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn(file, args, {
       cwd: options.cwd,
@@ -149,15 +195,15 @@ export async function defaultProcessRunner(
     }
 
     child.stdout?.on('data', (chunk) => {
-      if (stdout.length < MAX_OUTPUT_BYTES) {
-        const remaining = MAX_OUTPUT_BYTES - stdout.length;
+      if (stdout.length < maxBytes) {
+        const remaining = maxBytes - stdout.length;
         stdout += chunk.toString('utf8').slice(0, remaining);
       }
     });
 
     child.stderr?.on('data', (chunk) => {
-      if (stderr.length < MAX_OUTPUT_BYTES) {
-        const remaining = MAX_OUTPUT_BYTES - stderr.length;
+      if (stderr.length < maxBytes) {
+        const remaining = maxBytes - stderr.length;
         stderr += chunk.toString('utf8').slice(0, remaining);
       }
     });
@@ -495,6 +541,255 @@ export function parseGhUsername(output: string): string | undefined {
   // Match "account <username>" or "Logged in as <username>"
   const match = output.match(/(?:account|Logged in as)\s+([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})/i);
   return match ? match[1] : undefined;
+}
+
+export function parsePaginatedJsonArrays<T = any>(str: string): T[] {
+  const trimmed = str.trim();
+  if (!trimmed) return [];
+  // If single array
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {}
+  }
+  // If multiple concatenated arrays e.g. [...][...] from --paginate
+  const items: T[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '[') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (str[i] === ']') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        try {
+          const chunk = JSON.parse(str.slice(start, i + 1));
+          if (Array.isArray(chunk)) {
+            items.push(...chunk);
+          }
+        } catch {}
+        start = -1;
+      }
+    }
+  }
+  return items;
+}
+
+export function groupRepositoriesByOwner(
+  repos: GithubRepositorySummary[],
+  currentUsername?: string
+): GithubOwnerGroup[] {
+  const cleanUser = (currentUsername || '').trim().toLowerCase();
+  const groupMap = new Map<string, {
+    owner: string;
+    ownerType?: 'User' | 'Organization';
+    ownerAvatarUrl?: string;
+    isCurrentUser: boolean;
+    repositories: GithubRepositorySummary[];
+  }>();
+
+  // Deduplicate repos by id or fullName
+  const seenIds = new Set<string | number>();
+
+  for (const repo of repos) {
+    const key = repo.id || repo.fullName;
+    if (seenIds.has(key)) continue;
+    seenIds.add(key);
+
+    const ownerName = repo.owner || 'Unknown';
+    const ownerKey = ownerName.toLowerCase();
+    let group = groupMap.get(ownerKey);
+
+    if (!group) {
+      const isCurrentUser = Boolean(cleanUser && ownerKey === cleanUser);
+      group = {
+        owner: ownerName,
+        ownerType: repo.ownerType,
+        ownerAvatarUrl: repo.ownerAvatarUrl,
+        isCurrentUser,
+        repositories: [],
+      };
+      groupMap.set(ownerKey, group);
+    } else {
+      if (!group.ownerAvatarUrl && repo.ownerAvatarUrl) {
+        group.ownerAvatarUrl = repo.ownerAvatarUrl;
+      }
+      if (!group.ownerType && repo.ownerType) {
+        group.ownerType = repo.ownerType;
+      }
+    }
+
+    group.repositories.push(repo);
+  }
+
+  // Sort repositories within each group by pushedAt/updatedAt descending, then name
+  for (const group of groupMap.values()) {
+    group.repositories.sort((a, b) => {
+      const timeA = new Date(a.pushedAt || a.updatedAt || 0).getTime();
+      const timeB = new Date(b.pushedAt || b.updatedAt || 0).getTime();
+      if (timeA !== timeB) return timeB - timeA;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+  }
+
+  // Convert to array and sort groups:
+  // 1. Current user first
+  // 2. Alphabetical by owner name
+  const groups = Array.from(groupMap.values());
+  groups.sort((a, b) => {
+    if (a.isCurrentUser && !b.isCurrentUser) return -1;
+    if (!a.isCurrentUser && b.isCurrentUser) return 1;
+    return a.owner.localeCompare(b.owner, undefined, { sensitivity: 'base' });
+  });
+
+  return groups;
+}
+
+function normalizeRawGithubRepo(raw: any): GithubRepositorySummary {
+  const owner = raw.owner?.login || '';
+  const fullName = raw.full_name || (owner ? `${owner}/${raw.name}` : raw.name);
+  return {
+    id: typeof raw.id === 'number' ? raw.id : Number(raw.id) || 0,
+    name: String(raw.name || ''),
+    fullName,
+    owner,
+    ownerType: raw.owner?.type === 'Organization' ? 'Organization' : 'User',
+    ownerAvatarUrl: raw.owner?.avatar_url || undefined,
+    isPrivate: Boolean(raw.private),
+    description: raw.description ?? null,
+    defaultBranch: raw.default_branch || 'main',
+    updatedAt: raw.updated_at || undefined,
+    pushedAt: raw.pushed_at || undefined,
+    htmlUrl: raw.html_url || `https://github.com/${fullName}`,
+    cloneUrl: raw.clone_url || `https://github.com/${fullName}.git`,
+    sshUrl: raw.ssh_url || undefined,
+    fork: Boolean(raw.fork),
+    archived: Boolean(raw.archived),
+    permissions: raw.permissions ? {
+      admin: Boolean(raw.permissions.admin),
+      push: Boolean(raw.permissions.push),
+      pull: Boolean(raw.permissions.pull),
+    } : undefined,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GitHub Repositories Listing
+// ---------------------------------------------------------------------------
+
+export async function listGithubRepositories(
+  options: ListGithubRepositoriesOptions = {}
+): Promise<ListGithubRepositoriesResult> {
+  const token = typeof options.token === 'string' ? options.token.trim() : '';
+
+  if (token) {
+    if (/[\r\n\0]/.test(token)) {
+      throw new Error('Token contains invalid characters');
+    }
+    // Fetch directly using GitHub REST API with token
+    let currentUser: string | undefined;
+    try {
+      const userRes = await fetch('https://api.github.com/user', {
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'open-pi-viewer',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+      if (userRes.ok) {
+        const userData: any = await userRes.json();
+        if (userData && typeof userData.login === 'string') {
+          currentUser = userData.login;
+        }
+      }
+    } catch {}
+
+    const allRepos: GithubRepositorySummary[] = [];
+    let page = 1;
+    const maxPages = 10; // Safety cap: up to 1000 repositories
+
+    while (page <= maxPages) {
+      const endpoint = `https://api.github.com/user/repos?per_page=100&page=${page}&affiliation=owner,collaborator,organization_member&sort=updated`;
+      const res = await fetch(endpoint, {
+        headers: {
+          'Accept': 'application/vnd.github+json',
+          'Authorization': `Bearer ${token}`,
+          'User-Agent': 'open-pi-viewer',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+      });
+
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
+          throw new Error('GitHub authentication failed: invalid token or insufficient permissions');
+        }
+        throw new Error(`Failed to list GitHub repositories (HTTP ${res.status})`);
+      }
+
+      const rawList: any = await res.json();
+      if (!Array.isArray(rawList) || rawList.length === 0) {
+        break;
+      }
+
+      for (const item of rawList) {
+        allRepos.push(normalizeRawGithubRepo(item));
+      }
+
+      if (rawList.length < 100) {
+        break;
+      }
+      page++;
+    }
+
+    const groups = groupRepositoriesByOwner(allRepos, currentUser);
+    return {
+      groups,
+      total: allRepos.length,
+      currentUser,
+    };
+  }
+
+  // Probe gh status
+  const auth = await getGithubAuthStatus();
+  if (!auth.installed || !auth.authenticated) {
+    throw new Error('GitHub authentication required: gh CLI is not authenticated and no Personal Access Token was provided');
+  }
+
+  const runner = getRunner();
+  const env = getAgnosticExecEnv();
+
+  // Run gh api to fetch all repos with pagination
+  const ghRes = await runner(
+    'gh',
+    [
+      'api',
+      'user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=updated',
+      '--paginate',
+    ],
+    {
+      env,
+      timeout: LIST_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+    }
+  );
+
+  if (ghRes.exitCode !== 0) {
+    const combined = `${ghRes.stderr}\n${ghRes.stdout}`;
+    throw new Error(sanitizeErrorMessage(combined, token) || 'Failed to list GitHub repositories via gh CLI');
+  }
+
+  const rawRepos = parsePaginatedJsonArrays(ghRes.stdout);
+  const allRepos = rawRepos.map(normalizeRawGithubRepo);
+  const groups = groupRepositoriesByOwner(allRepos, auth.username);
+
+  return {
+    groups,
+    total: allRepos.length,
+    currentUser: auth.username,
+  };
 }
 
 // ---------------------------------------------------------------------------

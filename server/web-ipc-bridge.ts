@@ -44,9 +44,12 @@ export {
 export {
   getGithubAuthStatus,
   cloneGithubRepository,
+  listGithubRepositories,
   setProcessRunnerForTest,
   parseGithubRepository,
   buildChildGitEnv,
+  groupRepositoriesByOwner,
+  parsePaginatedJsonArrays,
 } from './bridge/github';
 
 export {
@@ -134,6 +137,7 @@ import {
 import {
   getGithubAuthStatus,
   cloneGithubRepository,
+  listGithubRepositories,
 } from './bridge/github';
 
 import {
@@ -303,6 +307,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleBrowseFilesystem(args);
     case 'get_github_auth_status':
       return await getGithubAuthStatus();
+    case 'list_github_repositories':
+      return await listGithubRepositories(args.payload || args);
     case 'clone_github_repository':
       return await cloneGithubRepository(args.payload || args);
     default:
