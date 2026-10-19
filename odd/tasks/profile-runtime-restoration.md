@@ -66,7 +66,7 @@ Base: 99da61e29c7244fd206d8182faaa51895884b4a1
 
 | ID | Specs | Route | Status | Evidence |
 |---|---|---|---|---|
-| T1 | S1-S6 | gentle-ai-worker; independent gentle-ai-verify | in_progress | Initial attempt 133df7f/6f35220 failed; corrective cycles 721a471/1a55c22 (S1.1-S2.1) and 62ec32b/0c0a7fc (S1.2-S2.2) passed unit/gate; approved redesign for stable session snapshot (S4-S6) in progress |
+| T1 | S1-S6 | gentle-ai-worker; independent gentle-ai-verify | done | Resolved via commits d31098b, 7316815, 6f89598; all 1977 tests pass. Closes #125 |
 
 ## Log
 
