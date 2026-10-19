@@ -305,9 +305,9 @@ pub async fn clone_github_repository_impl(
     envs.push(("GIT_CEILING_DIRECTORIES".into(), parent.to_string_lossy().into_owned()));
     envs.push(("GIT_CLONE_CWD".into(), target.to_string_lossy().into_owned()));
     let args = if auth.authenticated {
-        vec!["repo".into(), "clone".into(), repo.clone_url, target.to_string_lossy().into_owned()]
+        vec!["repo".into(), "clone".into(), repo.clone_url.clone(), target.to_string_lossy().into_owned()]
     } else {
-        vec!["clone".into(), "--".into(), repo.clone_url, target.to_string_lossy().into_owned()]
+        vec!["clone".into(), "--".into(), repo.clone_url.clone(), target.to_string_lossy().into_owned()]
     };
     let spec = CommandSpec { program: if auth.authenticated { "gh" } else { "git" }.into(), args, envs, env_removes, timeout: CLONE_TIMEOUT };
     let mut run_result = runner.run_command(spec).await;
