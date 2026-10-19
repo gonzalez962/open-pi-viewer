@@ -1062,7 +1062,7 @@
 .delete-folder-input {
   width: 100%;
   padding: 8px 12px;
-  background-color: var(--bg-input, var(--bg-base));
+  background-color: var(--bg-input);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-sm);
   color: var(--fg-default);
