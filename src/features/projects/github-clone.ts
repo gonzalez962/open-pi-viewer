@@ -1,9 +1,13 @@
 import {
   getGitHubAuthStatusPi,
   cloneGitHubRepositoryPi,
+  listGitHubRepositoriesPi,
   type GitHubAuthStatus,
   type CloneGitHubRepositoryPayload,
   type CloneGitHubRepositoryResult,
+  type GitHubOwnerGroup,
+  type GitHubRepositorySummary,
+  type ListGitHubRepositoriesResult,
 } from '@infra/bridge';
 
 export interface GitHubRepoValidationResult {
@@ -224,6 +228,13 @@ export interface GitHubCloneState {
     authenticated: boolean;
     username?: string;
   };
+  repositories: {
+    loading: boolean;
+    error: string | null;
+    groups: GitHubOwnerGroup[];
+    total: number;
+    selectedRepo?: GitHubRepositorySummary;
+  };
   error: string | null;
   successPath: string | null;
 }
@@ -233,6 +244,7 @@ export interface GitHubCloneControllerOptions {
   storage?: Storage | null;
   getAuthStatus?: () => Promise<GitHubAuthStatus>;
   cloneRepository?: (payload: CloneGitHubRepositoryPayload) => Promise<CloneGitHubRepositoryResult>;
+  listRepositories?: (payload?: { token?: string }) => Promise<ListGitHubRepositoriesResult>;
   onSuccess?: (clonedPath: string) => void;
   onStateChange?: (state: GitHubCloneState) => void;
 }
@@ -245,6 +257,8 @@ export interface GitHubCloneController {
   clearToken: () => void;
   fetchPatUser: (tokenToProbe?: string) => Promise<string | undefined>;
   loadAuthStatus: () => Promise<void>;
+  loadRepositories: () => Promise<void>;
+  selectRepository: (repo: GitHubRepositorySummary) => void;
   submit: () => Promise<void>;
   reset: () => void;
   dispose: () => void;
@@ -255,6 +269,7 @@ export function createGitHubCloneController(
 ): GitHubCloneController {
   const getAuth = options.getAuthStatus ?? getGitHubAuthStatusPi;
   const cloneRepo = options.cloneRepository ?? cloneGitHubRepositoryPi;
+  const listRepos = options.listRepositories ?? listGitHubRepositoriesPi;
   const storage = options.storage;
   let isDisposed = false;
 
@@ -270,6 +285,12 @@ export function createGitHubCloneController(
       loading: false,
       installed: false,
       authenticated: false,
+    },
+    repositories: {
+      loading: false,
+      error: null,
+      groups: [],
+      total: 0,
     },
     error: null,
     successPath: null,
@@ -378,6 +399,64 @@ export function createGitHubCloneController(
       if (!state.authStatus.authenticated && state.token) {
         void fetchPatUser();
       }
+    },
+
+    loadRepositories: async () => {
+      if (isDisposed) return;
+      const effectiveToken = state.token.trim() || getSavedGitHubPat(storage);
+      const isAuth = state.authStatus.authenticated || Boolean(effectiveToken);
+
+      if (!isAuth) {
+        updateState({
+          repositories: {
+            loading: false,
+            error: 'projects.github_clone.auth_required_browse',
+            groups: [],
+            total: 0,
+          },
+        });
+        return;
+      }
+
+      updateState({
+        repositories: { ...state.repositories, loading: true, error: null },
+      });
+
+      try {
+        const payload = !state.authStatus.authenticated && effectiveToken ? { token: effectiveToken } : undefined;
+        const res = await listRepos(payload);
+        if (isDisposed) return;
+        updateState({
+          repositories: {
+            loading: false,
+            error: null,
+            groups: res?.groups || [],
+            total: res?.total || 0,
+          },
+        });
+      } catch (err: any) {
+        if (isDisposed) return;
+        const safeError = sanitizeCloneErrorMessage(err);
+        updateState({
+          repositories: {
+            ...state.repositories,
+            loading: false,
+            error: safeError,
+          },
+        });
+      }
+    },
+
+    selectRepository: (repo: GitHubRepositorySummary) => {
+      if (isDisposed) return;
+      updateState({
+        repository: repo.fullName,
+        repositories: {
+          ...state.repositories,
+          selectedRepo: repo,
+        },
+        error: null,
+      });
     },
 
     submit: async () => {

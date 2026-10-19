@@ -3056,6 +3056,50 @@ export interface GitHubAuthStatus {
   username?: string;
 }
 
+export interface GitHubRepoPermissions {
+  admin: boolean;
+  push: boolean;
+  pull: boolean;
+}
+
+export interface GitHubRepositorySummary {
+  id: number;
+  name: string;
+  fullName: string;
+  owner: string;
+  ownerType?: 'User' | 'Organization';
+  ownerAvatarUrl?: string;
+  isPrivate: boolean;
+  description?: string | null;
+  defaultBranch?: string;
+  updatedAt?: string;
+  pushedAt?: string;
+  htmlUrl: string;
+  cloneUrl: string;
+  sshUrl?: string;
+  fork: boolean;
+  archived?: boolean;
+  permissions?: GitHubRepoPermissions;
+}
+
+export interface GitHubOwnerGroup {
+  owner: string;
+  ownerType?: 'User' | 'Organization';
+  ownerAvatarUrl?: string;
+  isCurrentUser: boolean;
+  repositories: GitHubRepositorySummary[];
+}
+
+export interface ListGitHubRepositoriesPayload {
+  token?: string;
+}
+
+export interface ListGitHubRepositoriesResult {
+  groups: GitHubOwnerGroup[];
+  total: number;
+  currentUser?: string;
+}
+
 export interface CloneGitHubRepositoryPayload {
   repository: string;
   parentPath: string;
@@ -3091,4 +3135,18 @@ export async function cloneGitHubRepositoryPi(
     throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
   }
   return await invokeFn<CloneGitHubRepositoryResult>('clone_github_repository', { payload });
+}
+
+/**
+ * Retrieve GitHub repositories accessible to the user, grouped by owner.
+ * Fixed IPC contract: list_github_repositories payload {token?} -> ListGitHubRepositoriesResult.
+ */
+export async function listGitHubRepositoriesPi(
+  payload?: ListGitHubRepositoriesPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<ListGitHubRepositoriesResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { groups: [], total: 0 };
+  }
+  return await invokeFn<ListGitHubRepositoriesResult>('list_github_repositories', { payload });
 }

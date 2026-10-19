@@ -16,6 +16,9 @@ pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Bounded timeout for repository cloning operations (120 seconds).
 pub const CLONE_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// Bounded timeout for listing repositories (30 seconds).
+pub const LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Status of GitHub CLI availability and active authentication
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +27,72 @@ pub struct GithubAuthStatus {
     pub authenticated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepoPermissions {
+    pub admin: bool,
+    pub push: bool,
+    pub pull: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubRepositorySummary {
+    pub id: i64,
+    pub name: String,
+    pub full_name: String,
+    pub owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
+    pub is_private: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pushed_at: Option<String>,
+    pub html_url: String,
+    pub clone_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_url: Option<String>,
+    pub fork: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<GithubRepoPermissions>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubOwnerGroup {
+    pub owner: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_avatar_url: Option<String>,
+    pub is_current_user: bool,
+    pub repositories: Vec<GithubRepositorySummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListGithubRepositoriesPayload {
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListGithubRepositoriesResult {
+    pub groups: Vec<GithubOwnerGroup>,
+    pub total: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_user: Option<String>,
 }
 
 /// Payload accepted by `clone_github_repository` command
@@ -68,6 +137,7 @@ pub struct CommandSpec {
     pub envs: Vec<(String, String)>,
     pub env_removes: Vec<String>,
     pub timeout: Duration,
+    pub capture_output: bool,
 }
 
 /// Subprocess runner abstraction for deterministic testing without live execution
@@ -91,10 +161,15 @@ impl SubprocessRunner for RealSubprocessRunner {
             cmd.args(&spec.args);
             cmd.kill_on_drop(true);
             cmd.stdin(std::process::Stdio::null());
-            // Clone output is not shown to callers. Discard it instead of buffering
-            // unbounded progress output or credential-bearing diagnostics.
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
+            if spec.capture_output {
+                cmd.stdout(std::process::Stdio::piped());
+                cmd.stderr(std::process::Stdio::piped());
+            } else {
+                // Clone output is not shown to callers. Discard it instead of buffering
+                // unbounded progress output or credential-bearing diagnostics.
+                cmd.stdout(std::process::Stdio::null());
+                cmd.stderr(std::process::Stdio::null());
+            }
             #[cfg(unix)]
             cmd.process_group(0);
 
@@ -109,38 +184,52 @@ impl SubprocessRunner for RealSubprocessRunner {
                 }
             }
 
-            let mut child = cmd.spawn().map_err(|_| "Unable to start GitHub command".to_string())?;
-            let pid = child.id();
-            match tokio::time::timeout(spec.timeout, child.wait()).await {
-                Ok(Ok(status)) => Ok(ProcessOutput {
-                    success: status.success(), exit_code: status.code(),
-                    stdout: String::new(), stderr: String::new(),
-                }),
-                Ok(Err(_)) => Err("GitHub command failed".into()),
-                Err(_) => {
-                    if let Some(pid) = pid {
-                        #[cfg(windows)]
-                        let mut killer = {
-                            let mut c = tokio::process::Command::new("taskkill");
-                            c.args(["/PID", &pid.to_string(), "/T", "/F"]);
-                            c
-                        };
-                        #[cfg(unix)]
-                        let mut killer = {
-                            let mut c = tokio::process::Command::new("kill");
-                            c.args(["-KILL", "--", &format!("-{pid}")]);
-                            c
-                        };
-                        #[cfg(any(windows, unix))]
-                        {
-                            killer.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
-                                .stderr(std::process::Stdio::null()).kill_on_drop(true);
-                            let _ = tokio::time::timeout(Duration::from_secs(3), killer.status()).await;
+            if spec.capture_output {
+                let output_fut = cmd.output();
+                match tokio::time::timeout(spec.timeout, output_fut).await {
+                    Ok(Ok(output)) => Ok(ProcessOutput {
+                        success: output.status.success(),
+                        exit_code: output.status.code(),
+                        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                    }),
+                    Ok(Err(_)) => Err("GitHub command failed".into()),
+                    Err(_) => Err("Command timed out".into()),
+                }
+            } else {
+                let mut child = cmd.spawn().map_err(|_| "Unable to start GitHub command".to_string())?;
+                let pid = child.id();
+                match tokio::time::timeout(spec.timeout, child.wait()).await {
+                    Ok(Ok(status)) => Ok(ProcessOutput {
+                        success: status.success(), exit_code: status.code(),
+                        stdout: String::new(), stderr: String::new(),
+                    }),
+                    Ok(Err(_)) => Err("GitHub command failed".into()),
+                    Err(_) => {
+                        if let Some(pid) = pid {
+                            #[cfg(windows)]
+                            let mut killer = {
+                                let mut c = tokio::process::Command::new("taskkill");
+                                c.args(["/PID", &pid.to_string(), "/T", "/F"]);
+                                c
+                            };
+                            #[cfg(unix)]
+                            let mut killer = {
+                                let mut c = tokio::process::Command::new("kill");
+                                c.args(["-KILL", "--", &format!("-{pid}")]);
+                                c
+                            };
+                            #[cfg(any(windows, unix))]
+                            {
+                                killer.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null()).kill_on_drop(true);
+                                let _ = tokio::time::timeout(Duration::from_secs(3), killer.status()).await;
+                            }
                         }
+                        let _ = child.start_kill();
+                        let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+                        Err("Command timed out".into())
                     }
-                    let _ = child.start_kill();
-                    let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
-                    Err("Command timed out".into())
                 }
             }
         })
@@ -274,9 +363,161 @@ pub fn parse_gh_username(output: &str) -> Option<String> {
     None
 }
 
+pub fn parse_paginated_json_arrays(stdout: &str) -> Vec<serde_json::Value> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if let Ok(serde_json::Value::Array(items)) = serde_json::from_str(trimmed) {
+            return items;
+        }
+    }
+    let mut items = Vec::new();
+    let mut depth = 0;
+    let mut start = None;
+    for (i, c) in stdout.char_indices() {
+        if c == '[' {
+            if depth == 0 {
+                start = Some(i);
+            }
+            depth += 1;
+        } else if c == ']' {
+            depth -= 1;
+            if depth == 0 {
+                if let Some(s) = start {
+                    if let Ok(serde_json::Value::Array(chunk)) = serde_json::from_str(&stdout[s..=i]) {
+                        items.extend(chunk);
+                    }
+                    start = None;
+                }
+            }
+        }
+    }
+    items
+}
+
+pub fn normalize_raw_github_repo(raw: &serde_json::Value) -> Option<GithubRepositorySummary> {
+    let obj = raw.as_object()?;
+    let id = obj.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let name = obj.get("name").and_then(|v| v.as_str())?.to_string();
+    let owner_obj = obj.get("owner").and_then(|v| v.as_object());
+    let owner = owner_obj
+        .and_then(|o| o.get("login"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let full_name = obj
+        .get("full_name")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| if owner.is_empty() { name.clone() } else { format!("{}/{}", owner, name) });
+    let owner_type = owner_obj
+        .and_then(|o| o.get("type"))
+        .and_then(|v| v.as_str())
+        .map(|t| if t == "Organization" { "Organization".to_string() } else { "User".to_string() });
+    let owner_avatar_url = owner_obj
+        .and_then(|o| o.get("avatar_url"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let is_private = obj.get("private").and_then(|v| v.as_bool()).unwrap_or(false);
+    let description = obj.get("description").and_then(|v| v.as_str()).map(String::from);
+    let default_branch = obj.get("default_branch").and_then(|v| v.as_str()).map(String::from);
+    let updated_at = obj.get("updated_at").and_then(|v| v.as_str()).map(String::from);
+    let pushed_at = obj.get("pushed_at").and_then(|v| v.as_str()).map(String::from);
+    let html_url = obj
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| format!("https://github.com/{}", full_name));
+    let clone_url = obj
+        .get("clone_url")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| format!("https://github.com/{}.git", full_name));
+    let ssh_url = obj.get("ssh_url").and_then(|v| v.as_str()).map(String::from);
+    let fork = obj.get("fork").and_then(|v| v.as_bool()).unwrap_or(false);
+    let archived = obj.get("archived").and_then(|v| v.as_bool());
+    let permissions = obj.get("permissions").and_then(|p| {
+        Some(GithubRepoPermissions {
+            admin: p.get("admin").and_then(|v| v.as_bool()).unwrap_or(false),
+            push: p.get("push").and_then(|v| v.as_bool()).unwrap_or(false),
+            pull: p.get("pull").and_then(|v| v.as_bool()).unwrap_or(false),
+        })
+    });
+
+    Some(GithubRepositorySummary {
+        id,
+        name,
+        full_name,
+        owner,
+        owner_type,
+        owner_avatar_url,
+        is_private,
+        description,
+        default_branch,
+        updated_at,
+        pushed_at,
+        html_url,
+        clone_url,
+        ssh_url,
+        fork,
+        archived,
+        permissions,
+    })
+}
+
+pub fn group_repositories_by_owner(
+    repos: Vec<GithubRepositorySummary>,
+    current_user: Option<&str>,
+) -> Vec<GithubOwnerGroup> {
+    let clean_user = current_user.map(str::trim).filter(|s| !s.is_empty()).map(str::to_lowercase);
+    let mut map: std::collections::BTreeMap<String, GithubOwnerGroup> = std::collections::BTreeMap::new();
+    let mut seen_ids = std::collections::HashSet::new();
+
+    for repo in repos {
+        if !seen_ids.insert(repo.id) {
+            continue;
+        }
+        let owner_key = repo.owner.to_lowercase();
+        let is_current = clean_user.as_ref().map_or(false, |u| u == &owner_key);
+        let group = map.entry(owner_key).or_insert_with(|| GithubOwnerGroup {
+            owner: repo.owner.clone(),
+            owner_type: repo.owner_type.clone(),
+            owner_avatar_url: repo.owner_avatar_url.clone(),
+            is_current_user: is_current,
+            repositories: Vec::new(),
+        });
+        if group.owner_avatar_url.is_none() && repo.owner_avatar_url.is_some() {
+            group.owner_avatar_url = repo.owner_avatar_url.clone();
+        }
+        if group.owner_type.is_none() && repo.owner_type.is_some() {
+            group.owner_type = repo.owner_type.clone();
+        }
+        group.repositories.push(repo);
+    }
+
+    // Sort repositories within each group alphabetically by name (case-insensitive)
+    for group in map.values_mut() {
+        group.repositories.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    }
+
+    // Sort groups: current user first, then alphabetical by owner
+    let mut groups: Vec<GithubOwnerGroup> = map.into_values().collect();
+    groups.sort_by(|a, b| {
+        match (a.is_current_user, b.is_current_user) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.owner.to_lowercase().cmp(&b.owner.to_lowercase()),
+        }
+    });
+
+    groups
+}
+
 /// Core implementation of auth status detection using an injectable runner
 pub async fn get_github_auth_status_impl(runner: &dyn SubprocessRunner) -> Result<GithubAuthStatus, String> {
-    let probe = |args: Vec<String>| CommandSpec { program: "gh".into(), args, envs: vec![], env_removes: vec![], timeout: PROBE_TIMEOUT };
+    let probe = |args: Vec<String>| CommandSpec { program: "gh".into(), args, envs: vec![], env_removes: vec![], timeout: PROBE_TIMEOUT, capture_output: true };
     let installed = runner.run_command(probe(vec!["--version".into()])).await.map(|r| r.success).unwrap_or(false);
     if !installed { return Ok(GithubAuthStatus { installed: false, authenticated: false, username: None }); }
     let auth_res = runner.run_command(probe(vec!["auth".into(), "status".into(), "--hostname".into(), "github.com".into()])).await;
@@ -309,7 +550,7 @@ pub async fn clone_github_repository_impl(
     } else {
         vec!["clone".into(), "--".into(), repo.clone_url.clone(), target.to_string_lossy().into_owned()]
     };
-    let spec = CommandSpec { program: if auth.authenticated { "gh" } else { "git" }.into(), args, envs, env_removes, timeout: CLONE_TIMEOUT };
+    let spec = CommandSpec { program: if auth.authenticated { "gh" } else { "git" }.into(), args, envs, env_removes, timeout: CLONE_TIMEOUT, capture_output: false };
     let mut run_result = runner.run_command(spec).await;
 
     // Fallback: If gh repo clone failed and no explicit token was provided, attempt anonymous
@@ -331,6 +572,7 @@ pub async fn clone_github_repository_impl(
                 envs: fallback_envs,
                 env_removes: fallback_removes,
                 timeout: CLONE_TIMEOUT,
+                capture_output: false,
             };
             let fallback_result = runner.run_command(fallback_spec).await;
             if fallback_result.as_ref().map_or(false, |o| o.success) {
@@ -347,6 +589,188 @@ pub async fn clone_github_repository_impl(
             Err(sanitize_error_message(&message, token))
         }
     }
+}
+
+/// Core implementation of repository listing using an injectable runner
+pub async fn list_github_repositories_impl(
+    token: Option<&str>,
+    runner: &dyn SubprocessRunner,
+) -> Result<ListGithubRepositoriesResult, String> {
+    let token = token.map(str::trim).filter(|t| !t.is_empty());
+
+    if let Some(tok) = token {
+        if tok.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err("Token contains invalid characters".to_string());
+        }
+
+        // Check if gh is installed
+        let probe = CommandSpec {
+            program: "gh".into(),
+            args: vec!["--version".into()],
+            envs: vec![],
+            env_removes: vec![],
+            timeout: PROBE_TIMEOUT,
+            capture_output: true,
+        };
+        let gh_installed = runner.run_command(probe).await.map(|r| r.success).unwrap_or(false);
+
+        if gh_installed {
+            // First get user login
+            let user_spec = CommandSpec {
+                program: "gh".into(),
+                args: vec!["api".into(), "user".into()],
+                envs: vec![("GH_TOKEN".into(), tok.to_string())],
+                env_removes: vec![],
+                timeout: PROBE_TIMEOUT,
+                capture_output: true,
+            };
+            let current_user = if let Ok(out) = runner.run_command(user_spec).await {
+                if out.success {
+                    serde_json::from_str::<serde_json::Value>(&out.stdout)
+                        .ok()
+                        .and_then(|v| v.get("login").and_then(|l| l.as_str()).map(String::from))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let list_spec = CommandSpec {
+                program: "gh".into(),
+                args: vec![
+                    "api".into(),
+                    "user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=updated".into(),
+                    "--paginate".into(),
+                ],
+                envs: vec![("GH_TOKEN".into(), tok.to_string())],
+                env_removes: vec![],
+                timeout: LIST_TIMEOUT,
+                capture_output: true,
+            };
+            let res = runner.run_command(list_spec).await?;
+            if !res.success {
+                return Err(sanitize_error_message(&format!("{}\n{}", res.stderr, res.stdout), Some(tok)));
+            }
+
+            let raw_items = parse_paginated_json_arrays(&res.stdout);
+            let repos: Vec<GithubRepositorySummary> = raw_items.iter().filter_map(normalize_raw_github_repo).collect();
+            let total = repos.len();
+            let groups = group_repositories_by_owner(repos, current_user.as_deref());
+
+            return Ok(ListGithubRepositoriesResult {
+                groups,
+                total,
+                current_user,
+            });
+        } else {
+            // Fallback to curl
+            let user_curl_spec = CommandSpec {
+                program: "curl".into(),
+                args: vec![
+                    "-s".into(),
+                    "-H".into(),
+                    "Accept: application/vnd.github+json".into(),
+                    "-H".into(),
+                    format!("Authorization: Bearer {}", tok),
+                    "-H".into(),
+                    "User-Agent: open-pi-viewer".into(),
+                    "https://api.github.com/user".into(),
+                ],
+                envs: vec![],
+                env_removes: vec![],
+                timeout: PROBE_TIMEOUT,
+                capture_output: true,
+            };
+            let current_user = if let Ok(out) = runner.run_command(user_curl_spec).await {
+                if out.success {
+                    serde_json::from_str::<serde_json::Value>(&out.stdout)
+                        .ok()
+                        .and_then(|v| v.get("login").and_then(|l| l.as_str()).map(String::from))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let curl_spec = CommandSpec {
+                program: "curl".into(),
+                args: vec![
+                    "-s".into(),
+                    "-H".into(),
+                    "Accept: application/vnd.github+json".into(),
+                    "-H".into(),
+                    format!("Authorization: Bearer {}", tok),
+                    "-H".into(),
+                    "User-Agent: open-pi-viewer".into(),
+                    "https://api.github.com/user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=updated".into(),
+                ],
+                envs: vec![],
+                env_removes: vec![],
+                timeout: LIST_TIMEOUT,
+                capture_output: true,
+            };
+            let res = runner.run_command(curl_spec).await?;
+            if !res.success {
+                return Err("Failed to list GitHub repositories via curl".to_string());
+            }
+            let raw_items = parse_paginated_json_arrays(&res.stdout);
+            let repos: Vec<GithubRepositorySummary> = raw_items.iter().filter_map(normalize_raw_github_repo).collect();
+            let total = repos.len();
+            let groups = group_repositories_by_owner(repos, current_user.as_deref());
+
+            return Ok(ListGithubRepositoriesResult {
+                groups,
+                total,
+                current_user,
+            });
+        }
+    }
+
+    // When no token is passed, gh must be authenticated
+    let auth = get_github_auth_status_impl(runner).await?;
+    if !auth.installed || !auth.authenticated {
+        return Err("GitHub authentication required: gh CLI is not authenticated and no Personal Access Token was provided".to_string());
+    }
+
+    let list_spec = CommandSpec {
+        program: "gh".into(),
+        args: vec![
+            "api".into(),
+            "user/repos?per_page=100&affiliation=owner,collaborator,organization_member&sort=updated".into(),
+            "--paginate".into(),
+        ],
+        envs: vec![],
+        env_removes: vec![],
+        timeout: LIST_TIMEOUT,
+        capture_output: true,
+    };
+    let res = runner.run_command(list_spec).await?;
+    if !res.success {
+        return Err(sanitize_error_message(&format!("{}\n{}", res.stderr, res.stdout), None));
+    }
+
+    let raw_items = parse_paginated_json_arrays(&res.stdout);
+    let repos: Vec<GithubRepositorySummary> = raw_items.iter().filter_map(normalize_raw_github_repo).collect();
+    let total = repos.len();
+    let groups = group_repositories_by_owner(repos, auth.username.as_deref());
+
+    Ok(ListGithubRepositoriesResult {
+        groups,
+        total,
+        current_user: auth.username,
+    })
+}
+
+/// Tauri command to list all GitHub repositories accessible to the user
+#[tauri::command]
+pub async fn list_github_repositories(
+    payload: Option<ListGithubRepositoriesPayload>,
+    token: Option<String>,
+) -> Result<ListGithubRepositoriesResult, String> {
+    let tok = payload.as_ref().and_then(|p| p.token.clone()).or(token);
+    list_github_repositories_impl(tok.as_deref(), &RealSubprocessRunner).await
 }
 
 /// Tauri command to inspect GitHub CLI availability and auth status
@@ -862,5 +1286,129 @@ mod tests {
         assert!(temp_dir.exists(), "Parent directory must be preserved");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_group_repositories_by_owner_categorization() {
+        let repo1 = GithubRepositorySummary {
+            id: 1,
+            name: "repo-alpha".into(),
+            full_name: "myorg/repo-alpha".into(),
+            owner: "myorg".into(),
+            owner_type: Some("Organization".into()),
+            owner_avatar_url: None,
+            is_private: true,
+            description: None,
+            default_branch: Some("main".into()),
+            updated_at: None,
+            pushed_at: Some("2026-02-01T00:00:00Z".into()),
+            html_url: "https://github.com/myorg/repo-alpha".into(),
+            clone_url: "https://github.com/myorg/repo-alpha.git".into(),
+            ssh_url: None,
+            fork: false,
+            archived: None,
+            permissions: None,
+        };
+        let repo2 = GithubRepositorySummary {
+            id: 2,
+            name: "my-tool".into(),
+            full_name: "testuser/my-tool".into(),
+            owner: "testuser".into(),
+            owner_type: Some("User".into()),
+            owner_avatar_url: None,
+            is_private: false,
+            description: None,
+            default_branch: Some("main".into()),
+            updated_at: None,
+            pushed_at: Some("2026-03-01T00:00:00Z".into()),
+            html_url: "https://github.com/testuser/my-tool".into(),
+            clone_url: "https://github.com/testuser/my-tool.git".into(),
+            ssh_url: None,
+            fork: false,
+            archived: None,
+            permissions: None,
+        };
+        let repo3 = GithubRepositorySummary {
+            id: 3,
+            name: "another-tool".into(),
+            full_name: "collab/another-tool".into(),
+            owner: "collab".into(),
+            owner_type: Some("User".into()),
+            owner_avatar_url: None,
+            is_private: true,
+            description: None,
+            default_branch: Some("main".into()),
+            updated_at: None,
+            pushed_at: Some("2026-01-01T00:00:00Z".into()),
+            html_url: "https://github.com/collab/another-tool".into(),
+            clone_url: "https://github.com/collab/another-tool.git".into(),
+            ssh_url: None,
+            fork: false,
+            archived: None,
+            permissions: None,
+        };
+
+        let groups = group_repositories_by_owner(vec![repo1, repo2, repo3], Some("testuser"));
+        assert_eq!(groups.len(), 3);
+        // Current user must be first
+        assert_eq!(groups[0].owner, "testuser");
+        assert!(groups[0].is_current_user);
+        assert_eq!(groups[0].repositories[0].name, "my-tool");
+
+        // Remaining sorted alphabetically: collab, myorg
+        assert_eq!(groups[1].owner, "collab");
+        assert!(!groups[1].is_current_user);
+
+        assert_eq!(groups[2].owner, "myorg");
+        assert!(!groups[2].is_current_user);
+    }
+
+    #[tokio::test]
+    async fn test_list_github_repositories_impl_with_gh() {
+        let runner = MockRunner {
+            handler: |spec| {
+                if spec.program == "gh" && spec.args.contains(&"--version".to_string()) {
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: "gh version 2.50.0".into(), stderr: String::new() });
+                }
+                if spec.program == "gh" && spec.args.contains(&"auth".to_string()) {
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: "Logged in to github.com account octocat (keyring)".into(), stderr: String::new() });
+                }
+                if spec.program == "gh" && spec.args.contains(&"api".to_string()) {
+                    let json = serde_json::json!([
+                        {
+                            "id": 1,
+                            "name": "octo-repo",
+                            "full_name": "octocat/octo-repo",
+                            "owner": { "login": "octocat", "type": "User" },
+                            "private": false,
+                            "html_url": "https://github.com/octocat/octo-repo",
+                            "clone_url": "https://github.com/octocat/octo-repo.git"
+                        },
+                        {
+                            "id": 2,
+                            "name": "team-lib",
+                            "full_name": "orgx/team-lib",
+                            "owner": { "login": "orgx", "type": "Organization" },
+                            "private": true,
+                            "html_url": "https://github.com/orgx/team-lib",
+                            "clone_url": "https://github.com/orgx/team-lib.git"
+                        }
+                    ]);
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: json.to_string(), stderr: String::new() });
+                }
+                Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: String::new(), stderr: String::new() })
+            },
+        };
+
+        let res = list_github_repositories_impl(None, &runner).await.unwrap();
+        assert_eq!(res.total, 2);
+        assert_eq!(res.current_user.as_deref(), Some("octocat"));
+        assert_eq!(res.groups.len(), 2);
+        assert_eq!(groups_find(&res.groups, "octocat").unwrap().is_current_user, true);
+        assert_eq!(groups_find(&res.groups, "orgx").unwrap().is_current_user, false);
+    }
+
+    fn groups_find<'a>(groups: &'a [GithubOwnerGroup], owner: &str) -> Option<&'a GithubOwnerGroup> {
+        groups.iter().find(|g| g.owner == owner)
     }
 }
