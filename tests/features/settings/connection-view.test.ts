@@ -275,3 +275,39 @@ test('SettingsView: translates missing detection result in Spanish without Engli
   assert.match(translated, /No se encontró el paquete gentle-pi/);
   assert.doesNotMatch(translated, /not configured in Pi settings/i);
 });
+
+test('SettingsView: renders default projects directory input and browse button', () => {
+  let changedDir: string | null | undefined = undefined;
+
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: {
+        ...samplePreferences,
+        defaultProjectsDirectory: 'C:\\Users\\Personal\\Projects',
+      },
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      onDefaultProjectsDirectoryChange: (dir) => {
+        changedDir = dir;
+      },
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /id="settings-default-projects-dir-input"/);
+  assert.match(html, /value="C:\\Users\\Personal\\Projects"/);
+  assert.match(html, /Projects Directory/);
+  assert.match(html, /Clear/);
+  assert.strictEqual(changedDir, undefined);
+});
+
