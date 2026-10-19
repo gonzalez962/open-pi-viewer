@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getSddProfilesPi,
   saveSddProfilePi,
@@ -47,7 +47,10 @@ export interface UseProfilesResult {
   projectActiveProfile: string | null;
   globalActiveProfile: string | null;
   effectiveActiveProfile: string | null;
+  effectiveProfile: ProfileSummary | null;
   effectiveScope: 'project' | 'global' | null;
+  loadedCwd: string | undefined;
+  isProfilesLoaded: boolean;
   categories: AgentCategory[];
   allAgents: string[];
   agentMeta: Record<string, DiscoveredAgentMeta>;
@@ -277,6 +280,8 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>(() => []);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
   const customProvidersRef = useRef<CustomProvidersMap>({});
+  const requestIdRef = useRef(0);
+  const [loadedCwd, setLoadedCwd] = useState<string | undefined>(undefined);
 
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -295,15 +300,21 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   const [formData, setFormData] = useState<ProfileFormData>(EMPTY_PROFILE_FORM);
 
   const refreshProfiles = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    const requestCwd = cwd;
     setIsLoading(true);
     setError(null);
     try {
       const [profilesData, customProvidersConfig, thinkingLevels, runtimeModels] = await Promise.all([
-        getSddProfilesPi(cwd),
+        getSddProfilesPi(requestCwd),
         getCustomProvidersPi().catch(() => ({ providers: {} })),
         getModelThinkingLevelsPi().catch(() => ({})),
         getAvailableModelsPi().catch(() => []),
       ]);
+
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
 
       const providers = customProvidersConfig?.providers || {};
       customProvidersRef.current = providers;
@@ -323,6 +334,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       setAllAgents(profilesData.allAgents || []);
       setAgentMeta(profilesData.agentMeta || {});
       setAvailableModels(enrichedModels);
+      setLoadedCwd(requestCwd);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -663,12 +675,30 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
     [formData, isEditing, editingOriginalName, editingOriginalScope, cwd, refreshProfiles]
   );
 
+  const effectiveProfile = useMemo(() => {
+    if (!effectiveActiveProfile || loadedCwd !== cwd) return null;
+    return (
+      profiles.find(
+        (p) =>
+          p.name === effectiveActiveProfile &&
+          (effectiveScope ? p.scope === effectiveScope : true)
+      ) ||
+      profiles.find((p) => p.name === effectiveActiveProfile) ||
+      null
+    );
+  }, [profiles, effectiveActiveProfile, effectiveScope, loadedCwd, cwd]);
+
+  const isProfilesLoaded = !isLoading && loadedCwd === cwd;
+
   return {
     profiles,
     projectActiveProfile,
     globalActiveProfile,
     effectiveActiveProfile,
+    effectiveProfile,
     effectiveScope,
+    loadedCwd,
+    isProfilesLoaded,
     categories,
     allAgents,
     agentMeta,

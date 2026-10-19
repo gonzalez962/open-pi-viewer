@@ -6,7 +6,6 @@ import {
   getEnabledModelsPi,
   getModelThinkingLevelsPi,
   getSessionStatsPi,
-  setModelPi,
   setThinkingLevelPi,
 } from '@infra/bridge';
 import {
@@ -14,8 +13,8 @@ import {
   filterByEnabledModels,
   filterExcludedModels,
   resolveModelDefaultThinkingLevel,
-  resolveModelSelectionOutcome,
 } from '../providers';
+import { executeModelSelection } from '../lib/modelSelection';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import type { ConnectionState } from '@core/types/connection';
 import type { ChatAction } from '@core/reducer';
@@ -23,10 +22,16 @@ import type { ChatAction } from '@core/reducer';
 export interface UseModelsOptions {
   connectionStatus: ConnectionState;
   sessionId: string | null;
+  projectId?: string;
+  cwd?: string;
   /** Read via closure inside the connect-time effect, exactly like `state.modelInfo` was in App.tsx. */
   modelInfo: ModelInfo | null | undefined;
   availableModels: ModelInfo[];
-  dispatch: React.Dispatch<ChatAction>;
+  dispatch: React.Dispatch<ChatAction & { targetProjectId?: string }>;
+  resolveSessionSnapshot?: (
+    cwd: string,
+    sessionId: string
+  ) => { modelId?: string | null; provider?: string | null } | null;
 }
 
 export interface UseModelsResult {
@@ -34,6 +39,7 @@ export interface UseModelsResult {
   handleSelectModel: (provider: string, modelId: string) => Promise<void>;
   handleSelectThinkingLevel: (level: ThinkingLevel) => Promise<void>;
   handleRefreshModels: () => Promise<void>;
+  isSessionInitialized: boolean;
 }
 
 /**
@@ -46,71 +52,39 @@ export interface UseModelsResult {
 export function useModels({
   connectionStatus,
   sessionId,
+  projectId,
+  cwd,
   modelInfo,
   availableModels,
   dispatch,
+  resolveSessionSnapshot,
 }: UseModelsOptions): UseModelsResult {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
+  const [initializedSessionId, setInitializedSessionId] = useState<string | null>(null);
+  const [initializedCwd, setInitializedCwd] = useState<string | undefined>(undefined);
+  const [initializedProjectId, setInitializedProjectId] = useState<string | undefined>(undefined);
   const enabledModelsRef = useRef<string[] | undefined>(undefined);
+
+  const isSessionInitialized =
+    connectionStatus === 'connected' &&
+    sessionId !== null &&
+    initializedSessionId === sessionId &&
+    (cwd === undefined || initializedCwd === cwd) &&
+    (projectId === undefined || initializedProjectId === projectId);
 
   const handleSelectModel = useCallback(
     async (provider: string, modelId: string) => {
-      try {
-        dispatch({ type: 'MODEL_CHANGE_START' });
-        const thinkingLevels = await getModelThinkingLevelsPi().catch(() => modelThinkingLevels);
-        setModelThinkingLevels(thinkingLevels);
-        const updatedModel = await setModelPi(provider, modelId);
-        const levels = await getAvailableThinkingLevelsPi();
-        const matched = availableModels.find(
-          (m) => m.provider === provider && m.id === modelId
-        );
-        const outcome = resolveModelSelectionOutcome(
-          matched,
-          updatedModel,
-          modelId,
-          provider,
-          levels,
-          thinkingLevels
-        );
-
-        if (outcome.supportsReasoning) {
-          try {
-            await setThinkingLevelPi(outcome.defaultThinkingLevel);
-          } catch (err) {
-            console.warn('Failed to set thinking level for selected model:', err);
-          }
-          dispatch({
-            type: 'MODEL_CHANGE_SUCCESS',
-            payload: {
-              model: outcome.fullModel,
-              thinkingLevel: outcome.defaultThinkingLevel,
-              availableThinkingLevels: levels,
-            },
-          });
-        } else {
-          dispatch({
-            type: 'MODEL_CHANGE_SUCCESS',
-            payload: {
-              model: outcome.fullModel,
-              thinkingLevel: null,
-              availableThinkingLevels: levels,
-            },
-          });
-        }
-      } catch (err: unknown) {
-        const errorMsg =
-          err instanceof Error
-            ? err.message
-            : typeof err === 'string'
-              ? err
-              : 'Failed to switch model';
-        dispatch({
-          type: 'MODEL_CHANGE_FAIL',
-          payload: { error: errorMsg },
-        });
-      }
+      await executeModelSelection({
+        provider,
+        modelId,
+        targetProjectId: projectId,
+        availableModels,
+        modelThinkingLevels,
+        dispatch,
+        onThinkingLevelsFetched: setModelThinkingLevels,
+      });
     },
-    [availableModels, modelThinkingLevels]
+    [availableModels, modelThinkingLevels, projectId, dispatch]
   );
 
   const handleSelectThinkingLevel = useCallback(
@@ -119,13 +93,14 @@ export function useModels({
         await setThinkingLevelPi(level);
         dispatch({
           type: 'SET_THINKING_LEVEL',
+          targetProjectId: projectId,
           payload: { level },
         });
       } catch (err) {
         console.warn('Failed to set thinking level:', err);
       }
     },
-    []
+    [projectId, dispatch]
   );
 
   const handleRefreshModels = useCallback(async () => {
@@ -148,17 +123,29 @@ export function useModels({
         const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
         const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
         const activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
-        dispatch({ type: 'SET_AVAILABLE_MODELS', payload: { models: activeModels } });
+        dispatch({
+          type: 'SET_AVAILABLE_MODELS',
+          targetProjectId: projectId,
+          payload: { models: activeModels },
+        });
       }
     } catch (err) {
       console.warn('Failed to refresh models:', err);
     }
-  }, [connectionStatus]);
+  }, [connectionStatus, projectId, dispatch]);
 
   // Fetch available models, thinking levels, and session stats when connected.
   useEffect(() => {
-    if (connectionStatus !== 'connected') return;
+    if (connectionStatus !== 'connected' || !sessionId) {
+      setInitializedSessionId(null);
+      setInitializedCwd(undefined);
+      setInitializedProjectId(undefined);
+      return;
+    }
 
+    const currentSessionId = sessionId;
+    const currentCwd = cwd;
+    const currentProjectId = projectId;
     let isSubscribed = true;
 
     const loadSessionParams = async () => {
@@ -190,29 +177,67 @@ export function useModels({
           const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
           const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
           activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
-          dispatch({ type: 'SET_AVAILABLE_MODELS', payload: { models: activeModels } });
+          dispatch({
+            type: 'SET_AVAILABLE_MODELS',
+            targetProjectId: currentProjectId,
+            payload: { models: activeModels },
+          });
         }
         if (levels && levels.length > 0) {
-          dispatch({ type: 'SET_AVAILABLE_THINKING_LEVELS', payload: { levels } });
+          dispatch({
+            type: 'SET_AVAILABLE_THINKING_LEVELS',
+            targetProjectId: currentProjectId,
+            payload: { levels },
+          });
         }
         if (stats) {
-          dispatch({ type: 'SET_SESSION_STATS', payload: { stats } });
+          dispatch({
+            type: 'SET_SESSION_STATS',
+            targetProjectId: currentProjectId,
+            payload: { stats },
+          });
+        }
+
+        const snapshot =
+          currentCwd && currentSessionId && resolveSessionSnapshot
+            ? resolveSessionSnapshot(currentCwd, currentSessionId)
+            : null;
+
+        let baseModel = modelInfo;
+        if (!baseModel && snapshot?.modelId) {
+          const snapshotMatched = activeModels.find(
+            (m) =>
+              (m.id === snapshot.modelId ||
+                (snapshot.provider && `${snapshot.provider}/${m.id}` === snapshot.modelId) ||
+                (snapshot.provider && m.id === `${snapshot.provider}/${snapshot.modelId}`)) &&
+              (!snapshot.provider || m.provider === snapshot.provider || !m.provider)
+          );
+          if (snapshotMatched) {
+            baseModel = snapshotMatched;
+          } else {
+            baseModel = {
+              id: snapshot.modelId,
+              provider: snapshot.provider || '',
+              name: snapshot.modelId,
+            };
+          }
         }
 
         const matched = activeModels.find(
-          (m) => m.id === modelInfo?.id && (m.provider === modelInfo?.provider || !modelInfo?.provider)
+          (m) => m.id === baseModel?.id && (m.provider === baseModel?.provider || !baseModel?.provider)
         );
         const currentModel = matched
           ? {
               ...matched,
-              ...modelInfo,
-              input_modalities: matched.input_modalities ?? modelInfo?.input_modalities,
+              ...baseModel,
+              input_modalities: matched.input_modalities ?? baseModel?.input_modalities,
             }
-          : modelInfo || activeModels[0];
+          : baseModel || activeModels[0];
 
         if (currentModel && (!modelInfo || !modelInfo.input_modalities)) {
           dispatch({
             type: 'MODEL_CHANGE_SUCCESS',
+            targetProjectId: currentProjectId,
             payload: {
               model: currentModel,
               thinkingLevel: (currentModel.defaultThinkingLevel as ThinkingLevel) ?? null,
@@ -234,7 +259,17 @@ export function useModels({
             console.warn('Failed to set initial thinking level:', err);
           }
           if (!isSubscribed) return;
-          dispatch({ type: 'SET_THINKING_LEVEL', payload: { level: defaultEffort } });
+          dispatch({
+            type: 'SET_THINKING_LEVEL',
+            targetProjectId: currentProjectId,
+            payload: { level: defaultEffort },
+          });
+        }
+
+        if (isSubscribed && sessionId === currentSessionId) {
+          setInitializedSessionId(currentSessionId);
+          setInitializedCwd(currentCwd);
+          setInitializedProjectId(currentProjectId);
         }
       } catch (err) {
         console.warn('Failed to load session parameters:', err);
@@ -246,12 +281,13 @@ export function useModels({
     return () => {
       isSubscribed = false;
     };
-  }, [connectionStatus, sessionId]);
+  }, [connectionStatus, sessionId, cwd, projectId]);
 
   return {
     modelThinkingLevels,
     handleSelectModel,
     handleSelectThinkingLevel,
     handleRefreshModels,
+    isSessionInitialized,
   };
 }

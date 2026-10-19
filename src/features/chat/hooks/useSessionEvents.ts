@@ -352,7 +352,12 @@ export function useSessionEvents({
       resolveTargetProjectId: (cwd?: string) => {
         if (!cwd) return activeProjectIdRef.current ?? undefined;
         const matched = findProjectByCwd(projectsRef.current, cwd);
-        return matched?.id ?? activeProjectIdRef.current ?? undefined;
+        if (matched) return matched.id;
+        const activeProj = projectsRef.current.find((p) => p.id === activeProjectIdRef.current);
+        if (activeProj && isSameProjectPath(activeProj.path, cwd)) {
+          return activeProjectIdRef.current ?? undefined;
+        }
+        return undefined;
       },
     });
   }

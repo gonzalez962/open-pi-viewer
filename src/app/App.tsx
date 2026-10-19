@@ -7,6 +7,7 @@ import {
   deleteMcpServerPi,
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
+import type { ThinkingLevel } from '@core/types/models';
 import { mapProvidersToArray, resolveModelDefaultThinkingLevel } from '@features/providers/providers';
 import { isConfigReady, validateConnectConfig } from '@features/settings/config';
 import { canRetryConnection, shouldShowHeaderStatus } from '@features/settings/connection';
@@ -44,12 +45,19 @@ import { SessionSidebar } from '@features/sessions/SessionSidebar';
 import { FileTree } from '@features/workspace/FileTree';
 import {
   applyProfileRuntime,
+  resolveProfileModel,
   PROFILE_ACTIVATED_EVENT,
   PROFILE_CLEARED_EVENT,
   type ProfileSummary,
   type ProfileActivationEventDetail,
 } from '@core/types/profiles';
 import { useProfiles } from '@features/profiles/hooks/useProfiles';
+import { useProfileRuntime } from '@features/profiles/hooks/useProfileRuntime';
+import {
+  loadSessionProfileSnapshot,
+  updateSessionProfileSnapshotManualSelection,
+  updateSessionProfileSnapshotExplicitProfile,
+} from '@features/profiles/lib/sessionProfileSnapshot';
 import {
   TerminalOverlay,
   TerminateConfirmationModal,
@@ -260,6 +268,16 @@ export const App: React.FC = () => {
               type: 'CONNECT_SUCCESS',
               targetProjectId,
               payload: { model: res.model },
+            });
+          } else if (res.model && res.model.id && targetState.modelInfo?.id !== res.model.id) {
+            dispatch({
+              type: 'MODEL_CHANGE_SUCCESS',
+              targetProjectId,
+              payload: {
+                model: res.model,
+                thinkingLevel: (res.model.defaultThinkingLevel as ThinkingLevel) ?? null,
+                availableThinkingLevels: targetState.availableThinkingLevels,
+              },
             });
           }
           return;
@@ -764,6 +782,10 @@ export const App: React.FC = () => {
     prevStatusRef.current = appStatus;
   }, [appStatus, t]);
 
+  const resolveSessionSnapshot = useCallback((targetCwd: string, targetSessionId: string) => {
+    return loadSessionProfileSnapshot(targetCwd, targetSessionId).snapshot;
+  }, []);
+
   // Models cluster: thinking-level overrides map, model/thinking-level selection,
   // manual refresh, and the connect-time effect that fetches available models, thinking
   // levels, session stats, custom providers and the thinking-level overrides map.
@@ -772,12 +794,16 @@ export const App: React.FC = () => {
     handleSelectModel,
     handleSelectThinkingLevel,
     handleRefreshModels,
+    isSessionInitialized,
   } = useModels({
     connectionStatus: state.connectionStatus,
     sessionId: state.sessionId,
+    projectId: projectsRegistry.activeProjectId ?? undefined,
+    cwd: config.workingDirectory,
     modelInfo: state.modelInfo,
     availableModels: state.availableModels,
     dispatch,
+    resolveSessionSnapshot,
   });
 
   // The OAuth helper updates auth.json outside Pi RPC. Its model-list command reads
@@ -827,6 +853,69 @@ export const App: React.FC = () => {
     availableModels: state.availableModels,
   });
 
+  const profileRuntime = useProfileRuntime({
+    cwd: config.workingDirectory,
+    sessionId: state.sessionId,
+    isConnected,
+    isBusy,
+    isSessionInitialized,
+    isProfilesLoaded: profilesHook.isProfilesLoaded,
+    loadedCwd: profilesHook.loadedCwd,
+    effectiveProfile: profilesHook.effectiveProfile,
+    availableModels: state.availableModels,
+    onSelectModel: handleSelectModel,
+    onSelectThinkingLevel: handleSelectThinkingLevel,
+  });
+
+  const effectiveModelInfo = useMemo(() => {
+    if (state.modelInfo) return state.modelInfo;
+    if (config.workingDirectory && state.sessionId) {
+      const snap = loadSessionProfileSnapshot(config.workingDirectory, state.sessionId).snapshot;
+      if (snap?.modelId) {
+        return {
+          id: snap.modelId,
+          provider: snap.provider || '',
+          name: snap.modelId,
+        };
+      }
+    }
+    return null;
+  }, [state.modelInfo, config.workingDirectory, state.sessionId]);
+
+  const handleManualSelectModel = useCallback(
+    async (provider: string, modelId: string) => {
+      profileRuntime.recordManualSelection();
+      if (config.workingDirectory && state.sessionId) {
+        updateSessionProfileSnapshotManualSelection(
+          config.workingDirectory,
+          state.sessionId,
+          { provider, modelId }
+        );
+      }
+      try {
+        await handleSelectModel(provider, modelId);
+      } catch (err) {
+        console.warn('Manual model selection failed:', err);
+      }
+    },
+    [profileRuntime, handleSelectModel, config.workingDirectory, state.sessionId]
+  );
+
+  const handleManualSelectThinkingLevel = useCallback(
+    async (level: ThinkingLevel) => {
+      profileRuntime.recordManualSelection();
+      if (config.workingDirectory && state.sessionId) {
+        updateSessionProfileSnapshotManualSelection(
+          config.workingDirectory,
+          state.sessionId,
+          { reasoningEffort: level }
+        );
+      }
+      await handleSelectThinkingLevel(level);
+    },
+    [profileRuntime, handleSelectThinkingLevel, config.workingDirectory, state.sessionId]
+  );
+
   // Engram project detection for current working directory
   const {
     engramProject,
@@ -860,12 +949,34 @@ export const App: React.FC = () => {
       if (!activatedProfile) return;
 
       if (isConnected && !isBusy) {
-        await applyProfileRuntime(activatedProfile, {
-          isConnected,
-          availableModels: state.availableModels,
-          onSelectModel: handleSelectModel,
-          onSelectThinkingLevel: handleSelectThinkingLevel,
-        });
+        profileRuntime.resetManualSelection();
+        if (config.workingDirectory && state.sessionId) {
+          const resolvedModel = resolveProfileModel(
+            activatedProfile.default_model,
+            state.availableModels
+          );
+          updateSessionProfileSnapshotExplicitProfile(
+            config.workingDirectory,
+            state.sessionId,
+            {
+              profileName: activatedProfile.name,
+              profileScope: activatedProfile.scope,
+              modelId: resolvedModel?.modelId ?? activatedProfile.default_model ?? null,
+              provider: resolvedModel?.provider || null,
+              reasoningEffort: activatedProfile.default_effort ?? null,
+            }
+          );
+        }
+        try {
+          await applyProfileRuntime(activatedProfile, {
+            isConnected,
+            availableModels: state.availableModels,
+            onSelectModel: handleSelectModel,
+            onSelectThinkingLevel: handleSelectThinkingLevel,
+          });
+        } catch (err) {
+          console.warn('Profile activation failed to apply runtime model:', err);
+        }
       }
 
       void profilesHook.refreshProfiles();
@@ -882,12 +993,16 @@ export const App: React.FC = () => {
             data.profiles.find((p) => p.name === globalName && p.scope === 'global') ||
             data.profiles.find((p) => p.name === globalName);
           if (globalProf) {
-            await applyProfileRuntime(globalProf, {
-              isConnected,
-              availableModels: state.availableModels,
-              onSelectModel: handleSelectModel,
-              onSelectThinkingLevel: handleSelectThinkingLevel,
-            });
+            try {
+              await applyProfileRuntime(globalProf, {
+                isConnected,
+                availableModels: state.availableModels,
+                onSelectModel: handleSelectModel,
+                onSelectThinkingLevel: handleSelectThinkingLevel,
+              });
+            } catch (err) {
+              console.warn('Fallback profile activation failed to apply runtime model:', err);
+            }
           }
         }
       }
@@ -1949,11 +2064,11 @@ export const App: React.FC = () => {
             )}
 
             <PromptControls
-              modelInfo={state.modelInfo}
+              modelInfo={effectiveModelInfo}
               availableModels={state.availableModels}
               isChangingModel={state.isChangingModel}
               thinkingLevel={state.thinkingLevel}
-              defaultThinkingLevel={resolveModelDefaultThinkingLevel(state.modelInfo, modelThinkingLevels, state.availableThinkingLevels)}
+              defaultThinkingLevel={resolveModelDefaultThinkingLevel(effectiveModelInfo, modelThinkingLevels, state.availableThinkingLevels)}
               availableThinkingLevels={state.availableThinkingLevels}
               sessionStats={state.sessionStats}
               isHighContext={isHighContext}
@@ -1963,8 +2078,8 @@ export const App: React.FC = () => {
               attachedFiles={attachedFiles}
               onAttachFiles={addAttachedFiles}
               onAbort={handleAbort}
-              onSelectModel={handleSelectModel}
-              onSelectThinkingLevel={handleSelectThinkingLevel}
+              onSelectModel={handleManualSelectModel}
+              onSelectThinkingLevel={handleManualSelectThinkingLevel}
               mcpServers={projectMcp.servers}
               mcpActiveCount={projectMcp.activeCount}
               mcpTotalCount={projectMcp.totalCount}
