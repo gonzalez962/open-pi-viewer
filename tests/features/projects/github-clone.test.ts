@@ -1000,3 +1000,73 @@ test('GitHubCloneModal: renders browse tabs and categorized repository groups', 
   assert.ok(html.includes('github-clone-tabs'), 'Must render tabs bar');
 });
 
+test('GitHubCloneModal: renders owner group headers collapsed by default with aria-expanded="false"', () => {
+  const mockGroups: any[] = [
+    {
+      owner: 'octocat',
+      isCurrentUser: true,
+      repositories: [
+        {
+          id: 101,
+          name: 'zebra-project',
+          fullName: 'octocat/zebra-project',
+          owner: 'octocat',
+          isPrivate: false,
+          description: 'Zebra project',
+        },
+        {
+          id: 102,
+          name: 'alpha-project',
+          fullName: 'octocat/alpha-project',
+          owner: 'octocat',
+          isPrivate: false,
+          description: 'Alpha project',
+        },
+      ],
+    },
+    {
+      owner: 'my-org',
+      isCurrentUser: false,
+      ownerType: 'Organization',
+      repositories: [
+        {
+          id: 202,
+          name: 'org-repo',
+          fullName: 'my-org/org-repo',
+          owner: 'my-org',
+          isPrivate: true,
+          description: 'Organization private repo',
+        },
+      ],
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'es',
+      initialAuthStatus: { loading: false, installed: true, authenticated: true, username: 'octocat' },
+      initialRepoState: {
+        groups: mockGroups,
+        total: 3,
+      },
+      listRepositories: async () => ({
+        groups: mockGroups,
+        total: 3,
+        currentUser: 'octocat',
+      }),
+      onClose: () => {},
+      onCloneSuccess: () => {},
+    })
+  );
+
+  assert.ok(html.includes('github-clone-owner-chevron'), 'Must render owner chevron');
+  assert.ok(html.includes('aria-expanded="false"'), 'Group headers must have aria-expanded="false" by default');
+  assert.ok(html.includes('is-collapsed'), 'Headers and chevrons must have is-collapsed by default');
+  assert.ok(html.includes('octocat'), 'Must render octocat owner');
+  assert.ok(html.includes('Tus repositorios'), 'Must render localized my_repos label');
+  assert.ok(html.includes('Organizaciones y colaboradores'), 'Must render localized org_repos label');
+});
+
+

@@ -624,14 +624,11 @@ export function groupRepositoriesByOwner(
     group.repositories.push(repo);
   }
 
-  // Sort repositories within each group by pushedAt/updatedAt descending, then name
+  // Sort repositories within each group alphabetically by name (case-insensitive)
   for (const group of groupMap.values()) {
-    group.repositories.sort((a, b) => {
-      const timeA = new Date(a.pushedAt || a.updatedAt || 0).getTime();
-      const timeB = new Date(b.pushedAt || b.updatedAt || 0).getTime();
-      if (timeA !== timeB) return timeB - timeA;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
-    });
+    group.repositories.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    );
   }
 
   // Convert to array and sort groups:

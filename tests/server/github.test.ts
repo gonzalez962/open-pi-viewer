@@ -563,9 +563,9 @@ test('T6 S2: groupRepositoriesByOwner categorizes repos by owner, places current
   assert.strictEqual(groups[0].owner, 'alice');
   assert.strictEqual(groups[0].isCurrentUser, true);
   assert.strictEqual(groups[0].repositories.length, 2);
-  // In alice's group, personal-site (Apr) comes before dotfiles (Feb)
-  assert.strictEqual(groups[0].repositories[0].name, 'personal-site');
-  assert.strictEqual(groups[0].repositories[1].name, 'dotfiles');
+  // Repositories within group are sorted alphabetically: dotfiles before personal-site
+  assert.strictEqual(groups[0].repositories[0].name, 'dotfiles');
+  assert.strictEqual(groups[0].repositories[1].name, 'personal-site');
 
   // Next groups sorted alphabetically: acme-corp, bob
   assert.strictEqual(groups[1].owner, 'acme-corp');

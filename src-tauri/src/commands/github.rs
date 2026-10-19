@@ -497,13 +497,9 @@ pub fn group_repositories_by_owner(
         group.repositories.push(repo);
     }
 
-    // Sort repositories within each group by pushed_at / updated_at descending, then name
+    // Sort repositories within each group alphabetically by name (case-insensitive)
     for group in map.values_mut() {
-        group.repositories.sort_by(|a, b| {
-            let time_a = a.pushed_at.as_deref().or(a.updated_at.as_deref()).unwrap_or("");
-            let time_b = b.pushed_at.as_deref().or(b.updated_at.as_deref()).unwrap_or("");
-            time_b.cmp(time_a).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        group.repositories.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     }
 
     // Sort groups: current user first, then alphabetical by owner
@@ -669,6 +665,35 @@ pub async fn list_github_repositories_impl(
             });
         } else {
             // Fallback to curl
+            let user_curl_spec = CommandSpec {
+                program: "curl".into(),
+                args: vec![
+                    "-s".into(),
+                    "-H".into(),
+                    "Accept: application/vnd.github+json".into(),
+                    "-H".into(),
+                    format!("Authorization: Bearer {}", tok),
+                    "-H".into(),
+                    "User-Agent: open-pi-viewer".into(),
+                    "https://api.github.com/user".into(),
+                ],
+                envs: vec![],
+                env_removes: vec![],
+                timeout: PROBE_TIMEOUT,
+                capture_output: true,
+            };
+            let current_user = if let Ok(out) = runner.run_command(user_curl_spec).await {
+                if out.success {
+                    serde_json::from_str::<serde_json::Value>(&out.stdout)
+                        .ok()
+                        .and_then(|v| v.get("login").and_then(|l| l.as_str()).map(String::from))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             let curl_spec = CommandSpec {
                 program: "curl".into(),
                 args: vec![
@@ -693,12 +718,12 @@ pub async fn list_github_repositories_impl(
             let raw_items = parse_paginated_json_arrays(&res.stdout);
             let repos: Vec<GithubRepositorySummary> = raw_items.iter().filter_map(normalize_raw_github_repo).collect();
             let total = repos.len();
-            let groups = group_repositories_by_owner(repos, None);
+            let groups = group_repositories_by_owner(repos, current_user.as_deref());
 
             return Ok(ListGithubRepositoriesResult {
                 groups,
                 total,
-                current_user: None,
+                current_user,
             });
         }
     }

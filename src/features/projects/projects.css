@@ -1623,8 +1623,9 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-height: 260px;
+  max-height: 380px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 4px;
 }
 
@@ -1635,6 +1636,7 @@
   border-radius: var(--radius-md, 8px);
   background-color: var(--bg-surface);
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .github-clone-owner-header {
@@ -1644,6 +1646,33 @@
   padding: 8px 12px;
   background-color: var(--bg-subtle);
   border-bottom: 1px solid var(--border-muted);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.12s ease;
+}
+
+.github-clone-owner-header:hover {
+  background-color: var(--bg-surface-elevated);
+}
+
+.github-clone-owner-header.is-collapsed {
+  border-bottom: none;
+}
+
+.github-clone-owner-chevron {
+  transition: transform 0.2s ease;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.github-clone-owner-chevron.is-collapsed {
+  transform: rotate(-90deg);
 }
 
 .github-clone-owner-avatar {
@@ -1747,6 +1776,7 @@
   font-size: 13px;
   font-weight: 500;
   color: var(--fg-default);
+  word-break: break-word;
 }
 
 .github-clone-repo-visibility-badge {
