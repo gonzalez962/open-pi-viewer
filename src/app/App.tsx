@@ -78,6 +78,11 @@ const FolderPickerModal = React.lazy(() =>
     default: m.FolderPickerModal,
   }))
 );
+const DefaultDirectorySetupModal = React.lazy(() =>
+  import('@features/projects/components/DefaultDirectorySetupModal').then((m) => ({
+    default: m.DefaultDirectorySetupModal,
+  }))
+);
 const GitHubCloneModal = React.lazy(() =>
   import('@features/projects/components/GitHubCloneModal').then((m) => ({
     default: m.GitHubCloneModal,
@@ -353,6 +358,7 @@ export const App: React.FC = () => {
     setNotifications,
     setCustomCommands,
     setHiddenCommandIds,
+    setDefaultProjectsDirectory,
     appearanceController,
     t,
   } = usePreferences();
@@ -473,6 +479,8 @@ export const App: React.FC = () => {
 
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isGitHubCloneOpen, setIsGitHubCloneOpen] = useState(false);
+  const [isDefaultDirSetupOpen, setIsDefaultDirSetupOpen] = useState(false);
+  const [pendingActionAfterDefaultDir, setPendingActionAfterDefaultDir] = useState<'add_project' | 'github_clone' | null>(null);
   const addProjectTriggerRef = useRef<HTMLElement | null>(null);
   const gitHubCloneTriggerRef = useRef<HTMLElement | null>(null);
 
@@ -484,8 +492,13 @@ export const App: React.FC = () => {
     if (isMobileNavOpen) {
       setIsMobileNavOpen(false);
     }
+    if (!preferences.defaultProjectsDirectory) {
+      setPendingActionAfterDefaultDir('add_project');
+      setIsDefaultDirSetupOpen(true);
+      return;
+    }
     setIsFolderPickerOpen(true);
-  }, [isMobileNavOpen]);
+  }, [isMobileNavOpen, preferences.defaultProjectsDirectory]);
 
   const handleCloseFolderPicker = useCallback(() => {
     setIsFolderPickerOpen(false);
@@ -507,8 +520,33 @@ export const App: React.FC = () => {
     if (isMobileNavOpen) {
       setIsMobileNavOpen(false);
     }
+    if (!preferences.defaultProjectsDirectory) {
+      setPendingActionAfterDefaultDir('github_clone');
+      setIsDefaultDirSetupOpen(true);
+      return;
+    }
     setIsGitHubCloneOpen(true);
-  }, [isMobileNavOpen]);
+  }, [isMobileNavOpen, preferences.defaultProjectsDirectory]);
+
+  const handleConfirmDefaultDirectory = useCallback(
+    (directory: string) => {
+      setDefaultProjectsDirectory(directory);
+      setIsDefaultDirSetupOpen(false);
+      const pending = pendingActionAfterDefaultDir;
+      setPendingActionAfterDefaultDir(null);
+      if (pending === 'add_project') {
+        setIsFolderPickerOpen(true);
+      } else if (pending === 'github_clone') {
+        setIsGitHubCloneOpen(true);
+      }
+    },
+    [pendingActionAfterDefaultDir, setDefaultProjectsDirectory]
+  );
+
+  const handleCloseDefaultDirSetup = useCallback(() => {
+    setIsDefaultDirSetupOpen(false);
+    setPendingActionAfterDefaultDir(null);
+  }, []);
 
   const handleCloseGitHubClone = useCallback(() => {
     setIsGitHubCloneOpen(false);
@@ -1526,6 +1564,7 @@ export const App: React.FC = () => {
                 webPushStatus={webPush.isSupported ? webPush.status : undefined}
                 onCustomCommandsChange={setCustomCommands}
                 onHiddenCommandIdsChange={setHiddenCommandIds}
+                onDefaultProjectsDirectoryChange={setDefaultProjectsDirectory}
                 appearanceController={appearanceController}
                 settingsError={settingsError}
                 settingsStorageNotice={settingsStorageNotice}
@@ -2151,6 +2190,7 @@ export const App: React.FC = () => {
           <FolderPickerModal
             isOpen={isFolderPickerOpen}
             initialPath={
+              preferences.defaultProjectsDirectory ||
               projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
               config.workingDirectory
             }
@@ -2166,6 +2206,7 @@ export const App: React.FC = () => {
           <GitHubCloneModal
             isOpen={isGitHubCloneOpen}
             initialDestinationPath={
+              preferences.defaultProjectsDirectory ||
               projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
               config.workingDirectory
             }
@@ -2175,6 +2216,22 @@ export const App: React.FC = () => {
               handleCloseGitHubClone();
               handleOpenAddProject();
             }}
+            locale={preferences.language}
+          />
+        </React.Suspense>
+      )}
+
+      {isDefaultDirSetupOpen && (
+        <React.Suspense fallback={null}>
+          <DefaultDirectorySetupModal
+            isOpen={isDefaultDirSetupOpen}
+            initialPath={
+              preferences.defaultProjectsDirectory ||
+              projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
+              config.workingDirectory
+            }
+            onClose={handleCloseDefaultDirSetup}
+            onConfirm={handleConfirmDefaultDirectory}
             locale={preferences.language}
           />
         </React.Suspense>

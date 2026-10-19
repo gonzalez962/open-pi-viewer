@@ -1416,3 +1416,33 @@ test('computeCustomThemeVariables: supports opacity-only without explicit color 
   });
   assert.strictEqual(customHex['--custom-bg-canvas'], 'rgba(255, 0, 0, 0.5)');
 });
+
+test('preferences: validateUiPreferences validates and persists defaultProjectsDirectory', () => {
+  const fakeStorage = createFakeStorage();
+  let livePrefs = { ...DEFAULT_UI_PREFERENCES };
+
+  const controller = new PreferencesController({
+    getPreferences: () => livePrefs,
+    setPreferences: (updated) => {
+      livePrefs = updated;
+    },
+    setWarning: () => {},
+    storage: fakeStorage,
+  });
+
+  // Sets valid directory
+  controller.setDefaultProjectsDirectory('  /home/user/my-projects  ');
+  assert.strictEqual(livePrefs.defaultProjectsDirectory, '/home/user/my-projects');
+
+  // Reloads from storage
+  const loaded = loadUiPreferences(fakeStorage);
+  assert.strictEqual(loaded.preferences.defaultProjectsDirectory, '/home/user/my-projects');
+
+  // Clearing sets it back to undefined
+  controller.setDefaultProjectsDirectory(null);
+  assert.strictEqual(livePrefs.defaultProjectsDirectory, undefined);
+
+  const reloaded = loadUiPreferences(fakeStorage);
+  assert.strictEqual(reloaded.preferences.defaultProjectsDirectory, undefined);
+});
+

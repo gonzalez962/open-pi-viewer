@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { DefaultDirectorySetupModal } from '@features/projects/components/DefaultDirectorySetupModal';
 import {
   pickDirectoryPi,
   browseFilesystemPi,
@@ -1703,3 +1704,104 @@ test('ProjectDock footer PRESERVE: clicking Clone button triggers onOpenGitHubCl
   addBtn.props.onClick();
   assert.strictEqual(addOpened, true, 'onClick must trigger onOpenAddProject callback');
 });
+
+test('DefaultDirectorySetupModal: renders accessible dialog when open and null when closed', () => {
+  let closedTree: any = null;
+  renderToStaticMarkup(
+    React.createElement(() => {
+      closedTree = DefaultDirectorySetupModal({
+        isOpen: false,
+        onClose: () => {},
+        onConfirm: () => {},
+        locale: 'en',
+      });
+      return closedTree;
+    })
+  );
+  assert.strictEqual(closedTree, null);
+
+  let openTree: any = null;
+  renderToStaticMarkup(
+    React.createElement(() => {
+      openTree = DefaultDirectorySetupModal({
+        isOpen: true,
+        initialPath: '/home/user/projects',
+        onClose: () => {},
+        onConfirm: () => {},
+        locale: 'en',
+      });
+      return openTree;
+    })
+  );
+
+  const dialog = findElement(
+    openTree,
+    (el) => el?.props?.role === 'dialog' && el?.props?.['aria-modal'] === 'true'
+  );
+  assert.ok(dialog, 'Modal must have role="dialog" and aria-modal="true"');
+
+  const input = findElement(
+    openTree,
+    (el) => el?.type === 'input' && el?.props?.id === 'default-directory-path-input'
+  );
+  assert.ok(input, 'Path input must be present');
+  assert.strictEqual(input.props.value, '/home/user/projects');
+});
+
+test('DefaultDirectorySetupModal: triggers onConfirm on form submit with trimmed directory', () => {
+  let confirmedDir: string | null = null;
+  let openTree: any = null;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      openTree = DefaultDirectorySetupModal({
+        isOpen: true,
+        initialPath: '  /custom/projects/path  ',
+        onClose: () => {},
+        onConfirm: (dir) => {
+          confirmedDir = dir;
+        },
+        locale: 'es',
+      });
+      return openTree;
+    })
+  );
+
+  const form = findElement(openTree, (el) => el?.type === 'form');
+  assert.ok(form, 'Form element must exist');
+  assert.strictEqual(typeof form.props.onSubmit, 'function');
+
+  form.props.onSubmit({ preventDefault: () => {} });
+  assert.strictEqual(confirmedDir, '/custom/projects/path', 'onConfirm must be called with trimmed path');
+});
+
+test('DefaultDirectorySetupModal: close button invokes onClose callback', () => {
+  let closed = false;
+  let openTree: any = null;
+
+  renderToStaticMarkup(
+    React.createElement(() => {
+      openTree = DefaultDirectorySetupModal({
+        isOpen: true,
+        onClose: () => {
+          closed = true;
+        },
+        onConfirm: () => {},
+        locale: 'en',
+      });
+      return openTree;
+    })
+  );
+
+  const closeBtn = findElement(
+    openTree,
+    (el) =>
+      el?.type === 'button' &&
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('folder-picker-close-btn')
+  );
+  assert.ok(closeBtn, 'Close button must exist');
+  closeBtn.props.onClick();
+  assert.strictEqual(closed, true, 'Clicking close button must invoke onClose');
+});
+

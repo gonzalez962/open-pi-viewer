@@ -326,6 +326,10 @@ export interface UiPreferences {
    * (Issue #9 T8). Purely visual: hidden commands still run when typed.
    */
   hiddenCommandIds?: string[];
+  /**
+   * Default directory configured by the user for opening the folder explorer and cloning repositories.
+   */
+  defaultProjectsDirectory?: string;
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -590,6 +594,18 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
   const hiddenCommandIds =
     'hiddenCommandIds' in record ? sanitizeHiddenCommandIds(record.hiddenCommandIds) : undefined;
 
+  let defaultProjectsDirectory: string | undefined = undefined;
+  if ('defaultProjectsDirectory' in record) {
+    if (typeof record.defaultProjectsDirectory === 'string') {
+      const trimmed = record.defaultProjectsDirectory.trim();
+      if (trimmed.length > 0) {
+        defaultProjectsDirectory = trimmed;
+      }
+    } else if (record.defaultProjectsDirectory !== undefined && record.defaultProjectsDirectory !== null) {
+      warnings.push(`Invalid defaultProjectsDirectory '${String(record.defaultProjectsDirectory)}'; ignored`);
+    }
+  }
+
   const valid = warnings.length === 0;
   return {
     valid,
@@ -604,6 +620,7 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
       ...(customBackground !== undefined ? { customBackground } : {}),
       ...(customCommands !== undefined ? { customCommands } : {}),
       ...(hiddenCommandIds !== undefined ? { hiddenCommandIds } : {}),
+      ...(defaultProjectsDirectory !== undefined ? { defaultProjectsDirectory } : {}),
     },
     ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
   };
@@ -882,6 +899,25 @@ export class PreferencesController {
           storage.removeItem(LEGACY_CUSTOM_ACCENT_STORAGE_KEY);
         } catch {}
       }
+      this.options.setWarning(null);
+    }
+    this.options.setPreferences(updated);
+    return updated;
+  }
+
+  setDefaultProjectsDirectory(directory: string | null): UiPreferences {
+    const storage = this.resolveStorage();
+    const current = this.options.getPreferences();
+    const updated: UiPreferences = { ...current };
+    if (directory && typeof directory === 'string' && directory.trim().length > 0) {
+      updated.defaultProjectsDirectory = directory.trim();
+    } else {
+      delete updated.defaultProjectsDirectory;
+    }
+    const saveRes = saveUiPreferences(updated, storage);
+    if (!saveRes.success) {
+      this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');
+    } else {
       this.options.setWarning(null);
     }
     this.options.setPreferences(updated);

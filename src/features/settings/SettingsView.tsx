@@ -39,6 +39,8 @@ export interface SettingsViewProps {
   onCustomCommandsChange?: (commands: CustomCommand[]) => void;
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
   onHiddenCommandIdsChange?: (ids: string[]) => void;
+  /** Persists the default projects directory for browsing and cloning. */
+  onDefaultProjectsDirectoryChange?: (directory: string | null) => void;
   settingsError: string | null;
   settingsStorageNotice: string | null;
   isBusy: boolean;
@@ -70,6 +72,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   webPushStatus,
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
+  onDefaultProjectsDirectoryChange,
   settingsError,
   settingsStorageNotice,
   isBusy,
@@ -222,6 +225,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         ...prev,
         workingDirectory: selected,
       }));
+    }
+  };
+
+  const handleBrowseDefaultProjectsDirectory = async () => {
+    const pickFn = pickDirectoryFn || pickDirectoryPi;
+    const selected = await pickFn(preferences.defaultProjectsDirectory || undefined);
+    if (selected && onDefaultProjectsDirectoryChange) {
+      onDefaultProjectsDirectoryChange(selected);
     }
   };
 
@@ -876,6 +887,60 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
             </div>
           </form>
+        </section>
+
+        {/* Section: Default Projects Directory */}
+        <section className="settings-card-section">
+          <div className="settings-section-header">
+            <h2 className="settings-section-title">
+              {t('settings.default_projects_dir_heading')}
+            </h2>
+            <span className="prompt-hint">
+              {t('settings.default_projects_dir_hint')}
+            </span>
+          </div>
+
+          <div className="connection-fields-grid">
+            <div className="field-group">
+              <label htmlFor="settings-default-projects-dir-input" className="field-label">
+                {t('projects.default_directory_label')}
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  id="settings-default-projects-dir-input"
+                  type="text"
+                  className="field-input"
+                  style={{ flex: 1 }}
+                  value={preferences.defaultProjectsDirectory || ''}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    onDefaultProjectsDirectoryChange?.(val ? val : null);
+                  }}
+                  placeholder={t('projects.default_directory_not_set')}
+                  title={t('projects.default_directory_hint')}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleBrowseDefaultProjectsDirectory}
+                  title={t('projects.default_directory_browse')}
+                >
+                  {t('projects.default_directory_browse')}
+                </button>
+                {preferences.defaultProjectsDirectory && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => onDefaultProjectsDirectoryChange?.(null)}
+                    title={t('projects.default_directory_clear')}
+                  >
+                    {t('projects.default_directory_clear')}
+                  </button>
+                )}
+              </div>
+              <span className="field-subtext">{t('projects.default_directory_hint')}</span>
+            </div>
+          </div>
         </section>
 
         {/* Section 3: Workspace File Explorer */}

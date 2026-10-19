@@ -32,6 +32,7 @@ export interface UsePreferencesResult {
   setCustomCommands: (commands: CustomCommand[]) => void;
   /** Replaces and persists the ids of commands hidden from the palette and "/help" (T8). */
   setHiddenCommandIds: (ids: string[]) => void;
+  setDefaultProjectsDirectory: (directory: string | null) => void;
   /** Atomically commits candidate appearance preferences. */
   commitAppearance: (candidate: AppearanceInput) => PreferencesSaveResult;
   /** Atomically resets appearance customizations back to defaults. */
@@ -146,6 +147,10 @@ export function usePreferences(): UsePreferencesResult {
     preferencesControllerRef.current?.setHiddenCommandIds(ids);
   }, []);
 
+  const setDefaultProjectsDirectory = useCallback((directory: string | null) => {
+    preferencesControllerRef.current?.setDefaultProjectsDirectory(directory);
+  }, []);
+
   const commitAppearance = useCallback((candidate: AppearanceInput): PreferencesSaveResult => {
     return (
       preferencesControllerRef.current?.commitAppearance(candidate) ?? {
@@ -184,6 +189,7 @@ export function usePreferences(): UsePreferencesResult {
     setNotifications,
     setCustomCommands,
     setHiddenCommandIds,
+    setDefaultProjectsDirectory,
     commitAppearance,
     resetAppearance,
     appearanceController: appearanceControllerRef.current,
