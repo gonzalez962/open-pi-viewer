@@ -5,6 +5,10 @@ import {
   type ProfileSummary,
 } from '@core/types/profiles';
 import type { ModelInfo, ThinkingLevel } from '@core/types/models';
+import {
+  loadSessionProfileSnapshot,
+  saveSessionProfileSnapshot,
+} from './sessionProfileSnapshot';
 
 export interface ProfileRuntimeContext {
   cwd?: string;
@@ -27,6 +31,7 @@ export interface RestorationDecisionInput {
   lastFailedContextKey?: string | null;
   manualSelectionContextKey: string | null;
   effectiveProfile: ProfileSummary | null;
+  hasSnapshot?: boolean;
 }
 
 export type RestorationDecisionReason =
@@ -64,6 +69,10 @@ export function decideProfileRestoration(input: RestorationDecisionInput): Resto
   }
   if (input.lastFailedContextKey === input.currentContextKey) {
     return { shouldRestore: false, reason: 'restore_failed' };
+  }
+  // If we already have a saved session snapshot, we don't need to wait for profiles to load from disk
+  if (input.hasSnapshot) {
+    return { shouldRestore: true, reason: 'ready' };
   }
   if (input.loadedCwd !== undefined && input.cwd !== undefined && input.loadedCwd !== input.cwd) {
     return { shouldRestore: false, reason: 'stale_cwd' };
@@ -200,6 +209,9 @@ export class ProfileRuntimeCoordinator {
 
     if (isContextChanged || isReconnected) {
       this.resetFailure(params.cwd, params.sessionId);
+      if (isContextChanged) {
+        this.state.lastRestoredContextKey = null;
+      }
     }
 
     this.lastActiveContextKey = contextKey;
@@ -210,6 +222,11 @@ export class ProfileRuntimeCoordinator {
     if (this.inFlightKey === contextKey && this.inFlightPromise) {
       return this.inFlightPromise;
     }
+
+    const snapshotRecord =
+      params.cwd && params.sessionId
+        ? loadSessionProfileSnapshot(params.cwd, params.sessionId).snapshot
+        : null;
 
     const decision = decideProfileRestoration({
       isConnected: params.isConnected,
@@ -223,16 +240,18 @@ export class ProfileRuntimeCoordinator {
       lastFailedContextKey: this.state.lastFailedContextKey,
       manualSelectionContextKey: this.state.manualSelectionContextKey,
       effectiveProfile: params.effectiveProfile,
+      hasSnapshot: Boolean(snapshotRecord && (snapshotRecord.modelId || snapshotRecord.reasoningEffort)),
     });
 
     if (!decision.shouldRestore) {
-      // Only latch as handled when metadata is confirmed loaded and there is truly no profile
+      // Only latch as handled when metadata is confirmed loaded and there is truly no profile and no snapshot
       if (
         decision.reason === 'no_profile' &&
         params.isConnected &&
         !params.isBusy &&
         params.isSessionInitialized &&
-        params.isProfilesLoaded !== false
+        params.isProfilesLoaded !== false &&
+        !snapshotRecord
       ) {
         this.state.lastRestoredContextKey = contextKey;
         this.state.lastFailedContextKey = null;
@@ -246,16 +265,56 @@ export class ProfileRuntimeCoordinator {
 
     const executeRestoration = async (): Promise<boolean> => {
       try {
-        const profile = params.effectiveProfile;
-        if (!profile) return false;
+        let targetModelId: string | null = null;
+        let targetProvider: string | null = null;
+        let targetEffort: string | null = null;
+
+        if (snapshotRecord && (snapshotRecord.modelId || snapshotRecord.reasoningEffort)) {
+          // Stable session snapshot takes precedence over reloading project configuration
+          targetModelId = snapshotRecord.modelId;
+          targetProvider = snapshotRecord.provider;
+          targetEffort = snapshotRecord.reasoningEffort ?? null;
+        } else if (params.effectiveProfile) {
+          // First time initialization for this session: derive from effective profile
+          const profile = params.effectiveProfile;
+          if (profile.default_model) {
+            const resolved = resolveProfileModel(profile.default_model, params.availableModels);
+            if (resolved && resolved.modelId) {
+              targetModelId = resolved.modelId;
+              targetProvider = resolved.provider;
+            }
+          }
+          if (profile.default_effort) {
+            const effort = resolveProfileEffort(profile.default_effort);
+            if (effort) {
+              targetEffort = effort;
+            }
+          }
+        }
+
+        if (!targetModelId && !targetEffort) return false;
+
+        if (targetModelId && !targetProvider) {
+          const resolved = resolveProfileModel(targetModelId, params.availableModels);
+          if (resolved?.provider) {
+            targetProvider = resolved.provider;
+            targetModelId = resolved.modelId || targetModelId;
+          } else if (targetModelId.includes('/')) {
+            const slashIdx = targetModelId.indexOf('/');
+            targetProvider = targetModelId.slice(0, slashIdx);
+            targetModelId = targetModelId.slice(slashIdx + 1);
+          } else if (params.availableModels && params.availableModels.length > 0) {
+            const matched = params.availableModels.find((m) => m.id === targetModelId);
+            if (matched?.provider) {
+              targetProvider = matched.provider;
+            }
+          }
+        }
 
         let modelApplied = false;
-        if (profile.default_model) {
-          const resolved = resolveProfileModel(profile.default_model, params.availableModels);
-          if (resolved && resolved.modelId) {
-            await params.onSelectModel(resolved.provider, resolved.modelId);
-            modelApplied = true;
-          }
+        if (targetModelId && targetProvider) {
+          await params.onSelectModel(targetProvider, targetModelId);
+          modelApplied = true;
         }
 
         // Validate that this run is still current before proceeding to effort RPC
@@ -266,11 +325,8 @@ export class ProfileRuntimeCoordinator {
           return false;
         }
 
-        if (profile.default_effort) {
-          const effort = resolveProfileEffort(profile.default_effort);
-          if (effort) {
-            await params.onSelectThinkingLevel(effort);
-          }
+        if (targetEffort) {
+          await params.onSelectThinkingLevel(targetEffort as ThinkingLevel);
         }
 
         if (
@@ -280,8 +336,25 @@ export class ProfileRuntimeCoordinator {
           return false;
         }
 
-        this.state.lastRestoredContextKey = contextKey;
-        this.state.lastFailedContextKey = null;
+        // Persist/confirm snapshot after successful application so failed RPCs don't latch false snapshot
+        if (params.cwd && params.sessionId && !snapshotRecord && params.effectiveProfile) {
+          saveSessionProfileSnapshot({
+            cwd: params.cwd,
+            sessionId: params.sessionId,
+            profileName: params.effectiveProfile.name,
+            profileScope: params.effectiveProfile.scope,
+            modelId: targetModelId,
+            provider: targetProvider,
+            reasoningEffort: (targetEffort as any) ?? null,
+            source: 'profile_default',
+            updatedAt: new Date().toISOString(),
+          });
+        }
+
+        if (modelApplied || !targetModelId) {
+          this.state.lastRestoredContextKey = contextKey;
+          this.state.lastFailedContextKey = null;
+        }
         return modelApplied;
       } catch (err) {
         // Record failure for this context if still active to avoid spinning infinite retries

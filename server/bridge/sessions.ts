@@ -377,7 +377,7 @@ export async function handleConnect(args: any = {}) {
 
   return {
     connected: true,
-    model: piRpc.modelInfo || getActiveModel(),
+    model: piRpc.modelInfo || (getActiveCwd() === targetCwd ? getActiveModel() : null),
     sessionId: resolvedSessionId,
     sessionFile: resolvedSessionFile,
     messageCount: messages?.length || 0,

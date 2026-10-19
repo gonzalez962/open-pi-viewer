@@ -40,3 +40,10 @@ The `ProfileRuntimeCoordinator` provides deterministic state management and sequ
 `App.tsx` coordinates `useModels`, `useProfiles`, and `useProfileRuntime`:
 - Routes manual UI model selections from `ChatSessionView` through `handleManualSelectModel`, marking the selection as manual and cancelling pending restoration continuations.
 - Automatically restores the effective profile (project-specific or inherited global) once both session initialization and profile metadata load have settled.
+
+### 5. Stable Session Profile Snapshot Architecture (`sessionProfileSnapshot.ts`, D5)
+- Captures effective configuration (profile reference, model, provider, reasoning effort) bound to `${cwd}::${sessionId}` on first session load.
+- Re-uses this session snapshot across project navigation without re-loading project configurations or clobbering active state.
+- Survives view reloads via persistent storage (`PI_VIEWER_SESSION_PROFILE_SNAPSHOTS_STORAGE_KEY`).
+- Confirms actual active model with Pi process before marking as restored.
+- Retains session configuration when profile definitions are edited on disk (affects new sessions only). Explicit reselection or manual changes update the session snapshot.

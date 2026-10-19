@@ -28,6 +28,10 @@ export interface UseModelsOptions {
   modelInfo: ModelInfo | null | undefined;
   availableModels: ModelInfo[];
   dispatch: React.Dispatch<ChatAction & { targetProjectId?: string }>;
+  resolveSessionSnapshot?: (
+    cwd: string,
+    sessionId: string
+  ) => { modelId?: string | null; provider?: string | null } | null;
 }
 
 export interface UseModelsResult {
@@ -53,6 +57,7 @@ export function useModels({
   modelInfo,
   availableModels,
   dispatch,
+  resolveSessionSnapshot,
 }: UseModelsOptions): UseModelsResult {
   const [modelThinkingLevels, setModelThinkingLevels] = useState<ModelThinkingLevelsMap>({});
   const [initializedSessionId, setInitializedSessionId] = useState<string | null>(null);
@@ -193,16 +198,41 @@ export function useModels({
           });
         }
 
+        const snapshot =
+          currentCwd && currentSessionId && resolveSessionSnapshot
+            ? resolveSessionSnapshot(currentCwd, currentSessionId)
+            : null;
+
+        let baseModel = modelInfo;
+        if (!baseModel && snapshot?.modelId) {
+          const snapshotMatched = activeModels.find(
+            (m) =>
+              (m.id === snapshot.modelId ||
+                (snapshot.provider && `${snapshot.provider}/${m.id}` === snapshot.modelId) ||
+                (snapshot.provider && m.id === `${snapshot.provider}/${snapshot.modelId}`)) &&
+              (!snapshot.provider || m.provider === snapshot.provider || !m.provider)
+          );
+          if (snapshotMatched) {
+            baseModel = snapshotMatched;
+          } else {
+            baseModel = {
+              id: snapshot.modelId,
+              provider: snapshot.provider || '',
+              name: snapshot.modelId,
+            };
+          }
+        }
+
         const matched = activeModels.find(
-          (m) => m.id === modelInfo?.id && (m.provider === modelInfo?.provider || !modelInfo?.provider)
+          (m) => m.id === baseModel?.id && (m.provider === baseModel?.provider || !baseModel?.provider)
         );
         const currentModel = matched
           ? {
               ...matched,
-              ...modelInfo,
-              input_modalities: matched.input_modalities ?? modelInfo?.input_modalities,
+              ...baseModel,
+              input_modalities: matched.input_modalities ?? baseModel?.input_modalities,
             }
-          : modelInfo || activeModels[0];
+          : baseModel || activeModels[0];
 
         if (currentModel && (!modelInfo || !modelInfo.input_modalities)) {
           dispatch({

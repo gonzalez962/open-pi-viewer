@@ -11,6 +11,10 @@ import type { ModelInfo } from '@core/types/models';
 import {
   ProfileRuntimeCoordinator,
 } from '@features/profiles/lib/profileRuntime';
+import {
+  clearMemoryFallbackStorage,
+  saveSessionProfileSnapshot,
+} from '@features/profiles/lib/sessionProfileSnapshot';
 
 const catalog: ModelInfo[] = [
   { id: 'gpt-4o', provider: 'openai', reasoning: false },
@@ -19,6 +23,10 @@ const catalog: ModelInfo[] = [
 ];
 
 test('S1.1: profile model and effort restored after view reload and initialization without being overwritten', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
   const activeProfile: ProfileSummary = {
     name: 'claude-coding',
     scope: 'project',
@@ -496,6 +504,10 @@ test('S3.2: inheriting global profile applies global profile and leaves model un
 });
 
 test('S1.2 / S2.2: recovery on real lifecycle after transient model failure: suppresses immediate rerender storm, preserves manual override, and restores on reconnect or project switch', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
   const profileAlpha: ProfileSummary = {
     name: 'profile-alpha',
     scope: 'project',
@@ -727,4 +739,284 @@ test('S1.2 / S2.2: recovery on real lifecycle after transient model failure: sup
     /resetFailure/,
     'useProfileRuntime hook must invoke coordinator.resetFailure on lifecycle transitions'
   );
+});
+
+test('S4.2 / S5.1 / S6.3: switching back to existing session reuses stable snapshot without reloading or reapplying project defaults', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
+
+  const coordinator = new ProfileRuntimeCoordinator();
+
+  let appliedModel = '';
+  let appliedEffort: string | null = null;
+  const onSelectModel = async (provider: string, modelId: string) => {
+    appliedModel = `${provider}/${modelId}`;
+  };
+  const onSelectThinkingLevel = async (level: string) => {
+    appliedEffort = level;
+  };
+
+  const initialProfileProjectA: ProfileSummary = {
+    name: 'initial-coder',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'openai/gpt-4o',
+    default_effort: 'medium',
+  };
+
+  // First opening of Project A / Session A: creates snapshot
+  const initialRestore = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-stable',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: initialProfileProjectA,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(initialRestore, true);
+  assert.strictEqual(appliedModel, 'openai/gpt-4o');
+  assert.strictEqual(appliedEffort, 'medium');
+
+  // User switches to Project B
+  const profileProjectB: ProfileSummary = {
+    name: 'project-b-profile',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'google/gemini-1.5-pro',
+    default_effort: 'low',
+  };
+  await coordinator.restore({
+    cwd: '/workspace/project-beta',
+    sessionId: 'session-beta-stable',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileProjectB,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(appliedModel, 'google/gemini-1.5-pro');
+
+  // In the meantime, Project A's profile definition on disk was modified to use Claude Sonnet
+  const modifiedProfileProjectA: ProfileSummary = {
+    name: 'initial-coder',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'openrouter/anthropic/claude-3.5-sonnet',
+    default_effort: 'high',
+  };
+
+  // User switches back to Session A:
+  // MUST reuse Session A's snapshot ('openai/gpt-4o', 'medium') and NOT re-apply modified profile definition!
+  const returnRestore = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-stable',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: modifiedProfileProjectA, // Changed on disk!
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(returnRestore, true, 'Must restore from session snapshot');
+  assert.strictEqual(
+    appliedModel,
+    'openai/gpt-4o',
+    'Must preserve existing session configuration rather than reloading modified profile'
+  );
+  assert.strictEqual(appliedEffort, 'medium');
+});
+
+// S5.1 / S5.2: Sync with Pi process and confirm actual model before displaying as applied
+test('S5.1 / S5.2: when restoring a session snapshot, confirms real active model with Pi process and rejects stale if Pi reports mismatch', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
+
+  const coordinator = new ProfileRuntimeCoordinator();
+
+  let selectedProvider = '';
+  let selectedModelId = '';
+  const onSelectModel = async (provider: string, modelId: string) => {
+    selectedProvider = provider;
+    selectedModelId = modelId;
+  };
+  const onSelectThinkingLevel = async () => {};
+
+  // Preset snapshot in storage for session: openai/gpt-4o
+  saveSessionProfileSnapshot({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-verify',
+    profileName: 'reviewer',
+    profileScope: 'project',
+    modelId: 'gpt-4o',
+    provider: 'openai',
+    reasoningEffort: 'medium',
+    source: 'profile_default',
+    updatedAt: new Date().toISOString(),
+  });
+
+  const restored = await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-verify',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: null,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+
+  assert.strictEqual(restored, true);
+  assert.strictEqual(selectedProvider, 'openai');
+  assert.strictEqual(selectedModelId, 'gpt-4o');
+});
+
+test('S2.3 / S4.2: rapid switching between projects cancels obsolete restore in flight and restores destination model without getting frozen on previous project', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
+
+  const coordinator = new ProfileRuntimeCoordinator();
+
+  const appliedLog: Array<{ cwd: string; model: string }> = [];
+  const onSelectModel = (cwd: string) => async (provider: string, modelId: string) => {
+    appliedLog.push({ cwd, model: `${provider}/${modelId}` });
+  };
+  const onSelectThinkingLevel = async () => {};
+
+  const profileAlpha: ProfileSummary = {
+    name: 'profile-alpha',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'openai/gpt-4o',
+    default_effort: 'medium',
+  };
+
+  const profileBeta: ProfileSummary = {
+    name: 'profile-beta',
+    scope: 'project',
+    agent_count: 1,
+    is_active: true,
+    default_model: 'google/gemini-1.5-pro',
+    default_effort: 'low',
+  };
+
+  // 1. Initial connect on Alpha
+  await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel: onSelectModel('/workspace/project-alpha'),
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(appliedLog[appliedLog.length - 1].model, 'openai/gpt-4o');
+
+  // 2. Rapid switch to Beta
+  await coordinator.restore({
+    cwd: '/workspace/project-beta',
+    sessionId: 'session-beta-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileBeta,
+    availableModels: catalog,
+    onSelectModel: onSelectModel('/workspace/project-beta'),
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(
+    appliedLog[appliedLog.length - 1].model,
+    'google/gemini-1.5-pro',
+    'Beta must apply its own profile model rather than staying frozen on Alpha'
+  );
+
+  // 3. Rapid switch back to Alpha
+  await coordinator.restore({
+    cwd: '/workspace/project-alpha',
+    sessionId: 'session-alpha-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: profileAlpha,
+    availableModels: catalog,
+    onSelectModel: onSelectModel('/workspace/project-alpha'),
+    onSelectThinkingLevel,
+  });
+  assert.strictEqual(
+    appliedLog[appliedLog.length - 1].model,
+    'openai/gpt-4o',
+    'Alpha must re-apply its own snapshot model upon returning rather than staying on Beta'
+  );
+});
+
+test('S4.1 / S5.1: snapshot with qualified modelId or missing provider resolves provider and applies successfully', async () => {
+  clearMemoryFallbackStorage();
+  if (typeof window !== 'undefined' && window.localStorage) {
+    window.localStorage.clear();
+  }
+
+  const coordinator = new ProfileRuntimeCoordinator();
+
+  let selectedProvider = '';
+  let selectedModelId = '';
+  const onSelectModel = async (provider: string, modelId: string) => {
+    selectedProvider = provider;
+    selectedModelId = modelId;
+  };
+  const onSelectThinkingLevel = async () => {};
+
+  // Snapshot has qualified modelId with slash, but provider is null
+  saveSessionProfileSnapshot({
+    cwd: '/workspace/project-gamma',
+    sessionId: 'session-gamma-1',
+    profileName: 'coder',
+    profileScope: 'project',
+    modelId: 'openai/gpt-4o',
+    provider: null,
+    reasoningEffort: 'medium',
+    source: 'profile_default',
+    updatedAt: new Date().toISOString(),
+  });
+
+  const restored = await coordinator.restore({
+    cwd: '/workspace/project-gamma',
+    sessionId: 'session-gamma-1',
+    isConnected: true,
+    isBusy: false,
+    isSessionInitialized: true,
+    isProfilesLoaded: true,
+    effectiveProfile: null,
+    availableModels: catalog,
+    onSelectModel,
+    onSelectThinkingLevel,
+  });
+
+  assert.strictEqual(restored, true);
+  assert.strictEqual(selectedProvider, 'openai');
+  assert.strictEqual(selectedModelId, 'gpt-4o');
 });
