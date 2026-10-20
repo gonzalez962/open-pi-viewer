@@ -15,6 +15,7 @@ export interface WebAuthConfig {
   enabled: boolean;
   key?: string;
   secureCookie?: boolean;
+  sessionTtlMs?: number;
   turnstileSiteKey?: string;
   turnstileSecretKey?: string;
 }
@@ -74,6 +75,7 @@ export interface WebAuthInstance {
  * - PI_VIEWER_AUTH_ENABLED: strict "true" or "false" (defaults to false).
  * - PI_VIEWER_AUTH_KEY: required and non-blank when auth is enabled; fails startup otherwise.
  * - PI_VIEWER_AUTH_SECURE_COOKIE: explicit "true" enables Secure cookie attribute.
+ * - PI_VIEWER_AUTH_SESSION_DAYS / PI_VIEWER_AUTH_DAYS: positive number of days for auth session duration (defaults to 24 hours).
  */
 export function resolveWebAuthConfig(
   env: Record<string, string | undefined> = process.env
@@ -109,6 +111,21 @@ export function resolveWebAuthConfig(
     secureCookie = rawSecure.trim() === 'true';
   }
 
+  const rawDays = env.PI_VIEWER_AUTH_SESSION_DAYS ?? env.PI_VIEWER_AUTH_DAYS;
+  let sessionTtlMs = DEFAULT_WEB_AUTH_SESSION_TTL_MS;
+  if (rawDays !== undefined && rawDays !== '') {
+    const trimmed = rawDays.trim();
+    if (trimmed !== '') {
+      const days = Number(trimmed);
+      if (!Number.isFinite(days) || days <= 0) {
+        throw new Error(
+          `Invalid PI_VIEWER_AUTH_SESSION_DAYS value "${rawDays}". Expected a positive number of days.`
+        );
+      }
+      sessionTtlMs = Math.round(days * 24 * 60 * 60 * 1000);
+    }
+  }
+
   const turnstileSiteKey = enabled ? env.PI_VIEWER_TURNSTILE_SITE_KEY?.trim() || undefined : undefined;
   const turnstileSecretKey = enabled ? env.PI_VIEWER_TURNSTILE_SECRET_KEY?.trim() || undefined : undefined;
   validateTurnstileConfig(enabled, turnstileSiteKey, turnstileSecretKey);
@@ -116,6 +133,7 @@ export function resolveWebAuthConfig(
     enabled,
     key: enabled ? rawKey : undefined,
     secureCookie,
+    sessionTtlMs,
     ...(turnstileSiteKey ? { turnstileSiteKey, turnstileSecretKey } : {}),
   };
 }
@@ -232,7 +250,7 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
   const isEnabled = options.enabled ?? false;
   const configuredKey = options.key ?? '';
   const cookieName = options.cookieName || DEFAULT_WEB_AUTH_COOKIE_NAME;
-  const sessionTtlMs = options.sessionTtlMs || DEFAULT_WEB_AUTH_SESSION_TTL_MS;
+  const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_WEB_AUTH_SESSION_TTL_MS;
   const nowFn = options.now || (() => Date.now());
   const turnstileSiteKey = isEnabled ? options.turnstileSiteKey?.trim() || undefined : undefined;
   const turnstileSecretKey = isEnabled ? options.turnstileSecretKey?.trim() || undefined : undefined;

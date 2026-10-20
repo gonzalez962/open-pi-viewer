@@ -240,6 +240,10 @@ PI_VIEWER_AUTH_KEY=replace-with-a-secure-random-passphrase
 # Emits the "Secure" cookie attribute. Arbitrary forwarded headers (e.g. X-Forwarded-Proto) are NOT trusted.
 PI_VIEWER_AUTH_SECURE_COOKIE=false
 
+# Optional session validity duration in days (default: 1 day / 24 hours if unset).
+# Accepts positive numbers (e.g. 7 for a week, 30 for a month, or 0.5 for 12 hours).
+# PI_VIEWER_AUTH_SESSION_DAYS=1
+
 # Optional paired Cloudflare Turnstile bot protection for the web login gate.
 # Ignored when PI_VIEWER_AUTH_ENABLED=false. With auth enabled, both keys must be paired.
 # The site key is public and delivered via GET /api/auth/status to render the widget.
@@ -271,7 +275,7 @@ When exposing the web viewer to the internet, you can optionally configure Cloud
 - **Strict Bootstrap Routes**: Bootstrap endpoints (`GET /api/auth/status`, `POST /api/auth/login`, `POST /api/auth/logout`) use exact path matching on normalized pathnames. Prefix variations such as `/api/auth/login/evil` never bypass authentication and fail closed with 401.
 - **CSRF & Same-Origin Enforcement**: Authenticated API routes and login/logout enforce same-origin validation matching the `Host` header against `Origin`, `Referer`, or `Sec-Fetch-Site: same-origin`. Cross-origin calls receive `403 Forbidden`. Arbitrary `X-Forwarded-Host` headers are never trusted.
 - **Web Logout**: The logout control appears directly below Settings in the navigation footer when web authentication is enabled. A reusable in-app confirmation dialog (`src/app/components/ConfirmationModal.tsx`) explains that Pi processes and ongoing work keep running. It accepts custom title, message, action labels and callbacks; focuses Cancel initially, contains keyboard focus, restores focus on dismissal, and disables dismissal/actions while pending. Escape, Cancel, or clicking the backdrop dismiss it without logging out. Cancelling makes no logout request; confirming revokes only browser access and closes its event streams. Desktop and auth-disabled viewers do not show the control.
-- **Streaming Leases & SSE Termination**: Active `/api/events` EventSource streams are bound to the session lease. When a session expires (after the 24-hour TTL) or the user logs out, active SSE connections are terminated (`res.end()`), and watchdog timers are cleaned up immediately without leaks.
+- **Streaming Leases & SSE Termination**: Active `/api/events` EventSource streams are bound to the session lease. When a session expires (after the configured session TTL via `PI_VIEWER_AUTH_SESSION_DAYS`, default 24 hours) or the user logs out, active SSE connections are terminated (`res.end()`), and watchdog timers are cleaned up immediately without leaks.
 - **Resource Bounding & Rate Limiting**: Login attempts are rate-limited per client IP (5 failed attempts per 60 seconds return `429 Too Many Requests`). Web login request bodies are capped at 8 KB (`413 Payload Too Large`), and in-memory sessions are bounded (oldest evicted when capacity is reached). Event streams are limited to 8 per session owner and 256 globally; evicted sessions lose their active streams.
 - **No Public Domain Auto-Detection**: Authentication is strictly opt-in via `PI_VIEWER_AUTH_ENABLED`. Pi Viewer never inspects Host headers to automatically guess whether an address is public or internal.
 - **OAuth Isolation**: Built-in provider OAuth (`PI_VIEWER_OAUTH_ACCESS_KEY` / `pi_oauth_session`) remains strictly isolated with its own session state and owner boundaries.
