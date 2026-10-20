@@ -165,6 +165,12 @@ import {
   setResourceActivation,
 } from './bridge/resource-activation';
 
+import {
+  loadViewerStorage,
+  saveViewerStorage,
+  updateViewerStorageKey,
+} from './storage';
+
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
 
@@ -311,6 +317,14 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return await listGithubRepositories(args.payload || args);
     case 'clone_github_repository':
       return await cloneGithubRepository(args.payload || args);
+    case 'get_viewer_storage':
+      return loadViewerStorage();
+    case 'save_viewer_storage':
+      return saveViewerStorage(args.payload || args);
+    case 'update_viewer_storage_key': {
+      const payload = args.payload || args;
+      return updateViewerStorageKey(payload.key, payload.value);
+    }
     default:
       return null;
   }

@@ -32,6 +32,10 @@ npm-debug.log*
 .env.local
 .env.*.local
 
+# Open Pi Viewer configuration
+open-pi-viewer.json
+open-pi-viewer.json.tmp*
+
 # Editor and OS
 .vscode/
 .idea/

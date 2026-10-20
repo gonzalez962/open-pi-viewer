@@ -226,6 +226,14 @@ export function saveSessionProfileSnapshot(
       PI_VIEWER_SESSION_PROFILE_SNAPSHOTS_STORAGE_KEY,
       JSON.stringify(snapshots)
     );
+    // Fire-and-forget sync to server viewer storage
+    if (typeof window !== 'undefined') {
+      import('@infra/viewer-storage')
+        .then(({ updateViewerStorageKeyPi }) => {
+          void updateViewerStorageKeyPi('profileSnapshots', snapshots);
+        })
+        .catch(() => {});
+    }
     return { success: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

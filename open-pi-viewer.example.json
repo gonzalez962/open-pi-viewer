@@ -1,0 +1,38 @@
+{
+  "$schema": "./open-pi-viewer.schema.json",
+  "version": 1,
+  "connectConfig": {
+    "nodePath": "node",
+    "piEntrypoint": "",
+    "workingDirectory": "",
+    "fileTreeRefreshInterval": 15
+  },
+  "uiPreferences": {
+    "language": "es",
+    "theme": "dark",
+    "customAccent": null,
+    "customTextColor": null,
+    "customLabelColor": null,
+    "workAnimation": {
+      "mode": "multicolor",
+      "color1": "#00ff0a",
+      "color2": "#00e5ff"
+    },
+    "customBackground": null,
+    "customCommands": [],
+    "hiddenCommandIds": [],
+    "notifications": {
+      "enabled": true,
+      "sound": true,
+      "volume": 0.8
+    },
+    "defaultProjectsDirectory": null
+  },
+  "projects": {
+    "activeProjectId": null,
+    "projects": []
+  },
+  "sessions": {},
+  "profileSnapshots": {},
+  "githubPat": null
+}

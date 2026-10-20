@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { pickDirectoryPi } from '@infra/bridge';
 import {
   addProject,
@@ -7,6 +7,7 @@ import {
   loadProjectsRegistry,
   saveProjectsRegistry,
   updateProjectName,
+  validateProjectsRegistry,
   type ProjectItem,
   type ProjectsRegistry,
 } from '@features/projects/projects';
@@ -60,6 +61,46 @@ export function useProjects({
 
   const projectsRegistryRef = useRef(projectsRegistry);
   projectsRegistryRef.current = projectsRegistry;
+
+  // Synchronize in-memory registry when storage updates from external or server sync
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleSync = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      const prevActive = projectsRegistryRef.current.activeProjectId;
+      const incomingRegistry =
+        detail && detail.projects
+          ? validateProjectsRegistry(detail.projects).registry
+          : loadProjectsRegistry(undefined, workingDirectory).registry;
+
+      // Preserve currently active project if it exists in the incoming project list
+      const effectiveActive =
+        prevActive && incomingRegistry.projects.some((p) => p.id === prevActive)
+          ? prevActive
+          : incomingRegistry.activeProjectId;
+
+      const nextRegistry: ProjectsRegistry = {
+        ...incomingRegistry,
+        activeProjectId: effectiveActive,
+      };
+
+      projectsRegistryRef.current = nextRegistry;
+      setProjectsRegistry(nextRegistry);
+
+      if (effectiveActive && effectiveActive !== prevActive) {
+        onActivateProject?.(effectiveActive);
+      }
+    };
+
+    window.addEventListener('viewer:storage_synced', handleSync);
+    window.addEventListener('storage', handleSync);
+
+    return () => {
+      window.removeEventListener('viewer:storage_synced', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, [workingDirectory, onActivateProject]);
 
   const handleSelectProject = useCallback(
     (project: ProjectItem) => {

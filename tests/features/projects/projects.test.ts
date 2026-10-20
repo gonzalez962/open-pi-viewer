@@ -36,6 +36,7 @@ import {
   setActiveProject,
   updateProjectName,
   validateProjectsRegistry,
+  mergeProjectsRegistries,
 } from '@features/projects/projects';
 import {
   useProjects,
@@ -1804,4 +1805,86 @@ test('DefaultDirectorySetupModal: close button invokes onClose callback', () => 
   closeBtn.props.onClick();
   assert.strictEqual(closed, true, 'Clicking close button must invoke onClose');
 });
+
+test('mergeProjectsRegistries: unites local and remote projects without duplicates by path', () => {
+  const local: ProjectsRegistry = {
+    activeProjectId: 'local-1',
+    projects: [
+      {
+        id: 'local-1',
+        path: '/work/app-a',
+        customName: 'App A Local',
+        createdAt: '2026-01-01T00:00:00Z',
+        lastOpenedAt: '2026-01-05T00:00:00Z',
+      },
+      {
+        id: 'local-2',
+        path: '/work/app-b',
+        createdAt: '2026-01-01T00:00:00Z',
+        lastOpenedAt: '2026-01-01T00:00:00Z',
+      },
+    ],
+  };
+
+  const remote: ProjectsRegistry = {
+    activeProjectId: 'remote-1',
+    projects: [
+      {
+        id: 'remote-1',
+        path: '/work/app-a',
+        customName: '',
+        createdAt: '2026-01-01T00:00:00Z',
+        lastOpenedAt: '2026-01-02T00:00:00Z',
+      },
+      {
+        id: 'remote-3',
+        path: '/work/app-c',
+        customName: 'App C Remote',
+        createdAt: '2026-01-01T00:00:00Z',
+        lastOpenedAt: '2026-01-03T00:00:00Z',
+      },
+    ],
+  };
+
+  const merged = mergeProjectsRegistries(local, remote);
+
+  // Must have 3 projects total: app-a, app-b, app-c
+  assert.strictEqual(merged.projects.length, 3);
+  assert.strictEqual(merged.activeProjectId, 'remote-1');
+
+  // app-a should preserve customName from local and more recent lastOpenedAt
+  const appA = merged.projects.find((p) => p.path === '/work/app-a');
+  assert.ok(appA);
+  assert.strictEqual(appA.customName, 'App A Local');
+  assert.strictEqual(appA.lastOpenedAt, '2026-01-05T00:00:00Z');
+
+  // app-b added from local
+  const appB = merged.projects.find((p) => p.path === '/work/app-b');
+  assert.ok(appB);
+
+  // app-c preserved from remote
+  const appC = merged.projects.find((p) => p.path === '/work/app-c');
+  assert.ok(appC);
+});
+
+test('mergeProjectsRegistries: preserves local active project over remote active project', () => {
+  const local: ProjectsRegistry = {
+    activeProjectId: 'local-2',
+    projects: [
+      { id: 'local-1', path: '/work/app-a', createdAt: '2026-01-01T00:00:00Z', lastOpenedAt: '2026-01-01T00:00:00Z' },
+      { id: 'local-2', path: '/work/app-b', createdAt: '2026-01-01T00:00:00Z', lastOpenedAt: '2026-01-01T00:00:00Z' },
+    ],
+  };
+
+  const remote: ProjectsRegistry = {
+    activeProjectId: 'remote-1',
+    projects: [
+      { id: 'remote-1', path: '/work/app-a', createdAt: '2026-01-01T00:00:00Z', lastOpenedAt: '2026-01-01T00:00:00Z' },
+    ],
+  };
+
+  const merged = mergeProjectsRegistries(local, remote);
+  assert.strictEqual(merged.activeProjectId, 'local-2');
+});
+
 

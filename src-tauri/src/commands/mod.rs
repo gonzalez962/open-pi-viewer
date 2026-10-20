@@ -24,6 +24,7 @@ pub struct AppState {
     pub declined_migrations: Arc<Mutex<HashSet<PathBuf>>>,
     pub active_oauth_login: Arc<Mutex<Option<oauth::ActiveOAuthSession>>>,
     pub terminal_manager: Arc<crate::terminal::TerminalManager>,
+    pub storage_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -37,6 +38,7 @@ impl AppState {
             declined_migrations: Arc::new(Mutex::new(HashSet::new())),
             active_oauth_login: Arc::new(Mutex::new(None)),
             terminal_manager: Arc::new(crate::terminal::TerminalManager::new()),
+            storage_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -542,4 +544,16 @@ pub use terminal::{
     TerminalPollPayload,
     TerminalGetPayload,
     TerminalSuccessResult,
+};
+
+pub use config_files::{
+    get_viewer_storage,
+    __cmd__get_viewer_storage,
+    __tauri_command_name_get_viewer_storage,
+    save_viewer_storage,
+    __cmd__save_viewer_storage,
+    __tauri_command_name_save_viewer_storage,
+    update_viewer_storage_key,
+    __cmd__update_viewer_storage_key,
+    __tauri_command_name_update_viewer_storage_key,
 };

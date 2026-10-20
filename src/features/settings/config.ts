@@ -272,6 +272,14 @@ export function saveConnectConfig(
 
   try {
     store.setItem(CONFIG_STORAGE_KEY, JSON.stringify(validation.config));
+    // Fire-and-forget sync to server viewer storage
+    if (typeof window !== 'undefined') {
+      import('@infra/viewer-storage')
+        .then(({ updateViewerStorageKeyPi }) => {
+          void updateViewerStorageKeyPi('connectConfig', validation.config);
+        })
+        .catch(() => {});
+    }
     return { success: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
