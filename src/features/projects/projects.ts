@@ -379,6 +379,14 @@ export function saveProjectsRegistry(
 
   try {
     store.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(validation.registry));
+    // Fire-and-forget sync to server viewer storage
+    if (typeof window !== 'undefined') {
+      import('@infra/viewer-storage')
+        .then(({ updateViewerStorageKeyPi }) => {
+          void updateViewerStorageKeyPi('projects', validation.registry);
+        })
+        .catch(() => {});
+    }
     return { success: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -592,3 +600,59 @@ export function decideRemoveProject(
     ...(nextActive ? { applyPath: nextActive.path } : {}),
   };
 }
+
+/**
+ * Merges a local projects registry with a remote projects registry, avoiding duplicates by project path.
+ * If a project exists in both, preserves the customName and the most recent lastOpenedAt timestamp.
+ */
+export function mergeProjectsRegistries(
+  local: ProjectsRegistry,
+  remote: ProjectsRegistry
+): ProjectsRegistry {
+  const mergedProjects: ProjectItem[] = [...remote.projects];
+
+  for (const localProj of local.projects) {
+    const existingIndex = mergedProjects.findIndex((rp) =>
+      isSameProjectPath(rp.path, localProj.path)
+    );
+
+    if (existingIndex === -1) {
+      mergedProjects.push(localProj);
+    } else {
+      const existing = mergedProjects[existingIndex];
+      const customName = existing.customName || localProj.customName;
+      const lastOpenedAt =
+        (existing.lastOpenedAt || '') > (localProj.lastOpenedAt || '')
+          ? existing.lastOpenedAt
+          : localProj.lastOpenedAt;
+      mergedProjects[existingIndex] = {
+        ...existing,
+        customName,
+        lastOpenedAt,
+      };
+    }
+  }
+
+  let activeProjectId: string | null = null;
+  if (local.activeProjectId) {
+    const localActive = local.projects.find((p) => p.id === local.activeProjectId);
+    if (localActive) {
+      const matched = mergedProjects.find((p) => isSameProjectPath(p.path, localActive.path));
+      activeProjectId = matched ? matched.id : null;
+    }
+  }
+
+  if (!activeProjectId && remote.activeProjectId && mergedProjects.some((p) => p.id === remote.activeProjectId)) {
+    activeProjectId = remote.activeProjectId;
+  }
+
+  if (!activeProjectId && mergedProjects.length > 0) {
+    activeProjectId = mergedProjects[0].id;
+  }
+
+  return {
+    projects: mergedProjects,
+    activeProjectId,
+  };
+}
+

@@ -53,6 +53,14 @@ export function saveGitHubPat(token: string, storage?: Storage | null): void {
     } else {
       store?.removeItem(GITHUB_PAT_STORAGE_KEY);
     }
+    // Fire-and-forget sync to server viewer storage
+    if (typeof window !== 'undefined') {
+      import('@infra/viewer-storage')
+        .then(({ updateViewerStorageKeyPi }) => {
+          void updateViewerStorageKeyPi('githubPat', clean || null);
+        })
+        .catch(() => {});
+    }
   } catch {
     // Fail-safe ignore quota or security exceptions
   }
@@ -65,6 +73,14 @@ export function clearSavedGitHubPat(storage?: Storage | null): void {
   try {
     const store = resolveStorage(storage);
     store?.removeItem(GITHUB_PAT_STORAGE_KEY);
+    // Fire-and-forget sync to server viewer storage
+    if (typeof window !== 'undefined') {
+      import('@infra/viewer-storage')
+        .then(({ updateViewerStorageKeyPi }) => {
+          void updateViewerStorageKeyPi('githubPat', null);
+        })
+        .catch(() => {});
+    }
   } catch {
     // Fail-safe ignore
   }

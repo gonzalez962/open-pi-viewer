@@ -230,6 +230,13 @@ export function saveSessionRecord(
 
   try {
     store.setItem(PI_VIEWER_SESSIONS_STORAGE_KEY, JSON.stringify(records));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('viewer:session_record_saved', { detail: records })
+        );
+      } catch {}
+    }
     return { success: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -286,6 +293,13 @@ export function updateSessionHasMessages(
 
   try {
     store.setItem(PI_VIEWER_SESSIONS_STORAGE_KEY, JSON.stringify(records));
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('viewer:session_record_saved', { detail: records })
+        );
+      } catch {}
+    }
     return { success: true };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

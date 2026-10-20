@@ -121,6 +121,9 @@ pub fn run() {
             commands::get_github_auth_status,
             commands::clone_github_repository,
             commands::list_github_repositories,
+            commands::get_viewer_storage,
+            commands::save_viewer_storage,
+            commands::update_viewer_storage_key,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

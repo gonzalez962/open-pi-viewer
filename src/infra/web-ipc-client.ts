@@ -53,6 +53,9 @@ export function initWebIpcClient(): void {
       try {
         const msg = JSON.parse(e.data);
         if (!msg || !msg.event) return;
+        if (msg.event === 'viewer://storage_updated' && msg.payload) {
+          window.dispatchEvent(new CustomEvent('viewer://storage_updated', { detail: msg.payload }));
+        }
         const set = eventListeners.get(msg.event);
         if (set && set.size > 0) {
           set.forEach((handlerId) => {

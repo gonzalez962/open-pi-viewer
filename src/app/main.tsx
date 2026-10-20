@@ -2,6 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { WebAuthGate } from './WebAuthGate';
+import { initStorageSynchronization } from './storage-sync';
 import '@infra/web-ipc-client';
 import '@shared/styles/tokens.css';
 import '@shared/styles/base.css';
@@ -23,6 +24,9 @@ const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element #root was not found in index.html');
 }
+
+// Initialize storage synchronization between localStorage and server's open-pi-viewer.json
+void initStorageSynchronization();
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>

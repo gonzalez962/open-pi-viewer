@@ -10652,3 +10652,173 @@ Local daemon: not running
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Open Pi Viewer storage commands for desktop (Tauri) and web parity
+// ---------------------------------------------------------------------------
+
+pub fn resolve_viewer_storage_path() -> PathBuf {
+    if let Ok(path_str) = std::env::var("PI_VIEWER_CONFIG_PATH") {
+        if !path_str.trim().is_empty() {
+            return PathBuf::from(path_str.trim());
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.join("open-pi-viewer.json").is_file() {
+            return cwd.join("open-pi-viewer.json");
+        }
+        if cwd.file_name().and_then(|n| n.to_str()) == Some("src-tauri") {
+            if let Some(parent) = cwd.parent() {
+                let candidate = parent.join("open-pi-viewer.json");
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+        let candidate = cwd.join("..").join("open-pi-viewer.json");
+        if candidate.is_file() {
+            if let Ok(canon) = dunce::canonicalize(&candidate) {
+                return canon;
+            }
+            return candidate;
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            let candidate = exe_dir.join("open-pi-viewer.json");
+            if candidate.is_file() {
+                return candidate;
+            }
+            let dev_root = exe_dir.join("../../../open-pi-viewer.json");
+            if dev_root.is_file() {
+                if let Ok(canon) = dunce::canonicalize(&dev_root) {
+                    return canon;
+                }
+                return dev_root;
+            }
+        }
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("open-pi-viewer.json")
+}
+
+#[tauri::command]
+pub async fn get_viewer_storage() -> Result<Value, String> {
+    let path = resolve_viewer_storage_path();
+    if !path.exists() {
+        return Ok(serde_json::json!({
+            "version": 1,
+            "connectConfig": null,
+            "uiPreferences": null,
+            "projects": null,
+            "sessions": null,
+            "profileSnapshots": null,
+            "githubPat": null
+        }));
+    }
+
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let parsed: Value = serde_json::from_str(&content).unwrap_or_else(|_| {
+                serde_json::json!({
+                    "version": 1,
+                    "connectConfig": null,
+                    "uiPreferences": null,
+                    "projects": null,
+                    "sessions": null,
+                    "profileSnapshots": null,
+                    "githubPat": null
+                })
+            });
+            Ok(parsed)
+        }
+        Err(e) => Err(format!("Failed to read viewer storage: {e}")),
+    }
+}
+
+#[tauri::command]
+pub async fn save_viewer_storage(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    payload: Value,
+) -> Result<Value, String> {
+    use tauri::Emitter;
+    let _guard = state.storage_lock.lock().await;
+
+    let current_res = get_viewer_storage().await?;
+    let mut current_obj = current_res.as_object().cloned().unwrap_or_default();
+
+    if let Some(payload_obj) = payload.as_object() {
+        for (k, v) in payload_obj {
+            current_obj.insert(k.clone(), v.clone());
+        }
+    }
+    current_obj.insert("version".to_string(), serde_json::json!(1));
+
+    let updated = Value::Object(current_obj);
+    let path = resolve_viewer_storage_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let serialized = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
+    let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+    std::fs::write(&tmp_path, serialized).map_err(|e| format!("Failed to write tmp storage: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
+
+    let _ = app_handle.emit("viewer://storage_updated", &updated);
+
+    Ok(updated)
+}
+
+#[derive(serde::Deserialize)]
+pub struct UpdateStorageKeyPayload {
+    pub key: Option<String>,
+    pub value: Option<Value>,
+}
+
+#[tauri::command]
+pub async fn update_viewer_storage_key(
+    app_handle: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    key: Option<String>,
+    value: Option<Value>,
+    payload: Option<UpdateStorageKeyPayload>,
+) -> Result<Value, String> {
+    use tauri::Emitter;
+    let _guard = state.storage_lock.lock().await;
+
+    let effective_key = key
+        .or_else(|| payload.as_ref().and_then(|p| p.key.clone()))
+        .ok_or_else(|| "Key is required".to_string())?;
+
+    let effective_value = value
+        .or_else(|| payload.and_then(|p| p.value))
+        .unwrap_or(Value::Null);
+
+    let current_res = get_viewer_storage().await?;
+    let mut current_obj = current_res.as_object().cloned().unwrap_or_default();
+    current_obj.insert(effective_key, effective_value);
+    current_obj.insert("version".to_string(), serde_json::json!(1));
+
+    let updated = Value::Object(current_obj);
+    let path = resolve_viewer_storage_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let serialized = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())?;
+    let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+
+    std::fs::write(&tmp_path, serialized).map_err(|e| format!("Failed to write tmp storage: {e}"))?;
+    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
+
+    let _ = app_handle.emit("viewer://storage_updated", &updated);
+
+    Ok(updated)
+}

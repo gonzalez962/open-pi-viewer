@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   extractAppearancePreferences,
   loadUiPreferences,
+  validateUiPreferences,
   PreferencesController,
   type AppearanceInput,
   type PreferencesSaveResult,
@@ -108,6 +109,32 @@ export function usePreferences(): UsePreferencesResult {
 
     return () => {
       controller.stop();
+    };
+  }, []);
+
+  // Synchronize preferences when server storage finishes syncing or broadcasts changes
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleSync = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail;
+      if (detail && detail.uiPreferences) {
+        const validation = validateUiPreferences(detail.uiPreferences);
+        preferencesRef.current = validation.preferences;
+        setPreferences(validation.preferences);
+      } else {
+        const fresh = loadUiPreferences().preferences;
+        preferencesRef.current = fresh;
+        setPreferences(fresh);
+      }
+    };
+
+    window.addEventListener('viewer:storage_synced', handleSync);
+    window.addEventListener('storage', handleSync);
+
+    return () => {
+      window.removeEventListener('viewer:storage_synced', handleSync);
+      window.removeEventListener('storage', handleSync);
     };
   }, []);
 
