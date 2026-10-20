@@ -171,6 +171,101 @@ test('resolveWebAuthConfig: fails startup if PI_VIEWER_AUTH_ENABLED is not stric
   }, /strictly "true" or "false"/);
 });
 
+test('resolveWebAuthConfig: defaults sessionTtlMs to 24 hours when session days is unset or empty', () => {
+  const cfg1 = resolveWebAuthConfig({});
+  assert.equal(cfg1.sessionTtlMs, 24 * 60 * 60 * 1000);
+
+  const cfg2 = resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '' });
+  assert.equal(cfg2.sessionTtlMs, 24 * 60 * 60 * 1000);
+
+  const cfg3 = resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '   ' });
+  assert.equal(cfg3.sessionTtlMs, 24 * 60 * 60 * 1000);
+});
+
+test('resolveWebAuthConfig: parses session days into sessionTtlMs', () => {
+  const cfg1 = resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '7' });
+  assert.equal(cfg1.sessionTtlMs, 7 * 24 * 60 * 60 * 1000);
+
+  const cfg2 = resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '0.5' });
+  assert.equal(cfg2.sessionTtlMs, 12 * 60 * 60 * 1000);
+
+  const cfg3 = resolveWebAuthConfig({ PI_VIEWER_AUTH_DAYS: '3' });
+  assert.equal(cfg3.sessionTtlMs, 3 * 24 * 60 * 60 * 1000);
+});
+
+test('resolveWebAuthConfig: fails startup if session days is non-numeric or non-positive', () => {
+  assert.throws(() => {
+    resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '0' });
+  }, /Invalid PI_VIEWER_AUTH_SESSION_DAYS value/);
+
+  assert.throws(() => {
+    resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: '-2' });
+  }, /Invalid PI_VIEWER_AUTH_SESSION_DAYS value/);
+
+  assert.throws(() => {
+    resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: 'abc' });
+  }, /Invalid PI_VIEWER_AUTH_SESSION_DAYS value/);
+
+  assert.throws(() => {
+    resolveWebAuthConfig({ PI_VIEWER_AUTH_SESSION_DAYS: 'Infinity' });
+  }, /Invalid PI_VIEWER_AUTH_SESSION_DAYS value/);
+});
+
+test('enabled mode: login sets Max-Age based on configured session days and preserves session beyond 24 hours', async () => {
+  let currentTime = 1_000_000;
+  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+  const webAuth = createWebAuth({
+    enabled: true,
+    key: 'multi-day-secret',
+    sessionTtlMs: threeDaysMs,
+    now: () => currentTime,
+  });
+
+  const req = new MockRequest({
+    url: '/api/auth/login',
+    method: 'POST',
+    headers: {
+      host: 'localhost:5173',
+      origin: 'http://localhost:5173',
+      'content-type': 'application/json',
+    },
+  });
+  const res = new MockResponse();
+  simulateStreamingBody(req, JSON.stringify({ key: 'multi-day-secret' }));
+  await webAuth.middleware(req as unknown as IncomingMessage, res as unknown as ServerResponse, () => {});
+
+  assert.equal(res.statusCode, 200);
+  const setCookie = String(res.getHeader('set-cookie'));
+  const maxAgeExpected = Math.floor(threeDaysMs / 1000);
+  assert.ok(setCookie.includes(`Max-Age=${maxAgeExpected}`), `Cookie Max-Age should be ${maxAgeExpected}`);
+
+  const token = extractCookie(res)!;
+  const statusReq = (time: number) => {
+    currentTime = time;
+    const reqStatus = new MockRequest({
+      url: '/api/auth/status',
+      method: 'GET',
+      headers: {
+        host: 'localhost:5173',
+        cookie: `${DEFAULT_WEB_AUTH_COOKIE_NAME}=${token}`,
+      },
+    });
+    return reqStatus;
+  };
+
+  // 36 hours later (past 24h default, but within 3 days)
+  const res36h = new MockResponse();
+  await webAuth.middleware(statusReq(1_000_000 + 36 * 60 * 60 * 1000) as unknown as IncomingMessage, res36h as unknown as ServerResponse, () => {});
+  const data36h = parseJsonBody(res36h);
+  assert.equal(data36h.authenticated, true, 'Session must still be authenticated after 36 hours when TTL is 3 days');
+
+  // Past 3 days (e.g. 73 hours)
+  const res73h = new MockResponse();
+  await webAuth.middleware(statusReq(1_000_000 + 73 * 60 * 60 * 1000) as unknown as IncomingMessage, res73h as unknown as ServerResponse, () => {});
+  const data73h = parseJsonBody(res73h);
+  assert.equal(data73h.authenticated, false, 'Session must be expired after 73 hours when TTL is 3 days');
+});
+
 // ---------------------------------------------------------------------------
 // 2. Disabled Mode Behavior
 // ---------------------------------------------------------------------------
