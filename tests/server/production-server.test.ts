@@ -10,6 +10,7 @@ async function fixture(enabled = false) {
   fs.writeFileSync(path.join(root, 'index.html'), '<html>production interface</html>');
   fs.writeFileSync(path.join(root, 'assets', 'app.js'), 'console.log("build")');
   fs.writeFileSync(path.join(root, 'push-sw.js'), 'self.addEventListener("push", () => {});');
+  fs.writeFileSync(path.join(root, 'manifest.json'), '{"name":"Pi Viewer"}');
   fs.writeFileSync(path.join(root, 'private.txt'), 'not a public asset');
   const server = createProductionServer({ staticDir: root, authConfig: { enabled, key: enabled ? 'test-key' : undefined } });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -37,6 +38,11 @@ test('production server serves build assets, SPA routes and existing IPC without
     assert.match(worker.headers.get('content-type') || '', /javascript/);
     assert.equal(worker.headers.get('cache-control'), 'no-cache');
     assert.equal(await worker.text(), 'self.addEventListener("push", () => {});');
+    const manifest = await fetch(`${f.base}/manifest.json`);
+    assert.equal(manifest.status, 200);
+    assert.match(manifest.headers.get('content-type') || '', /json/);
+    assert.equal(manifest.headers.get('cache-control'), 'no-cache');
+    assert.equal(await manifest.text(), '{"name":"Pi Viewer"}');
     const route = await fetch(`${f.base}/projects/example`);
     assert.equal(route.status, 200);
     assert.match(await route.text(), /production interface/);
