@@ -1,13 +1,27 @@
 /**
- * Service Worker for Web Push notifications.
+ * Service Worker for PWA lifecycle and Web Push notifications.
  *
  * Responsibilities:
+ * - Manage standard PWA lifecycle (install, activate, client claiming).
  * - Display desktop notifications when the app page is closed.
  * - Always display valid received pushes (userVisibleOnly contract).
  *   The server suppresses sends to devices with an active viewer connection.
  * - Validate and clamp finite title/body/tag; reject arbitrary URLs/paths.
  * - On click: focus existing viewer client or open same-origin root.
  */
+
+self.addEventListener('install', () => {
+  if (typeof self.skipWaiting === 'function') {
+    self.skipWaiting();
+  }
+});
+
+self.addEventListener('activate', (event) => {
+  if (self.clients && typeof self.clients.claim === 'function') {
+    event.waitUntil(self.clients.claim());
+  }
+});
+
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {

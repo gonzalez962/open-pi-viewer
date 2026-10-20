@@ -7,6 +7,7 @@ import type { WebAuthConfig } from './bridge/web-auth';
 const contentTypes: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon',
   '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.webm': 'video/webm',
@@ -90,7 +91,7 @@ export function createProductionServer(options: { staticDir: string; authConfig:
     res.writeHead(200, {
       'Content-Type': contentTypes[path.extname(file).toLowerCase()] || 'application/octet-stream',
       'Content-Length': fs.statSync(file).size,
-      'Cache-Control': file === indexFile || pathname === '/push-sw.js' ? 'no-cache' : 'public, max-age=3600',
+      'Cache-Control': file === indexFile || pathname === '/push-sw.js' || pathname === '/manifest.json' || pathname === '/manifest.webmanifest' ? 'no-cache' : 'public, max-age=3600',
       'X-Content-Type-Options': 'nosniff',
     });
     if (req.method === 'HEAD') { res.end(); return; }

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { App } from './App';
 import { WebAuthGate } from './WebAuthGate';
 import { initStorageSynchronization } from './storage-sync';
+import { registerPwaServiceWorker } from '@infra/pwa';
 import '@infra/web-ipc-client';
 import '@shared/styles/tokens.css';
 import '@shared/styles/base.css';
@@ -27,6 +28,9 @@ if (!rootElement) {
 
 // Initialize storage synchronization between localStorage and server's open-pi-viewer.json
 void initStorageSynchronization();
+
+// Register PWA service worker in web browser mode
+registerPwaServiceWorker();
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
