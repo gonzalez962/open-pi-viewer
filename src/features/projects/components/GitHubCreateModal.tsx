@@ -186,13 +186,6 @@ export const GitHubCreateModal: React.FC<GitHubCreateModalProps> = ({
     controllerRef.current?.setDestinationPath(val);
   };
 
-  const handleTokenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setToken(val);
-    setErrorKey(null);
-    controllerRef.current?.setToken(val);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -572,42 +565,6 @@ export const GitHubCreateModal: React.FC<GitHubCreateModalProps> = ({
                       {translate(locale, 'projects.github_create.browse')}
                     </button>
                   </div>
-                </div>
-              )}
-
-              {/* Personal Access Token (for environments without gh CLI or override) */}
-              {(!authStatus.authenticated || token) && (
-                <div className="github-clone-field">
-                  <div className="github-clone-label-row">
-                    <label htmlFor="github-create-pat-input" className="github-clone-label">
-                      {translate(locale, 'projects.github_create.pat_label')}
-                    </label>
-                    {token && (
-                      <button
-                        type="button"
-                        className="github-clone-clear-pat-btn"
-                        onClick={() => {
-                          controllerRef.current?.clearToken();
-                        }}
-                        disabled={isSubmitting}
-                      >
-                        {translate(locale, 'projects.github_create.pat_clear')}
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    id="github-create-pat-input"
-                    type="password"
-                    className="github-clone-input"
-                    placeholder={translate(locale, 'projects.github_create.pat_placeholder')}
-                    value={token}
-                    onChange={handleTokenChange}
-                    disabled={isSubmitting}
-                    autoComplete="off"
-                  />
-                  <span className="github-clone-hint">
-                    {translate(locale, 'projects.github_create.pat_hint')}
-                  </span>
                 </div>
               )}
             </div>

@@ -1202,28 +1202,30 @@
 
 .github-clone-create-repo-btn,
 .github-clone-local-repo-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: 6px;
-  height: 32px;
-  box-sizing: border-box;
-  background-color: var(--bg-surface-elevated, #2a2a2e);
-  border: 1px solid var(--border-default, #3f3f46);
-  color: var(--fg-default, #e4e4e7);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0 10px;
-  border-radius: var(--radius-md, 6px);
   transition: all 0.15s ease;
+  margin-bottom: -1px;
+  border-radius: 0;
+  height: auto;
+  box-sizing: border-box;
 }
 
 .github-clone-create-repo-btn:hover:not(:disabled),
 .github-clone-local-repo-btn:hover:not(:disabled) {
-  background-color: var(--bg-surface-hover, #333338);
-  border-color: var(--border-active, #52525b);
-  color: var(--fg-bright, #ffffff);
+  color: var(--fg-default);
+  background: none;
+  border-color: transparent;
+  border-bottom-color: var(--border-default);
 }
 
 .github-clone-create-repo-btn:disabled,
@@ -1527,6 +1529,8 @@
   gap: 8px;
   border-bottom: 1px solid var(--border-muted);
   padding-bottom: 2px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
 }
 
 .github-clone-tab {
@@ -1626,11 +1630,34 @@
 .github-clone-owner-groups {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  max-height: 380px;
+  gap: 8px;
+  max-height: 200px;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+.github-clone-owner-groups.has-expanded-owner {
+  max-height: 410px;
+}
+
+.github-clone-owner-groups::-webkit-scrollbar {
+  width: 6px;
+}
+
+.github-clone-owner-groups::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.github-clone-owner-groups::-webkit-scrollbar-thumb {
+  background-color: var(--border-default);
+  border-radius: 3px;
+}
+
+.github-clone-owner-groups::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-hover, var(--fg-muted));
 }
 
 .github-clone-owner-group {
@@ -1648,6 +1675,8 @@
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
+  min-height: 42px;
+  box-sizing: border-box;
   background-color: var(--bg-subtle);
   border-bottom: 1px solid var(--border-muted);
   position: sticky;
@@ -1734,6 +1763,28 @@
 .github-clone-repo-list {
   display: flex;
   flex-direction: column;
+  max-height: 210px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-default) transparent;
+}
+
+.github-clone-repo-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.github-clone-repo-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.github-clone-repo-list::-webkit-scrollbar-thumb {
+  background-color: var(--border-default);
+  border-radius: 3px;
+}
+
+.github-clone-repo-list::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-hover, var(--fg-muted));
 }
 
 .github-clone-repo-item {
@@ -1741,6 +1792,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 12px;
+  min-height: 52px;
+  box-sizing: border-box;
   cursor: pointer;
   border-bottom: 1px solid var(--border-muted);
   background-color: transparent;

@@ -311,3 +311,44 @@ test('SettingsView: renders default projects directory input and browse button',
   assert.strictEqual(changedDir, undefined);
 });
 
+test('SettingsView: renders GitHub Integration section with PAT input and actions', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePreferences,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /GitHub Integration/);
+  assert.match(html, /id="settings-github-pat-input"/);
+  assert.match(html, /type="password"/);
+  assert.match(html, /Save Token/);
+});
+
+test('SettingsView: translates github authenticated statuses showing simple username for PAT and extra note for gh CLI', () => {
+  const tEn = (key: any, params?: any) => translate('en', key, params);
+  const tEs = (key: any, params?: any) => translate('es', key, params);
+
+  // PAT: only username
+  assert.strictEqual(tEn('settings.github_pat_authenticated', { user: 'alice' }), 'Using @alice');
+  assert.strictEqual(tEs('settings.github_pat_authenticated', { user: 'alice' }), 'Usando @alice');
+
+  // gh CLI: indicates github via gh
+  assert.strictEqual(tEn('settings.github_gh_authenticated', { user: 'bob' }), 'Using @bob (via GitHub CLI)');
+  assert.strictEqual(tEs('settings.github_gh_authenticated', { user: 'bob' }), 'Usando @bob (vía GitHub CLI)');
+});
+
+
+

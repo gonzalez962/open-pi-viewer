@@ -42,6 +42,13 @@ export interface GitHubCloneModalProps {
   getAuthStatus?: () => Promise<GitHubAuthStatus>;
   cloneRepository?: (payload: CloneGitHubRepositoryPayload) => Promise<CloneGitHubRepositoryResult>;
   listRepositories?: (payload?: { token?: string }) => Promise<ListGitHubRepositoriesResult>;
+  onRepoStateChange?: (repoState: {
+    loading: boolean;
+    error: string | null;
+    groups: GitHubOwnerGroup[];
+    total: number;
+    selectedRepo?: GitHubRepositorySummary;
+  }) => void;
 }
 
 export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
@@ -59,12 +66,12 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
   getAuthStatus,
   cloneRepository,
   listRepositories,
+  onRepoStateChange,
 }) => {
   const [activeTab, setActiveTab] = useState<'browse' | 'manual'>('browse');
   const [repository, setRepository] = useState('');
   const [destinationPath, setDestinationPath] = useState(initialDestinationPath);
   const [token, setToken] = useState(() => getSavedGitHubPat(storage));
-  const [patUser, setPatUser] = useState<string | undefined>(undefined);
   const [isSubmitting, setIsSubmitting] = useState(initialIsSubmitting);
   const [authStatus, setAuthStatus] = useState<{
     loading: boolean;
@@ -107,11 +114,16 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
   cloneRepositoryRef.current = cloneRepository;
   const listRepositoriesRef = useRef(listRepositories);
   listRepositoriesRef.current = listRepositories;
+  const initialRepoStateRef = useRef(initialRepoState);
+  initialRepoStateRef.current = initialRepoState;
+  const onRepoStateChangeRef = useRef(onRepoStateChange);
+  onRepoStateChangeRef.current = onRepoStateChange;
 
   // Initialize or update controller
   useEffect(() => {
     const ctrl = createGitHubCloneController({
       initialDestinationPath,
+      initialRepoState,
       storage,
       getAuthStatus: getAuthStatus ? () => getAuthStatusRef.current!() : undefined,
       cloneRepository: cloneRepository ? (p) => cloneRepositoryRef.current!(p) : undefined,
@@ -122,10 +134,10 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
       onStateChange: (state: GitHubCloneState) => {
         setIsSubmitting(state.isSubmitting);
         setAuthStatus(state.authStatus);
-        setPatUser(state.patUser);
         setErrorKey(state.error);
         setToken((prev) => (prev !== state.token ? state.token : prev));
         setRepoState(state.repositories);
+        onRepoStateChangeRef.current?.(state.repositories);
       },
     });
     controllerRef.current = ctrl;
@@ -147,11 +159,14 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
         controllerRef.current?.setToken(saved);
       }
       void controllerRef.current?.loadAuthStatus().then(() => {
-        void controllerRef.current?.loadRepositories();
+        if (!initialRepoStateRef.current?.groups || initialRepoStateRef.current.groups.length === 0) {
+          void controllerRef.current?.loadRepositories();
+        }
       });
     } else {
       setErrorKey(null);
       setSearchQuery('');
+      setExpandedOwners({});
     }
   }, [isOpen, initialDestinationPath, storage]);
 
@@ -239,11 +254,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     onClose();
   }, [isSubmitting, onClose]);
 
-  const handleClearPat = useCallback(() => {
-    setToken('');
-    controllerRef.current?.clearToken();
-  }, []);
-
   const handleRepoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setRepository(val);
@@ -256,13 +266,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
     setDestinationPath(val);
     setErrorKey(null);
     controllerRef.current?.setDestinationPath(val);
-  };
-
-  const handleTokenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setToken(val);
-    setErrorKey(null);
-    controllerRef.current?.setToken(val);
   };
 
   const toggleOwnerExpand = (owner: string) => {
@@ -332,6 +335,14 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
       .filter((g): g is GitHubOwnerGroup => g !== null);
   }, [repoState.groups, searchQuery]);
 
+  const hasAnyExpandedOwner = useMemo(() => {
+    return filteredGroups.some((group) => {
+      return (
+        Boolean(searchQuery.trim()) || Boolean(expandedOwners[group.owner])
+      );
+    });
+  }, [filteredGroups, searchQuery, expandedOwners]);
+
   if (!isOpen) return null;
 
   return (
@@ -376,61 +387,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
             </div>
 
             <div className="github-clone-header-actions">
-              {onOpenCreateRepo && (
-                <button
-                  type="button"
-                  className="github-clone-create-repo-btn"
-                  onClick={() => {
-                    handleClose();
-                    onOpenCreateRepo();
-                  }}
-                  disabled={isSubmitting}
-                  title={translate(locale, 'projects.github_clone.create_repo')}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  <span>{translate(locale, 'projects.github_clone.create_repo')}</span>
-                </button>
-              )}
-              {onOpenLocalFolder && (
-                <button
-                  type="button"
-                  className="github-clone-local-repo-btn"
-                  onClick={() => {
-                    handleClose();
-                    onOpenLocalFolder();
-                  }}
-                  disabled={isSubmitting}
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                  <span>{translate(locale, 'projects.github_clone.open_local_folder')}</span>
-                </button>
-              )}
               <button
                 ref={closeBtnRef}
                 type="button"
@@ -447,24 +403,9 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
           {/* Form */}
           <form className="github-clone-form" onSubmit={handleSubmit}>
             <div className="github-clone-body">
-              {/* Auth Status Banner */}
-              <div
-                className={`github-clone-auth-banner ${
-                  authStatus.authenticated ? 'is-authenticated' : 'is-unauthenticated'
-                }`}
-              >
-                {authStatus.loading ? (
-                  <span className="github-clone-auth-text">...</span>
-                ) : authStatus.authenticated ? (
-                  <div className="github-clone-auth-row">
-                    <span className="github-clone-auth-badge">✓</span>
-                    <span className="github-clone-auth-text">
-                      {authStatus.username
-                        ? translate(locale, 'projects.github_clone.auth_gh_ready', { user: authStatus.username })
-                        : translate(locale, 'projects.github_clone.auth_gh_ready_generic')}
-                    </span>
-                  </div>
-                ) : (
+              {/* Auth Status Banner - omitted when authenticated */}
+              {!authStatus.loading && !authStatus.authenticated && (
+                <div className="github-clone-auth-banner is-unauthenticated">
                   <div className="github-clone-auth-info">
                     <div className="github-clone-auth-row">
                       <span className="github-clone-auth-badge">ℹ</span>
@@ -476,8 +417,8 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                       {translate(locale, 'projects.github_clone.auth_public_hint')}
                     </span>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* Error display - safe fixed localized text only */}
               {errorKey && (
@@ -518,9 +459,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                     <line x1="3" y1="18" x2="3.01" y2="18" />
                   </svg>
                   <span>{translate(locale, 'projects.github_clone.tab_browse')}</span>
-                  {repoState.total > 0 && (
-                    <span className="github-clone-tab-badge">{repoState.total}</span>
-                  )}
                 </button>
                 <button
                   type="button"
@@ -546,6 +484,58 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                   </svg>
                   <span>{translate(locale, 'projects.github_clone.tab_manual')}</span>
                 </button>
+                {onOpenCreateRepo && (
+                  <button
+                    type="button"
+                    role="tab"
+                    className="github-clone-tab github-clone-create-repo-btn"
+                    onClick={onOpenCreateRepo}
+                    disabled={isSubmitting}
+                    title={translate(locale, 'projects.github_clone.create_repo')}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span>{translate(locale, 'projects.github_clone.create_repo')}</span>
+                  </button>
+                )}
+                {onOpenLocalFolder && (
+                  <button
+                    type="button"
+                    role="tab"
+                    className="github-clone-tab github-clone-local-repo-btn"
+                    onClick={onOpenLocalFolder}
+                    disabled={isSubmitting}
+                    title={translate(locale, 'projects.github_clone.open_local_folder')}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                    <span>{translate(locale, 'projects.github_clone.open_local_folder')}</span>
+                  </button>
+                )}
               </div>
 
               {/* Tab 1: Browse Repositories Categorized by Owner */}
@@ -599,9 +589,15 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                       <span>{translate(locale, 'projects.github_clone.no_repos_found')}</span>
                     </div>
                   ) : (
-                    <div className="github-clone-owner-groups">
+                    <div
+                      className={`github-clone-owner-groups ${
+                        hasAnyExpandedOwner ? 'has-expanded-owner' : 'all-collapsed'
+                      }`}
+                    >
                       {filteredGroups.map((group) => {
-                        const isExpanded = Boolean(searchQuery.trim()) || Boolean(expandedOwners[group.owner]);
+                        const isExpanded =
+                          Boolean(searchQuery.trim()) ||
+                          Boolean(expandedOwners[group.owner]);
                         return (
                           <div key={group.owner} className="github-clone-owner-group">
                             <div
@@ -768,43 +764,6 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
                   {translate(locale, 'projects.github_clone.destination_hint')}
                 </span>
               </div>
-
-              {/* PAT field: asked only when gh is NOT authenticated */}
-              {!authStatus.loading && !authStatus.authenticated && (
-                <div className="github-clone-field">
-                  <div className="github-clone-label-row">
-                    <label htmlFor="github-clone-pat-input" className="github-clone-label">
-                      {translate(locale, 'projects.github_clone.pat_label')}
-                    </label>
-                    {token && (
-                      <button
-                        type="button"
-                        className="github-clone-clear-pat-btn"
-                        onClick={handleClearPat}
-                        disabled={isSubmitting}
-                      >
-                        {translate(locale, 'projects.github_clone.pat_clear')}
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    id="github-clone-pat-input"
-                    type="password"
-                    className="github-clone-input"
-                    value={token}
-                    onChange={handleTokenChange}
-                    placeholder={translate(locale, 'projects.github_clone.pat_placeholder')}
-                    disabled={isSubmitting}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
-                  <span className="github-clone-hint">
-                    {patUser
-                      ? translate(locale, 'projects.github_clone.auth_pat_user', { user: patUser })
-                      : translate(locale, 'projects.github_clone.pat_hint')}
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Footer */}
