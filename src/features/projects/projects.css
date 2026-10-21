@@ -1200,6 +1200,7 @@
   gap: 10px;
 }
 
+.github-clone-create-repo-btn,
 .github-clone-local-repo-btn {
   display: inline-flex;
   align-items: center;
@@ -1218,17 +1219,20 @@
   transition: all 0.15s ease;
 }
 
+.github-clone-create-repo-btn:hover:not(:disabled),
 .github-clone-local-repo-btn:hover:not(:disabled) {
   background-color: var(--bg-surface-hover, #333338);
   border-color: var(--border-active, #52525b);
   color: var(--fg-bright, #ffffff);
 }
 
+.github-clone-create-repo-btn:disabled,
 .github-clone-local-repo-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
+.github-clone-create-repo-btn svg,
 .github-clone-local-repo-btn svg {
   flex-shrink: 0;
 }
@@ -1856,4 +1860,156 @@
     max-height: 90dvh;
   }
 }
+
+/* ==========================================================================
+   GitHub Create Repository Modal Enhancements
+   ========================================================================== */
+
+.github-create-visibility-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 520px) {
+  .github-create-visibility-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.github-create-vis-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1.5px solid var(--border-default);
+  background-color: var(--bg-surface-elevated, var(--bg-subtle));
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.github-create-vis-card:hover:not(:disabled) {
+  border-color: var(--border-active);
+  background-color: var(--bg-surface-hover, var(--bg-subtle-hover));
+}
+
+.github-create-vis-card.is-selected {
+  border-color: var(--accent-primary, #6366f1);
+  background-color: rgba(99, 102, 241, 0.08);
+}
+
+.github-create-vis-icon {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.github-create-vis-card.is-selected .github-create-vis-icon {
+  color: var(--accent-primary, #6366f1);
+}
+
+.github-create-vis-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.github-create-vis-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.github-create-vis-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-default);
+}
+
+.github-create-vis-card.is-selected .github-create-vis-title {
+  color: var(--accent-primary, #6366f1);
+}
+
+.github-create-vis-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+
+.github-create-options-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.github-create-option-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-subtle);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.github-create-option-card:hover {
+  background-color: var(--bg-surface-elevated);
+  border-color: var(--border-muted);
+}
+
+.github-create-checkbox {
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--accent-primary, #6366f1);
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.github-create-option-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.github-create-option-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fg-default);
+}
+
+.github-create-option-desc {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.35;
+}
+
+.github-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.github-input-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--fg-muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+
+.github-clone-input.has-icon {
+  padding-left: 36px;
+}
+
 

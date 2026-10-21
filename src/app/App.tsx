@@ -88,6 +88,11 @@ const GitHubCloneModal = React.lazy(() =>
     default: m.GitHubCloneModal,
   }))
 );
+const GitHubCreateModal = React.lazy(() =>
+  import('@features/projects/components/GitHubCreateModal').then((m) => ({
+    default: m.GitHubCreateModal,
+  }))
+);
 const ProfilesView = React.lazy(() =>
   import('@features/profiles/ProfilesView').then((m) => ({ default: m.ProfilesView }))
 );
@@ -479,10 +484,12 @@ export const App: React.FC = () => {
 
   const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [isGitHubCloneOpen, setIsGitHubCloneOpen] = useState(false);
+  const [isGitHubCreateOpen, setIsGitHubCreateOpen] = useState(false);
   const [isDefaultDirSetupOpen, setIsDefaultDirSetupOpen] = useState(false);
-  const [pendingActionAfterDefaultDir, setPendingActionAfterDefaultDir] = useState<'add_project' | 'github_clone' | null>(null);
+  const [pendingActionAfterDefaultDir, setPendingActionAfterDefaultDir] = useState<'add_project' | 'github_clone' | 'github_create' | null>(null);
   const addProjectTriggerRef = useRef<HTMLElement | null>(null);
   const gitHubCloneTriggerRef = useRef<HTMLElement | null>(null);
+  const gitHubCreateTriggerRef = useRef<HTMLElement | null>(null);
 
   const handleOpenAddProject = useCallback(() => {
     if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
@@ -528,6 +535,21 @@ export const App: React.FC = () => {
     setIsGitHubCloneOpen(true);
   }, [isMobileNavOpen, preferences.defaultProjectsDirectory]);
 
+  const handleOpenGitHubCreate = useCallback(() => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      gitHubCreateTriggerRef.current = document.activeElement;
+    }
+    if (isMobileNavOpen) {
+      setIsMobileNavOpen(false);
+    }
+    if (!preferences.defaultProjectsDirectory) {
+      setPendingActionAfterDefaultDir('github_create');
+      setIsDefaultDirSetupOpen(true);
+      return;
+    }
+    setIsGitHubCreateOpen(true);
+  }, [isMobileNavOpen, preferences.defaultProjectsDirectory]);
+
   const handleConfirmDefaultDirectory = useCallback(
     (directory: string) => {
       setDefaultProjectsDirectory(directory);
@@ -538,6 +560,8 @@ export const App: React.FC = () => {
         setIsFolderPickerOpen(true);
       } else if (pending === 'github_clone') {
         setIsGitHubCloneOpen(true);
+      } else if (pending === 'github_create') {
+        setIsGitHubCreateOpen(true);
       }
     },
     [pendingActionAfterDefaultDir, setDefaultProjectsDirectory]
@@ -561,6 +585,19 @@ export const App: React.FC = () => {
     gitHubCloneTriggerRef.current = null;
   }, []);
 
+  const handleCloseGitHubCreate = useCallback(() => {
+    setIsGitHubCreateOpen(false);
+    const trigger = gitHubCreateTriggerRef.current;
+    if (trigger && typeof trigger.focus === 'function' && typeof document !== 'undefined' && document.contains(trigger)) {
+      if (!trigger.closest?.('[inert], [aria-hidden="true"], .is-closed')) {
+        trigger.focus();
+      } else if (mobileMenuToggleRef.current && typeof mobileMenuToggleRef.current.focus === 'function') {
+        mobileMenuToggleRef.current.focus();
+      }
+    }
+    gitHubCreateTriggerRef.current = null;
+  }, []);
+
   const handleAddProjectRef = useRef(handleAddProject);
   handleAddProjectRef.current = handleAddProject;
 
@@ -570,6 +607,16 @@ export const App: React.FC = () => {
       handleCloseGitHubClone();
     },
     [handleCloseGitHubClone]
+  );
+
+  const handleCreateSuccess = useCallback(
+    (result: { path?: string }) => {
+      if (result.path) {
+        handleAddProjectRef.current(result.path);
+      }
+      handleCloseGitHubCreate();
+    },
+    [handleCloseGitHubCreate]
   );
 
   const handleConfirmAddProject = useCallback(
@@ -1129,6 +1176,7 @@ export const App: React.FC = () => {
       profilesHook.isModalOpen ||
       isFolderPickerOpen ||
       isGitHubCloneOpen ||
+      isGitHubCreateOpen ||
       commandPalette.isOpen ||
       activeDialog ||
       hasActiveModalOrOverlay(typeof document !== 'undefined' ? document : null)
@@ -1459,7 +1507,7 @@ export const App: React.FC = () => {
           activeProjectName={activeProjectName}
           locale={preferences.language}
           triggerRef={mobileMenuToggleRef}
-          restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen}
+          restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
           <ProjectDock
             projects={projectsRegistry.projects}
@@ -2216,6 +2264,26 @@ export const App: React.FC = () => {
               handleCloseGitHubClone();
               handleOpenAddProject();
             }}
+            onOpenCreateRepo={() => {
+              handleCloseGitHubClone();
+              handleOpenGitHubCreate();
+            }}
+            locale={preferences.language}
+          />
+        </React.Suspense>
+      )}
+
+      {isGitHubCreateOpen && (
+        <React.Suspense fallback={null}>
+          <GitHubCreateModal
+            isOpen={isGitHubCreateOpen}
+            initialDestinationPath={
+              preferences.defaultProjectsDirectory ||
+              projectsRegistry.projects.find((p) => p.id === projectsRegistry.activeProjectId)?.path ||
+              config.workingDirectory
+            }
+            onClose={handleCloseGitHubCreate}
+            onCreateSuccess={handleCreateSuccess}
             locale={preferences.language}
           />
         </React.Suspense>

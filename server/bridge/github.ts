@@ -87,6 +87,21 @@ export interface CloneGithubRepositoryResult {
   path: string;
 }
 
+export interface CreateGithubRepositoryArgs {
+  name: string;
+  description?: string;
+  isPrivate?: boolean;
+  autoInit?: boolean;
+  parentPath?: string;
+  token?: string;
+  organization?: string;
+}
+
+export interface CreateGithubRepositoryResult {
+  repository: GithubRepositorySummary;
+  path?: string;
+}
+
 export interface ProcessRunResult {
   stdout: string;
   stderr: string;
@@ -999,4 +1014,154 @@ export async function cloneGithubRepository(
     }
     throw new Error(sanitizeErrorMessage(err.message || String(err), token));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Create Operation
+// ---------------------------------------------------------------------------
+
+const GITHUB_REPO_NAME_REGEX = /^[a-zA-Z0-9_.-]{1,100}$/;
+const GITHUB_ORG_NAME_REGEX = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
+
+export async function createGithubRepository(
+  args: CreateGithubRepositoryArgs
+): Promise<CreateGithubRepositoryResult> {
+  if (!args || typeof args !== 'object') {
+    throw new Error('Arguments must be an object with name');
+  }
+
+  const rawName = typeof args.name === 'string' ? args.name.trim() : '';
+  if (!rawName) {
+    throw new Error('Repository name is required');
+  }
+
+  if (rawName.startsWith('-') || rawName === '.' || rawName === '..' || !GITHUB_REPO_NAME_REGEX.test(rawName)) {
+    throw new Error(`Invalid repository name "${rawName}". Name must be 1-100 characters containing letters, numbers, hyphens, periods, and underscores.`);
+  }
+
+  if (args.organization) {
+    const cleanOrg = args.organization.trim();
+    if (!GITHUB_ORG_NAME_REGEX.test(cleanOrg)) {
+      throw new Error(`Invalid organization name "${cleanOrg}"`);
+    }
+  }
+
+  const token = typeof args.token === 'string' ? args.token.trim() : '';
+  if (token && /[\r\n\0]/.test(token)) {
+    throw new Error('Token contains invalid characters');
+  }
+
+  const isPrivate = Boolean(args.isPrivate);
+  const autoInit = args.autoInit !== undefined ? Boolean(args.autoInit) : Boolean(args.parentPath);
+  const description = typeof args.description === 'string' ? args.description.trim() : '';
+
+  let createdRaw: any = null;
+
+  if (token) {
+    // Create using GitHub REST API with Bearer token
+    const endpoint = args.organization
+      ? `https://api.github.com/orgs/${encodeURIComponent(args.organization.trim())}/repos`
+      : 'https://api.github.com/user/repos';
+
+    const payload: Record<string, any> = {
+      name: rawName,
+      private: isPrivate,
+      auto_init: autoInit,
+    };
+    if (description) {
+      payload.description = description;
+    }
+
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'open-pi-viewer',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('GitHub authentication failed: invalid token or insufficient permissions');
+      }
+      let errorDetail = `HTTP ${res.status}`;
+      try {
+        const errJson: any = await res.json();
+        if (errJson?.message) {
+          errorDetail = errJson.message;
+        }
+      } catch {}
+      throw new Error(`Failed to create repository: ${sanitizeErrorMessage(errorDetail, token)}`);
+    }
+
+    createdRaw = await res.json();
+  } else {
+    // Create using gh CLI
+    const auth = await getGithubAuthStatus();
+    if (!auth.installed || !auth.authenticated) {
+      throw new Error('GitHub authentication required: gh CLI is not authenticated and no Personal Access Token was provided');
+    }
+
+    const runner = getRunner();
+    const env = getAgnosticExecEnv();
+    const endpoint = args.organization
+      ? `orgs/${args.organization.trim()}/repos`
+      : 'user/repos';
+
+    const ghArgs = [
+      'api',
+      endpoint,
+      '--method',
+      'POST',
+      '-f',
+      `name=${rawName}`,
+      '-F',
+      `private=${isPrivate}`,
+      '-F',
+      `auto_init=${autoInit}`,
+    ];
+
+    if (description) {
+      ghArgs.push('-f', `description=${description}`);
+    }
+
+    const ghRes = await runner('gh', ghArgs, {
+      env,
+      timeout: PROBE_TIMEOUT_MS * 4,
+    });
+
+    if (ghRes.exitCode !== 0) {
+      const combined = `${ghRes.stderr}\n${ghRes.stdout}`;
+      throw new Error(sanitizeErrorMessage(combined, token) || 'Failed to create GitHub repository via gh CLI');
+    }
+
+    try {
+      createdRaw = JSON.parse(ghRes.stdout);
+    } catch {
+      throw new Error('Malformed JSON response from gh CLI');
+    }
+  }
+
+  const summary = normalizeRawGithubRepo(createdRaw);
+
+  // If parentPath is provided, clone the newly created repository locally
+  if (args.parentPath && typeof args.parentPath === 'string' && args.parentPath.trim()) {
+    const cloneRes = await cloneGithubRepository({
+      repository: summary.cloneUrl,
+      parentPath: args.parentPath.trim(),
+      token: token || undefined,
+    });
+    return {
+      repository: summary,
+      path: cloneRes.path,
+    };
+  }
+
+  return {
+    repository: summary,
+  };
 }

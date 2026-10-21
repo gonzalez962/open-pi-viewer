@@ -777,6 +777,67 @@ test('GitHubCloneModal: renders Local Repo button with + icon when onOpenLocalFo
   assert.ok(esHtml.includes('Repo Local'), 'Button text in Spanish must be Repo Local');
 });
 
+test('GitHubCloneModal: renders New Repo button with + icon when onOpenCreateRepo is provided in en and es', () => {
+  let createOpened = false;
+
+  const enHtml = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'en',
+      onClose: () => {},
+      onCloneSuccess: () => {},
+      onOpenCreateRepo: () => {
+        createOpened = true;
+      },
+    })
+  );
+
+  assert.ok(enHtml.includes('github-clone-create-repo-btn'), 'Button must have github-clone-create-repo-btn class');
+  assert.ok(enHtml.includes('New Repo'), 'Button text in English must be New Repo');
+  assert.ok(enHtml.includes('<line x1="12" y1="5" x2="12" y2="19"'), 'Button must include + icon svg');
+
+  const esHtml = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'es',
+      onClose: () => {},
+      onCloneSuccess: () => {},
+      onOpenCreateRepo: () => {},
+    })
+  );
+  assert.ok(esHtml.includes('Nuevo Repo'), 'Button text in Spanish must be Nuevo Repo');
+
+  // Interactive click simulation
+  let capturedTree: any;
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = GitHubCloneModal({
+        isOpen: true,
+        initialDestinationPath: '/home/user/projects',
+        locale: 'en',
+        onClose: () => {},
+        onCloneSuccess: () => {},
+        onOpenCreateRepo: () => {
+          createOpened = true;
+        },
+      });
+      return capturedTree;
+    })
+  );
+
+  const createBtn = findElement(
+    capturedTree,
+    (el) =>
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('github-clone-create-repo-btn')
+  );
+  assert.ok(createBtn, 'Button must exist in tree');
+  createBtn.props.onClick();
+  assert.strictEqual(createOpened, true, 'Clicking must invoke onOpenCreateRepo callback');
+});
+
 function findElement(node: any, predicate: (n: any) => boolean): any {
   if (!node || typeof node !== 'object') return null;
   if (predicate(node)) return node;

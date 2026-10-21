@@ -3110,6 +3110,21 @@ export interface CloneGitHubRepositoryResult {
   path: string;
 }
 
+export interface CreateGitHubRepositoryPayload {
+  name: string;
+  description?: string;
+  isPrivate?: boolean;
+  autoInit?: boolean;
+  parentPath?: string;
+  token?: string;
+  organization?: string;
+}
+
+export interface CreateGitHubRepositoryResult {
+  repository: GitHubRepositorySummary;
+  path?: string;
+}
+
 /**
  * Retrieve GitHub CLI auth status from backend.
  * Returns installed and authenticated flags.
@@ -3135,6 +3150,20 @@ export async function cloneGitHubRepositoryPi(
     throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
   }
   return await invokeFn<CloneGitHubRepositoryResult>('clone_github_repository', { payload });
+}
+
+/**
+ * Create a new GitHub repository and optionally clone it into parentPath.
+ * Fixed IPC contract: create_github_repository payload {name, description?, isPrivate?, autoInit?, parentPath?, token?, organization?} -> {repository, path?}.
+ */
+export async function createGitHubRepositoryPi(
+  payload: CreateGitHubRepositoryPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<CreateGitHubRepositoryResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<CreateGitHubRepositoryResult>('create_github_repository', { payload });
 }
 
 /**

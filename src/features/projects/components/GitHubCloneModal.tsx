@@ -38,6 +38,7 @@ export interface GitHubCloneModalProps {
   onClose: () => void;
   onCloneSuccess: (clonedPath: string) => void;
   onOpenLocalFolder?: () => void;
+  onOpenCreateRepo?: () => void;
   getAuthStatus?: () => Promise<GitHubAuthStatus>;
   cloneRepository?: (payload: CloneGitHubRepositoryPayload) => Promise<CloneGitHubRepositoryResult>;
   listRepositories?: (payload?: { token?: string }) => Promise<ListGitHubRepositoriesResult>;
@@ -54,6 +55,7 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
   onClose,
   onCloneSuccess,
   onOpenLocalFolder,
+  onOpenCreateRepo,
   getAuthStatus,
   cloneRepository,
   listRepositories,
@@ -374,6 +376,34 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
             </div>
 
             <div className="github-clone-header-actions">
+              {onOpenCreateRepo && (
+                <button
+                  type="button"
+                  className="github-clone-create-repo-btn"
+                  onClick={() => {
+                    handleClose();
+                    onOpenCreateRepo();
+                  }}
+                  disabled={isSubmitting}
+                  title={translate(locale, 'projects.github_clone.create_repo')}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <span>{translate(locale, 'projects.github_clone.create_repo')}</span>
+                </button>
+              )}
               {onOpenLocalFolder && (
                 <button
                   type="button"
