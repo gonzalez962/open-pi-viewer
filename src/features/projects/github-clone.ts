@@ -86,6 +86,28 @@ export function clearSavedGitHubPat(storage?: Storage | null): void {
   }
 }
 
+export async function probeGitHubPatUser(token: string): Promise<string | undefined> {
+  const clean = token.trim();
+  if (!clean) return undefined;
+  try {
+    const res = await fetch('https://api.github.com/user', {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'Authorization': `Bearer ${clean}`,
+        'User-Agent': 'open-pi-viewer',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      if (data && typeof data.login === 'string') {
+        return data.login;
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
 const GITHUB_OWNER_REGEX = /^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$/;
 const GITHUB_REPO_REGEX = /^[a-zA-Z0-9_.-]{1,100}$/;
 
@@ -257,6 +279,13 @@ export interface GitHubCloneState {
 
 export interface GitHubCloneControllerOptions {
   initialDestinationPath?: string;
+  initialRepoState?: {
+    loading?: boolean;
+    error?: string | null;
+    groups: GitHubOwnerGroup[];
+    total: number;
+    selectedRepo?: GitHubRepositorySummary;
+  };
   storage?: Storage | null;
   getAuthStatus?: () => Promise<GitHubAuthStatus>;
   cloneRepository?: (payload: CloneGitHubRepositoryPayload) => Promise<CloneGitHubRepositoryResult>;
@@ -303,10 +332,11 @@ export function createGitHubCloneController(
       authenticated: false,
     },
     repositories: {
-      loading: false,
-      error: null,
-      groups: [],
-      total: 0,
+      loading: Boolean(options.initialRepoState?.loading),
+      error: options.initialRepoState?.error ?? null,
+      groups: options.initialRepoState?.groups ?? [],
+      total: options.initialRepoState?.total ?? 0,
+      selectedRepo: options.initialRepoState?.selectedRepo,
     },
     error: null,
     successPath: null,
@@ -412,8 +442,9 @@ export function createGitHubCloneController(
           },
         });
       }
-      if (!state.authStatus.authenticated && state.token) {
-        void fetchPatUser();
+      const effectiveToken = state.token.trim() || getSavedGitHubPat(storage);
+      if (effectiveToken) {
+        void fetchPatUser(effectiveToken);
       }
     },
 
@@ -439,7 +470,7 @@ export function createGitHubCloneController(
       });
 
       try {
-        const payload = !state.authStatus.authenticated && effectiveToken ? { token: effectiveToken } : undefined;
+        const payload = effectiveToken ? { token: effectiveToken } : undefined;
         const res = await listRepos(payload);
         if (isDisposed) return;
         updateState({
@@ -500,23 +531,21 @@ export function createGitHubCloneController(
       }
 
       // Determine token handling:
-      // If gh CLI is authenticated: we omit token so gh repo clone is used
-      // If gh CLI is NOT authenticated: we send token (if entered or saved) and save it for future clones
+      // PAT is primary: if entered or saved, send it (and persist it for this instance)
+      // If NO PAT is present, fallback to gh CLI session (or anonymous for public repos)
       let tokenToSend: string | undefined = undefined;
 
       const trimmedToken = state.token.trim();
       const savedToken = getSavedGitHubPat(storage);
       const effectiveToken = trimmedToken || savedToken;
 
-      if (!state.authStatus.authenticated) {
-        if (effectiveToken) {
-          tokenToSend = effectiveToken;
-          saveGitHubPat(effectiveToken, storage);
-          updateState({ token: effectiveToken, hasSavedToken: true });
-        } else {
-          clearSavedGitHubPat(storage);
-          updateState({ token: '', hasSavedToken: false });
-        }
+      if (effectiveToken) {
+        tokenToSend = effectiveToken;
+        saveGitHubPat(effectiveToken, storage);
+        updateState({ token: effectiveToken, hasSavedToken: true });
+      } else {
+        clearSavedGitHubPat(storage);
+        updateState({ token: '', hasSavedToken: false });
       }
 
       updateState({

@@ -311,3 +311,122 @@ test('SettingsView: renders default projects directory input and browse button',
   assert.strictEqual(changedDir, undefined);
 });
 
+test('SettingsView: renders GitHub Integration section with PAT input and actions', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePreferences,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /GitHub Integration/);
+  assert.match(html, /id="settings-github-pat-input"/);
+  assert.match(html, /type="password"/);
+  assert.match(html, /Save Token/);
+});
+
+test('SettingsView: renders default projects directory configured status badge and copy button', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: {
+        ...samplePreferences,
+        defaultProjectsDirectory: '/home/developer/projects',
+      },
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /settings-projects-dir-status-badge is-configured/);
+  assert.match(html, /Configured/);
+  assert.match(html, /settings-projects-dir-copy-btn/);
+  assert.match(html, /value="\/home\/developer\/projects"/);
+});
+
+test('SettingsView: renders default projects directory unconfigured badge when not set', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: {
+        ...samplePreferences,
+        defaultProjectsDirectory: undefined,
+      },
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+    })
+  );
+
+  assert.match(html, /settings-projects-dir-status-badge is-not-configured/);
+  assert.match(html, /Not Configured/);
+});
+
+test('SettingsView: does not render Profiles and Model Providers cards in general settings tab', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(SettingsView, {
+      config: sampleConfig,
+      settingsDraft: sampleConfig,
+      setSettingsDraft: () => {},
+      preferences: samplePreferences,
+      onThemeChange: () => {},
+      onLanguageChange: () => {},
+      settingsError: null,
+      settingsStorageNotice: null,
+      isBusy: false,
+      onSaveAndApply: () => {},
+      onClose: () => {},
+      t,
+      loadCustomProviders: async () => [],
+      renderProviders: () => null,
+      activeProfileName: 'my-profile',
+      activeProfileScope: 'project',
+    })
+  );
+
+  // Tabs exist in header
+  assert.match(html, /Profiles/);
+  assert.match(html, /Model Providers/);
+
+  // But the card sections with action buttons were removed from the general tab body
+  assert.doesNotMatch(html, /btn_open_profiles/);
+  assert.doesNotMatch(html, /btn_open_providers/);
+  assert.doesNotMatch(html, /settings\.profiles_heading/);
+  assert.doesNotMatch(html, /settings\.providers_heading/);
+});
+
+
+
+
+

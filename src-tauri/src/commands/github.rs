@@ -112,6 +112,31 @@ pub struct CloneGithubRepositoryResult {
     pub path: String,
 }
 
+/// Payload accepted by `create_github_repository` command
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGithubRepositoryPayload {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(alias = "isPrivate")]
+    pub is_private: Option<bool>,
+    #[serde(alias = "autoInit")]
+    pub auto_init: Option<bool>,
+    #[serde(alias = "parentPath")]
+    pub parent_path: Option<String>,
+    pub token: Option<String>,
+    pub organization: Option<String>,
+}
+
+/// Result returned from a successful repository creation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateGithubRepositoryResult {
+    pub repository: GithubRepositorySummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 /// Validated and normalized GitHub repository specification
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedRepo {
@@ -804,6 +829,261 @@ pub async fn clone_github_repository(
     clone_github_repository_impl(&repo, &parent, tok.as_deref(), &RealSubprocessRunner).await
 }
 
+/// Core implementation of repository creation
+pub async fn create_github_repository_impl(
+    args: CreateGithubRepositoryPayload,
+    runner: &dyn SubprocessRunner,
+) -> Result<CreateGithubRepositoryResult, String> {
+    let name = args
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Repository name is required".to_string())?;
+
+    if name.starts_with('-')
+        || name == "."
+        || name == ".."
+        || name.len() > 100
+        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+    {
+        return Err(format!(
+            "Invalid repository name \"{}\". Name must be 1-100 characters containing letters, numbers, hyphens, periods, and underscores.",
+            name
+        ));
+    }
+
+    if let Some(ref org) = args.organization {
+        let clean_org = org.trim();
+        if clean_org.is_empty()
+            || clean_org.len() > 39
+            || clean_org.starts_with('-')
+            || !clean_org.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return Err(format!("Invalid organization name \"{}\"", clean_org));
+        }
+    }
+
+    let token = args.token.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    if let Some(tok) = token {
+        if tok.chars().any(|c| c == '\r' || c == '\n' || c == '\0') {
+            return Err("Token contains invalid characters".to_string());
+        }
+    }
+
+    let is_private = args.is_private.unwrap_or(false);
+    let auto_init = args.auto_init.unwrap_or(args.parent_path.is_some());
+    let description = args.description.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    let raw_val: serde_json::Value = if let Some(tok) = token {
+        let probe = CommandSpec {
+            program: "gh".into(),
+            args: vec!["--version".into()],
+            envs: vec![],
+            env_removes: vec![],
+            timeout: PROBE_TIMEOUT,
+            capture_output: true,
+        };
+        let gh_installed = runner.run_command(probe).await.map(|r| r.success).unwrap_or(false);
+
+        if gh_installed {
+            let endpoint = if let Some(ref org) = args.organization {
+                format!("orgs/{}/repos", org.trim())
+            } else {
+                "user/repos".to_string()
+            };
+
+            let mut gh_args = vec![
+                "api".into(),
+                endpoint,
+                "--method".into(),
+                "POST".into(),
+                "-f".into(),
+                format!("name={}", name),
+                "-F".into(),
+                format!("private={}", is_private),
+                "-F".into(),
+                format!("auto_init={}", auto_init),
+            ];
+            if let Some(desc) = description {
+                gh_args.push("-f".into());
+                gh_args.push(format!("description={}", desc));
+            }
+
+            let create_spec = CommandSpec {
+                program: "gh".into(),
+                args: gh_args,
+                envs: vec![("GH_TOKEN".into(), tok.to_string())],
+                env_removes: vec![],
+                timeout: PROBE_TIMEOUT * 4,
+                capture_output: true,
+            };
+
+            let res = runner.run_command(create_spec).await?;
+            if !res.success {
+                return Err(sanitize_error_message(
+                    &format!("{}\n{}", res.stderr, res.stdout),
+                    Some(tok),
+                ));
+            }
+
+            serde_json::from_str(&res.stdout).map_err(|e| e.to_string())?
+        } else {
+            let endpoint = if let Some(ref org) = args.organization {
+                format!("https://api.github.com/orgs/{}/repos", org.trim())
+            } else {
+                "https://api.github.com/user/repos".to_string()
+            };
+
+            let mut body_map = serde_json::Map::new();
+            body_map.insert("name".into(), serde_json::Value::String(name.to_string()));
+            body_map.insert("private".into(), serde_json::Value::Bool(is_private));
+            body_map.insert("auto_init".into(), serde_json::Value::Bool(auto_init));
+            if let Some(desc) = description {
+                body_map.insert("description".into(), serde_json::Value::String(desc.to_string()));
+            }
+            let body_str = serde_json::to_string(&body_map).unwrap_or_default();
+
+            let curl_spec = CommandSpec {
+                program: "curl".into(),
+                args: vec![
+                    "-s".into(),
+                    "-X".into(),
+                    "POST".into(),
+                    "-H".into(),
+                    "Accept: application/vnd.github+json".into(),
+                    "-H".into(),
+                    format!("Authorization: Bearer {}", tok),
+                    "-H".into(),
+                    "User-Agent: open-pi-viewer".into(),
+                    "-H".into(),
+                    "Content-Type: application/json".into(),
+                    "-d".into(),
+                    body_str,
+                    endpoint,
+                ],
+                envs: vec![],
+                env_removes: vec![],
+                timeout: PROBE_TIMEOUT * 4,
+                capture_output: true,
+            };
+
+            let res = runner.run_command(curl_spec).await?;
+            if !res.success {
+                return Err(sanitize_error_message(
+                    &format!("{}\n{}", res.stderr, res.stdout),
+                    Some(tok),
+                ));
+            }
+
+            let val: serde_json::Value = serde_json::from_str(&res.stdout).map_err(|e| e.to_string())?;
+            if val.get("message").is_some() && val.get("id").is_none() {
+                let msg = val.get("message").and_then(|m| m.as_str()).unwrap_or("Failed to create repository");
+                return Err(sanitize_error_message(msg, Some(tok)));
+            }
+            val
+        }
+    } else {
+        let auth = get_github_auth_status_impl(runner).await?;
+        if !auth.installed || !auth.authenticated {
+            return Err("GitHub authentication required: gh CLI is not authenticated and no Personal Access Token was provided".to_string());
+        }
+
+        let endpoint = if let Some(ref org) = args.organization {
+            format!("orgs/{}/repos", org.trim())
+        } else {
+            "user/repos".to_string()
+        };
+
+        let mut gh_args = vec![
+            "api".into(),
+            endpoint,
+            "--method".into(),
+            "POST".into(),
+            "-f".into(),
+            format!("name={}", name),
+            "-F".into(),
+            format!("private={}", is_private),
+            "-F".into(),
+            format!("auto_init={}", auto_init),
+        ];
+        if let Some(desc) = description {
+            gh_args.push("-f".into());
+            gh_args.push(format!("description={}", desc));
+        }
+
+        let create_spec = CommandSpec {
+            program: "gh".into(),
+            args: gh_args,
+            envs: vec![],
+            env_removes: vec![],
+            timeout: PROBE_TIMEOUT * 4,
+            capture_output: true,
+        };
+
+        let res = runner.run_command(create_spec).await?;
+        if !res.success {
+            return Err(sanitize_error_message(
+                &format!("{}\n{}", res.stderr, res.stdout),
+                None,
+            ));
+        }
+
+        serde_json::from_str(&res.stdout).map_err(|e| e.to_string())?
+    };
+
+    let summary = normalize_raw_github_repo(&raw_val)
+        .ok_or_else(|| "Failed to parse repository response from GitHub".to_string())?;
+
+    if let Some(ref parent) = args.parent_path {
+        let clean_parent = parent.trim();
+        if !clean_parent.is_empty() {
+            let clone_res = clone_github_repository_impl(&summary.clone_url, clean_parent, token, runner).await?;
+            return Ok(CreateGithubRepositoryResult {
+                repository: summary,
+                path: Some(clone_res.path),
+            });
+        }
+    }
+
+    Ok(CreateGithubRepositoryResult {
+        repository: summary,
+        path: None,
+    })
+}
+
+/// Tauri command to create a GitHub repository
+#[tauri::command]
+pub async fn create_github_repository(
+    payload: Option<CreateGithubRepositoryPayload>,
+    name: Option<String>,
+    description: Option<String>,
+    is_private: Option<bool>,
+    auto_init: Option<bool>,
+    parent_path: Option<String>,
+    token: Option<String>,
+    organization: Option<String>,
+) -> Result<CreateGithubRepositoryResult, String> {
+    let mut args = payload.unwrap_or(CreateGithubRepositoryPayload {
+        name: None,
+        description: None,
+        is_private: None,
+        auto_init: None,
+        parent_path: None,
+        token: None,
+        organization: None,
+    });
+    if args.name.is_none() { args.name = name; }
+    if args.description.is_none() { args.description = description; }
+    if args.is_private.is_none() { args.is_private = is_private; }
+    if args.auto_init.is_none() { args.auto_init = auto_init; }
+    if args.parent_path.is_none() { args.parent_path = parent_path; }
+    if args.token.is_none() { args.token = token; }
+    if args.organization.is_none() { args.organization = organization; }
+
+    create_github_repository_impl(args, &RealSubprocessRunner).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1410,5 +1690,48 @@ mod tests {
 
     fn groups_find<'a>(groups: &'a [GithubOwnerGroup], owner: &str) -> Option<&'a GithubOwnerGroup> {
         groups.iter().find(|g| g.owner == owner)
+    }
+
+    #[tokio::test]
+    async fn test_create_github_repository_impl_via_gh() {
+        let runner = MockRunner {
+            handler: move |spec: CommandSpec| {
+                if spec.program == "gh" && spec.args.contains(&"--version".to_string()) {
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: "gh version 2.50.0".into(), stderr: String::new() });
+                }
+                if spec.program == "gh" && spec.args.contains(&"auth".to_string()) {
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: "Logged in to github.com account octocat".into(), stderr: String::new() });
+                }
+                if spec.program == "gh" && spec.args.contains(&"api".to_string()) {
+                    let json = serde_json::json!({
+                        "id": 888,
+                        "name": "my-new-rust-repo",
+                        "full_name": "octocat/my-new-rust-repo",
+                        "owner": { "login": "octocat", "type": "User" },
+                        "private": true,
+                        "html_url": "https://github.com/octocat/my-new-rust-repo",
+                        "clone_url": "https://github.com/octocat/my-new-rust-repo.git"
+                    });
+                    return Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: json.to_string(), stderr: String::new() });
+                }
+                Ok(ProcessOutput { success: true, exit_code: Some(0), stdout: String::new(), stderr: String::new() })
+            },
+        };
+
+        let payload = CreateGithubRepositoryPayload {
+            name: Some("my-new-rust-repo".to_string()),
+            description: Some("Created from open-pi-viewer".to_string()),
+            is_private: Some(true),
+            auto_init: Some(true),
+            parent_path: None,
+            token: None,
+            organization: None,
+        };
+
+        let res = create_github_repository_impl(payload, &runner).await.unwrap();
+        assert_eq!(res.repository.name, "my-new-rust-repo");
+        assert_eq!(res.repository.full_name, "octocat/my-new-rust-repo");
+        assert_eq!(res.repository.is_private, true);
+        assert!(res.path.is_none());
     }
 }

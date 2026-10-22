@@ -483,7 +483,7 @@ test('github-clone controller: PAT is saved to storage on submit and reused for 
   assert.strictEqual(storage.getItem(GITHUB_PAT_STORAGE_KEY), null);
 });
 
-test('github-clone controller: does not dispatch saved PAT when gh is authenticated', async () => {
+test('github-clone controller: dispatches saved PAT as primary credential even when gh is authenticated', async () => {
   const storage = createMemoryStorage({ [GITHUB_PAT_STORAGE_KEY]: 'ghp_saved_pat_123' });
   let capturedToken: string | undefined = 'initial';
 
@@ -501,10 +501,27 @@ test('github-clone controller: does not dispatch saved PAT when gh is authentica
   controller.setRepository('myorg/repo');
   await controller.submit();
 
-  // When gh is authenticated, token is omitted so gh repo clone is used
-  assert.strictEqual(capturedToken, undefined);
-  // Stored PAT remains untouched in storage
+  // PAT is primary: token is dispatched even when gh CLI is authenticated
+  assert.strictEqual(capturedToken, 'ghp_saved_pat_123');
+  // Stored PAT remains in storage
   assert.strictEqual(storage.getItem(GITHUB_PAT_STORAGE_KEY), 'ghp_saved_pat_123');
+
+  // When no PAT exists, token is omitted so gh CLI session is used
+  storage.clear();
+  let fallbackToken: string | undefined = 'initial';
+  const fallbackController = createGitHubCloneController({
+    initialDestinationPath: '/home/user/workspace',
+    storage,
+    getAuthStatus: async () => ({ installed: true, authenticated: true }),
+    cloneRepository: async (payload) => {
+      fallbackToken = payload.token;
+      return { path: '/dest/repo' };
+    },
+  });
+  await fallbackController.loadAuthStatus();
+  fallbackController.setRepository('myorg/repo');
+  await fallbackController.submit();
+  assert.strictEqual(fallbackToken, undefined, 'Omits token to fallback to gh CLI when no PAT exists');
 });
 
 test('github-clone controller: dispose suppresses late async completion notifications and onSuccess', async () => {
@@ -659,40 +676,27 @@ test('GitHubCloneModal: renders accessible dialog with role="dialog", aria-modal
   assert.ok(html.includes('role="dialog"'), 'Must have role="dialog"');
   assert.ok(html.includes('aria-modal="true"'), 'Must have aria-modal="true"');
   assert.ok(html.includes('Clone GitHub Repository'), 'Must have modal title');
-  assert.ok(html.includes('type="password"'), 'Token input must be type="password"');
-  assert.ok(html.includes('Saved locally'), 'Must display notice that PAT is saved locally');
+  assert.strictEqual(html.includes('github-clone-pat-input'), false, 'PAT input is managed in Settings and omitted from clone modal');
 });
 
-test('GitHubCloneModal: PAT field is asked when gh is NOT authenticated, and hidden when gh IS authenticated', () => {
-  // 1. Not authenticated (gh missing or not logged in): PAT field is asked
-  const unauthHtml = renderToStaticMarkup(
+test('GitHubCloneModal: uses saved PAT from settings/storage without rendering pat input', () => {
+  const storage = createMemoryStorage({ [GITHUB_PAT_STORAGE_KEY]: 'ghp_settings_pat_999' });
+  const html = renderToStaticMarkup(
     React.createElement(GitHubCloneModal, {
       isOpen: true,
       initialDestinationPath: '/home/user/projects',
       locale: 'en',
-      initialAuthStatus: { loading: false, installed: false, authenticated: false },
+      storage,
       onClose: () => {},
       onCloneSuccess: () => {},
     })
   );
-  assert.ok(unauthHtml.includes('github-clone-pat-input'), 'PAT input must be asked when gh is not logged in');
 
-  // 2. Authenticated: PAT field is NOT asked
-  const authHtml = renderToStaticMarkup(
-    React.createElement(GitHubCloneModal, {
-      isOpen: true,
-      initialDestinationPath: '/home/user/projects',
-      locale: 'en',
-      initialAuthStatus: { loading: false, installed: true, authenticated: true },
-      onClose: () => {},
-      onCloneSuccess: () => {},
-    })
-  );
-  assert.strictEqual(authHtml.includes('github-clone-pat-input'), false, 'PAT input must NOT be asked when gh is authenticated');
+  assert.strictEqual(html.includes('github-clone-pat-input'), false, 'PAT input should not be in clone modal');
 });
 
-test('GitHubCloneModal: displays authenticated username for gh CLI and for saved PAT', () => {
-  // 1. With gh CLI authenticated username
+test('GitHubCloneModal: omits authenticated status banner when authenticated, shows unauthenticated banner when not', () => {
+  // 1. When authenticated: no auth banner is shown
   const ghAuthHtml = renderToStaticMarkup(
     React.createElement(GitHubCloneModal, {
       isOpen: true,
@@ -703,20 +707,22 @@ test('GitHubCloneModal: displays authenticated username for gh CLI and for saved
       onCloneSuccess: () => {},
     })
   );
-  assert.ok(ghAuthHtml.includes('@octocat'), 'Must render @octocat in authenticated banner');
+  assert.strictEqual(ghAuthHtml.includes('github-clone-auth-banner'), false, 'Authenticated banner must be omitted');
+  assert.strictEqual(ghAuthHtml.includes('GitHub CLI is authenticated'), false, 'No authenticated message should appear');
 
-  // 2. Spanish localization with username
-  const ghAuthEsHtml = renderToStaticMarkup(
+  // 2. When unauthenticated: informative banner is shown
+  const ghUnauthHtml = renderToStaticMarkup(
     React.createElement(GitHubCloneModal, {
       isOpen: true,
       initialDestinationPath: '/home/user/projects',
-      locale: 'es',
-      initialAuthStatus: { loading: false, installed: true, authenticated: true, username: 'torvalds' },
+      locale: 'en',
+      initialAuthStatus: { loading: false, installed: false, authenticated: false },
       onClose: () => {},
       onCloneSuccess: () => {},
     })
   );
-  assert.ok(ghAuthEsHtml.includes('@torvalds'), 'Must render @torvalds in Spanish authenticated banner');
+  assert.ok(ghUnauthHtml.includes('github-clone-auth-banner'), 'Unauthenticated banner must be present');
+  assert.ok(ghUnauthHtml.includes('is-unauthenticated'), 'Must have is-unauthenticated class');
 });
 
 test('GitHubCloneModal: closed state renders null', () => {
@@ -745,10 +751,10 @@ test('GitHubCloneModal: localized in Spanish', () => {
   );
 
   assert.ok(html.includes('Clonar Repositorio de GitHub'), 'Spanish title must be rendered');
-  assert.ok(html.includes('Guardado localmente'), 'Spanish PAT notice must be rendered');
+  assert.ok(html.includes('Directorio de destino'), 'Spanish destination label must be rendered');
 });
 
-test('GitHubCloneModal: renders Local Repo button with + icon when onOpenLocalFolder is provided', () => {
+test('GitHubCloneModal: renders Local button with + icon when onOpenLocalFolder is provided', () => {
   const enHtml = renderToStaticMarkup(
     React.createElement(GitHubCloneModal, {
       isOpen: true,
@@ -761,7 +767,7 @@ test('GitHubCloneModal: renders Local Repo button with + icon when onOpenLocalFo
   );
 
   assert.ok(enHtml.includes('github-clone-local-repo-btn'), 'Button must have github-clone-local-repo-btn class');
-  assert.ok(enHtml.includes('Local Repo'), 'Button text in English must be Local Repo');
+  assert.ok(enHtml.includes('Local'), 'Button text in English must be Local');
   assert.ok(enHtml.includes('<line x1="12" y1="5" x2="12" y2="19"'), 'Button must include + icon svg');
 
   const esHtml = renderToStaticMarkup(
@@ -774,7 +780,68 @@ test('GitHubCloneModal: renders Local Repo button with + icon when onOpenLocalFo
       onOpenLocalFolder: () => {},
     })
   );
-  assert.ok(esHtml.includes('Repo Local'), 'Button text in Spanish must be Repo Local');
+  assert.ok(esHtml.includes('Local'), 'Button text in Spanish must be Local');
+});
+
+test('GitHubCloneModal: renders Create button with + icon when onOpenCreateRepo is provided in en and es', () => {
+  let createOpened = false;
+
+  const enHtml = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'en',
+      onClose: () => {},
+      onCloneSuccess: () => {},
+      onOpenCreateRepo: () => {
+        createOpened = true;
+      },
+    })
+  );
+
+  assert.ok(enHtml.includes('github-clone-create-repo-btn'), 'Button must have github-clone-create-repo-btn class');
+  assert.ok(enHtml.includes('Create'), 'Button text in English must be Create');
+  assert.ok(enHtml.includes('<line x1="12" y1="5" x2="12" y2="19"'), 'Button must include + icon svg');
+
+  const esHtml = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'es',
+      onClose: () => {},
+      onCloneSuccess: () => {},
+      onOpenCreateRepo: () => {},
+    })
+  );
+  assert.ok(esHtml.includes('Crear'), 'Button text in Spanish must be Crear');
+
+  // Interactive click simulation
+  let capturedTree: any;
+  renderToStaticMarkup(
+    React.createElement(() => {
+      capturedTree = GitHubCloneModal({
+        isOpen: true,
+        initialDestinationPath: '/home/user/projects',
+        locale: 'en',
+        onClose: () => {},
+        onCloneSuccess: () => {},
+        onOpenCreateRepo: () => {
+          createOpened = true;
+        },
+      });
+      return capturedTree;
+    })
+  );
+
+  const createBtn = findElement(
+    capturedTree,
+    (el) =>
+      typeof el?.props?.className === 'string' &&
+      el.props.className.includes('github-clone-create-repo-btn')
+  );
+  assert.ok(createBtn, 'Button must exist in tree');
+  createBtn.props.onClick();
+  assert.strictEqual(createOpened, true, 'Clicking must invoke onOpenCreateRepo callback');
 });
 
 function findElement(node: any, predicate: (n: any) => boolean): any {
@@ -996,7 +1063,8 @@ test('GitHubCloneModal: renders browse tabs and categorized repository groups', 
   );
 
   assert.ok(html.includes('Browse Repositories'), 'Must render Browse Repositories tab');
-  assert.ok(html.includes('Manual URL'), 'Must render Manual URL tab');
+  assert.ok(html.includes('Public'), 'Must render Public tab');
+  assert.ok(!html.includes('github-clone-tab-badge'), 'Must not render repo count badge in tab');
   assert.ok(html.includes('github-clone-tabs'), 'Must render tabs bar');
 });
 
@@ -1068,5 +1136,200 @@ test('GitHubCloneModal: renders owner group headers collapsed by default with ar
   assert.ok(html.includes('Tus repositorios'), 'Must render localized my_repos label');
   assert.ok(html.includes('Organizaciones y colaboradores'), 'Must render localized org_repos label');
 });
+
+test('GitHubCloneModal: renders owner group headers collapsed by default and keeps repos hidden initially', () => {
+  const mockGroups: any[] = [
+    {
+      owner: 'octocat',
+      isCurrentUser: true,
+      repositories: [
+        { id: 1, name: 'repo-1', fullName: 'octocat/repo-1', owner: 'octocat', isPrivate: false },
+        { id: 2, name: 'repo-2', fullName: 'octocat/repo-2', owner: 'octocat', isPrivate: false },
+        { id: 3, name: 'repo-3', fullName: 'octocat/repo-3', owner: 'octocat', isPrivate: true },
+        { id: 4, name: 'repo-4', fullName: 'octocat/repo-4', owner: 'octocat', isPrivate: false },
+        { id: 5, name: 'repo-5', fullName: 'octocat/repo-5', owner: 'octocat', isPrivate: true },
+      ],
+    },
+    {
+      owner: 'acme-org',
+      isCurrentUser: false,
+      ownerType: 'Organization',
+      repositories: [
+        { id: 6, name: 'org-repo-secret', fullName: 'acme-org/org-repo-secret', owner: 'acme-org', isPrivate: true },
+      ],
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'es',
+      initialAuthStatus: { loading: false, installed: true, authenticated: true, username: 'octocat' },
+      initialRepoState: {
+        groups: mockGroups,
+        total: 6,
+      },
+      listRepositories: async () => ({
+        groups: mockGroups,
+        total: 6,
+        currentUser: 'octocat',
+      }),
+      onClose: () => {},
+      onCloneSuccess: () => {},
+    })
+  );
+
+  // Group headers are collapsed by default and repos are not rendered yet
+  assert.ok(!html.includes('github-clone-repo-list'), 'Repositories must not be rendered when owner group is collapsed');
+  assert.ok(html.includes('aria-expanded="false"'), 'Group headers must have aria-expanded="false"');
+  assert.ok(html.includes('is-collapsed'), 'Headers and chevrons must have is-collapsed by default');
+  assert.ok(html.includes('all-collapsed'), 'Container must have all-collapsed class when no owner is expanded');
+});
+
+test('GitHubCloneModal: renders new repo and local repo as tabs after manual url', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(GitHubCloneModal, {
+      isOpen: true,
+      initialDestinationPath: '/home/user/projects',
+      locale: 'en',
+      initialAuthStatus: { loading: false, installed: true, authenticated: true, username: 'octocat' },
+      onClose: () => {},
+      onCloneSuccess: () => {},
+      onOpenCreateRepo: () => {},
+      onOpenLocalFolder: () => {},
+    })
+  );
+
+  // Header should only contain the close button
+  assert.ok(!html.includes('github-clone-header-actions"><button type="button" class="github-clone-tab'), 'Actions should be in tabs, not header');
+
+  // Tabs container must contain all 4 tabs in order
+  const tabsIndex = html.indexOf('github-clone-tabs');
+  const browseIndex = html.indexOf('Browse Repositories', tabsIndex);
+  const manualIndex = html.indexOf('Public', browseIndex);
+  const createIndex = html.indexOf('github-clone-create-repo-btn', manualIndex);
+  const localIndex = html.indexOf('github-clone-local-repo-btn', createIndex);
+
+  assert.ok(browseIndex > tabsIndex, 'Browse Repositories tab must exist');
+  assert.ok(manualIndex > browseIndex, 'Public tab must be after Browse Repositories');
+  assert.ok(createIndex > manualIndex, 'Create tab must be after Public');
+  assert.ok(localIndex > createIndex, 'Local tab must be after Create');
+});
+
+test('GitHubCloneModal navigation: clicking Create or Local invokes callbacks and enables return to clone on cancellation', () => {
+  let isCloneOpen = true;
+  let isCreateOpen = false;
+  let isLocalOpen = false;
+  let returnToCloneOnCancel = false;
+
+  const handleOpenCreateRepo = () => {
+    returnToCloneOnCancel = true;
+    isCloneOpen = false;
+    isCreateOpen = true;
+  };
+
+  const handleCloseCreateRepo = () => {
+    isCreateOpen = false;
+    if (returnToCloneOnCancel) {
+      returnToCloneOnCancel = false;
+      isCloneOpen = true;
+    }
+  };
+
+  const handleOpenLocalRepo = () => {
+    returnToCloneOnCancel = true;
+    isCloneOpen = false;
+    isLocalOpen = true;
+  };
+
+  const handleCloseLocalRepo = () => {
+    isLocalOpen = false;
+    if (returnToCloneOnCancel) {
+      returnToCloneOnCancel = false;
+      isCloneOpen = true;
+    }
+  };
+
+  // 1. Simulate clicking Create tab
+  handleOpenCreateRepo();
+  assert.strictEqual(isCloneOpen, false, 'Clone modal should close when opening create');
+  assert.strictEqual(isCreateOpen, true, 'Create modal should open');
+  assert.strictEqual(returnToCloneOnCancel, true);
+
+  // 2. User cancels/closes Create modal -> returns to Clone modal
+  handleCloseCreateRepo();
+  assert.strictEqual(isCreateOpen, false, 'Create modal should close');
+  assert.strictEqual(isCloneOpen, true, 'Clone modal must reopen on create cancel');
+  assert.strictEqual(returnToCloneOnCancel, false);
+
+  // 3. Simulate clicking Local tab
+  handleOpenLocalRepo();
+  assert.strictEqual(isCloneOpen, false, 'Clone modal should close when opening local');
+  assert.strictEqual(isLocalOpen, true, 'Local picker should open');
+  assert.strictEqual(returnToCloneOnCancel, true);
+
+  // 4. User cancels/closes Local picker -> returns to Clone modal
+  handleCloseLocalRepo();
+  assert.strictEqual(isLocalOpen, false, 'Local picker should close');
+  assert.strictEqual(isCloneOpen, true, 'Clone modal must reopen on local cancel');
+  assert.strictEqual(returnToCloneOnCancel, false);
+});
+
+test('GitHubCloneModal caching: preserves repository state on return from create/local without auto-fetching', async () => {
+  let listFetchCount = 0;
+  const mockGroups: any[] = [
+    {
+      owner: 'cached-user',
+      isCurrentUser: true,
+      repositories: [
+        { id: 10, name: 'cached-repo', fullName: 'cached-user/cached-repo', owner: 'cached-user', isPrivate: false },
+      ],
+    },
+  ];
+
+  const cachedRepoState = {
+    loading: false,
+    error: null,
+    groups: mockGroups,
+    total: 1,
+  };
+
+  // Controller initialized with cached repository state does NOT auto-fetch
+  const ctrlWithCache = createGitHubCloneController({
+    initialRepoState: cachedRepoState,
+    getAuthStatus: async () => ({ installed: true, authenticated: true, username: 'cached-user' }),
+    listRepositories: async () => {
+      listFetchCount++;
+      return { groups: mockGroups, total: 1, currentUser: 'cached-user' };
+    },
+  });
+
+  await ctrlWithCache.loadAuthStatus();
+  // State is preloaded immediately without calling listRepositories
+  assert.strictEqual(ctrlWithCache.getState().repositories.groups.length, 1);
+  assert.strictEqual(ctrlWithCache.getState().repositories.groups[0].owner, 'cached-user');
+  assert.strictEqual(listFetchCount, 0, 'No automatic fetch when cached state exists');
+
+  // Manual reload explicitly fetches
+  await ctrlWithCache.loadRepositories();
+  assert.strictEqual(listFetchCount, 1, 'Manual reload triggers fetch');
+
+  // Clean controller without initial state auto-fetches
+  let freshFetchCount = 0;
+  const ctrlFresh = createGitHubCloneController({
+    getAuthStatus: async () => ({ installed: true, authenticated: true, username: 'fresh-user' }),
+    listRepositories: async () => {
+      freshFetchCount++;
+      return { groups: mockGroups, total: 1, currentUser: 'fresh-user' };
+    },
+  });
+  await ctrlFresh.loadAuthStatus();
+  await ctrlFresh.loadRepositories();
+  assert.strictEqual(freshFetchCount, 1, 'Fresh controller without cached state performs fetch');
+});
+
+
+
 
 

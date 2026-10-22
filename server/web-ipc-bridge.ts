@@ -44,6 +44,7 @@ export {
 export {
   getGithubAuthStatus,
   cloneGithubRepository,
+  createGithubRepository,
   listGithubRepositories,
   setProcessRunnerForTest,
   parseGithubRepository,
@@ -137,6 +138,7 @@ import {
 import {
   getGithubAuthStatus,
   cloneGithubRepository,
+  createGithubRepository,
   listGithubRepositories,
 } from './bridge/github';
 
@@ -317,6 +319,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return await listGithubRepositories(args.payload || args);
     case 'clone_github_repository':
       return await cloneGithubRepository(args.payload || args);
+    case 'create_github_repository':
+      return await createGithubRepository(args.payload || args);
     case 'get_viewer_storage':
       return loadViewerStorage();
     case 'save_viewer_storage':

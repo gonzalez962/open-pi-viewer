@@ -12,6 +12,7 @@ import {
   groupRepositoriesByOwner,
   parsePaginatedJsonArrays,
   setProcessRunnerForTest,
+  createGithubRepository,
 } from '@server/bridge/github';
 
 // ---------------------------------------------------------------------------
@@ -669,3 +670,199 @@ test('T6 S4: listGithubRepositories throws error when not authenticated and no t
     setProcessRunnerForTest(null);
   }
 });
+
+// ---------------------------------------------------------------------------
+// 7. Repository Creation
+// ---------------------------------------------------------------------------
+
+test('T7 S1: createGithubRepository validates repository name format', async () => {
+  await assert.rejects(
+    async () => createGithubRepository({ name: '' }),
+    /name is required/i
+  );
+  await assert.rejects(
+    async () => createGithubRepository({ name: '   ' }),
+    /name is required/i
+  );
+  await assert.rejects(
+    async () => createGithubRepository({ name: '-invalid-flag' }),
+    /invalid repository name/i
+  );
+  await assert.rejects(
+    async () => createGithubRepository({ name: 'owner/repo' }),
+    /invalid repository name/i
+  );
+  await assert.rejects(
+    async () => createGithubRepository({ name: 'repo with spaces' }),
+    /invalid repository name/i
+  );
+  await assert.rejects(
+    async () => createGithubRepository({ name: 'repo\nnewline' }),
+    /invalid repository name/i
+  );
+});
+
+test('T7 S2: createGithubRepository throws when unauthenticated and no token', async () => {
+  setProcessRunnerForTest(async (file, args) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      return { stdout: '', stderr: 'You are not logged into any GitHub hosts', exitCode: 1 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    await assert.rejects(
+      async () => createGithubRepository({ name: 'new-app' }),
+      /authentication required/i
+    );
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+test('T7 S3: createGithubRepository via gh CLI invokes api and returns summary', async () => {
+  let capturedArgs: string[] = [];
+  setProcessRunnerForTest(async (file, args) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      return { stdout: 'Logged in to github.com account octocat', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('api')) {
+      capturedArgs = args;
+      const createdRepo = {
+        id: 999,
+        name: 'new-cool-project',
+        full_name: 'octocat/new-cool-project',
+        owner: { login: 'octocat', type: 'User' },
+        private: true,
+        description: 'A great new project',
+        default_branch: 'main',
+        html_url: 'https://github.com/octocat/new-cool-project',
+        clone_url: 'https://github.com/octocat/new-cool-project.git',
+        fork: false,
+      };
+      return { stdout: JSON.stringify(createdRepo), stderr: '', exitCode: 0 };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    const res = await createGithubRepository({
+      name: 'new-cool-project',
+      description: 'A great new project',
+      isPrivate: true,
+      autoInit: true,
+    });
+
+    assert.ok(capturedArgs.length > 0);
+    assert.strictEqual(res.repository.name, 'new-cool-project');
+    assert.strictEqual(res.repository.fullName, 'octocat/new-cool-project');
+    assert.strictEqual(res.repository.isPrivate, true);
+    assert.strictEqual(res.repository.htmlUrl, 'https://github.com/octocat/new-cool-project');
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
+test('T7 S4: createGithubRepository via PAT uses fetch directly and clones if parentPath provided', async () => {
+  const originalFetch = globalThis.fetch;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-github-create-test-'));
+
+  try {
+    let fetchCalled = false;
+    let fetchUrl = '';
+    let fetchHeaders: any = null;
+    let fetchBody: any = null;
+
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      fetchCalled = true;
+      fetchUrl = String(input);
+      fetchHeaders = init?.headers;
+      fetchBody = JSON.parse(String(init?.body || '{}'));
+      return {
+        ok: true,
+        status: 201,
+        json: async () => ({
+          id: 12345,
+          name: 'pat-repo',
+          full_name: 'tokenuser/pat-repo',
+          owner: { login: 'tokenuser', type: 'User' },
+          private: false,
+          description: 'Repo via token',
+          default_branch: 'main',
+          html_url: 'https://github.com/tokenuser/pat-repo',
+          clone_url: 'https://github.com/tokenuser/pat-repo.git',
+          fork: false,
+        }),
+      } as any;
+    };
+
+    setProcessRunnerForTest(async (file, args, _options) => {
+      // Mocking git clone invocation
+      if (file === 'git' && args.includes('clone')) {
+        const dest = args[args.length - 1];
+        fs.mkdirSync(dest, { recursive: true });
+        return { stdout: 'Cloned successfully', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const res = await createGithubRepository({
+      name: 'pat-repo',
+      token: 'ghp_secret1234567890123456',
+      parentPath: tempDir,
+      isPrivate: false,
+      description: 'Repo via token',
+    });
+
+    assert.ok(fetchCalled);
+    assert.strictEqual(fetchUrl, 'https://api.github.com/user/repos');
+    assert.strictEqual(fetchHeaders['Authorization'], 'Bearer ghp_secret1234567890123456');
+    assert.strictEqual(fetchBody.name, 'pat-repo');
+    assert.strictEqual(fetchBody.private, false);
+    assert.strictEqual(res.repository.name, 'pat-repo');
+    assert.ok(res.path);
+    assert.strictEqual(res.path, path.join(tempDir, 'pat-repo'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    setProcessRunnerForTest(null);
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+});
+
+test('T7 S5: createGithubRepository sanitizes PAT from error messages on 422 failure', async () => {
+  const originalFetch = globalThis.fetch;
+  const token = 'ghp_super_secret_pat_99999999';
+
+  try {
+    globalThis.fetch = async (): Promise<Response> => {
+      return {
+        ok: false,
+        status: 422,
+        json: async () => ({
+          message: `Repository name already exists for token ${token}`,
+          errors: [{ message: 'name already exists' }],
+        }),
+      } as any;
+    };
+
+    await assert.rejects(
+      async () => createGithubRepository({ name: 'duplicate-repo', token }),
+      (err: Error) => {
+        assert.ok(!err.message.includes(token), 'Error message must not leak token');
+        assert.ok(err.message.includes('[REDACTED]') || err.message.includes('already exists'));
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+

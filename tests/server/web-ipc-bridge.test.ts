@@ -502,6 +502,47 @@ test('server/bridge: IPC clone_github_repository dispatches with payload or dire
   }
 });
 
+test('server/bridge: IPC create_github_repository dispatches with payload or direct args', async () => {
+  setProcessRunnerForTest(async (file, args) => {
+    if (file === 'gh' && args.includes('--version')) {
+      return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('auth')) {
+      return { stdout: 'Logged in to github.com account octocat', stderr: '', exitCode: 0 };
+    }
+    if (file === 'gh' && args.includes('api')) {
+      return {
+        stdout: JSON.stringify({
+          id: 555,
+          name: 'ipc-created-repo',
+          full_name: 'octocat/ipc-created-repo',
+          owner: { login: 'octocat', type: 'User' },
+          private: true,
+          html_url: 'https://github.com/octocat/ipc-created-repo',
+          clone_url: 'https://github.com/octocat/ipc-created-repo.git',
+          fork: false,
+        }),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+
+  try {
+    const resPayload: any = await handleIpcCommand('create_github_repository', {
+      payload: {
+        name: 'ipc-created-repo',
+        isPrivate: true,
+      },
+    });
+    assert.strictEqual(resPayload.repository.name, 'ipc-created-repo');
+    assert.strictEqual(resPayload.repository.fullName, 'octocat/ipc-created-repo');
+  } finally {
+    setProcessRunnerForTest(null);
+  }
+});
+
 test('server/bridge: IPC preserves existing get_bridge_state dispatch', async () => {
   const state: any = await handleIpcCommand('get_bridge_state');
   assert.ok(state && typeof state === 'object');
