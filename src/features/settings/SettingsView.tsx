@@ -87,18 +87,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   initialTab = 'general',
   appearanceController,
   t,
-  loadCustomProviders,
   renderProviders,
   renderProfiles,
   renderMcp,
   renderExtensions,
-  activeProfileName,
-  activeProfileScope,
   pickDirectoryFn,
   detectGentleShellFn,
 }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
-  const [customProviders, setCustomProviders] = useState<CustomProviderConfig[]>([]);
   const [isDetectingShell, setIsDetectingShell] = useState(false);
   const [gentleShellNotice, setGentleShellNotice] = useState<{
     type: 'success' | 'error';
@@ -138,6 +134,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gitHubPatSaving, setGitHubPatSaving] = useState(false);
   const [gitHubPatSuccess, setGitHubPatSuccess] = useState(false);
   const [showGitHubPat, setShowGitHubPat] = useState(false);
+
+  const [defaultProjectsDirDraft, setDefaultProjectsDirDraft] = useState(() => preferences.defaultProjectsDirectory || '');
+  const [defaultProjectsDirSavedNotice, setDefaultProjectsDirSavedNotice] = useState(false);
+  const [defaultProjectsDirCopied, setDefaultProjectsDirCopied] = useState(false);
+
+  useEffect(() => {
+    setDefaultProjectsDirDraft(preferences.defaultProjectsDirectory || '');
+  }, [preferences.defaultProjectsDirectory]);
 
   useEffect(() => {
     const saved = getSavedGitHubPat();
@@ -281,9 +285,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleBrowseDefaultProjectsDirectory = async () => {
     const pickFn = pickDirectoryFn || pickDirectoryPi;
-    const selected = await pickFn(preferences.defaultProjectsDirectory || undefined);
-    if (selected && onDefaultProjectsDirectoryChange) {
-      onDefaultProjectsDirectoryChange(selected);
+    const selected = await pickFn(defaultProjectsDirDraft || preferences.defaultProjectsDirectory || undefined);
+    if (selected) {
+      setDefaultProjectsDirDraft(selected);
+      onDefaultProjectsDirectoryChange?.(selected);
+      setDefaultProjectsDirSavedNotice(true);
+      setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+    }
+  };
+
+  const handleSaveDefaultProjectsDirectory = () => {
+    const clean = defaultProjectsDirDraft.trim();
+    onDefaultProjectsDirectoryChange?.(clean ? clean : null);
+    setDefaultProjectsDirDraft(clean);
+    setDefaultProjectsDirSavedNotice(true);
+    setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+  };
+
+  const handleClearDefaultProjectsDirectory = () => {
+    onDefaultProjectsDirectoryChange?.(null);
+    setDefaultProjectsDirDraft('');
+    setDefaultProjectsDirSavedNotice(true);
+    setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+  };
+
+  const handleResetDefaultProjectsDirectory = () => {
+    setDefaultProjectsDirDraft(preferences.defaultProjectsDirectory || '');
+  };
+
+  const handleCopyDefaultProjectsDirectory = async () => {
+    const text = defaultProjectsDirDraft || preferences.defaultProjectsDirectory || '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setDefaultProjectsDirCopied(true);
+      setTimeout(() => setDefaultProjectsDirCopied(false), 2000);
+    } catch {
+      // fallback
     }
   };
 
@@ -307,22 +345,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setNotificationNotice(t(delivered ? 'settings.notifications_test_sent' : 'settings.notifications_test_failed'));
     } finally { setNotificationBusy(false); }
   };
-
-  useEffect(() => {
-    let isMounted = true;
-    loadCustomProviders()
-      .then((providers) => {
-        if (isMounted) {
-          setCustomProviders(providers);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      isMounted = false;
-    };
-    // Dependency list intentionally limited to activeTab: it preserves the pre-T4 re-fetch timing.
-    // loadCustomProviders is a fresh closure on every parent render, so including it would refetch on each render.
-  }, [activeTab]);
 
   return (
     <div className="settings-view" role="region" aria-label={t('settings.title')}>
@@ -654,117 +676,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </section>
 
-        {/* Section: SDD Profiles & Subagents */}
-        <section className="settings-card-section">
-          <div className="settings-section-header">
-            <h2 className="settings-section-title">
-              {t('settings.profiles_heading')}
-            </h2>
-            <span className="prompt-hint">
-              {t('settings.profiles_hint')}
-            </span>
-          </div>
-
-          <div className="settings-provider-summary">
-            <div className="provider-summary-info">
-              <span className="provider-summary-title">
-                {t('settings.profiles_summary_title')}
-              </span>
-              <div className="provider-summary-tags">
-                <span className="provider-summary-tag">
-                  <strong>{activeProfileName || t('settings.profiles_none_active')}</strong>
-                  {activeProfileScope && (
-                    <span className="provider-summary-tag-count">
-                      ({activeProfileScope === 'project' ? t('settings.profiles_scope_project') : t('settings.profiles_scope_global')})
-                    </span>
-                  )}
-                </span>
-              </div>
-              <p className="prompt-hint" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
-                {t('settings.profiles_attribution')}
-              </p>
-            </div>
-
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setActiveTab('profiles')}
-            >
-              <span>{t('settings.btn_open_profiles')}</span>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-            </button>
-          </div>
-        </section>
-
-        {/* Section 2: Model Providers */}
-        <section className="settings-card-section">
-          <div className="settings-section-header">
-            <h2 className="settings-section-title">
-              {t('settings.providers_heading')}
-            </h2>
-            <span className="prompt-hint">
-              {t('settings.providers_hint')}
-            </span>
-          </div>
-
-          <div className="settings-provider-summary">
-            <div className="provider-summary-info">
-              <span className="provider-summary-title">
-                {t('settings.providers_summary_title')}
-              </span>
-              {customProviders.length > 0 ? (
-                <div className="provider-summary-tags">
-                  {customProviders.map((p) => (
-                    <span key={p.id} className="provider-summary-tag">
-                      <strong>{p.name || p.id}</strong>
-                      <span className="provider-summary-tag-count">
-                        ({p.models.length} {t('settings.providers_models_count')})
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <span className="prompt-hint">
-                  {t('settings.providers_none_configured')}
-                </span>
-              )}
-            </div>
-
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={() => setActiveTab('providers')}
-            >
-              <span>{t('settings.btn_open_providers')}</span>
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <polyline points="9 18 15 12 9 6" />
-              </svg>
-            </button>
-          </div>
-        </section>
-
         {/* Section 3: Connection Configuration */}
         <section className="settings-card-section">
           <div className="settings-section-header">
@@ -942,54 +853,180 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
         {/* Section: Default Projects Directory */}
         <section className="settings-card-section">
-          <div className="settings-section-header">
-            <h2 className="settings-section-title">
-              {t('settings.default_projects_dir_heading')}
-            </h2>
-            <span className="prompt-hint">
-              {t('settings.default_projects_dir_hint')}
-            </span>
+          <div className="settings-projects-dir-header-row">
+            <div className="settings-projects-dir-title-group">
+              <span className="settings-projects-dir-icon" aria-hidden="true">
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </span>
+              <div>
+                <h2 className="settings-section-title">
+                  {t('settings.default_projects_dir_heading')}
+                </h2>
+                <span className="prompt-hint">
+                  {t('settings.default_projects_dir_hint')}
+                </span>
+              </div>
+            </div>
+
+            {preferences.defaultProjectsDirectory ? (
+              <div className="settings-projects-dir-status-badge is-configured">
+                <span className="settings-projects-dir-status-dot" aria-hidden="true" />
+                <span>{t('settings.default_projects_dir_status_configured')}</span>
+              </div>
+            ) : (
+              <div className="settings-projects-dir-status-badge is-not-configured">
+                <span>{t('settings.default_projects_dir_status_not_configured')}</span>
+              </div>
+            )}
           </div>
 
-          <div className="connection-fields-grid">
-            <div className="field-group">
-              <label htmlFor="settings-default-projects-dir-input" className="field-label">
-                {t('projects.default_directory_label')}
-              </label>
-              <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="field-group" style={{ marginTop: '12px' }}>
+            <label htmlFor="settings-default-projects-dir-input" className="field-label">
+              {t('projects.default_directory_label')}
+            </label>
+
+            <div className="settings-projects-dir-actions-row">
+              <div className="settings-projects-dir-input-wrapper">
+                <span className="settings-projects-dir-input-icon" aria-hidden="true">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                </span>
                 <input
                   id="settings-default-projects-dir-input"
                   type="text"
-                  className="field-input"
-                  style={{ flex: 1 }}
-                  value={preferences.defaultProjectsDirectory || ''}
+                  className="field-input settings-projects-dir-input"
+                  value={defaultProjectsDirDraft}
                   onChange={(e) => {
-                    const val = e.target.value.trim();
-                    onDefaultProjectsDirectoryChange?.(val ? val : null);
+                    setDefaultProjectsDirDraft(e.target.value);
+                    setDefaultProjectsDirSavedNotice(false);
                   }}
-                  placeholder={t('projects.default_directory_not_set')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSaveDefaultProjectsDirectory();
+                    }
+                  }}
+                  placeholder={t('projects.default_directory_placeholder')}
                   title={t('projects.default_directory_hint')}
+                  spellCheck={false}
+                  autoComplete="off"
                 />
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  onClick={handleBrowseDefaultProjectsDirectory}
-                  title={t('projects.default_directory_browse')}
-                >
-                  {t('projects.default_directory_browse')}
-                </button>
-                {preferences.defaultProjectsDirectory && (
+                {(defaultProjectsDirDraft.trim() || preferences.defaultProjectsDirectory) && (
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => onDefaultProjectsDirectoryChange?.(null)}
+                    className="settings-projects-dir-copy-btn"
+                    onClick={handleCopyDefaultProjectsDirectory}
+                    title={defaultProjectsDirCopied ? t('settings.default_projects_dir_copied') : t('settings.default_projects_dir_copy')}
+                    aria-label={defaultProjectsDirCopied ? t('settings.default_projects_dir_copied') : t('settings.default_projects_dir_copy')}
+                  >
+                    {defaultProjectsDirCopied ? (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--status-green, #4ade80)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleBrowseDefaultProjectsDirectory}
+                title={t('projects.default_directory_browse')}
+              >
+                {t('projects.default_directory_browse')}
+              </button>
+
+              {defaultProjectsDirDraft.trim() !== (preferences.defaultProjectsDirectory || '').trim() && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSaveDefaultProjectsDirectory}
+                    title={t('settings.default_projects_dir_save')}
+                  >
+                    {t('settings.default_projects_dir_save')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleResetDefaultProjectsDirectory}
+                    title={t('settings.default_projects_dir_reset')}
+                  >
+                    {t('settings.default_projects_dir_reset')}
+                  </button>
+                </>
+              )}
+
+              {(preferences.defaultProjectsDirectory || defaultProjectsDirDraft.trim()) &&
+                defaultProjectsDirDraft.trim() === (preferences.defaultProjectsDirectory || '').trim() && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleClearDefaultProjectsDirectory}
                     title={t('projects.default_directory_clear')}
                   >
                     {t('projects.default_directory_clear')}
                   </button>
                 )}
-              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '8px' }}>
               <span className="field-subtext">{t('projects.default_directory_hint')}</span>
+              {defaultProjectsDirSavedNotice && (
+                <span
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    color: 'var(--status-green, #4ade80)',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  {t('settings.default_projects_dir_saved')}
+                </span>
+              )}
+              {defaultProjectsDirDraft.trim() !== (preferences.defaultProjectsDirectory || '').trim() && !defaultProjectsDirSavedNotice && (
+                <span
+                  style={{
+                    color: 'var(--status-warning, #f59e0b)',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  ● {t('settings.default_projects_dir_unsaved')}
+                </span>
+              )}
+            </div>
+
+            <div className="settings-projects-dir-helper-box">
+              <span>{t('settings.default_projects_dir_helper')}</span>
             </div>
           </div>
         </section>

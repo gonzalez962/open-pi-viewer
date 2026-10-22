@@ -2187,4 +2187,138 @@
   color: var(--fg-bright, #ffffff);
 }
 
+/* Projects Directory Settings Card */
+.settings-projects-dir-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.settings-projects-dir-title-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-projects-dir-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md, 8px);
+  background-color: var(--bg-surface-elevated, #2a2a2e);
+  border: 1px solid var(--border-muted, #3f3f46);
+  color: var(--fg-default);
+  flex-shrink: 0;
+}
+
+.settings-projects-dir-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-muted, #3f3f46);
+}
+
+.settings-projects-dir-status-badge.is-configured {
+  background-color: rgba(74, 222, 128, 0.12);
+  color: var(--status-green, #4ade80);
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.settings-projects-dir-status-badge.is-not-configured {
+  background-color: var(--bg-subtle);
+  color: var(--fg-muted);
+}
+
+.settings-projects-dir-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--status-green, #4ade80);
+  display: inline-block;
+}
+
+.settings-projects-dir-actions-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-projects-dir-actions-row .btn {
+  height: 32px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.settings-projects-dir-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.settings-projects-dir-input-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--fg-muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+
+.settings-projects-dir-input {
+  padding-left: 32px !important;
+  padding-right: 36px !important;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px !important;
+}
+
+.settings-projects-dir-copy-btn {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.settings-projects-dir-copy-btn:hover {
+  color: var(--fg-default);
+}
+
+.settings-projects-dir-helper-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm, 6px);
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  font-size: 11px;
+  color: var(--fg-muted);
+  flex-wrap: wrap;
+}
+
+
 
