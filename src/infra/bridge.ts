@@ -2855,7 +2855,7 @@ export function formatDiscoveryDiagnostic(discovered: DiscoveredEnvironment): st
 export async function getBuiltinOAuthProvidersPi(
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<BuiltinOAuthProviderStatus[]> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return [];
   }
   try {
@@ -2902,7 +2902,7 @@ export async function startOAuthLoginPi(
   payload: StartOAuthLoginPayload,
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<StartOAuthLoginResult> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return {
       started: false,
       providerId: payload.providerId,
@@ -2919,7 +2919,7 @@ export async function cancelOAuthLoginPi(
   payload?: CancelOAuthLoginPayload,
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<CancelOAuthLoginResult> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return {
       cancelled: false,
       message: 'Desktop runtime unavailable: running in browser preview',
@@ -2937,7 +2937,7 @@ export async function sendOAuthPromptResponsePi(
   payload: SendOAuthPromptResponsePayload,
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<SendOAuthPromptResponseResult> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return { sent: false };
   }
   return await invokeFn<SendOAuthPromptResponseResult>('send_oauth_prompt_response', { payload });
@@ -2950,7 +2950,7 @@ export async function logoutOAuthProviderPi(
   payload: LogoutOAuthProviderPayload,
   invokeFn: InvokeFn = defaultInvoke
 ): Promise<LogoutOAuthProviderResult> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
     return {
       success: false,
       providerId: payload.providerId,
@@ -2968,7 +2968,7 @@ export async function listenOAuthEventsPi(
   onEvent: (envelope: OAuthEventEnvelope) => void,
   listenFn: typeof listen = listen
 ): Promise<UnlistenFn> {
-  if (!isTauri() && listenFn === listen) {
+  if (!isTauri() && !isWebShim() && listenFn === listen) {
     return () => {};
   }
   return await listenFn<OAuthEventEnvelope>('pi://oauth-event', (event) => {

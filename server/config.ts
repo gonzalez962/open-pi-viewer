@@ -30,6 +30,45 @@ export function discoverNodeExecutable(configured?: string): string {
   return process.execPath;
 }
 
+export function extractCliJsFromShim(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+
+    if (filePath.endsWith('cli.js')) {
+      return path.resolve(filePath);
+    }
+
+    const fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(Math.min(stat.size, 32 * 1024));
+    fs.readSync(fd, buffer, 0, buffer.length, 0);
+    fs.closeSync(fd);
+    const content = buffer.toString('utf8');
+    const dir = path.dirname(filePath);
+
+    // 1. Check for explicit cmd-shim-target comment (npm/pnpm/yarn convention)
+    const shimMatch = content.match(/#\s*cmd-shim-target=(.+)/);
+    if (shimMatch) {
+      const target = shimMatch[1].trim();
+      const resolved = path.isAbsolute(target) ? path.resolve(target) : path.resolve(dir, target);
+      if (fs.existsSync(resolved)) return resolved;
+    }
+
+    // 2. Scan lines containing pi-coding-agent or cli.js
+    const match = content.match(/["']([^"']*cli\.js)["']/i) || content.match(/(\S+cli\.js)/i);
+    if (match) {
+      const cleanTarget = match[1]
+        .replace(/%~dp0[\\/]?/gi, dir + path.sep)
+        .replace(/\$basedir[\\/]?/gi, dir + path.sep)
+        .replace(/\$\(dirname "\$0"\)[\\/]?/gi, dir + path.sep);
+      const resolved = path.isAbsolute(cleanTarget) ? path.resolve(cleanTarget) : path.resolve(dir, cleanTarget);
+      if (fs.existsSync(resolved)) return resolved;
+    }
+  } catch {}
+  return null;
+}
+
 export function discoverPiCli(configured?: string | null): string | null {
   if (configured && configured.trim() && fs.existsSync(configured.trim())) {
     return path.resolve(configured.trim());
@@ -55,26 +94,16 @@ export function discoverPiCli(configured?: string | null): string | null {
     });
     const lines = out.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     for (const line of lines) {
-      if (line.endsWith('cli.js') && fs.existsSync(line)) {
-        return path.resolve(line);
-      }
-      // Inspect Windows wrapper scripts (.cmd)
-      if (line.endsWith('.cmd')) {
-        try {
-          const content = fs.readFileSync(line, 'utf8');
-          const match = content.match(/["']([^"']*cli\.js)["']/i);
-          if (match) {
-            const dir = path.dirname(line);
-            const resolved = path.resolve(match[1].replace(/%~dp0\\?/g, dir + path.sep));
-            if (fs.existsSync(resolved)) return resolved;
-          }
-        } catch {}
+      const extracted = extractCliJsFromShim(line);
+      if (extracted) {
+        return extracted;
       }
       // Symlink or script resolution on Unix
       try {
         const real = fs.realpathSync(line);
-        if (real.endsWith('cli.js') && fs.existsSync(real)) {
-          return real;
+        const realExtracted = extractCliJsFromShim(real);
+        if (realExtracted) {
+          return realExtracted;
         }
       } catch {}
     }
@@ -95,6 +124,33 @@ export function discoverPiCli(configured?: string | null): string | null {
   for (const cand of candidates) {
     if (cand && fs.existsSync(cand)) {
       return path.resolve(cand);
+    }
+  }
+
+  // 4. Versioned pnpm global directories (e.g. pnpm/global/v11/... or pnpm/global/5/...)
+  const pnpmGlobalBases = [
+    path.join(process.env.LOCALAPPDATA || '', 'pnpm', 'global'),
+    path.join(home, '.local', 'share', 'pnpm', 'global'),
+  ];
+  for (const base of pnpmGlobalBases) {
+    if (fs.existsSync(base)) {
+      try {
+        const entries = fs.readdirSync(base, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            const candidate = path.join(base, entry.name, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js');
+            if (fs.existsSync(candidate)) return path.resolve(candidate);
+            const subDir = path.join(base, entry.name);
+            const subEntries = fs.readdirSync(subDir, { withFileTypes: true });
+            for (const sub of subEntries) {
+              if (sub.isDirectory()) {
+                const subCandidate = path.join(subDir, sub.name, 'node_modules', '@earendil-works', 'pi-coding-agent', 'dist', 'bundle', 'cli.js');
+                if (fs.existsSync(subCandidate)) return path.resolve(subCandidate);
+              }
+            }
+          }
+        }
+      } catch {}
     }
   }
 
@@ -183,6 +239,7 @@ export function getAgnosticExecEnv(): NodeJS.ProcessEnv {
   if (isWin) {
     if (process.env.LOCALAPPDATA) {
       userBinDirs.push(path.join(process.env.LOCALAPPDATA, 'pnpm'));
+      userBinDirs.push(path.join(process.env.LOCALAPPDATA, 'pnpm', 'bin'));
     }
     if (process.env.APPDATA) {
       userBinDirs.push(path.join(process.env.APPDATA, 'npm'));
