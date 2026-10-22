@@ -159,19 +159,138 @@
 .connection-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+}
+
+.connection-section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.connection-section-header-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.connection-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.connection-notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.connection-notice-banner.is-success {
+  background-color: var(--status-green-bg, rgba(34, 197, 94, 0.1));
+  border: 1px solid var(--status-green-border, rgba(34, 197, 94, 0.25));
+  color: var(--status-green, #22c55e);
+}
+
+.connection-notice-banner.is-error {
+  background-color: var(--status-red-bg, rgba(239, 68, 68, 0.1));
+  border: 1px solid var(--status-red-border, rgba(239, 68, 68, 0.25));
+  color: var(--status-red, #ef4444);
+}
+
+.connection-notice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.connection-notice-message {
+  flex: 1;
 }
 
 .connection-fields-grid {
   display: grid;
-  grid-template-columns: 140px 1fr 1fr;
-  gap: 12px;
+  grid-template-columns: minmax(200px, 1fr) minmax(280px, 1.8fr);
+  gap: 16px;
 }
 
 @media (max-width: 768px) {
+  .connection-section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
   .connection-fields-grid {
     grid-template-columns: 1fr;
+    gap: 14px;
   }
+}
+
+.connection-field-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connection-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.connection-field-tag {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background-color: var(--bg-subtle, rgba(255, 255, 255, 0.05));
+  color: var(--fg-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+.connection-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.connection-input-with-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.connection-input-with-action .field-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.connection-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.connection-field-hint {
+  font-size: 11px;
+  color: var(--fg-muted);
+  line-height: 1.35;
+  margin-top: 1px;
 }
 
 .connection-card {
@@ -329,7 +448,10 @@
 
 .connection-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
+  padding-top: 12px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border-subtle);
 }
 
 .error-banner {
