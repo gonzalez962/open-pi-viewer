@@ -1,14 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { openExternalUrl } from '@infra/opener';
-import { getPiChainsPi, type PiChain } from '@infra/bridge';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
 import { useProfiles } from './hooks/useProfiles';
 import { ProfileCard } from './components/ProfileCard';
 import { ProfileModal } from './components/ProfileModal';
 import {
-  computeProfileCounts,
   filterProfiles,
-  type ProfileScope,
   type ProfilesViewProps,
 } from './types';
 
@@ -61,32 +58,15 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   } = useProfiles({ cwd, availableModels: liveModels });
 
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [scopeFilter, setScopeFilter] = useState<'all' | ProfileScope>('all');
-  const [chains, setChains] = useState<PiChain[]>([]);
-
-  useEffect(() => {
-    let active = true;
-    getPiChainsPi()
-      .then((c) => {
-        if (active && c) setChains(c);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const tLocal = (key: TranslationKey, params?: Record<string, string | number>): string => {
     return t ? t(key, params) : translate(getActiveLocale(), key, params);
   };
 
-  // Compute profile counts
-  const counts = useMemo(() => computeProfileCounts(profiles), [profiles]);
-
-  // Filter profiles by search query and scope filter
+  // Filter profiles by search query
   const filteredProfiles = useMemo(
-    () => filterProfiles(profiles, searchQuery, scopeFilter),
-    [profiles, searchQuery, scopeFilter]
+    () => filterProfiles(profiles, searchQuery, 'all'),
+    [profiles, searchQuery]
   );
 
   const handleOpenExternal = (e: React.MouseEvent, url: string) => {
@@ -136,15 +116,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
         </div>
 
         <div className="profiles-toolbar-actions">
-          <span className="profiles-stat-pill profiles-stat-total">
-            {tLocal('profiles.stat_total', { count: counts.total })}
-          </span>
-          <span className="profiles-stat-pill profiles-stat-global">
-            {tLocal('profiles.stat_global', { count: counts.global })}
-          </span>
-          <span className="profiles-stat-pill profiles-stat-project">
-            {tLocal('profiles.stat_project', { count: counts.project })}
-          </span>
           <button
             type="button"
             className="btn btn-secondary btn-sm profiles-reload-btn"
@@ -290,37 +261,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
           </div>
         )}
 
-        {/* Scope Filter Tabs */}
-        <div className="profiles-scope-tabs" role="tablist" aria-label="Filtrar por ámbito">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'all'}
-            className={`profiles-tab ${scopeFilter === 'all' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('all')}
-          >
-            {tLocal('profiles.tab_all')} <span className="profiles-tab-count">{counts.total}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'global'}
-            className={`profiles-tab ${scopeFilter === 'global' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('global')}
-          >
-            {tLocal('profiles.tab_global')} <span className="profiles-tab-count">{counts.global}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'project'}
-            className={`profiles-tab ${scopeFilter === 'project' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('project')}
-          >
-            {tLocal('profiles.tab_project')} <span className="profiles-tab-count">{counts.project}</span>
-          </button>
-        </div>
-
         {/* Profiles Grid or States */}
         {isLoading ? (
           <div className="profiles-loading-state">
@@ -368,7 +308,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
               className="btn btn-secondary btn-sm"
               onClick={() => {
                 setSearchQuery('');
-                setScopeFilter('all');
               }}
             >
               {tLocal('profiles.reset_filters')}
@@ -376,58 +315,25 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
           </div>
         ) : (
           <div className="profiles-grid">
-            {filteredProfiles.map((profile) => (
-              <ProfileCard
-                key={`${profile.scope}-${profile.name}`}
-                profile={profile}
-                isActive={profile.is_active}
-                effectiveScope={effectiveScope}
-                cwd={cwd}
-                isActivating={activatingName === profile.name}
-                isDeleting={isDeleting && deletingName === profile.name}
-                onActivate={handleActivateProfile}
-                onClearActive={handleClearProjectActive}
-                onEdit={openEditModal}
-                onDuplicate={openDuplicateModal}
-                onDelete={handleDeleteProfile}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Pi Execution Chains Section */}
-        {chains.length > 0 && (
-          <div className="profiles-chains-section">
-            <div className="profiles-section-header">
-              <h3 className="profiles-section-title">Cadenas de Trabajo / Chains ({chains.length})</h3>
-              <p className="profiles-section-subtitle">
-                Pipelines coordinados de subagentes para planificación, verificación y revisión formal.
-              </p>
-            </div>
-            <div className="chains-grid">
-              {chains.map((chain) => (
-                <div key={chain.name} className="chain-card">
-                  <div className="chain-card-header">
-                    <span className="chain-badge">Chain</span>
-                    <h4 className="chain-name">{chain.name}</h4>
-                  </div>
-                  <p className="chain-desc">{chain.description}</p>
-                  <div className="chain-steps">
-                    <span className="chain-steps-label">Flujo de ejecución:</span>
-                    <div className="chain-steps-flow">
-                      {chain.steps.map((st, sIdx) => (
-                        <React.Fragment key={st.name}>
-                          <span className="chain-step-chip" title={st.description || st.name}>
-                            {st.name}
-                          </span>
-                          {sIdx < chain.steps.length - 1 && <span className="chain-step-arrow">→</span>}
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            {filteredProfiles.map((profile) => {
+              const profileKey = profile.id || profile.name;
+              return (
+                <ProfileCard
+                  key={profile.id || `${profile.scope}-${profile.name}`}
+                  profile={profile}
+                  isActive={profile.is_active}
+                  effectiveScope={effectiveScope}
+                  cwd={cwd}
+                  isActivating={activatingName === profileKey}
+                  isDeleting={isDeleting && deletingName === profileKey}
+                  onActivate={handleActivateProfile}
+                  onClearActive={handleClearProjectActive}
+                  onEdit={openEditModal}
+                  onDuplicate={openDuplicateModal}
+                  onDelete={handleDeleteProfile}
+                />
+              );
+            })}
           </div>
         )}
       </div>

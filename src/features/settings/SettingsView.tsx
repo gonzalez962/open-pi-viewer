@@ -272,17 +272,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
-  const handleBrowseCwd = async () => {
-    const pickFn = pickDirectoryFn || pickDirectoryPi;
-    const selected = await pickFn(settingsDraft.workingDirectory || undefined);
-    if (selected) {
-      setSettingsDraft((prev) => ({
-        ...prev,
-        workingDirectory: selected,
-      }));
-    }
-  };
-
   const handleBrowseDefaultProjectsDirectory = async () => {
     const pickFn = pickDirectoryFn || pickDirectoryPi;
     const selected = await pickFn(defaultProjectsDirDraft || preferences.defaultProjectsDirectory || undefined);
@@ -677,33 +666,51 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </section>
 
         {/* Section 3: Connection Configuration */}
-        <section className="settings-card-section">
-          <div className="settings-section-header">
-            <h2 className="settings-section-title">
-              {t('settings.connection_heading')}
-            </h2>
-            <span className="prompt-hint">
-              {t('settings.connection_hint')}
-            </span>
+        <section className="settings-card-section connection-settings-card">
+          <div className="connection-section-header">
+            <div className="connection-section-header-titles">
+              <h2 className="settings-section-title">
+                {t('settings.connection_heading')}
+              </h2>
+              <span className="prompt-hint">
+                {t('settings.connection_hint')}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm connection-reset-btn"
+              onClick={handleResetBinaryPaths}
+              disabled={binaryDiscoveryBusy}
+              title={t('settings.reset_binary_paths_title')}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+              </svg>
+              <span>{isResettingPaths ? t('settings.reset_binary_paths_detecting') : t('settings.reset_binary_paths')}</span>
+            </button>
           </div>
 
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={handleResetBinaryPaths}
-            disabled={binaryDiscoveryBusy}
-            title={t('settings.reset_binary_paths_title')}
-          >
-            {isResettingPaths ? t('settings.reset_binary_paths_detecting') : t('settings.reset_binary_paths')}
-          </button>
           {binaryPathsNotice && (
-            <p
-              className={binaryPathsNotice.type === 'error' ? 'field-subtext field-subtext-error' : 'field-subtext field-subtext-success'}
+            <div
+              className={`connection-notice-banner ${binaryPathsNotice.type === 'error' ? 'is-error' : 'is-success'}`}
               role={binaryPathsNotice.type === 'error' ? 'alert' : 'status'}
               aria-live="polite"
             >
-              {binaryPathsNotice.message}
-            </p>
+              <span className="connection-notice-icon" aria-hidden="true">
+                {binaryPathsNotice.type === 'error' ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                )}
+              </span>
+              <span className="connection-notice-message">{binaryPathsNotice.message}</span>
+            </div>
           )}
 
           <form
@@ -711,38 +718,48 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             onSubmit={onSaveAndApply}
           >
             <div className="connection-fields-grid">
-              <div className="field-group">
-                <label htmlFor="settings-node-path-input" className="field-label">
-                  {t('settings.node_path_label')}
-                </label>
-                <input
-                  id="settings-node-path-input"
-                  type="text"
-                  className="field-input"
-                  value={settingsDraft.nodePath}
-                  disabled={isResettingPaths}
-                  onChange={(e) =>
-                    setSettingsDraft((prev) => ({
-                      ...prev,
-                      nodePath: e.target.value,
-                    }))
-                  }
-                  placeholder={t('settings.node_path_placeholder')}
-                  title={t('settings.node_path_title')}
-                  required
-                />
+              <div className="field-group connection-field-item">
+                <div className="connection-field-header">
+                  <label htmlFor="settings-node-path-input" className="field-label">
+                    {t('settings.node_path_label')}
+                  </label>
+                  <span className="connection-field-tag">Runtime</span>
+                </div>
+                <div className="connection-input-wrapper">
+                  <input
+                    id="settings-node-path-input"
+                    type="text"
+                    className="field-input connection-input"
+                    value={settingsDraft.nodePath}
+                    disabled={isResettingPaths}
+                    onChange={(e) =>
+                      setSettingsDraft((prev) => ({
+                        ...prev,
+                        nodePath: e.target.value,
+                      }))
+                    }
+                    placeholder={t('settings.node_path_placeholder')}
+                    title={t('settings.node_path_title')}
+                    required
+                  />
+                </div>
+                <span className="field-subtext connection-field-hint">
+                  {t('settings.node_path_title')}
+                </span>
               </div>
 
-              <div className="field-group">
-                <label htmlFor="settings-pi-entry-input" className="field-label">
-                  {t('settings.pi_entry_label')}
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="field-group connection-field-item">
+                <div className="connection-field-header">
+                  <label htmlFor="settings-pi-entry-input" className="field-label">
+                    {t('settings.pi_entry_label')}
+                  </label>
+                  <span className="connection-field-tag">CLI</span>
+                </div>
+                <div className="connection-input-with-action">
                   <input
                     id="settings-pi-entry-input"
                     type="text"
-                    className="field-input"
-                    style={{ flex: 1 }}
+                    className="field-input connection-input"
                     value={settingsDraft.piEntrypoint}
                     disabled={isResettingPaths}
                     onChange={(e) => {
@@ -760,69 +777,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                   <button
                     type="button"
-                    className="btn btn-secondary btn-sm"
+                    className="btn btn-secondary btn-sm connection-action-btn"
                     onClick={handleDetectGentleShell}
                     disabled={binaryDiscoveryBusy}
                     title={t('settings.btn_detect_gentle_shell_title')}
                   >
-                    {isDetectingShell
-                      ? t('settings.btn_detect_gentle_shell_detecting')
-                      : t('settings.btn_detect_gentle_shell')}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="11" cy="11" r="8"/>
+                      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <span>
+                      {isDetectingShell
+                        ? t('settings.btn_detect_gentle_shell_detecting')
+                        : t('settings.btn_detect_gentle_shell')}
+                    </span>
                   </button>
                 </div>
-                {gentleShellNotice && (
+                {gentleShellNotice ? (
                   <span
-                    className={
+                    className={`field-subtext ${
                       gentleShellNotice.type === 'success'
-                        ? 'field-subtext field-subtext-success'
-                        : 'field-subtext field-subtext-error'
-                    }
+                        ? 'field-subtext-success'
+                        : 'field-subtext-error'
+                    }`}
                     role={gentleShellNotice.type === 'error' ? 'alert' : 'status'}
                     aria-live="polite"
-                    style={{
-                      display: 'block',
-                      marginTop: '4px',
-                      color:
-                        gentleShellNotice.type === 'success'
-                          ? 'var(--color-success, #22c55e)'
-                          : 'var(--color-danger, #ef4444)',
-                    }}
                   >
                     {gentleShellNotice.message}
                   </span>
+                ) : (
+                  <span className="field-subtext connection-field-hint">
+                    {t('settings.pi_entry_title')}
+                  </span>
                 )}
-              </div>
-
-              <div className="field-group">
-                <label htmlFor="settings-cwd-input" className="field-label">
-                  {t('settings.cwd_label')}
-                </label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    id="settings-cwd-input"
-                    type="text"
-                    className="field-input"
-                    style={{ flex: 1 }}
-                    value={settingsDraft.workingDirectory}
-                    onChange={(e) =>
-                      setSettingsDraft((prev) => ({
-                        ...prev,
-                        workingDirectory: e.target.value,
-                      }))
-                    }
-                    placeholder={t('settings.cwd_placeholder')}
-                    title={t('settings.cwd_title')}
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={handleBrowseCwd}
-                    title={t('settings.btn_browse_cwd')}
-                  >
-                    {t('settings.btn_browse_cwd')}
-                  </button>
-                </div>
               </div>
             </div>
 

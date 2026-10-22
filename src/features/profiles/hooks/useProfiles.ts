@@ -10,11 +10,9 @@ import {
   MOCK_SDD_PROFILES_STORAGE_KEY,
 } from '@infra/bridge';
 import {
-  sanitizeProfileName,
   type AgentCategory,
   type DiscoveredAgentMeta,
   type Profile,
-  type ProfileScope,
   type ProfileSummary,
   type ReasoningEffort,
   type ModelProfileEntry,
@@ -86,6 +84,7 @@ export interface UseProfilesResult {
 function findFullProfile(summary: ProfileSummary, cwd?: string): Profile | null {
   if (summary.model_profiles && Object.keys(summary.model_profiles).length > 0) {
     return {
+      id: summary.id,
       name: summary.name,
       description: summary.description,
       default_model: summary.default_model,
@@ -93,8 +92,6 @@ function findFullProfile(summary: ProfileSummary, cwd?: string): Profile | null 
       model_profiles: summary.model_profiles,
     };
   }
-
-
 
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
@@ -104,7 +101,7 @@ function findFullProfile(summary: ProfileSummary, cwd?: string): Profile | null 
         if (Array.isArray(stored)) {
           const found = stored.find(
             (p: Profile & { scope?: string; cwd?: string }) =>
-              p.name === summary.name &&
+              ((summary.id && p.id === summary.id) || p.name === summary.name) &&
               p.scope === summary.scope &&
               (p.scope !== 'project' || !cwd || p.cwd === cwd)
           );
@@ -293,8 +290,6 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
   // Modal form state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isEditing, setIsEditing] = useState<boolean>(false);
-  const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
-  const [editingOriginalScope, setEditingOriginalScope] = useState<ProfileScope | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [modalError, setModalError] = useState<string | null>(null);
   const [formData, setFormData] = useState<ProfileFormData>(EMPTY_PROFILE_FORM);
@@ -374,14 +369,15 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
 
   const handleActivateProfile = useCallback(
     async (profile: ProfileSummary, scope: 'project' | 'global') => {
-      setActivatingName(profile.name);
+      const profileKey = profile.id || profile.name;
+      setActivatingName(profileKey);
       setError(null);
       setSuccessNotice(null);
 
       try {
         const payload = {
           cwd: scope === 'project' ? cwd : undefined,
-          name: profile.name,
+          name: profileKey,
           scope,
         };
 
@@ -444,21 +440,33 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
 
   const handleDeleteProfile = useCallback(
     async (profile: ProfileSummary) => {
+      const profileKey = profile.id || profile.name;
       setIsDeleting(true);
-      setDeletingName(profile.name);
+      setDeletingName(profileKey);
       setError(null);
       setSuccessNotice(null);
 
       try {
         const res = await deleteSddProfilePi({
-          cwd: profile.scope === 'project' ? cwd : undefined,
+          cwd: cwd || (profile.scope === 'project' ? cwd : undefined),
           scope: profile.scope,
-          name: profile.name,
+          name: profileKey,
         });
 
         if (res.success) {
+          setProfiles((prev) =>
+            prev.filter((p) => {
+              if (profile.id && p.id) {
+                return p.id !== profile.id;
+              }
+              return p.name !== profile.name;
+            })
+          );
           setSuccessNotice(`Perfil "${profile.name}" eliminado correctamente`);
           await refreshProfiles();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event(PROFILE_LIST_CHANGED_EVENT));
+          }
         } else {
           setError(res.message || 'Error al eliminar el perfil');
         }
@@ -484,13 +492,11 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
 
     setFormData({
       ...EMPTY_PROFILE_FORM,
-      scope: cwd ? 'project' : 'global',
+      scope: 'global',
       default_model: firstModelId,
       default_effort: (defaultEffort as ReasoningEffort) || '',
     });
     setIsEditing(false);
-    setEditingOriginalName(null);
-    setEditingOriginalScope(null);
     setModalError(null);
     setIsModalOpen(true);
   }, [cwd, availableModels, modelThinkingLevels]);
@@ -500,17 +506,16 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       const full = findFullProfile(summary, cwd);
 
       setFormData({
+        id: summary.id,
         name: summary.name,
         description: summary.description || '',
-        scope: summary.scope === 'project' ? 'project' : 'global',
+        scope: 'global',
         default_model: summary.default_model || full?.default_model || '',
         default_effort: summary.default_effort || full?.default_effort || '',
         model_profiles: full?.model_profiles || summary.model_profiles || {},
       });
 
       setIsEditing(true);
-      setEditingOriginalName(summary.name);
-      setEditingOriginalScope(summary.scope);
       setModalError(null);
       setIsModalOpen(true);
     },
@@ -522,17 +527,16 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       const full = findFullProfile(summary, cwd);
 
       setFormData({
+        id: undefined,
         name: `${summary.name}-copy`,
         description: summary.description ? `${summary.description} (copia)` : '',
-        scope: summary.scope === 'project' ? 'project' : 'global',
+        scope: 'global',
         default_model: summary.default_model || full?.default_model || '',
         default_effort: summary.default_effort || full?.default_effort || '',
         model_profiles: { ...(full?.model_profiles || summary.model_profiles || {}) },
       });
 
       setIsEditing(false);
-      setEditingOriginalName(null);
-      setEditingOriginalScope(null);
       setModalError(null);
       setIsModalOpen(true);
     },
@@ -600,12 +604,6 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         return false;
       }
 
-      const sanitized = sanitizeProfileName(rawName);
-      if (!sanitized) {
-        setModalError('El nombre del perfil contiene únicamente caracteres no válidos');
-        return false;
-      }
-
       setIsSaving(true);
       setModalError(null);
 
@@ -621,6 +619,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         }
 
         const profilePayload: Profile = {
+          id: formData.id,
           name: rawName,
           description: formData.description.trim() || undefined,
           default_model: formData.default_model.trim() || undefined,
@@ -628,27 +627,8 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
           model_profiles: cleanedModelProfiles,
         };
 
-        // If editing a custom profile and name/scope changed, delete the old profile first
-        if (
-          isEditing &&
-          editingOriginalName &&
-          editingOriginalScope &&
-          (editingOriginalName !== rawName || editingOriginalScope !== formData.scope)
-        ) {
-          try {
-            await deleteSddProfilePi({
-              cwd: editingOriginalScope === 'project' ? cwd : undefined,
-              scope: editingOriginalScope,
-              name: editingOriginalName,
-            });
-          } catch (err) {
-            console.warn('Failed to remove original profile during rename:', err);
-          }
-        }
-
         const saveRes = await saveSddProfilePi({
-          cwd: formData.scope === 'project' ? cwd : undefined,
-          scope: formData.scope,
+          scope: 'global',
           profile: profilePayload,
         });
 
@@ -672,7 +652,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         setIsSaving(false);
       }
     },
-    [formData, isEditing, editingOriginalName, editingOriginalScope, cwd, refreshProfiles]
+    [formData, cwd, refreshProfiles]
   );
 
   const effectiveProfile = useMemo(() => {
@@ -680,10 +660,10 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
     return (
       profiles.find(
         (p) =>
-          p.name === effectiveActiveProfile &&
+          ((p.id && p.id === effectiveActiveProfile) || p.name === effectiveActiveProfile) &&
           (effectiveScope ? p.scope === effectiveScope : true)
       ) ||
-      profiles.find((p) => p.name === effectiveActiveProfile) ||
+      profiles.find((p) => (p.id && p.id === effectiveActiveProfile) || p.name === effectiveActiveProfile) ||
       null
     );
   }, [profiles, effectiveActiveProfile, effectiveScope, loadedCwd, cwd]);

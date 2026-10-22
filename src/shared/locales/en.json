@@ -423,7 +423,7 @@
   "prompt_controls.inherit_global_profile": "Use global profile (inherit)",
   "prompt_controls.global_model_default": "Default global model",
   "prompt_controls.no_profiles_configured_hint": "No profiles configured. The system uses the global model for everything.",
-  "prompt_controls.create_project_profile": "Create project profile",
+  "prompt_controls.create_project_profile": "Create profile",
   "prompt_controls.profile_scope_project_tag": "(Project)",
   "prompt_controls.profile_scope_global_tag": "(Global)",
   "prompt_controls.profile_scope_default_tag": "(Default)",

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   type ReasoningEffort,
   isSyntheticAgentKey,
@@ -38,7 +38,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   categories,
   agentMeta,
   modelThinkingLevels: modelThinkingLevelsProp,
-  cwd,
+  cwd: _cwd,
   onClose,
   onChangeField,
   onChangeAgentModel,
@@ -71,25 +71,49 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     }
   };
 
-  // Accordion state: dynamically expanded first category when available
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    () => (categories.length > 0 ? new Set([categories[0].id]) : new Set())
-  );
-  const autoExpandedRef = useRef(false);
-
-  useEffect(() => {
-    if (!autoExpandedRef.current && categories.length > 0) {
-      autoExpandedRef.current = true;
-      setExpandedCategories(new Set([categories[0].id]));
+  // Accordion state: subagents are collapsed by default when creating profiles
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => {
+    if (!isEditing) {
+      return new Set();
     }
-  }, [categories]);
+    const withOverrides = new Set<string>();
+    for (const cat of categories) {
+      const hasOverride = cat.agents.some(
+        (agentKey) =>
+          formData.model_profiles[agentKey]?.model &&
+          formData.model_profiles[agentKey].model.trim() !== ''
+      );
+      if (hasOverride) {
+        withOverrides.add(cat.id);
+      }
+    }
+    return withOverrides;
+  });
 
   useEffect(() => {
     if (!isOpen) {
-      autoExpandedRef.current = false;
+      setExpandedCategories(new Set());
+      return;
+    }
+
+    if (isEditing) {
+      const withOverrides = new Set<string>();
+      for (const cat of categories) {
+        const hasOverride = cat.agents.some(
+          (agentKey) =>
+            formData.model_profiles[agentKey]?.model &&
+            formData.model_profiles[agentKey].model.trim() !== ''
+        );
+        if (hasOverride) {
+          withOverrides.add(cat.id);
+        }
+      }
+      setExpandedCategories(withOverrides);
+    } else {
+      // Always collapsed by default when creating profiles
       setExpandedCategories(new Set());
     }
-  }, [isOpen]);
+  }, [isOpen, isEditing]);
 
   const installedAgentKeys = useMemo(() => {
     return new Set(categories.flatMap((c) => c.agents));
@@ -345,7 +369,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     id="profile-name-input"
                     type="text"
                     className="profile-input"
-                    placeholder="p. ej. balanced-custom, deep-sdd, turbo-local"
+                    placeholder="p. ej. Mi Perfil, Claude + O3, Desarrollo Rápido"
                     value={formData.name}
                     onChange={(e) => onChangeField('name', e.target.value)}
                     required
@@ -353,7 +377,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     autoFocus
                   />
                   <span className="profile-field-hint">
-                    Identificador único para el archivo de configuración (.json).
+                    Nombre descriptivo para identificar este perfil.
                   </span>
                 </div>
 
@@ -370,56 +394,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     onChange={(e) => onChangeField('description', e.target.value)}
                     disabled={isSaving}
                   />
-                </div>
-
-                <div className="profile-form-group profile-col-span-2">
-                  <span className="profile-form-label">Ámbito de guardado</span>
-                  <div className="profile-scope-radio-grid">
-                    <label
-                      className={`profile-scope-card ${
-                        formData.scope === 'global' ? 'selected' : ''
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="profile-scope"
-                        value="global"
-                        checked={formData.scope === 'global'}
-                        onChange={() => onChangeField('scope', 'global')}
-                        disabled={isSaving}
-                      />
-                      <div className="profile-scope-card-content">
-                        <span className="profile-scope-card-title">Global (~/.pi/agent/profiles/)</span>
-                        <span className="profile-scope-card-desc">
-                          Disponible en todos tus proyectos y sesiones.
-                        </span>
-                      </div>
-                    </label>
-
-                    <label
-                      className={`profile-scope-card ${
-                        formData.scope === 'project' ? 'selected' : ''
-                      } ${!cwd ? 'disabled' : ''}`}
-                      title={!cwd ? 'Requiere un proyecto abierto' : undefined}
-                    >
-                      <input
-                        type="radio"
-                        name="profile-scope"
-                        value="project"
-                        checked={formData.scope === 'project'}
-                        onChange={() => onChangeField('scope', 'project')}
-                        disabled={isSaving || !cwd}
-                      />
-                      <div className="profile-scope-card-content">
-                        <span className="profile-scope-card-title">Proyecto actual (.pi/profiles/)</span>
-                        <span className="profile-scope-card-desc">
-                          {cwd
-                            ? 'Exclusivo para este repositorio de trabajo.'
-                            : 'Requiere tener un proyecto activo seleccionado.'}
-                        </span>
-                      </div>
-                    </label>
-                  </div>
                 </div>
               </div>
             </fieldset>

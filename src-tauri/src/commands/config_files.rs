@@ -3964,6 +3964,12 @@ pub fn sanitize_profile_name(name: &str) -> String {
         .collect()
 }
 
+/// Generates a unique, collision-resistant profile identifier.
+/// Uses a 'prof_' prefix followed by 12 lowercase hex characters.
+pub fn generate_profile_id() -> String {
+    format!("prof_{}", &uuid::Uuid::new_v4().simple().to_string()[..12])
+}
+
 /// Checks whether a key is a synthetic or invalid agent key (e.g. status emojis, UI hints, whitespace).
 pub fn is_synthetic_agent_key(key: &str) -> bool {
     let trimmed = key.trim();
@@ -3983,6 +3989,98 @@ pub fn is_synthetic_agent_key(key: &str) -> bool {
 }
 
 
+
+fn normalize_cwd_key(path: &Path) -> String {
+    let clean = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    clean.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+/// Reads the active profile for a specific project cwd from the global `projects-active.json` file.
+pub fn read_project_active_from_global(global_agent_dir: Option<&Path>, cwd: &Path) -> Option<String> {
+    let global_profiles = global_agent_dir?.join("profiles");
+    let map_file = global_profiles.join("projects-active.json");
+    if map_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&map_file) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(obj) = val.as_object() {
+                    let key = normalize_cwd_key(cwd);
+                    let raw_key = cwd.to_string_lossy().to_string();
+                    if let Some(prof_name) = obj.get(&key).or_else(|| obj.get(&raw_key)).and_then(|v| v.as_str()) {
+                        let trimmed = prof_name.trim();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Sets or clears the active profile for a specific project cwd in the global `projects-active.json` file.
+pub fn set_project_active_sdd_profile_in_global(
+    global_profiles_dir: &Path,
+    cwd_str: &str,
+    name: Option<&str>,
+) -> Result<Value, String> {
+    let clean_name = name.map(|n| n.trim()).filter(|n| !n.is_empty());
+    let map_file = global_profiles_dir.join("projects-active.json");
+    let key = normalize_cwd_key(Path::new(cwd_str));
+
+    match clean_name {
+        None => {
+            if map_file.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&map_file) {
+                    if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                        if let Some(obj) = val.as_object_mut() {
+                            obj.remove(&key);
+                            obj.remove(cwd_str);
+                            let _ = atomic_write_json(&map_file, &val);
+                        }
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "success": true,
+                "message": "Project active profile cleared"
+            }))
+        }
+        Some(n) => {
+            let found_profile = find_profile_by_name(global_profiles_dir, n);
+            if found_profile.is_none() {
+                return Ok(serde_json::json!({
+                    "success": false,
+                    "message": format!("Profile '{}' not found", n)
+                }));
+            }
+
+            std::fs::create_dir_all(global_profiles_dir)
+                .map_err(|e| format!("Failed to create global profiles directory: {}", e))?;
+
+            let mut map_val = if map_file.is_file() {
+                std::fs::read_to_string(&map_file)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+                    .filter(|v| v.is_object())
+                    .unwrap_or_else(|| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+
+            if let Some(obj) = map_val.as_object_mut() {
+                obj.insert(key, Value::String(n.to_string()));
+            }
+
+            atomic_write_json(&map_file, &map_val)?;
+
+            Ok(serde_json::json!({
+                "success": true,
+                "message": format!("Active profile set to '{}'", n)
+            }))
+        }
+    }
+}
 
 /// Reads the trimmed string from an `.active` profile pointer file if present and non-empty.
 pub fn read_active_file(path: &Path) -> Option<String> {
@@ -4087,28 +4185,36 @@ pub fn clear_profile_keys_from_subagents_file(target_file: &Path) -> Result<(), 
     atomic_write_json(target_file, &current_config)
 }
 
-/// Helper to find a profile definition in a directory by name or sanitized name,
+/// Helper to find a profile definition in a directory by ID, file stem, or name,
 /// first checking direct paths then falling back to a full directory scan.
 pub fn find_profile_by_name(dir: &Path, name: &str) -> Option<Value> {
     if !dir.is_dir() {
         return None;
     }
-    let sanitized = sanitize_profile_name(name);
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let sanitized = sanitize_profile_name(trimmed);
 
-    // 1. Direct path check
+    // 1. Direct path check by ID, stem, or sanitized name
     let direct_candidates = [
+        dir.join(format!("{}.json", trimmed)),
         dir.join(format!("{}.json", sanitized)),
-        dir.join(format!("{}.json", name)),
     ];
     for path in &direct_candidates {
         if path.is_file() {
             if let Ok(content) = std::fs::read_to_string(path) {
                 if let Ok(val) = serde_json::from_str::<Value>(&content) {
                     if val.is_object() {
+                        let prof_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.trim()).unwrap_or("");
                         let prof_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if prof_name.trim() == name
+                        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                        if prof_id == trimmed
+                            || stem == trimmed
+                            || prof_name.trim() == trimmed
                             || sanitize_profile_name(prof_name) == sanitized
-                            || prof_name.eq_ignore_ascii_case(name)
+                            || prof_name.eq_ignore_ascii_case(trimmed)
                         {
                             return Some(val);
                         }
@@ -4131,14 +4237,34 @@ pub fn find_profile_by_name(dir: &Path, name: &str) -> Option<Value> {
             .collect();
         paths.sort();
 
-        for path in paths {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+        // Pass 1: match by id or file stem
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                    if val.is_object() {
+                        let prof_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.trim()).unwrap_or("");
+                        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                        if prof_id == trimmed
+                            || prof_id.eq_ignore_ascii_case(trimmed)
+                            || stem == trimmed
+                            || stem.eq_ignore_ascii_case(trimmed)
+                        {
+                            return Some(val);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass 2: match by name or sanitized name
+        for path in &paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
                 if let Ok(val) = serde_json::from_str::<Value>(&content) {
                     if val.is_object() {
                         let prof_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if prof_name.trim() == name
+                        if prof_name.trim() == trimmed
                             || sanitize_profile_name(prof_name) == sanitized
-                            || prof_name.eq_ignore_ascii_case(name)
+                            || prof_name.eq_ignore_ascii_case(trimmed)
                         {
                             return Some(val);
                         }
@@ -4526,8 +4652,30 @@ pub fn discover_sdd_profiles_impl(
                 paths.sort();
                 for path in paths {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(val) = serde_json::from_str::<Value>(&content) {
-                            if val.is_object() && val.get("name").and_then(|v| v.as_str()).map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                        if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                            if val.is_object() {
+                                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                let id = val.get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| file_stem.clone());
+
+                                let name = val.get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| id.clone());
+
+                                if let Some(obj) = val.as_object_mut() {
+                                    if !obj.contains_key("id") || obj["id"].as_str().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                                        obj.insert("id".to_string(), Value::String(id.clone()));
+                                    }
+                                    if !obj.contains_key("name") || obj["name"].as_str().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                                        obj.insert("name".to_string(), Value::String(name.clone()));
+                                    }
+                                }
+
                                 raw_profiles.push((val, "global", Some(path.to_string_lossy().to_string())));
                             }
                         }
@@ -4554,8 +4702,30 @@ pub fn discover_sdd_profiles_impl(
                 paths.sort();
                 for path in paths {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(val) = serde_json::from_str::<Value>(&content) {
-                            if val.is_object() && val.get("name").and_then(|v| v.as_str()).map(|s| !s.trim().is_empty()).unwrap_or(false) {
+                        if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                            if val.is_object() {
+                                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                let id = val.get("id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| file_stem.clone());
+
+                                let name = val.get("name")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .unwrap_or_else(|| id.clone());
+
+                                if let Some(obj) = val.as_object_mut() {
+                                    if !obj.contains_key("id") || obj["id"].as_str().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                                        obj.insert("id".to_string(), Value::String(id.clone()));
+                                    }
+                                    if !obj.contains_key("name") || obj["name"].as_str().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                                        obj.insert("name".to_string(), Value::String(name.clone()));
+                                    }
+                                }
+
                                 raw_profiles.push((val, "project", Some(path.to_string_lossy().to_string())));
                             }
                         }
@@ -4567,48 +4737,37 @@ pub fn discover_sdd_profiles_impl(
 
     // 3. Read .active files
     let global_active = global_agent_dir.and_then(|d| read_active_file(&d.join("profiles").join(".active")));
-    let project_active = cwd.and_then(|c| read_active_file(&c.join(".pi").join("profiles").join(".active")));
+    let project_active = cwd.and_then(|c| {
+        read_project_active_from_global(global_agent_dir, c)
+            .or_else(|| read_active_file(&c.join(".pi").join("profiles").join(".active")))
+    });
 
     // 4. Effective active profile and scope
     let (effective_active, effective_scope): (Option<String>, Option<String>) = if let Some(ref pa) = project_active {
-        let clean_pa = sanitize_profile_name(pa);
-        let scope = raw_profiles
-            .iter()
-            .find(|(p, _, _)| {
-                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                sanitize_profile_name(name) == clean_pa
-            })
-            .map(|(_, sc, _)| *sc)
-            .unwrap_or("project");
-        (Some(pa.clone()), Some(scope.to_string()))
+        (Some(pa.clone()), Some("project".to_string()))
     } else if let Some(ref ga) = global_active {
-        let clean_ga = sanitize_profile_name(ga);
-        let scope = raw_profiles
-            .iter()
-            .find(|(p, _, _)| {
-                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                sanitize_profile_name(name) == clean_ga
-            })
-            .map(|(_, sc, _)| *sc)
-            .unwrap_or("global");
-        (Some(ga.clone()), Some(scope.to_string()))
+        (Some(ga.clone()), Some("global".to_string()))
     } else {
         (None, None)
     };
-
-    let sanitized_effective = effective_active.as_deref().map(sanitize_profile_name);
 
     // 5. Build profile summaries
     let mut profiles_summaries: Vec<Value> = Vec::new();
     let mut chosen_active_index: Option<usize> = None;
 
-    if let Some(ref se) = sanitized_effective {
-        for (idx, (p, scope, _)) in raw_profiles.iter().enumerate() {
-            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
-            let sanitized = sanitize_profile_name(name);
-            let matches_effective = sanitized == *se;
+    if let Some(ref ea) = effective_active {
+        let trimmed_ea = ea.trim();
+        let sanitized_ea = sanitize_profile_name(trimmed_ea);
 
-            if matches_effective && chosen_active_index.is_none() {
+        // Pass 1: exact match on id or file stem
+        for (idx, (p, scope, path)) in raw_profiles.iter().enumerate() {
+            let pid = p.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let stem = path.as_ref().map(|p_str| {
+                Path::new(p_str).file_stem().and_then(|s| s.to_str()).unwrap_or("")
+            }).unwrap_or("");
+            let matches = pid == trimmed_ea || pid.eq_ignore_ascii_case(trimmed_ea) || stem == trimmed_ea;
+
+            if matches && chosen_active_index.is_none() {
                 if project_active.is_some() && *scope == "project" {
                     chosen_active_index = Some(idx);
                 } else if project_active.is_none() && global_active.is_some() && *scope == "global" {
@@ -4618,9 +4777,39 @@ pub fn discover_sdd_profiles_impl(
         }
 
         if chosen_active_index.is_none() {
+            for (idx, (p, _, path)) in raw_profiles.iter().enumerate() {
+                let pid = p.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let stem = path.as_ref().map(|p_str| {
+                    Path::new(p_str).file_stem().and_then(|s| s.to_str()).unwrap_or("")
+                }).unwrap_or("");
+                if pid == trimmed_ea || pid.eq_ignore_ascii_case(trimmed_ea) || stem == trimmed_ea {
+                    chosen_active_index = Some(idx);
+                    break;
+                }
+            }
+        }
+
+        // Pass 2: legacy fallback match on name or sanitized name
+        if chosen_active_index.is_none() {
+            for (idx, (p, scope, _)) in raw_profiles.iter().enumerate() {
+                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+                let sanitized = sanitize_profile_name(name);
+                let matches_effective = name == trimmed_ea || sanitized == sanitized_ea || name.eq_ignore_ascii_case(trimmed_ea);
+
+                if matches_effective && chosen_active_index.is_none() {
+                    if project_active.is_some() && *scope == "project" {
+                        chosen_active_index = Some(idx);
+                    } else if project_active.is_none() && global_active.is_some() && *scope == "global" {
+                        chosen_active_index = Some(idx);
+                    }
+                }
+            }
+        }
+
+        if chosen_active_index.is_none() {
             for (idx, (p, _, _)) in raw_profiles.iter().enumerate() {
                 let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
-                if sanitize_profile_name(name) == *se {
+                if name == trimmed_ea || sanitize_profile_name(name) == sanitized_ea || name.eq_ignore_ascii_case(trimmed_ea) {
                     chosen_active_index = Some(idx);
                     break;
                 }
@@ -4629,6 +4818,7 @@ pub fn discover_sdd_profiles_impl(
     }
 
     for (idx, (p, scope, path)) in raw_profiles.iter().enumerate() {
+        let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
         let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
         let is_active = chosen_active_index == Some(idx);
         let active_scope = if is_active {
@@ -4649,6 +4839,7 @@ pub fn discover_sdd_profiles_impl(
             .unwrap_or(0);
 
         let mut summary_map = serde_json::Map::new();
+        summary_map.insert("id".to_string(), Value::String(id.to_string()));
         summary_map.insert("name".to_string(), Value::String(name.to_string()));
         if let Some(desc) = p.get("description").and_then(|v| v.as_str()) {
             summary_map.insert("description".to_string(), Value::String(desc.to_string()));
@@ -4808,11 +4999,17 @@ pub fn discover_sdd_profiles_impl(
         }
     }
 
+    let resolved_effective_active = if let Some(idx) = chosen_active_index {
+        raw_profiles[idx].0.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()).or(effective_active)
+    } else {
+        effective_active
+    };
+
     Ok(serde_json::json!({
         "profiles": profiles_summaries,
         "projectActiveProfile": project_active,
         "globalActiveProfile": global_active,
-        "effectiveActiveProfile": effective_active,
+        "effectiveActiveProfile": resolved_effective_active,
         "effectiveScope": effective_scope,
         "categories": categories,
         "allAgents": all_agents
@@ -4827,52 +5024,38 @@ pub async fn get_sdd_profiles(cwd: Option<String>) -> Result<Value, String> {
     discover_sdd_profiles_impl(global_agent_dir.as_deref(), valid_cwd)
 }
 
-/// Tauri command to save or update an SDD profile.
+/// Tauri command to save or update an SDD profile (all profiles are stored globally).
 #[tauri::command]
 pub async fn save_sdd_profile(
-    cwd: Option<String>,
-    scope: Option<String>,
+    _cwd: Option<String>,
+    _scope: Option<String>,
     mut profile: Value,
 ) -> Result<Value, String> {
     let name_str = profile.get("name").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).unwrap_or_default();
     if name_str.is_empty() {
         return Err("Profile name is required and cannot be empty".to_string());
     }
-    let sanitized_name = sanitize_profile_name(&name_str);
-    if sanitized_name.is_empty() {
-        return Err("Profile name contains only invalid characters".to_string());
-    }
 
-    let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let target_dir = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            resolve_project_profiles_dir(Path::new(cwd_str))
-        }
-        Some("global") => {
-            resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                resolve_project_profiles_dir(Path::new(cwd_str))
-            } else {
-                resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-            }
-        }
-    };
+    let target_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
 
     std::fs::create_dir_all(&target_dir)
         .map_err(|e| format!("Failed to create profiles directory {}: {}", target_dir.display(), e))?;
 
-    let target_file = target_dir.join(format!("{}.json", sanitized_name));
+    // Determine ID: use existing id if non-empty, otherwise generate a new unique hash ID
+    let raw_id = profile.get("id").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let id_str = match raw_id {
+        Some(existing_id) => existing_id,
+        None => generate_profile_id(),
+    };
+
+    let target_file = target_dir.join(format!("{}.json", id_str));
 
     let now_rfc3339 = crate::commands::sessions::system_time_to_rfc3339(std::time::SystemTime::now())
         .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".to_string());
 
     if let Some(obj) = profile.as_object_mut() {
+        obj.insert("id".to_string(), Value::String(id_str.clone()));
         obj.insert("name".to_string(), Value::String(name_str.to_string()));
         if !obj.contains_key("created_at") || obj["created_at"].is_null() {
             obj.insert("created_at".to_string(), Value::String(now_rfc3339.clone()));
@@ -4894,69 +5077,166 @@ pub async fn save_sdd_profile(
 #[tauri::command]
 pub async fn delete_sdd_profile(
     cwd: Option<String>,
-    scope: Option<String>,
+    _scope: Option<String>,
     name: String,
 ) -> Result<Value, String> {
     let trimmed_name = name.trim();
     if trimmed_name.is_empty() {
-        return Err("Profile name is required".to_string());
+        return Err("Profile name or ID is required".to_string());
     }
-    let sanitized_name = sanitize_profile_name(trimmed_name);
+    let clean_name = trimmed_name.strip_suffix(".json").unwrap_or(trimmed_name);
+    let sanitized_name = sanitize_profile_name(clean_name);
 
-    let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let target_dir = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            resolve_project_profiles_dir(Path::new(cwd_str))
+    let global_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
+
+    let mut search_dirs = vec![global_dir.clone()];
+    if let Some(ref c) = cwd {
+        let p_dir = Path::new(c).join(".pi").join("profiles");
+        if p_dir.is_dir() && !search_dirs.contains(&p_dir) {
+            search_dirs.push(p_dir);
         }
-        Some("global") => {
-            resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                let proj_dir = resolve_project_profiles_dir(Path::new(cwd_str));
-                if proj_dir.join(format!("{}.json", sanitized_name)).is_file() || proj_dir.join(format!("{}.json", trimmed_name)).is_file() {
-                    proj_dir
-                } else if let Some(g) = resolve_global_profiles_dir() {
-                    g
-                } else {
-                    proj_dir
+    }
+
+    let mut resolved_file: Option<PathBuf> = None;
+    let mut deleted_id: Option<String> = None;
+    let mut deleted_name: Option<String> = None;
+
+    for target_dir in &search_dirs {
+        let direct_id_path = target_dir.join(format!("{}.json", clean_name));
+        let direct_sanitized_path = target_dir.join(format!("{}.json", sanitized_name));
+
+        if direct_id_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&direct_id_path) {
+                if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                    deleted_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    deleted_name = val.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
                 }
-            } else {
-                resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
+            }
+            resolved_file = Some(direct_id_path);
+            break;
+        } else if direct_sanitized_path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&direct_sanitized_path) {
+                if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                    deleted_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    deleted_name = val.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                }
+            }
+            resolved_file = Some(direct_sanitized_path);
+            break;
+        } else if let Ok(entries) = std::fs::read_dir(target_dir) {
+            let mut paths: Vec<PathBuf> = entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.is_file()
+                        && p.extension().and_then(|ext| ext.to_str()) == Some("json")
+                        && p.file_name().and_then(|n| n.to_str()).map(|n| !n.starts_with('.')).unwrap_or(false)
+                })
+                .collect();
+            paths.sort();
+
+            // Pass 1: exact id or file stem match
+            for p in &paths {
+                if let Ok(content) = std::fs::read_to_string(p) {
+                    if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                        if val.is_object() {
+                            let prof_id = val.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                            if prof_id == clean_name
+                                || prof_id.eq_ignore_ascii_case(clean_name)
+                                || stem == clean_name
+                                || stem.eq_ignore_ascii_case(clean_name)
+                            {
+                                deleted_id = Some(prof_id.to_string());
+                                deleted_name = val.get("name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                resolved_file = Some(p.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if resolved_file.is_some() {
+                break;
+            }
+
+            // Pass 2: match by name or sanitized name
+            for p in &paths {
+                if let Ok(content) = std::fs::read_to_string(p) {
+                    if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                        if val.is_object() {
+                            let prof_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            if prof_name.trim() == clean_name
+                                || sanitize_profile_name(prof_name) == sanitized_name
+                                || prof_name.eq_ignore_ascii_case(clean_name)
+                            {
+                                deleted_id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                deleted_name = Some(prof_name.to_string());
+                                resolved_file = Some(p.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if resolved_file.is_some() {
+                break;
             }
         }
-    };
+    }
 
-    let file_to_delete = if target_dir.join(format!("{}.json", sanitized_name)).is_file() {
-        Some(target_dir.join(format!("{}.json", sanitized_name)))
-    } else if target_dir.join(format!("{}.json", trimmed_name)).is_file() {
-        Some(target_dir.join(format!("{}.json", trimmed_name)))
-    } else {
-        None
-    };
-
-    if let Some(path) = file_to_delete {
+    if let Some(path) = resolved_file {
         std::fs::remove_file(&path)
             .map_err(|e| format!("Failed to delete profile file {}: {}", path.display(), e))?;
     } else {
-        return Err(format!("Profile '{}' not found in {}", trimmed_name, target_dir.display()));
+        return Err(format!("Profile '{}' not found", clean_name));
     }
 
-    // Clear .active if it points to this profile
-    let active_file = target_dir.join(".active");
-    if let Some(active_name) = read_active_file(&active_file) {
-        if sanitize_profile_name(&active_name) == sanitized_name || active_name == trimmed_name {
-            let _ = std::fs::remove_file(&active_file);
+    let del_id_str = deleted_id.unwrap_or_else(|| clean_name.to_string());
+    let del_name_str = deleted_name.unwrap_or_else(|| clean_name.to_string());
+    let del_sanitized_name = sanitize_profile_name(&del_name_str);
+
+    // Clear .active in all search dirs if it points to this profile
+    for d in &search_dirs {
+        let active_file = d.join(".active");
+        if let Some(active_name) = read_active_file(&active_file) {
+            if active_name == del_id_str
+                || active_name == del_name_str
+                || sanitize_profile_name(&active_name) == del_sanitized_name
+                || sanitize_profile_name(&active_name) == sanitized_name
+                || active_name == clean_name
+            {
+                let _ = std::fs::remove_file(&active_file);
+            }
+        }
+    }
+
+    // Clear from projects-active.json if any project points to this profile
+    let map_file = global_dir.join("projects-active.json");
+    if map_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&map_file) {
+            if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                if let Some(obj) = val.as_object_mut() {
+                    obj.retain(|_, v| {
+                        let prof_str = v.as_str().unwrap_or("");
+                        prof_str != del_id_str
+                            && prof_str != del_name_str
+                            && sanitize_profile_name(prof_str) != del_sanitized_name
+                            && sanitize_profile_name(prof_str) != sanitized_name
+                            && prof_str != clean_name
+                    });
+                    let _ = atomic_write_json(&map_file, &val);
+                }
+            }
         }
     }
 
     Ok(serde_json::json!({
         "success": true,
-        "message": format!("Profile '{}' deleted successfully", trimmed_name)
+        "message": format!("Profile '{}' deleted successfully", clean_name)
     }))
 }
 
@@ -5042,42 +5322,25 @@ pub async fn set_active_sdd_profile(
     name: Option<String>,
 ) -> Result<Value, String> {
     let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let (target_profiles_dir, target_subagents_file, is_project) = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            let cwd_path = Path::new(cwd_str);
-            (resolve_project_profiles_dir(cwd_path), resolve_project_subagents_path(cwd_path), true)
-        }
-        Some("global") => {
-            let p_dir = resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
-            let s_file = resolve_global_subagents_path()
-                .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
-            (p_dir, s_file, false)
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                let cwd_path = Path::new(cwd_str);
-                (resolve_project_profiles_dir(cwd_path), resolve_project_subagents_path(cwd_path), true)
-            } else {
-                let p_dir = resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
-                let s_file = resolve_global_subagents_path()
-                    .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
-                (p_dir, s_file, false)
-            }
-        }
-    };
+    let is_project = matches!(requested_scope.as_deref(), Some("project"));
+    let global_profiles_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
 
-    let global_profiles_dir = resolve_global_profiles_dir();
-    set_active_sdd_profile_with_dirs(
-        &target_profiles_dir,
-        &target_subagents_file,
-        global_profiles_dir.as_deref(),
-        name.as_deref(),
-        is_project,
-    )
+    if is_project {
+        let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
+            .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
+        set_project_active_sdd_profile_in_global(&global_profiles_dir, cwd_str, name.as_deref())
+    } else {
+        let global_subagents_file = resolve_global_subagents_path()
+            .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
+        set_active_sdd_profile_with_dirs(
+            &global_profiles_dir,
+            &global_subagents_file,
+            Some(&global_profiles_dir),
+            name.as_deref(),
+            false,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9245,8 +9508,10 @@ mod tests {
     }
 
     static CRUD_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static SDD_CRUD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn run_sdd_profiles_crud_and_isolation() {
+        let _lock = SDD_CRUD_LOCK.lock().await;
         let count = CRUD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let temp_dir = std::env::temp_dir().join(format!("test_sdd_crud_{}_{}", std::process::id(), count));
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -9289,12 +9554,11 @@ mod tests {
         ).await.unwrap();
         assert_eq!(save_res["success"], true);
 
-        // 3. Query profiles: should list project-custom with agent_count 1,
-        // but saved profile overrides alone MUST NOT make an agent appear installed in categories
+        // 3. Query profiles: should list project-custom with agent_count 1 and global scope
         let queried = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
         let profiles = queried["profiles"].as_array().unwrap();
         let custom_summary = profiles.iter().find(|p| p["name"] == "project-custom").unwrap();
-        assert_eq!(custom_summary["scope"], "project");
+        assert_eq!(custom_summary["scope"], "global");
         assert_eq!(custom_summary["agent_count"], 1);
 
         let categories = queried["categories"].as_array().unwrap();
@@ -9314,28 +9578,17 @@ mod tests {
         ).await.unwrap();
         assert_eq!(act_res["success"], true);
 
-        // Verify .pi/subagents.json was updated with project-custom settings
+        // Verify NO files are written into project directory (<cwd>/.pi/)
+        let proj_active_file = cwd.join(".pi").join("profiles").join(".active");
         let proj_subagents = cwd.join(".pi").join("subagents.json");
-        assert!(proj_subagents.is_file());
-        let subagents_val: Value = serde_json::from_str(&std::fs::read_to_string(&proj_subagents).unwrap()).unwrap();
-        assert_eq!(subagents_val["active_profile"], "project-custom");
-        assert_eq!(subagents_val["default_model"], "test/model-1");
+        assert!(!proj_active_file.exists(), "Project .active must not be written to project directory");
+        assert!(!proj_subagents.exists(), "Project subagents.json must not be written to project directory");
 
         // 5. Query profiles: effective profile is project-custom with project scope
         let active_query = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
         assert_eq!(active_query["effectiveActiveProfile"], "project-custom");
         assert_eq!(active_query["effectiveScope"], "project");
         assert_eq!(active_query["projectActiveProfile"], "project-custom");
-
-        // Configured agents in subagents.json are discovered as runtime agents
-        let active_cats = active_query["categories"].as_array().unwrap();
-        let configured_found = active_cats.iter().any(|c| {
-            c.get("agents")
-                .and_then(|a| a.as_array())
-                .map(|arr| arr.iter().any(|v| v == "my-custom-subagent"))
-                .unwrap_or(false)
-        });
-        assert!(configured_found, "Configured subagents.json agent should be discovered");
 
         // 6. Clear project active profile -> should fall back to None
         let clear_res = set_active_sdd_profile(
@@ -9361,6 +9614,115 @@ mod tests {
         let post_del_query = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
         let post_profiles = post_del_query["profiles"].as_array().unwrap();
         assert!(post_profiles.iter().all(|p| p["name"] != "project-custom"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::env::remove_var("PI_GLOBAL_AGENT_DIR");
+    }
+
+    #[tokio::test]
+    async fn test_sdd_profiles_hash_id_and_retrocompatibility() {
+        let _lock = SDD_CRUD_LOCK.lock().await;
+        let count = CRUD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let temp_dir = std::env::temp_dir().join(format!("test_sdd_hash_{}_{}", std::process::id(), count));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let global_agent = temp_dir.join("global_agent");
+        let global_profiles = global_agent.join("profiles");
+        std::fs::create_dir_all(&global_profiles).unwrap();
+        std::env::set_var("PI_GLOBAL_AGENT_DIR", &global_agent);
+
+        let cwd = temp_dir.join("project");
+        let cwd_str = cwd.to_string_lossy().to_string();
+
+        // 1. S1.1 & S3.1: Saving a new profile creates <id>.json with prof_ prefix and stores id inside json
+        let save_res1 = save_sdd_profile(
+            Some(cwd_str.clone()),
+            Some("global".to_string()),
+            serde_json::json!({
+                "name": "Mi Perfil Duplicado",
+                "description": "Perfil 1 con nombre repetido",
+                "default_model": "provider/model-1"
+            })
+        ).await.unwrap();
+        assert_eq!(save_res1["success"], true);
+
+        let prof1 = &save_res1["profile"];
+        let id1 = prof1["id"].as_str().unwrap();
+        assert!(id1.starts_with("prof_"), "Expected prof_ prefix, got {}", id1);
+        assert_eq!(id1.len(), 17);
+        assert!(global_profiles.join(format!("{}.json", id1)).is_file());
+
+        // 2. S1.2: Second profile with identical name coexists cleanly with distinct id
+        let save_res2 = save_sdd_profile(
+            Some(cwd_str.clone()),
+            Some("global".to_string()),
+            serde_json::json!({
+                "name": "Mi Perfil Duplicado",
+                "description": "Perfil 2 con mismo nombre",
+                "default_model": "provider/model-2"
+            })
+        ).await.unwrap();
+        let prof2 = &save_res2["profile"];
+        let id2 = prof2["id"].as_str().unwrap();
+        assert!(id2.starts_with("prof_"));
+        assert_ne!(id1, id2);
+        assert!(global_profiles.join(format!("{}.json", id2)).is_file());
+
+        // Query profiles: both must be returned
+        let list1 = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
+        let profiles_arr = list1["profiles"].as_array().unwrap();
+        let matches: Vec<_> = profiles_arr.iter().filter(|p| p["name"] == "Mi Perfil Duplicado").collect();
+        assert_eq!(matches.len(), 2);
+
+        // 3. S2.1: Retrocompatibility with legacy files lacking id field
+        let legacy_file = global_profiles.join("legacy-model.json");
+        std::fs::write(&legacy_file, serde_json::to_string_pretty(&serde_json::json!({
+            "name": "Legacy Special Model",
+            "description": "Existed before id field",
+            "default_model": "legacy/model"
+        })).unwrap()).unwrap();
+
+        let list_legacy = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
+        let all_profs = list_legacy["profiles"].as_array().unwrap();
+        let legacy_summary = all_profs.iter().find(|p| p["name"] == "Legacy Special Model").unwrap();
+        assert_eq!(legacy_summary["id"], "legacy-model", "Fallback id must be file stem");
+
+        // 4. S2.2: Active pointer with legacy name or id resolves correctly
+        let act_res = set_active_sdd_profile(
+            Some(cwd_str.clone()),
+            Some("global".to_string()),
+            Some("legacy-model".to_string())
+        ).await.unwrap();
+        assert_eq!(act_res["success"], true);
+
+        let active_check = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
+        assert_eq!(active_check["effectiveActiveProfile"], "Legacy Special Model");
+
+        // 5. S2.3: Updating legacy profile with its id preserves existing file
+        let update_res = save_sdd_profile(
+            Some(cwd_str.clone()),
+            Some("global".to_string()),
+            serde_json::json!({
+                "id": "legacy-model",
+                "name": "Legacy Special Model Renamed",
+                "description": "Updated in place",
+                "default_model": "legacy/model-v2"
+            })
+        ).await.unwrap();
+        assert_eq!(update_res["success"], true);
+        assert!(legacy_file.is_file(), "Original file must still exist and be updated in place");
+
+        // 6. S3.2: Delete profile by id removes the file and clears active
+        let del_res = delete_sdd_profile(
+            Some(cwd_str.clone()),
+            Some("global".to_string()),
+            "legacy-model".to_string()
+        ).await.unwrap();
+        assert_eq!(del_res["success"], true);
+        assert!(!legacy_file.exists());
+
+        let post_del = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
+        assert!(post_del["effectiveActiveProfile"].is_null());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::env::remove_var("PI_GLOBAL_AGENT_DIR");

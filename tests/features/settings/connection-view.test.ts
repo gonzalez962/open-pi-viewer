@@ -46,12 +46,11 @@ test('SettingsView: renders connection configuration inputs with draft values', 
   assert.match(html, /value="node"/);
   assert.match(html, /id="settings-pi-entry-input"/);
   assert.match(html, /value="C:\\pi\\dist\\cli\.js"/);
-  assert.match(html, /id="settings-cwd-input"/);
-  assert.match(html, /value="C:\\projects\\demo"/);
+  assert.doesNotMatch(html, /id="settings-cwd-input"/);
   assert.match(html, /Save &amp; Apply/);
 });
 
-test('SettingsView: renders Browse directory button for portable configuration', () => {
+test('SettingsView: does not render working directory input in connection tab', () => {
   const html = renderToStaticMarkup(
     React.createElement(SettingsView, {
       config: sampleConfig,
@@ -71,7 +70,7 @@ test('SettingsView: renders Browse directory button for portable configuration',
     })
   );
 
-  assert.match(html, /Browse\.\.\./);
+  assert.doesNotMatch(html, /id="settings-cwd-input"/);
 });
 
 test('SettingsView: renders validation error banner when settingsError is present', () => {
@@ -150,7 +149,7 @@ test('SettingsView: renders unconfigured empty draft with placeholders intact an
   );
 
   assert.match(html, /placeholder="C:\\path\\to\\pi\\dist\\cli\.js"/);
-  assert.match(html, /placeholder="C:\\path\\to\\project"/);
+  assert.doesNotMatch(html, /id="settings-cwd-input"/);
   assert.match(html, /value=""/);
 });
 

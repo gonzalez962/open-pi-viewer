@@ -65,6 +65,7 @@ export interface ModelProfileEntry {
 }
 
 export interface Profile {
+  id?: string;
   name: string;
   description?: string;
   default_model?: string; // Orchestrator or default model
@@ -77,6 +78,7 @@ export interface Profile {
 export type ProfileScope = 'global' | 'project';
 
 export interface ProfileSummary {
+  id?: string;
   name: string;
   description?: string;
   default_model?: string;
@@ -87,6 +89,8 @@ export interface ProfileSummary {
   active_scope?: 'project' | 'global';
   path?: string;
   model_profiles?: Record<string, ModelProfileEntry>;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface AgentCategory {
@@ -353,6 +357,27 @@ export function sanitizeProfileName(name: string): string {
 }
 
 /**
+ * Generates a unique, collision-resistant profile identifier.
+ * Uses a 'prof_' prefix followed by 12 lowercase hex characters.
+ */
+export function generateProfileId(): string {
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(6);
+      crypto.getRandomValues(bytes);
+      const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+      return `prof_${hex}`;
+    }
+    if (typeof crypto.randomUUID === 'function') {
+      return `prof_${crypto.randomUUID().replace(/-/g, '').slice(0, 12).toLowerCase()}`;
+    }
+  }
+  const rand1 = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+  const rand2 = Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+  return `prof_${rand1}${rand2}`;
+}
+
+/**
  * Checks whether a key is a synthetic or invalid agent key.
  */
 export function isSyntheticAgentKey(key: string): boolean {
@@ -374,8 +399,43 @@ export function isSyntheticAgentKey(key: string): boolean {
 
 
 
+function findProfileMatch(
+  target: string,
+  profiles: ProfileSummary[]
+): ProfileSummary | null {
+  const trimmed = target.trim();
+  if (!trimmed) return null;
+
+  // 1. Exact match on id
+  const byId = profiles.find((p) => p.id && p.id === trimmed);
+  if (byId) return byId;
+
+  // 2. Exact match on name
+  const byName = profiles.find((p) => p.name === trimmed);
+  if (byName) return byName;
+
+  // 3. Match by sanitized id or sanitized name
+  const sanitized = sanitizeProfileName(trimmed);
+  const bySanitized = profiles.find(
+    (p) =>
+      (p.id && sanitizeProfileName(p.id) === sanitized) ||
+      sanitizeProfileName(p.name) === sanitized
+  );
+  if (bySanitized) return bySanitized;
+
+  // 4. Case-insensitive match on name or id
+  const lower = trimmed.toLowerCase();
+  const byLower = profiles.find(
+    (p) =>
+      (p.id && p.id.toLowerCase() === lower) ||
+      p.name.toLowerCase() === lower
+  );
+  return byLower ?? null;
+}
+
 /**
  * Resolves effective active profile.
+ * Matches by profile id first, then falls back to name or sanitized name for legacy compatibility.
  * If project active profile is set, returns project active profile.
  * If project active profile is absent or empty, falls back to global active profile.
  */
@@ -384,35 +444,39 @@ export function resolveEffectiveProfile(
   globalActive: string | null | undefined,
   profiles: ProfileSummary[] = []
 ): {
+  id?: string | null;
   name: string | null;
   scope: 'project' | 'global' | null;
   isFallback: boolean;
   profile: ProfileSummary | null;
 } {
-  const cleanProj = projectActive ? sanitizeProfileName(projectActive) : null;
-  const cleanGlob = globalActive ? sanitizeProfileName(globalActive) : null;
+  const cleanProj = projectActive && projectActive.trim() ? projectActive.trim() : null;
+  const cleanGlob = globalActive && globalActive.trim() ? globalActive.trim() : null;
 
   if (cleanProj) {
-    const matched = profiles.find((p) => sanitizeProfileName(p.name) === cleanProj);
+    const matched = findProfileMatch(cleanProj, profiles);
     return {
-      name: projectActive!.trim(),
-      scope: (matched?.scope as 'project' | 'global') ?? 'project',
+      id: matched?.id ?? null,
+      name: matched ? matched.name : cleanProj,
+      scope: 'project',
       isFallback: false,
       profile: matched ?? null,
     };
   }
 
   if (cleanGlob) {
-    const matched = profiles.find((p) => sanitizeProfileName(p.name) === cleanGlob);
+    const matched = findProfileMatch(cleanGlob, profiles);
     return {
-      name: globalActive!.trim(),
-      scope: (matched?.scope as 'project' | 'global') ?? 'global',
+      id: matched?.id ?? null,
+      name: matched ? matched.name : cleanGlob,
+      scope: 'global',
       isFallback: true,
       profile: matched ?? null,
     };
   }
 
   return {
+    id: null,
     name: null,
     scope: null,
     isFallback: false,

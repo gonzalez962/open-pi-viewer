@@ -74,6 +74,7 @@ import {
   resolveEffectiveProfile,
   sanitizeProfileName,
   isSyntheticAgentKey,
+  generateProfileId,
   type DiscoveredAgentMeta,
 } from '@core/types/profiles';
 import type {
@@ -2334,10 +2335,11 @@ export async function getSddProfilesPi(
         ? storage.getItem(`${MOCK_SDD_PROJECT_ACTIVE_PROFILE_PREFIX}${cwd}`) || null
         : null;
 
-    // Global custom profiles
-    const globalSummaries: ProfileSummary[] = storedCustom
-      .filter((p) => p.scope !== 'project')
-      .map((p) => ({
+    // All custom profiles are global
+    const allSummaries: ProfileSummary[] = storedCustom.map((p) => {
+      const id = p.id || sanitizeProfileName(p.name);
+      return {
+        id,
         name: p.name,
         description: p.description,
         default_model: p.default_model,
@@ -2345,49 +2347,27 @@ export async function getSddProfilesPi(
         agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
         scope: 'global',
         is_active: false,
-        path: p.path || `~/.pi/agent/profiles/${sanitizeProfileName(p.name)}.json`,
+        path: p.path || `~/.pi/agent/profiles/${id}.json`,
         model_profiles: p.model_profiles,
-      }));
-
-    // Project custom profiles (if cwd matches)
-    const projectSummaries: ProfileSummary[] = storedCustom
-      .filter((p) => p.scope === 'project' && (!cwd || !p.cwd || p.cwd === cwd))
-      .map((p) => ({
-        name: p.name,
-        description: p.description,
-        default_model: p.default_model,
-        default_effort: p.default_effort,
-        agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
-        scope: 'project',
-        is_active: false,
-        path: p.path || `${cwd || '.'}/.pi/profiles/${sanitizeProfileName(p.name)}.json`,
-        model_profiles: p.model_profiles,
-      }));
-
-    const allSummaries: ProfileSummary[] = [
-      ...globalSummaries,
-      ...projectSummaries,
-    ];
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      };
+    });
 
     const effective = resolveEffectiveProfile(projectActive, globalActive, allSummaries);
-    const sanitizedEffective = effective.name ? sanitizeProfileName(effective.name) : null;
 
     // Determine active profile index
     let chosenIdx = -1;
-    if (sanitizedEffective) {
-      if (projectActive) {
-        chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective && s.scope === 'project'
-        );
-      } else if (globalActive) {
-        chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective && s.scope === 'global'
-        );
-      }
-
+    if (effective.profile) {
+      chosenIdx = allSummaries.findIndex((s) =>
+        effective.profile?.id ? s.id === effective.profile.id : s.name === effective.profile?.name
+      );
+    } else if (effective.name) {
+      chosenIdx = allSummaries.findIndex((s) => s.id && s.id === effective.name);
       if (chosenIdx === -1) {
+        const sanitizedEffective = sanitizeProfileName(effective.name);
         chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective
+          (s) => s.name === effective.name || sanitizeProfileName(s.name) === sanitizedEffective
         );
       }
     }
@@ -2458,31 +2438,21 @@ export async function saveSddProfilePi(
     if (!name) {
       throw new Error('Profile name is required and cannot be empty');
     }
-    const sanitized = sanitizeProfileName(name);
-    if (!sanitized) {
-      throw new Error('Profile name contains only invalid characters');
-    }
+    const id = payload.profile?.id?.trim() || generateProfileId();
 
-    const scope = payload.scope || 'global';
     const now = new Date().toISOString();
 
     const stored = getStoredMockProfiles(storage);
     const existingIdx = stored.findIndex(
-      (p) =>
-        sanitizeProfileName(p.name) === sanitized &&
-        p.scope === scope &&
-        (scope !== 'project' || p.cwd === payload.cwd)
+      (p) => (p.id && p.id === id) || (p.name === name && !p.id)
     );
 
     const savedProfile: StoredMockProfile = {
       ...payload.profile,
+      id,
       name,
-      scope,
-      cwd: scope === 'project' ? payload.cwd : undefined,
-      path:
-        scope === 'project'
-          ? `${payload.cwd || '.'}/.pi/profiles/${sanitized}.json`
-          : `~/.pi/agent/profiles/${sanitized}.json`,
+      scope: 'global',
+      path: `~/.pi/agent/profiles/${id}.json`,
       created_at:
         existingIdx !== -1 && stored[existingIdx].created_at
           ? stored[existingIdx].created_at
@@ -2536,45 +2506,40 @@ export async function deleteSddProfilePi(
 
     const trimmed = payload.name?.trim();
     if (!trimmed) {
-      throw new Error('Profile name is required');
+      throw new Error('Profile name or ID is required');
     }
     const sanitized = sanitizeProfileName(trimmed);
 
     const stored = getStoredMockProfiles(storage);
-    const scope = payload.scope || 'global';
 
     const index = stored.findIndex((p) => {
-      const matchName = sanitizeProfileName(p.name) === sanitized || p.name === trimmed;
-      if (!matchName) return false;
-      if (payload.scope) {
-        if (p.scope !== payload.scope) return false;
-      }
-      if (p.scope === 'project' && payload.cwd) {
-        return p.cwd === payload.cwd;
-      }
-      return true;
+      return (p.id && p.id === trimmed) || p.name === trimmed || sanitizeProfileName(p.name) === sanitized;
     });
 
     if (index === -1) {
       throw new Error(`Profile '${trimmed}' not found`);
     }
 
+    const deleted = stored[index];
     stored.splice(index, 1);
     if (storage) {
       storage.setItem(MOCK_SDD_PROFILES_STORAGE_KEY, JSON.stringify(stored));
 
       // Clear active profile if it matched
-      if (scope === 'project' && payload.cwd) {
+      const delId = deleted.id || sanitized;
+      const delName = deleted.name;
+      const delSanitized = sanitizeProfileName(delName);
+
+      if (payload.cwd) {
         const key = `${MOCK_SDD_PROJECT_ACTIVE_PROFILE_PREFIX}${payload.cwd}`;
         const current = storage.getItem(key);
-        if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
+        if (current && (current === delId || current === delName || sanitizeProfileName(current) === delSanitized || current === trimmed)) {
           storage.removeItem(key);
         }
-      } else {
-        const current = storage.getItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
-        if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
-          storage.removeItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
-        }
+      }
+      const current = storage.getItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
+      if (current && (current === delId || current === delName || sanitizeProfileName(current) === delSanitized || current === trimmed)) {
+        storage.removeItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
       }
     }
 
@@ -2614,18 +2579,12 @@ export async function setActiveSddProfilePi(
       const storedCustom = getStoredMockProfiles(storage);
       const sanitized = sanitizeProfileName(cleanName);
       const exists = storedCustom.some((p) => {
-        const matchesName =
+        return (
+          (p.id && p.id === cleanName) ||
           p.name === cleanName ||
           sanitizeProfileName(p.name) === sanitized ||
-          p.name.toLowerCase() === cleanName.toLowerCase();
-        if (!matchesName) return false;
-        if (payload.scope === 'project') {
-          return (
-            (p.scope === 'project' && (!payload.cwd || !p.cwd || p.cwd === payload.cwd)) ||
-            p.scope === 'global'
-          );
-        }
-        return p.scope === 'global';
+          p.name.toLowerCase() === cleanName.toLowerCase()
+        );
       });
 
       if (!exists) {
@@ -2756,37 +2715,6 @@ export async function enrollEngramProjectPi(
     return Boolean(res);
   } catch {
     return false;
-  }
-}
-
-export interface PiChainStep {
-  name: string;
-  output?: string;
-  reads?: string;
-  description?: string;
-}
-
-export interface PiChain {
-  name: string;
-  description: string;
-  path: string;
-  steps: PiChainStep[];
-}
-
-/**
- * Retrieve discovered Pi chains from ~/.pi/agent/chains/ and gentle-pi assets via Tauri IPC.
- */
-export async function getPiChainsPi(
-  invokeFn: InvokeFn = defaultInvoke
-): Promise<PiChain[]> {
-  if (!isTauri() && invokeFn === defaultInvoke) {
-    return [];
-  }
-  try {
-    const res = await invokeFn<PiChain[]>('get_pi_chains');
-    return res ?? [];
-  } catch {
-    return [];
   }
 }
 
