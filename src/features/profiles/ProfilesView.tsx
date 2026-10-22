@@ -5,9 +5,7 @@ import { useProfiles } from './hooks/useProfiles';
 import { ProfileCard } from './components/ProfileCard';
 import { ProfileModal } from './components/ProfileModal';
 import {
-  computeProfileCounts,
   filterProfiles,
-  type ProfileScope,
   type ProfilesViewProps,
 } from './types';
 
@@ -60,19 +58,15 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
   } = useProfiles({ cwd, availableModels: liveModels });
 
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [scopeFilter, setScopeFilter] = useState<'all' | ProfileScope>('all');
 
   const tLocal = (key: TranslationKey, params?: Record<string, string | number>): string => {
     return t ? t(key, params) : translate(getActiveLocale(), key, params);
   };
 
-  // Compute profile counts
-  const counts = useMemo(() => computeProfileCounts(profiles), [profiles]);
-
-  // Filter profiles by search query and scope filter
+  // Filter profiles by search query
   const filteredProfiles = useMemo(
-    () => filterProfiles(profiles, searchQuery, scopeFilter),
-    [profiles, searchQuery, scopeFilter]
+    () => filterProfiles(profiles, searchQuery, 'all'),
+    [profiles, searchQuery]
   );
 
   const handleOpenExternal = (e: React.MouseEvent, url: string) => {
@@ -122,15 +116,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
         </div>
 
         <div className="profiles-toolbar-actions">
-          <span className="profiles-stat-pill profiles-stat-total">
-            {tLocal('profiles.stat_total', { count: counts.total })}
-          </span>
-          <span className="profiles-stat-pill profiles-stat-global">
-            {tLocal('profiles.stat_global', { count: counts.global })}
-          </span>
-          <span className="profiles-stat-pill profiles-stat-project">
-            {tLocal('profiles.stat_project', { count: counts.project })}
-          </span>
           <button
             type="button"
             className="btn btn-secondary btn-sm profiles-reload-btn"
@@ -276,37 +261,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
           </div>
         )}
 
-        {/* Scope Filter Tabs */}
-        <div className="profiles-scope-tabs" role="tablist" aria-label="Filtrar por ámbito">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'all'}
-            className={`profiles-tab ${scopeFilter === 'all' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('all')}
-          >
-            {tLocal('profiles.tab_all')} <span className="profiles-tab-count">{counts.total}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'global'}
-            className={`profiles-tab ${scopeFilter === 'global' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('global')}
-          >
-            {tLocal('profiles.tab_global')} <span className="profiles-tab-count">{counts.global}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={scopeFilter === 'project'}
-            className={`profiles-tab ${scopeFilter === 'project' ? 'active' : ''}`}
-            onClick={() => setScopeFilter('project')}
-          >
-            {tLocal('profiles.tab_project')} <span className="profiles-tab-count">{counts.project}</span>
-          </button>
-        </div>
-
         {/* Profiles Grid or States */}
         {isLoading ? (
           <div className="profiles-loading-state">
@@ -354,7 +308,6 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
               className="btn btn-secondary btn-sm"
               onClick={() => {
                 setSearchQuery('');
-                setScopeFilter('all');
               }}
             >
               {tLocal('profiles.reset_filters')}

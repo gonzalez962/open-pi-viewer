@@ -484,7 +484,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
 
     setFormData({
       ...EMPTY_PROFILE_FORM,
-      scope: cwd ? 'project' : 'global',
+      scope: 'global',
       default_model: firstModelId,
       default_effort: (defaultEffort as ReasoningEffort) || '',
     });
@@ -502,7 +502,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       setFormData({
         name: summary.name,
         description: summary.description || '',
-        scope: summary.scope === 'project' ? 'project' : 'global',
+        scope: 'global',
         default_model: summary.default_model || full?.default_model || '',
         default_effort: summary.default_effort || full?.default_effort || '',
         model_profiles: full?.model_profiles || summary.model_profiles || {},
@@ -524,7 +524,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
       setFormData({
         name: `${summary.name}-copy`,
         description: summary.description ? `${summary.description} (copia)` : '',
-        scope: summary.scope === 'project' ? 'project' : 'global',
+        scope: 'global',
         default_model: summary.default_model || full?.default_model || '',
         default_effort: summary.default_effort || full?.default_effort || '',
         model_profiles: { ...(full?.model_profiles || summary.model_profiles || {}) },
@@ -647,8 +647,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         }
 
         const saveRes = await saveSddProfilePi({
-          cwd: formData.scope === 'project' ? cwd : undefined,
-          scope: formData.scope,
+          scope: 'global',
           profile: profilePayload,
         });
 

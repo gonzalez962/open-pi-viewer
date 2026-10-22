@@ -29,7 +29,6 @@ import {
   saveSddProfilePi,
   deleteSddProfilePi,
   setActiveSddProfilePi,
-  MOCK_SDD_PROFILES_STORAGE_KEY,
   MOCK_SDD_INSTALLED_AGENTS_KEY,
 } from '@infra/bridge';
 
@@ -235,7 +234,7 @@ test('bridge: getSddProfilesPi returns 0 profiles when empty and resolves null a
   }
 });
 
-test('bridge: saveSddProfilePi persists project-scoped profile without altering global profiles', async () => {
+test('bridge: saveSddProfilePi stores profiles globally and respects per-project activation', async () => {
   const fakeStorage = new MemoryStorage();
   (globalThis as any).window = { localStorage: fakeStorage };
   (globalThis as any).localStorage = fakeStorage;
@@ -255,10 +254,10 @@ test('bridge: saveSddProfilePi persists project-scoped profile without altering 
       },
     };
 
-    // 1. Save project-scoped profile
+    // 1. Save profile (all profiles are stored globally)
     const saveRes = await saveSddProfilePi({
       cwd: projectWorkspace,
-      scope: 'project',
+      scope: 'global',
       profile: projectProfile,
     });
 
@@ -266,14 +265,14 @@ test('bridge: saveSddProfilePi persists project-scoped profile without altering 
     assert.strictEqual(saveRes.profile?.name, 'alpha-custom');
     assert.strictEqual(
       saveRes.path,
-      `${projectWorkspace}/.pi/profiles/alpha-custom.json`
+      '~/.pi/agent/profiles/alpha-custom.json'
     );
 
-    // 2. Querying projectWorkspace returns the project profile
+    // 2. Querying projectWorkspace returns the profile with global scope
     const alphaPayload = await getSddProfilesPi(projectWorkspace);
     const alphaProfile = alphaPayload.profiles.find((p) => p.name === 'alpha-custom');
     assert.ok(alphaProfile);
-    assert.strictEqual(alphaProfile.scope, 'project');
+    assert.strictEqual(alphaProfile.scope, 'global');
 
     // Saved profiles model_profiles alone are legacy references and MUST NOT make an agent appear installed
     assert.strictEqual(alphaPayload.categories.length, 0);
@@ -282,18 +281,29 @@ test('bridge: saveSddProfilePi persists project-scoped profile without altering 
     // The profile still cleanly retains its overrides for lossless roundtrip
     assert.strictEqual(alphaProfile.agent_count, 2);
 
-    // 3. Querying otherWorkspace does NOT contain the project profile (isolation)
+    // 3. Since profiles are global, otherWorkspace also sees the profile definition
     const betaPayload = await getSddProfilesPi(otherWorkspace);
     const betaHasAlpha = betaPayload.profiles.some((p) => p.name === 'alpha-custom');
-    assert.strictEqual(betaHasAlpha, false);
+    assert.strictEqual(betaHasAlpha, true);
 
-    // 4. Verify stored mock profiles in localStorage only contains the project profile
-    const rawStored = JSON.parse(fakeStorage.getItem(MOCK_SDD_PROFILES_STORAGE_KEY) || '[]');
-    assert.strictEqual(rawStored.length, 1);
-    assert.strictEqual(rawStored[0].scope, 'project');
-    assert.strictEqual(rawStored[0].cwd, projectWorkspace);
+    // 4. Activate profile exclusively for projectWorkspace
+    await setActiveSddProfilePi({
+      cwd: projectWorkspace,
+      scope: 'project',
+      name: 'alpha-custom',
+    });
 
-    // 5. Saving a global profile makes it visible across all workspaces
+    const activeAlpha = await getSddProfilesPi(projectWorkspace);
+    assert.strictEqual(activeAlpha.projectActiveProfile, 'alpha-custom');
+    assert.strictEqual(activeAlpha.effectiveActiveProfile, 'alpha-custom');
+    assert.strictEqual(activeAlpha.effectiveScope, 'project');
+
+    // In otherWorkspace, it is not active
+    const activeBeta = await getSddProfilesPi(otherWorkspace);
+    assert.strictEqual(activeBeta.projectActiveProfile, null);
+    assert.strictEqual(activeBeta.effectiveActiveProfile, null);
+
+    // 5. Saving a global corporate profile
     const globalProfile: Profile = {
       name: 'global-corporate',
       description: 'Corporate global standards',
@@ -318,10 +328,6 @@ test('bridge: saveSddProfilePi persists project-scoped profile without altering 
     assert.ok(checkAlpha.profiles.some((p) => p.name === 'global-corporate'));
     assert.ok(checkBeta.profiles.some((p) => p.name === 'global-corporate'));
     assert.ok(checkGlobal.profiles.some((p) => p.name === 'global-corporate'));
-
-    // project-alpha still has both, project-beta still does not have alpha-custom
-    assert.ok(checkAlpha.profiles.some((p) => p.name === 'alpha-custom'));
-    assert.strictEqual(checkBeta.profiles.some((p) => p.name === 'alpha-custom'), false);
   } finally {
     delete (globalThis as any).window;
     delete (globalThis as any).localStorage;

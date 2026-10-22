@@ -3,34 +3,22 @@ import type { ProfileCardProps } from '../types';
 
 export const ProfileCard: React.FC<ProfileCardProps> = ({
   profile,
-  isActive,
+  isActive: _isActive,
   effectiveScope: _effectiveScope,
-  cwd,
-  isActivating = false,
+  cwd: _cwd,
+  isActivating: _isActivating = false,
   isDeleting = false,
-  onActivate,
-  onClearActive,
+  onActivate: _onActivate,
+  onClearActive: _onClearActive,
   onEdit,
   onDuplicate,
   onDelete,
 }) => {
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
-  const scopeLabel =
-    profile.scope === 'project'
-      ? 'Proyecto'
-      : 'Global';
-
-  const activeBadgeLabel =
-    profile.active_scope === 'project'
-      ? 'Activo (Proyecto)'
-      : profile.active_scope === 'global'
-        ? 'Activo (Global)'
-        : 'Activo';
-
   return (
     <article
-      className={`profile-card ${isActive ? 'profile-card-active' : ''}`}
+      className="profile-card"
       aria-label={`Perfil ${profile.name}`}
     >
       <div className="profile-card-header">
@@ -39,23 +27,6 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
             <h3 className="profile-card-name" title={profile.name}>
               {profile.name}
             </h3>
-            <div className="profile-card-badges">
-              <span
-                className={`profile-badge profile-badge-scope profile-badge-${profile.scope}`}
-                title={`Ámbito: ${scopeLabel}`}
-              >
-                {scopeLabel}
-              </span>
-              {isActive && (
-                <span
-                  className="profile-badge profile-badge-status-active"
-                  title={activeBadgeLabel}
-                >
-                  <span className="profile-status-dot" aria-hidden="true" />
-                  {activeBadgeLabel}
-                </span>
-              )}
-            </div>
           </div>
 
           <p className="profile-card-desc">
@@ -133,66 +104,12 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
 
       {/* Card Actions */}
       <div className="profile-card-actions">
-        <div className="profile-activate-buttons">
-          {isActive ? (
-            profile.active_scope === 'project' && onClearActive ? (
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm profile-clear-active-btn"
-                onClick={() => onClearActive('project')}
-                title="Quitar asignación específica del proyecto para heredar el perfil global"
-              >
-                Restablecer a global
-              </button>
-            ) : (
-              <span className="profile-current-active-tag">
-                ✓ Activo actualmente
-              </span>
-            )
-          ) : (
-            <>
-              {cwd ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm profile-btn-activate"
-                    onClick={() => onActivate(profile, 'project')}
-                    disabled={isActivating || isDeleting}
-                    title="Activar este perfil exclusivamente para este proyecto"
-                  >
-                    Activar (Proyecto)
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm profile-btn-activate-global"
-                    onClick={() => onActivate(profile, 'global')}
-                    disabled={isActivating || isDeleting}
-                    title="Activar este perfil como predeterminado global"
-                  >
-                    Activar (Global)
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm profile-btn-activate"
-                  onClick={() => onActivate(profile, 'global')}
-                  disabled={isActivating || isDeleting}
-                  title="Activar este perfil globalmente"
-                >
-                  Activar
-                </button>
-              )}
-            </>
-          )}
-        </div>
-
         <div className="profile-standard-actions">
           <button
             type="button"
             className="btn btn-secondary btn-sm profile-action-btn"
             onClick={() => onEdit(profile)}
-            disabled={isActivating || isDeleting}
+            disabled={isDeleting}
             title="Editar perfil"
           >
             Editar
@@ -202,7 +119,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
             type="button"
             className="btn btn-secondary btn-sm profile-action-btn"
             onClick={() => onDuplicate(profile)}
-            disabled={isActivating || isDeleting}
+            disabled={isDeleting}
             title="Crear una copia editable de este perfil"
           >
             Duplicar
@@ -235,7 +152,7 @@ export const ProfileCard: React.FC<ProfileCardProps> = ({
               type="button"
               className="btn btn-danger btn-sm profile-action-btn profile-delete-btn"
               onClick={() => setIsConfirmingDelete(true)}
-              disabled={isActivating || isDeleting}
+              disabled={isDeleting}
               title="Eliminar perfil"
             >
               Eliminar

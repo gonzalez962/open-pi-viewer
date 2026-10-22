@@ -396,7 +396,7 @@ export function resolveEffectiveProfile(
     const matched = profiles.find((p) => sanitizeProfileName(p.name) === cleanProj);
     return {
       name: projectActive!.trim(),
-      scope: (matched?.scope as 'project' | 'global') ?? 'project',
+      scope: 'project',
       isFallback: false,
       profile: matched ?? null,
     };
@@ -406,7 +406,7 @@ export function resolveEffectiveProfile(
     const matched = profiles.find((p) => sanitizeProfileName(p.name) === cleanGlob);
     return {
       name: globalActive!.trim(),
-      scope: (matched?.scope as 'project' | 'global') ?? 'global',
+      scope: 'global',
       isFallback: true,
       profile: matched ?? null,
     };

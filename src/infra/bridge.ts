@@ -2334,40 +2334,18 @@ export async function getSddProfilesPi(
         ? storage.getItem(`${MOCK_SDD_PROJECT_ACTIVE_PROFILE_PREFIX}${cwd}`) || null
         : null;
 
-    // Global custom profiles
-    const globalSummaries: ProfileSummary[] = storedCustom
-      .filter((p) => p.scope !== 'project')
-      .map((p) => ({
-        name: p.name,
-        description: p.description,
-        default_model: p.default_model,
-        default_effort: p.default_effort,
-        agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
-        scope: 'global',
-        is_active: false,
-        path: p.path || `~/.pi/agent/profiles/${sanitizeProfileName(p.name)}.json`,
-        model_profiles: p.model_profiles,
-      }));
-
-    // Project custom profiles (if cwd matches)
-    const projectSummaries: ProfileSummary[] = storedCustom
-      .filter((p) => p.scope === 'project' && (!cwd || !p.cwd || p.cwd === cwd))
-      .map((p) => ({
-        name: p.name,
-        description: p.description,
-        default_model: p.default_model,
-        default_effort: p.default_effort,
-        agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
-        scope: 'project',
-        is_active: false,
-        path: p.path || `${cwd || '.'}/.pi/profiles/${sanitizeProfileName(p.name)}.json`,
-        model_profiles: p.model_profiles,
-      }));
-
-    const allSummaries: ProfileSummary[] = [
-      ...globalSummaries,
-      ...projectSummaries,
-    ];
+    // All custom profiles are global
+    const allSummaries: ProfileSummary[] = storedCustom.map((p) => ({
+      name: p.name,
+      description: p.description,
+      default_model: p.default_model,
+      default_effort: p.default_effort,
+      agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
+      scope: 'global',
+      is_active: false,
+      path: p.path || `~/.pi/agent/profiles/${sanitizeProfileName(p.name)}.json`,
+      model_profiles: p.model_profiles,
+    }));
 
     const effective = resolveEffectiveProfile(projectActive, globalActive, allSummaries);
     const sanitizedEffective = effective.name ? sanitizeProfileName(effective.name) : null;
@@ -2375,21 +2353,9 @@ export async function getSddProfilesPi(
     // Determine active profile index
     let chosenIdx = -1;
     if (sanitizedEffective) {
-      if (projectActive) {
-        chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective && s.scope === 'project'
-        );
-      } else if (globalActive) {
-        chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective && s.scope === 'global'
-        );
-      }
-
-      if (chosenIdx === -1) {
-        chosenIdx = allSummaries.findIndex(
-          (s) => sanitizeProfileName(s.name) === sanitizedEffective
-        );
-      }
+      chosenIdx = allSummaries.findIndex(
+        (s) => sanitizeProfileName(s.name) === sanitizedEffective
+      );
     }
 
     allSummaries.forEach((s, idx) => {
@@ -2463,26 +2429,18 @@ export async function saveSddProfilePi(
       throw new Error('Profile name contains only invalid characters');
     }
 
-    const scope = payload.scope || 'global';
     const now = new Date().toISOString();
 
     const stored = getStoredMockProfiles(storage);
     const existingIdx = stored.findIndex(
-      (p) =>
-        sanitizeProfileName(p.name) === sanitized &&
-        p.scope === scope &&
-        (scope !== 'project' || p.cwd === payload.cwd)
+      (p) => sanitizeProfileName(p.name) === sanitized
     );
 
     const savedProfile: StoredMockProfile = {
       ...payload.profile,
       name,
-      scope,
-      cwd: scope === 'project' ? payload.cwd : undefined,
-      path:
-        scope === 'project'
-          ? `${payload.cwd || '.'}/.pi/profiles/${sanitized}.json`
-          : `~/.pi/agent/profiles/${sanitized}.json`,
+      scope: 'global',
+      path: `~/.pi/agent/profiles/${sanitized}.json`,
       created_at:
         existingIdx !== -1 && stored[existingIdx].created_at
           ? stored[existingIdx].created_at
@@ -2541,18 +2499,9 @@ export async function deleteSddProfilePi(
     const sanitized = sanitizeProfileName(trimmed);
 
     const stored = getStoredMockProfiles(storage);
-    const scope = payload.scope || 'global';
 
     const index = stored.findIndex((p) => {
-      const matchName = sanitizeProfileName(p.name) === sanitized || p.name === trimmed;
-      if (!matchName) return false;
-      if (payload.scope) {
-        if (p.scope !== payload.scope) return false;
-      }
-      if (p.scope === 'project' && payload.cwd) {
-        return p.cwd === payload.cwd;
-      }
-      return true;
+      return sanitizeProfileName(p.name) === sanitized || p.name === trimmed;
     });
 
     if (index === -1) {
@@ -2564,17 +2513,16 @@ export async function deleteSddProfilePi(
       storage.setItem(MOCK_SDD_PROFILES_STORAGE_KEY, JSON.stringify(stored));
 
       // Clear active profile if it matched
-      if (scope === 'project' && payload.cwd) {
+      if (payload.cwd) {
         const key = `${MOCK_SDD_PROJECT_ACTIVE_PROFILE_PREFIX}${payload.cwd}`;
         const current = storage.getItem(key);
         if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
           storage.removeItem(key);
         }
-      } else {
-        const current = storage.getItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
-        if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
-          storage.removeItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
-        }
+      }
+      const current = storage.getItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
+      if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
+        storage.removeItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
       }
     }
 
@@ -2614,18 +2562,11 @@ export async function setActiveSddProfilePi(
       const storedCustom = getStoredMockProfiles(storage);
       const sanitized = sanitizeProfileName(cleanName);
       const exists = storedCustom.some((p) => {
-        const matchesName =
+        return (
           p.name === cleanName ||
           sanitizeProfileName(p.name) === sanitized ||
-          p.name.toLowerCase() === cleanName.toLowerCase();
-        if (!matchesName) return false;
-        if (payload.scope === 'project') {
-          return (
-            (p.scope === 'project' && (!payload.cwd || !p.cwd || p.cwd === payload.cwd)) ||
-            p.scope === 'global'
-          );
-        }
-        return p.scope === 'global';
+          p.name.toLowerCase() === cleanName.toLowerCase()
+        );
       });
 
       if (!exists) {

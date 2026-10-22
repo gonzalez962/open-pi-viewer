@@ -120,7 +120,20 @@ export function getSddProfilesImpl(cwd?: string) {
   }
 
   let projectActive: string | null = null;
-  if (projectProfilesDir) {
+  const projectsActiveFile = path.join(profilesDir, 'projects-active.json');
+  if (fs.existsSync(projectsActiveFile) && cwd) {
+    try {
+      const map = JSON.parse(fs.readFileSync(projectsActiveFile, 'utf8'));
+      const normalizedCwd = cwd.replace(/\\/g, '/').toLowerCase();
+      for (const [k, v] of Object.entries(map)) {
+        if (k.replace(/\\/g, '/').toLowerCase() === normalizedCwd && typeof v === 'string') {
+          projectActive = v.trim();
+          break;
+        }
+      }
+    } catch {}
+  }
+  if (!projectActive && projectProfilesDir) {
     const pActiveFile = path.join(projectProfilesDir, '.active');
     if (fs.existsSync(pActiveFile)) {
       const txt = fs.readFileSync(pActiveFile, 'utf8').trim();
@@ -131,7 +144,7 @@ export function getSddProfilesImpl(cwd?: string) {
   const effectiveActive = projectActive || globalActive;
   const effectiveScope = projectActive ? 'project' : globalActive ? 'global' : null;
 
-  const profiles = rawProfiles.map(({ profile, scope, filePath }) => {
+  const profiles = rawProfiles.map(({ profile, scope: _scope, filePath }) => {
     const isAct = effectiveActive && profile.name.toLowerCase() === effectiveActive.toLowerCase();
     const modelProfiles = profile.model_profiles || {};
     const agentCount = Object.keys(modelProfiles).length;
@@ -142,7 +155,7 @@ export function getSddProfilesImpl(cwd?: string) {
       default_model: profile.default_model || '',
       default_effort: profile.default_effort || 'high',
       agent_count: agentCount,
-      scope,
+      scope: 'global' as const,
       is_active: Boolean(isAct),
       active_scope: isAct ? effectiveScope : undefined,
       path: filePath,
@@ -220,41 +233,36 @@ export function getSddProfilesImpl(cwd?: string) {
 }
 
 export function setActiveSddProfileImpl(name: string | null, scope: 'project' | 'global' = 'global', cwd?: string) {
-  const dir = scope === 'project' && cwd ? path.join(cwd, '.pi', 'profiles') : path.join(PI_AGENT_DIR, 'profiles');
-  fs.mkdirSync(dir, { recursive: true });
-  const activeFile = path.join(dir, '.active');
+  const globalProfilesDir = path.join(PI_AGENT_DIR, 'profiles');
+  fs.mkdirSync(globalProfilesDir, { recursive: true });
 
+  if (scope === 'project') {
+    const mapFile = path.join(globalProfilesDir, 'projects-active.json');
+    let map: Record<string, string> = {};
+    if (fs.existsSync(mapFile)) {
+      try {
+        map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
+      } catch {}
+    }
+    const cleanCwd = cwd || getActiveCwd();
+    if (!name) {
+      delete map[cleanCwd];
+      fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
+      return { success: true, message: 'Project active profile cleared' };
+    }
+    map[cleanCwd] = name.trim();
+    fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
+    return { success: true, message: `Profile '${name}' activated for project` };
+  }
+
+  const activeFile = path.join(globalProfilesDir, '.active');
   if (!name) {
     if (fs.existsSync(activeFile)) fs.unlinkSync(activeFile);
-    return { success: true, message: 'Active profile cleared' };
+    return { success: true, message: 'Global active profile cleared' };
   }
 
   fs.writeFileSync(activeFile, name.trim() + '\n', 'utf8');
-
-  const profileFile = path.join(dir, `${slugify(name)}.json`);
-  let profileData: any = null;
-  if (fs.existsSync(profileFile)) {
-    profileData = JSON.parse(fs.readFileSync(profileFile, 'utf8'));
-  } else {
-    const gFile = path.join(PI_AGENT_DIR, 'profiles', `${slugify(name)}.json`);
-    if (fs.existsSync(gFile)) {
-      profileData = JSON.parse(fs.readFileSync(gFile, 'utf8'));
-    }
-  }
-
-  if (profileData && profileData.model_profiles) {
-    const subagentsPath = scope === 'project' && cwd ? path.join(cwd, '.pi', 'subagents.json') : path.join(PI_AGENT_DIR, 'subagents.json');
-    let subagentsObj: any = {};
-    if (fs.existsSync(subagentsPath)) {
-      try {
-        subagentsObj = JSON.parse(fs.readFileSync(subagentsPath, 'utf8'));
-      } catch {}
-    }
-    subagentsObj.model_profiles = profileData.model_profiles;
-    fs.writeFileSync(subagentsPath, JSON.stringify(subagentsObj, null, 2) + '\n', 'utf8');
-  }
-
-  return { success: true, message: `Profile '${name}' activated successfully` };
+  return { success: true, message: `Profile '${name}' activated globally` };
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +371,7 @@ export function handleSaveSddProfile(args: any = {}) {
   if (!profile || !profile.name) {
     throw new Error('Profile name is required');
   }
-  const dir = args.scope === 'project' ? path.join(args.cwd || getActiveCwd(), '.pi', 'profiles') : path.join(PI_AGENT_DIR, 'profiles');
+  const dir = path.join(PI_AGENT_DIR, 'profiles');
   fs.mkdirSync(dir, { recursive: true });
   const profilePath = path.join(dir, `${slugify(profile.name)}.json`);
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2) + '\n', 'utf8');
@@ -372,12 +380,22 @@ export function handleSaveSddProfile(args: any = {}) {
 
 export function handleDeleteSddProfile(args: any = {}) {
   const name = args.name;
-  const dir = args.scope === 'project' ? path.join(args.cwd || getActiveCwd(), '.pi', 'profiles') : path.join(PI_AGENT_DIR, 'profiles');
+  const dir = path.join(PI_AGENT_DIR, 'profiles');
   const profilePath = path.join(dir, `${slugify(name)}.json`);
   if (fs.existsSync(profilePath)) fs.unlinkSync(profilePath);
   const actFile = path.join(dir, '.active');
   if (fs.existsSync(actFile) && fs.readFileSync(actFile, 'utf8').trim() === name) {
     fs.unlinkSync(actFile);
+  }
+  const mapFile = path.join(dir, 'projects-active.json');
+  if (fs.existsSync(mapFile)) {
+    try {
+      const map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
+      for (const k of Object.keys(map)) {
+        if (map[k] === name) delete map[k];
+      }
+      fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
+    } catch {}
   }
   return { success: true, message: `Profile '${name}' deleted` };
 }

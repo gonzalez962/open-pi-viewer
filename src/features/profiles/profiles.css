@@ -470,24 +470,11 @@
 /* Card Actions */
 .profile-card-actions {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
   border-top: 1px solid var(--border-subtle);
   padding-top: 12px;
   margin-top: auto;
-}
-
-.profile-activate-buttons {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.profile-current-active-tag {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--status-green);
-  padding: 4px 0;
 }
 
 .profile-standard-actions {
@@ -495,6 +482,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  width: 100%;
 }
 
 .profile-delete-confirm-group {

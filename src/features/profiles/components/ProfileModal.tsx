@@ -38,7 +38,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
   categories,
   agentMeta,
   modelThinkingLevels: modelThinkingLevelsProp,
-  cwd,
+  cwd: _cwd,
   onClose,
   onChangeField,
   onChangeAgentModel,
@@ -370,56 +370,6 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     onChange={(e) => onChangeField('description', e.target.value)}
                     disabled={isSaving}
                   />
-                </div>
-
-                <div className="profile-form-group profile-col-span-2">
-                  <span className="profile-form-label">Ámbito de guardado</span>
-                  <div className="profile-scope-radio-grid">
-                    <label
-                      className={`profile-scope-card ${
-                        formData.scope === 'global' ? 'selected' : ''
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="profile-scope"
-                        value="global"
-                        checked={formData.scope === 'global'}
-                        onChange={() => onChangeField('scope', 'global')}
-                        disabled={isSaving}
-                      />
-                      <div className="profile-scope-card-content">
-                        <span className="profile-scope-card-title">Global (~/.pi/agent/profiles/)</span>
-                        <span className="profile-scope-card-desc">
-                          Disponible en todos tus proyectos y sesiones.
-                        </span>
-                      </div>
-                    </label>
-
-                    <label
-                      className={`profile-scope-card ${
-                        formData.scope === 'project' ? 'selected' : ''
-                      } ${!cwd ? 'disabled' : ''}`}
-                      title={!cwd ? 'Requiere un proyecto abierto' : undefined}
-                    >
-                      <input
-                        type="radio"
-                        name="profile-scope"
-                        value="project"
-                        checked={formData.scope === 'project'}
-                        onChange={() => onChangeField('scope', 'project')}
-                        disabled={isSaving || !cwd}
-                      />
-                      <div className="profile-scope-card-content">
-                        <span className="profile-scope-card-title">Proyecto actual (.pi/profiles/)</span>
-                        <span className="profile-scope-card-desc">
-                          {cwd
-                            ? 'Exclusivo para este repositorio de trabajo.'
-                            : 'Requiere tener un proyecto activo seleccionado.'}
-                        </span>
-                      </div>
-                    </label>
-                  </div>
                 </div>
               </div>
             </fieldset>

@@ -3984,6 +3984,98 @@ pub fn is_synthetic_agent_key(key: &str) -> bool {
 
 
 
+fn normalize_cwd_key(path: &Path) -> String {
+    let clean = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    clean.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+/// Reads the active profile for a specific project cwd from the global `projects-active.json` file.
+pub fn read_project_active_from_global(global_agent_dir: Option<&Path>, cwd: &Path) -> Option<String> {
+    let global_profiles = global_agent_dir?.join("profiles");
+    let map_file = global_profiles.join("projects-active.json");
+    if map_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&map_file) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(obj) = val.as_object() {
+                    let key = normalize_cwd_key(cwd);
+                    let raw_key = cwd.to_string_lossy().to_string();
+                    if let Some(prof_name) = obj.get(&key).or_else(|| obj.get(&raw_key)).and_then(|v| v.as_str()) {
+                        let trimmed = prof_name.trim();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Sets or clears the active profile for a specific project cwd in the global `projects-active.json` file.
+pub fn set_project_active_sdd_profile_in_global(
+    global_profiles_dir: &Path,
+    cwd_str: &str,
+    name: Option<&str>,
+) -> Result<Value, String> {
+    let clean_name = name.map(|n| n.trim()).filter(|n| !n.is_empty());
+    let map_file = global_profiles_dir.join("projects-active.json");
+    let key = normalize_cwd_key(Path::new(cwd_str));
+
+    match clean_name {
+        None => {
+            if map_file.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&map_file) {
+                    if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                        if let Some(obj) = val.as_object_mut() {
+                            obj.remove(&key);
+                            obj.remove(cwd_str);
+                            let _ = atomic_write_json(&map_file, &val);
+                        }
+                    }
+                }
+            }
+            Ok(serde_json::json!({
+                "success": true,
+                "message": "Project active profile cleared"
+            }))
+        }
+        Some(n) => {
+            let found_profile = find_profile_by_name(global_profiles_dir, n);
+            if found_profile.is_none() {
+                return Ok(serde_json::json!({
+                    "success": false,
+                    "message": format!("Profile '{}' not found", n)
+                }));
+            }
+
+            std::fs::create_dir_all(global_profiles_dir)
+                .map_err(|e| format!("Failed to create global profiles directory: {}", e))?;
+
+            let mut map_val = if map_file.is_file() {
+                std::fs::read_to_string(&map_file)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<Value>(&c).ok())
+                    .filter(|v| v.is_object())
+                    .unwrap_or_else(|| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+
+            if let Some(obj) = map_val.as_object_mut() {
+                obj.insert(key, Value::String(n.to_string()));
+            }
+
+            atomic_write_json(&map_file, &map_val)?;
+
+            Ok(serde_json::json!({
+                "success": true,
+                "message": format!("Active profile set to '{}'", n)
+            }))
+        }
+    }
+}
+
 /// Reads the trimmed string from an `.active` profile pointer file if present and non-empty.
 pub fn read_active_file(path: &Path) -> Option<String> {
     if path.is_file() {
@@ -4567,31 +4659,16 @@ pub fn discover_sdd_profiles_impl(
 
     // 3. Read .active files
     let global_active = global_agent_dir.and_then(|d| read_active_file(&d.join("profiles").join(".active")));
-    let project_active = cwd.and_then(|c| read_active_file(&c.join(".pi").join("profiles").join(".active")));
+    let project_active = cwd.and_then(|c| {
+        read_project_active_from_global(global_agent_dir, c)
+            .or_else(|| read_active_file(&c.join(".pi").join("profiles").join(".active")))
+    });
 
     // 4. Effective active profile and scope
     let (effective_active, effective_scope): (Option<String>, Option<String>) = if let Some(ref pa) = project_active {
-        let clean_pa = sanitize_profile_name(pa);
-        let scope = raw_profiles
-            .iter()
-            .find(|(p, _, _)| {
-                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                sanitize_profile_name(name) == clean_pa
-            })
-            .map(|(_, sc, _)| *sc)
-            .unwrap_or("project");
-        (Some(pa.clone()), Some(scope.to_string()))
+        (Some(pa.clone()), Some("project".to_string()))
     } else if let Some(ref ga) = global_active {
-        let clean_ga = sanitize_profile_name(ga);
-        let scope = raw_profiles
-            .iter()
-            .find(|(p, _, _)| {
-                let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                sanitize_profile_name(name) == clean_ga
-            })
-            .map(|(_, sc, _)| *sc)
-            .unwrap_or("global");
-        (Some(ga.clone()), Some(scope.to_string()))
+        (Some(ga.clone()), Some("global".to_string()))
     } else {
         (None, None)
     };
@@ -4827,11 +4904,11 @@ pub async fn get_sdd_profiles(cwd: Option<String>) -> Result<Value, String> {
     discover_sdd_profiles_impl(global_agent_dir.as_deref(), valid_cwd)
 }
 
-/// Tauri command to save or update an SDD profile.
+/// Tauri command to save or update an SDD profile (all profiles are stored globally).
 #[tauri::command]
 pub async fn save_sdd_profile(
-    cwd: Option<String>,
-    scope: Option<String>,
+    _cwd: Option<String>,
+    _scope: Option<String>,
     mut profile: Value,
 ) -> Result<Value, String> {
     let name_str = profile.get("name").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).unwrap_or_default();
@@ -4843,26 +4920,8 @@ pub async fn save_sdd_profile(
         return Err("Profile name contains only invalid characters".to_string());
     }
 
-    let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let target_dir = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            resolve_project_profiles_dir(Path::new(cwd_str))
-        }
-        Some("global") => {
-            resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                resolve_project_profiles_dir(Path::new(cwd_str))
-            } else {
-                resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-            }
-        }
-    };
+    let target_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
 
     std::fs::create_dir_all(&target_dir)
         .map_err(|e| format!("Failed to create profiles directory {}: {}", target_dir.display(), e))?;
@@ -4893,8 +4952,8 @@ pub async fn save_sdd_profile(
 /// Tauri command to delete an SDD profile file and clear .active if it points to it.
 #[tauri::command]
 pub async fn delete_sdd_profile(
-    cwd: Option<String>,
-    scope: Option<String>,
+    _cwd: Option<String>,
+    _scope: Option<String>,
     name: String,
 ) -> Result<Value, String> {
     let trimmed_name = name.trim();
@@ -4903,33 +4962,8 @@ pub async fn delete_sdd_profile(
     }
     let sanitized_name = sanitize_profile_name(trimmed_name);
 
-    let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let target_dir = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            resolve_project_profiles_dir(Path::new(cwd_str))
-        }
-        Some("global") => {
-            resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                let proj_dir = resolve_project_profiles_dir(Path::new(cwd_str));
-                if proj_dir.join(format!("{}.json", sanitized_name)).is_file() || proj_dir.join(format!("{}.json", trimmed_name)).is_file() {
-                    proj_dir
-                } else if let Some(g) = resolve_global_profiles_dir() {
-                    g
-                } else {
-                    proj_dir
-                }
-            } else {
-                resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?
-            }
-        }
-    };
+    let target_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
 
     let file_to_delete = if target_dir.join(format!("{}.json", sanitized_name)).is_file() {
         Some(target_dir.join(format!("{}.json", sanitized_name)))
@@ -4951,6 +4985,22 @@ pub async fn delete_sdd_profile(
     if let Some(active_name) = read_active_file(&active_file) {
         if sanitize_profile_name(&active_name) == sanitized_name || active_name == trimmed_name {
             let _ = std::fs::remove_file(&active_file);
+        }
+    }
+
+    // Clear from projects-active.json if any project points to this profile
+    let map_file = target_dir.join("projects-active.json");
+    if map_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&map_file) {
+            if let Ok(mut val) = serde_json::from_str::<Value>(&content) {
+                if let Some(obj) = val.as_object_mut() {
+                    obj.retain(|_, v| {
+                        let prof_str = v.as_str().unwrap_or("");
+                        sanitize_profile_name(prof_str) != sanitized_name && prof_str != trimmed_name
+                    });
+                    let _ = atomic_write_json(&map_file, &val);
+                }
+            }
         }
     }
 
@@ -5042,42 +5092,25 @@ pub async fn set_active_sdd_profile(
     name: Option<String>,
 ) -> Result<Value, String> {
     let requested_scope = scope.as_deref().map(|s| s.trim().to_lowercase());
-    let (target_profiles_dir, target_subagents_file, is_project) = match requested_scope.as_deref() {
-        Some("project") => {
-            let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
-                .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
-            let cwd_path = Path::new(cwd_str);
-            (resolve_project_profiles_dir(cwd_path), resolve_project_subagents_path(cwd_path), true)
-        }
-        Some("global") => {
-            let p_dir = resolve_global_profiles_dir()
-                .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
-            let s_file = resolve_global_subagents_path()
-                .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
-            (p_dir, s_file, false)
-        }
-        _ => {
-            if let Some(cwd_str) = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                let cwd_path = Path::new(cwd_str);
-                (resolve_project_profiles_dir(cwd_path), resolve_project_subagents_path(cwd_path), true)
-            } else {
-                let p_dir = resolve_global_profiles_dir()
-                    .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
-                let s_file = resolve_global_subagents_path()
-                    .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
-                (p_dir, s_file, false)
-            }
-        }
-    };
+    let is_project = matches!(requested_scope.as_deref(), Some("project"));
+    let global_profiles_dir = resolve_global_profiles_dir()
+        .ok_or_else(|| "Could not resolve global profiles directory".to_string())?;
 
-    let global_profiles_dir = resolve_global_profiles_dir();
-    set_active_sdd_profile_with_dirs(
-        &target_profiles_dir,
-        &target_subagents_file,
-        global_profiles_dir.as_deref(),
-        name.as_deref(),
-        is_project,
-    )
+    if is_project {
+        let cwd_str = cwd.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty())
+            .ok_or_else(|| "Project scope requested, but no valid cwd provided".to_string())?;
+        set_project_active_sdd_profile_in_global(&global_profiles_dir, cwd_str, name.as_deref())
+    } else {
+        let global_subagents_file = resolve_global_subagents_path()
+            .ok_or_else(|| "Could not resolve global subagents path".to_string())?;
+        set_active_sdd_profile_with_dirs(
+            &global_profiles_dir,
+            &global_subagents_file,
+            Some(&global_profiles_dir),
+            name.as_deref(),
+            false,
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -9245,8 +9278,10 @@ mod tests {
     }
 
     static CRUD_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static SDD_CRUD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn run_sdd_profiles_crud_and_isolation() {
+        let _lock = SDD_CRUD_LOCK.lock().await;
         let count = CRUD_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let temp_dir = std::env::temp_dir().join(format!("test_sdd_crud_{}_{}", std::process::id(), count));
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -9289,12 +9324,11 @@ mod tests {
         ).await.unwrap();
         assert_eq!(save_res["success"], true);
 
-        // 3. Query profiles: should list project-custom with agent_count 1,
-        // but saved profile overrides alone MUST NOT make an agent appear installed in categories
+        // 3. Query profiles: should list project-custom with agent_count 1 and global scope
         let queried = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
         let profiles = queried["profiles"].as_array().unwrap();
         let custom_summary = profiles.iter().find(|p| p["name"] == "project-custom").unwrap();
-        assert_eq!(custom_summary["scope"], "project");
+        assert_eq!(custom_summary["scope"], "global");
         assert_eq!(custom_summary["agent_count"], 1);
 
         let categories = queried["categories"].as_array().unwrap();
@@ -9314,28 +9348,17 @@ mod tests {
         ).await.unwrap();
         assert_eq!(act_res["success"], true);
 
-        // Verify .pi/subagents.json was updated with project-custom settings
+        // Verify NO files are written into project directory (<cwd>/.pi/)
+        let proj_active_file = cwd.join(".pi").join("profiles").join(".active");
         let proj_subagents = cwd.join(".pi").join("subagents.json");
-        assert!(proj_subagents.is_file());
-        let subagents_val: Value = serde_json::from_str(&std::fs::read_to_string(&proj_subagents).unwrap()).unwrap();
-        assert_eq!(subagents_val["active_profile"], "project-custom");
-        assert_eq!(subagents_val["default_model"], "test/model-1");
+        assert!(!proj_active_file.exists(), "Project .active must not be written to project directory");
+        assert!(!proj_subagents.exists(), "Project subagents.json must not be written to project directory");
 
         // 5. Query profiles: effective profile is project-custom with project scope
         let active_query = get_sdd_profiles(Some(cwd_str.clone())).await.unwrap();
         assert_eq!(active_query["effectiveActiveProfile"], "project-custom");
         assert_eq!(active_query["effectiveScope"], "project");
         assert_eq!(active_query["projectActiveProfile"], "project-custom");
-
-        // Configured agents in subagents.json are discovered as runtime agents
-        let active_cats = active_query["categories"].as_array().unwrap();
-        let configured_found = active_cats.iter().any(|c| {
-            c.get("agents")
-                .and_then(|a| a.as_array())
-                .map(|arr| arr.iter().any(|v| v == "my-custom-subagent"))
-                .unwrap_or(false)
-        });
-        assert!(configured_found, "Configured subagents.json agent should be discovered");
 
         // 6. Clear project active profile -> should fall back to None
         let clear_res = set_active_sdd_profile(
