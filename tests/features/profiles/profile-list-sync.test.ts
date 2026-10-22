@@ -8,17 +8,22 @@ const source = fs.readFileSync(new URL('../../../src/features/profiles/hooks/use
 const file = ts.createSourceFile('useProfiles.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 function expressions() {
   let save: ts.Expression | undefined;
+  let del: ts.Expression | undefined;
   const effects: ts.Expression[] = [];
   function visit(node: ts.Node) {
     if (ts.isVariableDeclaration(node) && node.name.getText(file) === 'handleSaveProfile') {
       save = (node.initializer as ts.CallExpression).arguments[0];
+    }
+    if (ts.isVariableDeclaration(node) && node.name.getText(file) === 'handleDeleteProfile') {
+      del = (node.initializer as ts.CallExpression).arguments[0];
     }
     if (ts.isCallExpression(node) && node.expression.getText(file) === 'useEffect') effects.push(node.arguments[0]);
     ts.forEachChild(node, visit);
   }
   visit(file);
   assert.ok(save);
-  return { save, effects };
+  assert.ok(del);
+  return { save, del, effects };
 }
 function compile(expression: ts.Expression, scope: Record<string, unknown>) {
   const js = ts.transpileModule(`const callback = ${expression.getText(file)};`, {
@@ -79,4 +84,52 @@ test('rejected profile saves leave both lists unchanged and emit no notification
   assert.deepEqual(f.otherList, []);
   assert.deepEqual(f.notifications, []);
   f.cleanups.forEach((cleanup) => cleanup());
+});
+
+test('deleting a profile dispatches change event and refreshes other mounted profile lists', async () => {
+  const target = new EventTarget();
+  let stored = ['profile-a', 'profile-b'];
+  let otherList = [...stored];
+  let localList = [...stored];
+  const notifications: string[] = [];
+  const window = {
+    addEventListener: target.addEventListener.bind(target),
+    removeEventListener: target.removeEventListener.bind(target),
+    dispatchEvent: (event: Event) => { notifications.push(event.type); return target.dispatchEvent(event); },
+  };
+  const eventName = 'pi:profiles-changed';
+  const { del, effects } = expressions();
+  const cleanups: Array<() => void> = [];
+
+  for (const effect of effects.filter((node) => node.getText(file).includes('addEventListener'))) {
+    const cleanup = compile(effect, {
+      window, PROFILE_LIST_CHANGED_EVENT: eventName,
+      refreshProfiles: async () => { otherList = [...stored]; },
+    })();
+    if (typeof cleanup === 'function') cleanups.push(cleanup);
+  }
+
+  const runDelete = compile(del!, {
+    setIsDeleting: () => {},
+    setDeletingName: () => {},
+    setError: () => {},
+    setSuccessNotice: () => {},
+    setProfiles: (fn: (prev: any[]) => any[]) => { localList = fn(localList.map((n) => ({ name: n }))).map((p: any) => p.name); },
+    deleteSddProfilePi: async () => {
+      stored = stored.filter((n) => n !== 'profile-a');
+      return { success: true, message: 'Deleted' };
+    },
+    refreshProfiles: async () => {},
+    window,
+    Event,
+    PROFILE_LIST_CHANGED_EVENT: eventName,
+    cwd: '/project',
+  });
+
+  await runDelete({ name: 'profile-a', scope: 'global' });
+
+  assert.deepEqual(localList, ['profile-b']);
+  assert.deepEqual(otherList, ['profile-b']);
+  assert.deepEqual(notifications, ['pi:profiles-changed']);
+  cleanups.forEach((cleanup) => cleanup());
 });

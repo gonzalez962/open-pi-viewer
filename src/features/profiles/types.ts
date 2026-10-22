@@ -25,6 +25,7 @@ export type {
 };
 
 export interface ProfileFormData {
+  id?: string;
   name: string;
   description: string;
   scope: 'global' | 'project';
@@ -34,6 +35,7 @@ export interface ProfileFormData {
 }
 
 export const EMPTY_PROFILE_FORM: ProfileFormData = {
+  id: undefined,
   name: '',
   description: '',
   scope: 'global',

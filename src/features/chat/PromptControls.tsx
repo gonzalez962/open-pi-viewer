@@ -633,13 +633,11 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
           <span className="control-text profile-name">
             {activeProfileName || t('prompt_controls.profiles_none_global')}
           </span>
-          <span className="profile-scope-tag">
-            {effectiveScope === 'project'
-              ? t('prompt_controls.profile_scope_project_tag')
-              : activeProfileName
-                ? t('prompt_controls.profile_scope_global_tag')
-                : t('prompt_controls.profile_scope_default_tag')}
-          </span>
+          {effectiveScope === 'project' && (
+            <span className="profile-scope-tag">
+              {t('prompt_controls.profile_scope_project_tag')}
+            </span>
+          )}
           <span className="chevron-icon" aria-hidden="true">▾</span>
         </button>
 
@@ -668,9 +666,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                 <div className="profile-option-main">
                   <span className="profile-option-name">
                     {t('prompt_controls.global_model_default')}
-                  </span>
-                  <span className="profile-badge-scope profile-badge-global">
-                    {t('prompt_controls.scope_global_badge')}
                   </span>
                 </div>
                 <div className="profile-option-meta">
@@ -704,10 +699,13 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                     </div>
                   ) : (
                     filteredProfiles.map((p) => {
-                      const isSelected = p.name === activeProfileName;
+                      const isSelected =
+                        p.is_active ||
+                        (p.id ? p.id === activeProfileName : p.name === activeProfileName) ||
+                        p.name === activeProfileName;
                       return (
                         <button
-                          key={`${p.scope}-${p.name}`}
+                          key={p.id || `${p.scope}-${p.name}`}
                           type="button"
                           className={`profile-option ${isSelected ? 'selected' : ''}`}
                           role="option"
@@ -723,11 +721,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                         >
                           <div className="profile-option-main">
                             <span className="profile-option-name">{p.name}</span>
-                            <span className={`profile-badge-scope profile-badge-${p.scope}`}>
-                              {p.scope === 'project'
-                                ? t('prompt_controls.scope_project_badge')
-                                : t('prompt_controls.scope_global_badge')}
-                            </span>
                           </div>
                           <div className="profile-option-meta">
                             {isSelected && (

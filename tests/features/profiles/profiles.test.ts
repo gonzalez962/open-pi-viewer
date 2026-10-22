@@ -263,9 +263,10 @@ test('bridge: saveSddProfilePi stores profiles globally and respects per-project
 
     assert.strictEqual(saveRes.success, true);
     assert.strictEqual(saveRes.profile?.name, 'alpha-custom');
+    assert.ok(saveRes.profile?.id);
     assert.strictEqual(
       saveRes.path,
-      '~/.pi/agent/profiles/alpha-custom.json'
+      `~/.pi/agent/profiles/${saveRes.profile?.id}.json`
     );
 
     // 2. Querying projectWorkspace returns the profile with global scope
@@ -316,9 +317,10 @@ test('bridge: saveSddProfilePi stores profiles globally and respects per-project
     });
     assert.strictEqual(globalSaveRes.success, true);
     assert.strictEqual(globalSaveRes.profile?.name, 'global-corporate');
+    assert.ok(globalSaveRes.profile?.id);
     assert.strictEqual(
       globalSaveRes.path,
-      '~/.pi/agent/profiles/global-corporate.json'
+      `~/.pi/agent/profiles/${globalSaveRes.profile?.id}.json`
     );
 
     const checkAlpha = await getSddProfilesPi(projectWorkspace);
@@ -535,6 +537,89 @@ test('bridge: deleteSddProfilePi deletes profile and clears active state if matc
       },
       /Profile 'non-existent-profile' not found/
     );
+  } finally {
+    delete (globalThis as any).window;
+    delete (globalThis as any).localStorage;
+  }
+});
+
+test('bridge: S3.1 / S1.2 / S2.1: saves new profiles with hash IDs, permits duplicate names, and supports legacy fallback', async () => {
+  const memory = new MemoryStorage();
+  (globalThis as any).window = { localStorage: memory };
+  (globalThis as any).localStorage = memory;
+
+  try {
+    // 1. Save first profile with a custom descriptive name
+    const res1 = await saveSddProfilePi({
+      profile: {
+        name: 'Mi Perfil Especial (v1)',
+        description: 'Primer perfil con este nombre',
+        default_model: 'anthropic/claude-3-7-sonnet',
+        model_profiles: {},
+      },
+    });
+
+    assert.strictEqual(res1.success, true);
+    assert.ok(res1.profile?.id);
+    assert.ok(res1.profile?.id.startsWith('prof_'));
+    assert.strictEqual(res1.profile?.id.length, 17);
+
+    // 2. Save second profile with the EXACT SAME name
+    const res2 = await saveSddProfilePi({
+      profile: {
+        name: 'Mi Perfil Especial (v1)',
+        description: 'Segundo perfil con nombre identico',
+        default_model: 'openai/o3-mini',
+        model_profiles: {},
+      },
+    });
+
+    assert.strictEqual(res2.success, true);
+    assert.ok(res2.profile?.id);
+    assert.notStrictEqual(res1.profile?.id, res2.profile?.id);
+
+    // Query profiles: both must exist independently
+    const list = await getSddProfilesPi();
+    const matching = list.profiles.filter((p) => p.name === 'Mi Perfil Especial (v1)');
+    assert.strictEqual(matching.length, 2);
+    assert.strictEqual(matching[0].id, res1.profile?.id);
+    assert.strictEqual(matching[1].id, res2.profile?.id);
+
+    // 3. Retrocompatibility: manually inject a legacy profile without an id field
+    const storedRaw = JSON.parse(memory.getItem('pi_viewer_sdd_profiles_mock') || '[]');
+    storedRaw.push({
+      name: 'legacy-fast-model',
+      description: 'Legacy profile without id',
+      default_model: 'anthropic/claude-haiku',
+      model_profiles: {},
+    });
+    memory.setItem('pi_viewer_sdd_profiles_mock', JSON.stringify(storedRaw));
+
+    const listWithLegacy = await getSddProfilesPi();
+    const legacyItem = listWithLegacy.profiles.find((p) => p.name === 'legacy-fast-model');
+    assert.ok(legacyItem);
+    assert.strictEqual(legacyItem.id, 'legacy-fast-model');
+
+    // 4. Activate by id
+    await setActiveSddProfilePi({
+      name: res2.profile!.id!,
+      scope: 'global',
+    });
+    const listActive = await getSddProfilesPi();
+    assert.strictEqual(listActive.effectiveActiveProfile, 'Mi Perfil Especial (v1)');
+    const activeItem = listActive.profiles.find((p) => p.is_active);
+    assert.strictEqual(activeItem?.id, res2.profile?.id);
+
+    // 5. Delete by id removes the exact targeted profile
+    const delRes = await deleteSddProfilePi({
+      name: res2.profile!.id!,
+    });
+    assert.strictEqual(delRes.success, true);
+
+    const afterDelete = await getSddProfilesPi();
+    assert.strictEqual(afterDelete.profiles.some((p) => p.id === res2.profile?.id), false);
+    // The other profile with the same name remains untouched!
+    assert.strictEqual(afterDelete.profiles.some((p) => p.id === res1.profile?.id), true);
   } finally {
     delete (globalThis as any).window;
     delete (globalThis as any).localStorage;
@@ -942,7 +1027,7 @@ test('ProfileModal: uses passed modelThinkingLevels map for default effort on mo
   );
 });
 
-test('ProfileModal: renders profile-agent-desc-hint when agentMeta contains descriptions', () => {
+test('ProfileModal: when creating a profile (isEditing: false), subagents categories are collapsed by default', () => {
   const catalog: ModelInfo[] = [
     {
       id: 'test/m1',
@@ -956,6 +1041,54 @@ test('ProfileModal: renders profile-agent-desc-hint when agentMeta contains desc
     React.createElement(ProfileModal, {
       isOpen: true,
       isEditing: false,
+      isSaving: false,
+      formData: EMPTY_PROFILE_FORM,
+      error: null,
+      availableModels: catalog,
+      categories: [
+        {
+          id: 'test-cat',
+          name: 'Testing Category',
+          description: 'Testing Category Description',
+          agents: ['test-agent'],
+        },
+      ],
+      agentMeta: {
+        'test-agent': {
+          id: 'test-agent',
+          name: 'test-agent',
+          description: 'Autonomous exploration agent for codebase',
+        },
+      },
+      onClose: () => {},
+      onChangeField: () => {},
+      onChangeAgentModel: () => {},
+      onRemoveAgentOverride: () => {},
+      onSave: () => {},
+    })
+  );
+
+  // Accordion header is present
+  assert.ok(html.includes('Testing Category'));
+  // But content is NOT expanded: no agents table rendered
+  assert.strictEqual(html.includes('profile-agents-table'), false);
+  assert.strictEqual(html.includes('profile-accordion-item expanded'), false);
+});
+
+test('ProfileModal: renders profile-agent-desc-hint when agentMeta contains descriptions', () => {
+  const catalog: ModelInfo[] = [
+    {
+      id: 'test/m1',
+      name: 'M1',
+      provider: 'test',
+      reasoning: false,
+    },
+  ];
+
+  const html = renderToStaticMarkup(
+    React.createElement(ProfileModal, {
+      isOpen: true,
+      isEditing: true,
       isSaving: false,
       formData: {
         ...EMPTY_PROFILE_FORM,

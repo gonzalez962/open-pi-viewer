@@ -1,9 +1,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { PI_AGENT_DIR, getActiveCwd } from './state';
+import { generateProfileId } from '../../src/core/types/profiles';
 
 export function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'general';
+}
+
+export function normalizeCwdKey(dir: string): string {
+  try {
+    return path.resolve(dir).replace(/\\/g, '/').toLowerCase();
+  } catch {
+    return dir.replace(/\\/g, '/').toLowerCase();
+  }
 }
 
 /**
@@ -92,7 +101,12 @@ export function getSddProfilesImpl(cwd?: string) {
       try {
         const fullPath = path.join(profilesDir, f);
         const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        if (data && data.name) {
+        if (data && typeof data === 'object') {
+          const stem = f.replace(/\.json$/, '');
+          const id = (data.id && typeof data.id === 'string' && data.id.trim()) ? data.id.trim() : stem;
+          const name = (data.name && typeof data.name === 'string' && data.name.trim()) ? data.name.trim() : id;
+          data.id = id;
+          data.name = name;
           rawProfiles.push({ profile: data, scope: 'global', filePath: fullPath });
         }
       } catch {}
@@ -105,7 +119,12 @@ export function getSddProfilesImpl(cwd?: string) {
       try {
         const fullPath = path.join(projectProfilesDir, f);
         const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
-        if (data && data.name) {
+        if (data && typeof data === 'object') {
+          const stem = f.replace(/\.json$/, '');
+          const id = (data.id && typeof data.id === 'string' && data.id.trim()) ? data.id.trim() : stem;
+          const name = (data.name && typeof data.name === 'string' && data.name.trim()) ? data.name.trim() : id;
+          data.id = id;
+          data.name = name;
           rawProfiles.push({ profile: data, scope: 'project', filePath: fullPath });
         }
       } catch {}
@@ -124,9 +143,9 @@ export function getSddProfilesImpl(cwd?: string) {
   if (fs.existsSync(projectsActiveFile) && cwd) {
     try {
       const map = JSON.parse(fs.readFileSync(projectsActiveFile, 'utf8'));
-      const normalizedCwd = cwd.replace(/\\/g, '/').toLowerCase();
+      const normalizedCwd = normalizeCwdKey(cwd);
       for (const [k, v] of Object.entries(map)) {
-        if (k.replace(/\\/g, '/').toLowerCase() === normalizedCwd && typeof v === 'string') {
+        if (normalizeCwdKey(k) === normalizedCwd && typeof v === 'string') {
           projectActive = v.trim();
           break;
         }
@@ -145,11 +164,16 @@ export function getSddProfilesImpl(cwd?: string) {
   const effectiveScope = projectActive ? 'project' : globalActive ? 'global' : null;
 
   const profiles = rawProfiles.map(({ profile, scope: _scope, filePath }) => {
-    const isAct = effectiveActive && profile.name.toLowerCase() === effectiveActive.toLowerCase();
+    const isAct = effectiveActive && (
+      (profile.id && profile.id.toLowerCase() === effectiveActive.toLowerCase()) ||
+      (profile.name && profile.name.toLowerCase() === effectiveActive.toLowerCase()) ||
+      (slugify(profile.name) === slugify(effectiveActive))
+    );
     const modelProfiles = profile.model_profiles || {};
     const agentCount = Object.keys(modelProfiles).length;
 
     return {
+      id: profile.id,
       name: profile.name,
       description: profile.description || '',
       default_model: profile.default_model || '',
@@ -160,8 +184,13 @@ export function getSddProfilesImpl(cwd?: string) {
       active_scope: isAct ? effectiveScope : undefined,
       path: filePath,
       model_profiles: modelProfiles,
+      created_at: profile.created_at,
+      updated_at: profile.updated_at,
     };
   });
+
+  const activeProfile = profiles.find((p) => p.is_active);
+  const resolvedEffectiveActive = activeProfile ? activeProfile.name : effectiveActive;
 
   const agentMeta = discoverAgentDefinitions();
   const agentSet = new Set<string>(Object.keys(agentMeta));
@@ -224,7 +253,7 @@ export function getSddProfilesImpl(cwd?: string) {
     profiles,
     projectActiveProfile: projectActive,
     globalActiveProfile: globalActive,
-    effectiveActiveProfile: effectiveActive,
+    effectiveActiveProfile: resolvedEffectiveActive,
     effectiveScope: effectiveScope,
     categories,
     allAgents,
@@ -245,10 +274,20 @@ export function setActiveSddProfileImpl(name: string | null, scope: 'project' | 
       } catch {}
     }
     const cleanCwd = cwd || getActiveCwd();
+    const normalizedKey = normalizeCwdKey(cleanCwd);
     if (!name) {
-      delete map[cleanCwd];
+      for (const k of Object.keys(map)) {
+        if (normalizeCwdKey(k) === normalizedKey || k === cleanCwd) {
+          delete map[k];
+        }
+      }
       fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
       return { success: true, message: 'Project active profile cleared' };
+    }
+    for (const k of Object.keys(map)) {
+      if (normalizeCwdKey(k) === normalizedKey) {
+        delete map[k];
+      }
     }
     map[cleanCwd] = name.trim();
     fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
@@ -368,36 +407,127 @@ export function handleSetActiveSddProfile(args: any = {}) {
 
 export function handleSaveSddProfile(args: any = {}) {
   const profile = args.profile;
-  if (!profile || !profile.name) {
-    throw new Error('Profile name is required');
+  if (!profile || !profile.name || typeof profile.name !== 'string' || !profile.name.trim()) {
+    throw new Error('Profile name is required and cannot be empty');
   }
+  const cleanName = profile.name.trim();
   const dir = path.join(PI_AGENT_DIR, 'profiles');
   fs.mkdirSync(dir, { recursive: true });
-  const profilePath = path.join(dir, `${slugify(profile.name)}.json`);
+
+  const id = (profile.id && typeof profile.id === 'string' && profile.id.trim())
+    ? profile.id.trim()
+    : generateProfileId();
+
+  const now = new Date().toISOString();
+  profile.id = id;
+  profile.name = cleanName;
+  if (!profile.created_at) {
+    profile.created_at = now;
+  }
+  profile.updated_at = now;
+
+  const profilePath = path.join(dir, `${id}.json`);
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2) + '\n', 'utf8');
-  return { success: true, profile, path: profilePath, message: `Profile '${profile.name}' saved` };
+  return { success: true, profile, path: profilePath, message: `Profile '${cleanName}' saved` };
 }
 
 export function handleDeleteSddProfile(args: any = {}) {
-  const name = args.name;
-  const dir = path.join(PI_AGENT_DIR, 'profiles');
-  const profilePath = path.join(dir, `${slugify(name)}.json`);
-  if (fs.existsSync(profilePath)) fs.unlinkSync(profilePath);
-  const actFile = path.join(dir, '.active');
-  if (fs.existsSync(actFile) && fs.readFileSync(actFile, 'utf8').trim() === name) {
-    fs.unlinkSync(actFile);
+  const rawName = args.name || args.payload?.name || (typeof args === 'string' ? args : '');
+  if (!rawName || typeof rawName !== 'string' || !rawName.trim()) {
+    throw new Error('Profile name or ID is required');
   }
-  const mapFile = path.join(dir, 'projects-active.json');
+  const trimmed = rawName.trim().replace(/\.json$/, '');
+  const globalDir = path.join(PI_AGENT_DIR, 'profiles');
+  const searchDirs = [globalDir];
+  const cwd = args.cwd || args.payload?.cwd || getActiveCwd();
+  if (cwd) {
+    const projDir = path.join(cwd, '.pi', 'profiles');
+    if (fs.existsSync(projDir) && !searchDirs.includes(projDir)) {
+      searchDirs.push(projDir);
+    }
+  }
+
+  let deletedId: string | null = null;
+  let deletedName: string | null = null;
+  let fileToDelete: string | null = null;
+
+  for (const dir of searchDirs) {
+    const directIdPath = path.join(dir, `${trimmed}.json`);
+    const directSlugPath = path.join(dir, `${slugify(trimmed)}.json`);
+
+    if (fs.existsSync(directIdPath)) {
+      fileToDelete = directIdPath;
+      try {
+        const data = JSON.parse(fs.readFileSync(directIdPath, 'utf8'));
+        deletedId = data.id || null;
+        deletedName = data.name || null;
+      } catch {}
+      break;
+    } else if (fs.existsSync(directSlugPath)) {
+      fileToDelete = directSlugPath;
+      try {
+        const data = JSON.parse(fs.readFileSync(directSlugPath, 'utf8'));
+        deletedId = data.id || null;
+        deletedName = data.name || null;
+      } catch {}
+      break;
+    } else if (fs.existsSync(dir)) {
+      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json') && !f.startsWith('.'));
+      for (const f of files) {
+        try {
+          const fullPath = path.join(dir, f);
+          const data = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+          const stem = f.replace(/\.json$/, '');
+          if (
+            (data.id && data.id === trimmed) ||
+            (data.name && data.name === trimmed) ||
+            slugify(data.name || '') === slugify(trimmed) ||
+            stem === trimmed
+          ) {
+            fileToDelete = fullPath;
+            deletedId = data.id || null;
+            deletedName = data.name || null;
+            break;
+          }
+        } catch {}
+      }
+      if (fileToDelete) break;
+    }
+  }
+
+  if (fileToDelete && fs.existsSync(fileToDelete)) {
+    fs.unlinkSync(fileToDelete);
+  }
+
+  const targetId = deletedId || trimmed;
+  const targetName = deletedName || trimmed;
+  const targetSlug = slugify(targetName);
+
+  for (const dir of searchDirs) {
+    const actFile = path.join(dir, '.active');
+    if (fs.existsSync(actFile)) {
+      const activeVal = fs.readFileSync(actFile, 'utf8').trim();
+      if (activeVal === targetId || activeVal === targetName || slugify(activeVal) === targetSlug || activeVal === trimmed) {
+        fs.unlinkSync(actFile);
+      }
+    }
+  }
+
+  const mapFile = path.join(globalDir, 'projects-active.json');
   if (fs.existsSync(mapFile)) {
     try {
       const map = JSON.parse(fs.readFileSync(mapFile, 'utf8'));
       for (const k of Object.keys(map)) {
-        if (map[k] === name) delete map[k];
+        const val = map[k];
+        if (val === targetId || val === targetName || slugify(val) === targetSlug || val === trimmed) {
+          delete map[k];
+        }
       }
       fs.writeFileSync(mapFile, JSON.stringify(map, null, 2) + '\n', 'utf8');
     } catch {}
   }
-  return { success: true, message: `Profile '${name}' deleted` };
+
+  return { success: true, message: `Profile '${trimmed}' deleted` };
 }
 
 export function handleGetPiChains() {

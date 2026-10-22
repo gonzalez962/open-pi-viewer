@@ -74,6 +74,7 @@ import {
   resolveEffectiveProfile,
   sanitizeProfileName,
   isSyntheticAgentKey,
+  generateProfileId,
   type DiscoveredAgentMeta,
 } from '@core/types/profiles';
 import type {
@@ -2335,27 +2336,40 @@ export async function getSddProfilesPi(
         : null;
 
     // All custom profiles are global
-    const allSummaries: ProfileSummary[] = storedCustom.map((p) => ({
-      name: p.name,
-      description: p.description,
-      default_model: p.default_model,
-      default_effort: p.default_effort,
-      agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
-      scope: 'global',
-      is_active: false,
-      path: p.path || `~/.pi/agent/profiles/${sanitizeProfileName(p.name)}.json`,
-      model_profiles: p.model_profiles,
-    }));
+    const allSummaries: ProfileSummary[] = storedCustom.map((p) => {
+      const id = p.id || sanitizeProfileName(p.name);
+      return {
+        id,
+        name: p.name,
+        description: p.description,
+        default_model: p.default_model,
+        default_effort: p.default_effort,
+        agent_count: Object.keys(p.model_profiles || {}).filter((k) => !isSyntheticAgentKey(k)).length,
+        scope: 'global',
+        is_active: false,
+        path: p.path || `~/.pi/agent/profiles/${id}.json`,
+        model_profiles: p.model_profiles,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      };
+    });
 
     const effective = resolveEffectiveProfile(projectActive, globalActive, allSummaries);
-    const sanitizedEffective = effective.name ? sanitizeProfileName(effective.name) : null;
 
     // Determine active profile index
     let chosenIdx = -1;
-    if (sanitizedEffective) {
-      chosenIdx = allSummaries.findIndex(
-        (s) => sanitizeProfileName(s.name) === sanitizedEffective
+    if (effective.profile) {
+      chosenIdx = allSummaries.findIndex((s) =>
+        effective.profile?.id ? s.id === effective.profile.id : s.name === effective.profile?.name
       );
+    } else if (effective.name) {
+      chosenIdx = allSummaries.findIndex((s) => s.id && s.id === effective.name);
+      if (chosenIdx === -1) {
+        const sanitizedEffective = sanitizeProfileName(effective.name);
+        chosenIdx = allSummaries.findIndex(
+          (s) => s.name === effective.name || sanitizeProfileName(s.name) === sanitizedEffective
+        );
+      }
     }
 
     allSummaries.forEach((s, idx) => {
@@ -2424,23 +2438,21 @@ export async function saveSddProfilePi(
     if (!name) {
       throw new Error('Profile name is required and cannot be empty');
     }
-    const sanitized = sanitizeProfileName(name);
-    if (!sanitized) {
-      throw new Error('Profile name contains only invalid characters');
-    }
+    const id = payload.profile?.id?.trim() || generateProfileId();
 
     const now = new Date().toISOString();
 
     const stored = getStoredMockProfiles(storage);
     const existingIdx = stored.findIndex(
-      (p) => sanitizeProfileName(p.name) === sanitized
+      (p) => (p.id && p.id === id) || (p.name === name && !p.id)
     );
 
     const savedProfile: StoredMockProfile = {
       ...payload.profile,
+      id,
       name,
       scope: 'global',
-      path: `~/.pi/agent/profiles/${sanitized}.json`,
+      path: `~/.pi/agent/profiles/${id}.json`,
       created_at:
         existingIdx !== -1 && stored[existingIdx].created_at
           ? stored[existingIdx].created_at
@@ -2494,34 +2506,39 @@ export async function deleteSddProfilePi(
 
     const trimmed = payload.name?.trim();
     if (!trimmed) {
-      throw new Error('Profile name is required');
+      throw new Error('Profile name or ID is required');
     }
     const sanitized = sanitizeProfileName(trimmed);
 
     const stored = getStoredMockProfiles(storage);
 
     const index = stored.findIndex((p) => {
-      return sanitizeProfileName(p.name) === sanitized || p.name === trimmed;
+      return (p.id && p.id === trimmed) || p.name === trimmed || sanitizeProfileName(p.name) === sanitized;
     });
 
     if (index === -1) {
       throw new Error(`Profile '${trimmed}' not found`);
     }
 
+    const deleted = stored[index];
     stored.splice(index, 1);
     if (storage) {
       storage.setItem(MOCK_SDD_PROFILES_STORAGE_KEY, JSON.stringify(stored));
 
       // Clear active profile if it matched
+      const delId = deleted.id || sanitized;
+      const delName = deleted.name;
+      const delSanitized = sanitizeProfileName(delName);
+
       if (payload.cwd) {
         const key = `${MOCK_SDD_PROJECT_ACTIVE_PROFILE_PREFIX}${payload.cwd}`;
         const current = storage.getItem(key);
-        if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
+        if (current && (current === delId || current === delName || sanitizeProfileName(current) === delSanitized || current === trimmed)) {
           storage.removeItem(key);
         }
       }
       const current = storage.getItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
-      if (current && (sanitizeProfileName(current) === sanitized || current === trimmed)) {
+      if (current && (current === delId || current === delName || sanitizeProfileName(current) === delSanitized || current === trimmed)) {
         storage.removeItem(MOCK_SDD_GLOBAL_ACTIVE_PROFILE_KEY);
       }
     }
@@ -2563,6 +2580,7 @@ export async function setActiveSddProfilePi(
       const sanitized = sanitizeProfileName(cleanName);
       const exists = storedCustom.some((p) => {
         return (
+          (p.id && p.id === cleanName) ||
           p.name === cleanName ||
           sanitizeProfileName(p.name) === sanitized ||
           p.name.toLowerCase() === cleanName.toLowerCase()

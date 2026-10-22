@@ -315,22 +315,25 @@ export const ProfilesView: React.FC<ProfilesViewProps> = ({
           </div>
         ) : (
           <div className="profiles-grid">
-            {filteredProfiles.map((profile) => (
-              <ProfileCard
-                key={`${profile.scope}-${profile.name}`}
-                profile={profile}
-                isActive={profile.is_active}
-                effectiveScope={effectiveScope}
-                cwd={cwd}
-                isActivating={activatingName === profile.name}
-                isDeleting={isDeleting && deletingName === profile.name}
-                onActivate={handleActivateProfile}
-                onClearActive={handleClearProjectActive}
-                onEdit={openEditModal}
-                onDuplicate={openDuplicateModal}
-                onDelete={handleDeleteProfile}
-              />
-            ))}
+            {filteredProfiles.map((profile) => {
+              const profileKey = profile.id || profile.name;
+              return (
+                <ProfileCard
+                  key={profile.id || `${profile.scope}-${profile.name}`}
+                  profile={profile}
+                  isActive={profile.is_active}
+                  effectiveScope={effectiveScope}
+                  cwd={cwd}
+                  isActivating={activatingName === profileKey}
+                  isDeleting={isDeleting && deletingName === profileKey}
+                  onActivate={handleActivateProfile}
+                  onClearActive={handleClearProjectActive}
+                  onEdit={openEditModal}
+                  onDuplicate={openDuplicateModal}
+                  onDelete={handleDeleteProfile}
+                />
+              );
+            })}
           </div>
         )}
       </div>

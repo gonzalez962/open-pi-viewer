@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   type ReasoningEffort,
   isSyntheticAgentKey,
@@ -71,25 +71,49 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
     }
   };
 
-  // Accordion state: dynamically expanded first category when available
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    () => (categories.length > 0 ? new Set([categories[0].id]) : new Set())
-  );
-  const autoExpandedRef = useRef(false);
-
-  useEffect(() => {
-    if (!autoExpandedRef.current && categories.length > 0) {
-      autoExpandedRef.current = true;
-      setExpandedCategories(new Set([categories[0].id]));
+  // Accordion state: subagents are collapsed by default when creating profiles
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => {
+    if (!isEditing) {
+      return new Set();
     }
-  }, [categories]);
+    const withOverrides = new Set<string>();
+    for (const cat of categories) {
+      const hasOverride = cat.agents.some(
+        (agentKey) =>
+          formData.model_profiles[agentKey]?.model &&
+          formData.model_profiles[agentKey].model.trim() !== ''
+      );
+      if (hasOverride) {
+        withOverrides.add(cat.id);
+      }
+    }
+    return withOverrides;
+  });
 
   useEffect(() => {
     if (!isOpen) {
-      autoExpandedRef.current = false;
+      setExpandedCategories(new Set());
+      return;
+    }
+
+    if (isEditing) {
+      const withOverrides = new Set<string>();
+      for (const cat of categories) {
+        const hasOverride = cat.agents.some(
+          (agentKey) =>
+            formData.model_profiles[agentKey]?.model &&
+            formData.model_profiles[agentKey].model.trim() !== ''
+        );
+        if (hasOverride) {
+          withOverrides.add(cat.id);
+        }
+      }
+      setExpandedCategories(withOverrides);
+    } else {
+      // Always collapsed by default when creating profiles
       setExpandedCategories(new Set());
     }
-  }, [isOpen]);
+  }, [isOpen, isEditing]);
 
   const installedAgentKeys = useMemo(() => {
     return new Set(categories.flatMap((c) => c.agents));
@@ -345,7 +369,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     id="profile-name-input"
                     type="text"
                     className="profile-input"
-                    placeholder="p. ej. balanced-custom, deep-sdd, turbo-local"
+                    placeholder="p. ej. Mi Perfil, Claude + O3, Desarrollo Rápido"
                     value={formData.name}
                     onChange={(e) => onChangeField('name', e.target.value)}
                     required
@@ -353,7 +377,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
                     autoFocus
                   />
                   <span className="profile-field-hint">
-                    Identificador único para el archivo de configuración (.json).
+                    Nombre descriptivo para identificar este perfil.
                   </span>
                 </div>
 

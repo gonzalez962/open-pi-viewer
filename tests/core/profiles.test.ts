@@ -12,6 +12,7 @@ import {
   resolveProfileModel,
   resolveProfileEffort,
   applyProfileRuntime,
+  generateProfileId,
   REASONING_EFFORTS,
   type Profile,
   type ProfileSummary,
@@ -261,6 +262,59 @@ Prompt body only.`;
   const parsedFallback = parseAgentMarkdownFrontmatter(noFrontmatter, 'stem-agent');
   assert.ok(parsedFallback);
   assert.strictEqual(parsedFallback.id, 'stem-agent');
+});
+
+test('S1.1: generateProfileId generates collision-free identifier with prof_ prefix', () => {
+  const id1 = generateProfileId();
+  const id2 = generateProfileId();
+
+  assert.ok(id1.startsWith('prof_'), `Expected prof_ prefix, got ${id1}`);
+  assert.strictEqual(id1.length, 17, `Expected prof_ prefix + 12 hex chars (17 chars total), got length ${id1.length}`);
+  assert.match(id1, /^prof_[0-9a-f]{12}$/);
+  assert.notStrictEqual(id1, id2, 'Expected distinct IDs across invocations');
+});
+
+test('S1.2: resolveEffectiveProfile matches by id when pointer contains profile id and supports duplicate names', () => {
+  const profiles: ProfileSummary[] = [
+    {
+      id: 'prof_111111111111',
+      name: 'Mi Perfil Compartido',
+      scope: 'global',
+      agent_count: 5,
+      is_active: false,
+    },
+    {
+      id: 'prof_222222222222',
+      name: 'Mi Perfil Compartido',
+      scope: 'global',
+      agent_count: 8,
+      is_active: false,
+    },
+  ];
+
+  // Resolve by id of the second one
+  const result = resolveEffectiveProfile('prof_222222222222', null, profiles);
+  assert.strictEqual(result.name, 'Mi Perfil Compartido');
+  assert.strictEqual(result.id, 'prof_222222222222');
+  assert.ok(result.profile);
+  assert.strictEqual(result.profile?.id, 'prof_222222222222');
+  assert.strictEqual(result.profile?.agent_count, 8);
+});
+
+test('S2.1 / S2.2: resolveEffectiveProfile matches legacy profiles without id by name or sanitized name', () => {
+  const profiles: ProfileSummary[] = [
+    {
+      name: 'balanced-custom',
+      scope: 'global',
+      agent_count: 4,
+      is_active: false,
+    },
+  ];
+
+  const result = resolveEffectiveProfile(null, 'Balanced Custom', profiles);
+  assert.strictEqual(result.name, 'balanced-custom');
+  assert.ok(result.profile);
+  assert.strictEqual(result.profile?.name, 'balanced-custom');
 });
 
 test('resolveEffectiveProfile: returns project active profile with isFallback: false when project active is set', () => {
