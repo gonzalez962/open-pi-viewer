@@ -26,9 +26,10 @@ import type {
   DeleteWorkspaceDirResult,
   WorkspaceGitStatus,
   WorkspaceFileDiff,
-  WorkspaceBranch,
   WorkspaceBranchList,
   BranchOperationResult,
+  WorkspaceBranchCommitsResult,
+  ListWorkspaceBranchCommitsPayload,
 } from '@core/types/workspace';
 import type { CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '@core/types/providers';
 import type {
@@ -661,6 +662,33 @@ export async function publishWorkspaceBranchPi(
     workingDirectory: workingDirectory || undefined,
   };
   return await invokeFn<BranchOperationResult>('publish_workspace_branch', { payload });
+}
+
+/**
+ * Lists paginated commits for a specific git branch via Tauri IPC or Web IPC.
+ */
+export async function listWorkspaceBranchCommitsPi(
+  branch: string,
+  limit?: number,
+  offset?: number,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<WorkspaceBranchCommitsResult> {
+  if (!isTauri() && invokeFn === invoke) {
+    return {
+      branch,
+      commits: [],
+      hasMore: false,
+    };
+  }
+
+  const payload: ListWorkspaceBranchCommitsPayload = {
+    branch,
+    limit: limit ?? 10,
+    offset: offset ?? 0,
+    workingDirectory: workingDirectory || undefined,
+  };
+  return await invokeFn<WorkspaceBranchCommitsResult>('list_workspace_branch_commits', { payload });
 }
 
 

@@ -99,6 +99,7 @@ import {
   handleCreateWorkspaceBranch,
   handleDeleteWorkspaceBranch,
   handlePublishWorkspaceBranch,
+  handleListWorkspaceBranchCommits,
 } from './bridge/paths';
 
 import {
@@ -319,6 +320,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleDeleteWorkspaceBranch(args);
     case 'publish_workspace_branch':
       return handlePublishWorkspaceBranch(args);
+    case 'list_workspace_branch_commits':
+      return handleListWorkspaceBranchCommits(args);
     case 'get_session_stats':
       return await handleGetSessionStats();
     case 'get_session_persistence_status':

@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
 import type { WorkspaceBranch } from '@core/types/workspace';
 import {
@@ -8,6 +9,7 @@ import {
   deleteWorkspaceBranchPi,
   publishWorkspaceBranchPi,
 } from '@infra/bridge';
+import { BranchCommitsModal } from './BranchCommitsModal';
 
 export interface BranchManagerModalProps {
   isOpen: boolean;
@@ -39,18 +41,35 @@ export function sanitizeBranchName(name: string): string {
   return sanitized;
 }
 
+/**
+ * Sorts branches so that 'main' is always first, followed by defaultBranch, then alphabetically.
+ */
+export function sortBranchesMainFirst(
+  branches: WorkspaceBranch[],
+  defaultBranch?: string | null
+): WorkspaceBranch[] {
+  return [...branches].sort((a, b) => {
+    if (a.name === 'main') return -1;
+    if (b.name === 'main') return 1;
+    if (defaultBranch && a.name === defaultBranch) return -1;
+    if (defaultBranch && b.name === defaultBranch) return 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
 export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
   isOpen,
   onClose,
   workingDirectory,
   currentBranch,
-  upstreamBranch,
+  upstreamBranch: _upstreamBranch,
   isAgentWorking = false,
   hasUncommittedChanges = false,
   locale,
   onBranchSwitched,
   onError,
 }) => {
+  void _upstreamBranch;
   const [branches, setBranches] = useState<WorkspaceBranch[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [allBases, setAllBases] = useState<string[]>([]);
@@ -71,6 +90,8 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
     name: string;
     baseBranch?: string;
   } | null>(null);
+  const [selectedCommitsBranch, setSelectedCommitsBranch] = useState<string | null>(null);
+  const [expandedActionsBranch, setExpandedActionsBranch] = useState<string | null>(null);
 
   const modalRef = useRef<HTMLDivElement>(null);
   const newBranchInputRef = useRef<HTMLInputElement>(null);
@@ -112,6 +133,8 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
       setPendingDeleteBranch(null);
       setPendingPublishBranch(null);
       setPendingUncommittedConfig(null);
+      setSelectedCommitsBranch(null);
+      setExpandedActionsBranch(null);
     }
   }, [isOpen, loadBranches]);
 
@@ -271,9 +294,9 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
 
   const filteredBranches = useMemo(() => {
     const q = filterTerm.trim().toLowerCase();
-    if (!q) return branches;
-    return branches.filter((b) => b.name.toLowerCase().includes(q));
-  }, [branches, filterTerm]);
+    const matched = q ? branches.filter((b) => b.name.toLowerCase().includes(q)) : branches;
+    return sortBranchesMainFirst(matched, defaultBranch);
+  }, [branches, filterTerm, defaultBranch]);
 
   const uniqueBases = useMemo(() => {
     const localNames = new Set(branches.map((b) => b.name));
@@ -302,12 +325,21 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
         list.push(trimmed);
       }
     }
+
+    list.sort((a, b) => {
+      if (a === 'main') return -1;
+      if (b === 'main') return 1;
+      if (defaultBranch && a === defaultBranch) return -1;
+      if (defaultBranch && b === defaultBranch) return 1;
+      return a.localeCompare(b);
+    });
+
     return list;
-  }, [allBases, branches]);
+  }, [allBases, branches, defaultBranch]);
 
   if (!isOpen) return null;
 
-  return (
+  const modalContent = (
     <div
       className="branch-modal-overlay"
       role="dialog"
@@ -638,11 +670,12 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                 b.name === defaultBranch ||
                 (!defaultBranch && (b.name === 'main' || b.name === 'master'));
               const isThisSwitching = isSwitching === b.name;
+              const isActionsOpen = expandedActionsBranch === b.name;
 
               return (
                 <div
                   key={b.name}
-                  className={`branch-item ${isCurrent ? 'is-active' : ''}`}
+                  className={`branch-item ${isCurrent ? 'is-active' : ''} ${isActionsOpen ? 'actions-open' : ''}`}
                   role="listitem"
                 >
                   <div className="branch-item-left">
@@ -684,80 +717,129 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="branch-item-actions">
-                    {!b.upstream && (
-                      <button
-                        type="button"
-                        className="btn-branch-publish"
-                        onClick={() => setPendingPublishBranch(b.name)}
-                        disabled={isSwitching !== null || isDeleting || isPublishing}
-                        title={t('file_tree.publish_branch_btn')}
-                        aria-label={t('file_tree.publish_branch_btn')}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
+                  <div className="branch-item-actions-wrapper">
+                    <div className={`branch-item-actions-drawer ${isActionsOpen ? 'is-expanded' : ''}`}>
+                      {!b.upstream && (
+                        <button
+                          type="button"
+                          className="btn-branch-publish"
+                          onClick={() => setPendingPublishBranch(b.name)}
+                          disabled={isSwitching !== null || isDeleting || isPublishing}
+                          title={t('file_tree.publish_branch_btn')}
+                          aria-label={t('file_tree.publish_branch_btn')}
                         >
-                          <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
-                          <path d="M12 12v9" />
-                          <path d="m16 16-4-4-4 4" />
-                        </svg>
-                        <span>{t('file_tree.publish_branch_action')}</span>
-                      </button>
-                    )}
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242" />
+                            <path d="M12 12v9" />
+                            <path d="m16 16-4-4-4 4" />
+                          </svg>
+                          <span>{t('file_tree.publish_branch_action')}</span>
+                        </button>
+                      )}
 
-                    {isCurrent ? (
-                      <span className="badge-branch-current">
-                        {t('file_tree.current_branch')}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn-branch-switch"
-                        onClick={() => handleRequestSwitch(b.name)}
-                        disabled={isSwitching !== null || isDeleting || isPublishing}
-                      >
-                        {isThisSwitching ? '...' : t('file_tree.switch_branch_btn')}
-                      </button>
-                    )}
-
-                    {!isCurrent && !isDefault && (
-                      <button
-                        type="button"
-                        className="btn-branch-delete"
-                        onClick={() => setPendingDeleteBranch(b.name)}
-                        disabled={isSwitching !== null || isDeleting || isPublishing}
-                        title={t('file_tree.delete_branch_btn')}
-                        aria-label={t('file_tree.delete_branch_btn')}
-                      >
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
+                      {isCurrent ? (
+                        <span className="badge-branch-current">
+                          {t('file_tree.current_branch')}
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn-branch-switch"
+                          onClick={() => handleRequestSwitch(b.name)}
+                          disabled={isSwitching !== null || isDeleting || isPublishing}
                         >
-                          <polyline points="3 6 5 6 21 6" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
+                          {isThisSwitching ? '...' : t('file_tree.switch_branch_btn')}
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        className={`btn-branch-commits ${selectedCommitsBranch === b.name ? 'is-active' : ''}`}
+                        onClick={() => setSelectedCommitsBranch(b.name)}
+                        title={t('file_tree.view_commits_btn')}
+                        aria-label={t('file_tree.view_commits_btn')}
+                      >
+                        {t('file_tree.view_commits_btn')}
                       </button>
-                    )}
+
+                      {!isCurrent && !isDefault && (
+                        <button
+                          type="button"
+                          className="btn-branch-delete"
+                          onClick={() => setPendingDeleteBranch(b.name)}
+                          disabled={isSwitching !== null || isDeleting || isPublishing}
+                          title={t('file_tree.delete_branch_btn')}
+                          aria-label={t('file_tree.delete_branch_btn')}
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      className={`btn-branch-actions-toggle ${isActionsOpen ? 'is-active' : ''}`}
+                      onClick={() => setExpandedActionsBranch((prev) => (prev === b.name ? null : b.name))}
+                      title={t('file_tree.branch_actions_toggle')}
+                      aria-label={t('file_tree.branch_actions_toggle')}
+                      aria-expanded={isActionsOpen}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="1.5" />
+                        <circle cx="19" cy="12" r="1.5" />
+                        <circle cx="5" cy="12" r="1.5" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               );
             })
           )}
         </div>
+
+        {/* Dedicated Branch Commits Modal */}
+        <BranchCommitsModal
+          isOpen={selectedCommitsBranch !== null}
+          branchName={selectedCommitsBranch}
+          workingDirectory={workingDirectory}
+          locale={locale}
+          onClose={() => setSelectedCommitsBranch(null)}
+        />
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' && document.body
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
