@@ -23,7 +23,8 @@
   flex: 1;
 }
 
-.btn-tree-create-folder {
+.btn-tree-create-folder,
+.btn-tree-modified {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -41,12 +42,21 @@
   transition: all 0.15s ease;
 }
 
-.btn-tree-create-folder:hover:not(:disabled) {
+.btn-tree-create-folder:hover:not(:disabled),
+.btn-tree-modified:hover:not(:disabled) {
   background-color: var(--bg-subtle-hover);
   border-color: var(--fg-subtle);
 }
 
-.btn-tree-create-folder:disabled {
+.btn-tree-modified.active {
+  color: var(--accent-primary);
+  background-color: var(--bg-surface);
+  border-color: var(--accent-primary, var(--border-active));
+  font-weight: 600;
+}
+
+.btn-tree-create-folder:disabled,
+.btn-tree-modified:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }

@@ -12,11 +12,13 @@ import {
 } from '@infra/bridge';
 import { parseUnifiedDiff } from '@features/workspace/FileViewerModal';
 import {
+  FileTree,
   computeDirChangesMap,
   computeTotalGitChanges,
   updateDirChildrenOnRefresh,
   pruneExpandedDirsOnRefresh,
   normalizeTreePath,
+  isEntryModified,
 } from '@features/workspace/FileTree';
 import { FileSearchBar } from '@features/workspace/components/FileSearchBar';
 import type {
@@ -462,6 +464,9 @@ test('i18n: file tree and auto-refresh settings keys exist with exact parity in 
     'file_tree.create_folder_submit',
     'file_tree.create_folder_cancel',
     'file_tree.folder_name_required',
+    'file_tree.filter_modified',
+    'file_tree.filter_modified_hint',
+    'file_tree.no_modified_files',
     'settings.file_tree_heading',
     'settings.file_tree_hint',
     'settings.file_tree_interval_label',
@@ -655,4 +660,79 @@ test('frontend tree matching: normalized sets match Windows tree entry relativeP
   assert.strictEqual(gitUntrackedSet.has(normFile), false);
   assert.strictEqual(dirChangesMap[normFolder], 1, 'Ancestor map should match normalized Windows folder relativePath');
 });
+
+/* ========================================================================= */
+/* Modified Filter Tests (isEntryModified and FileTree Modified toggle)       */
+/* ========================================================================= */
+
+test('isEntryModified: identifies modified, added, and untracked files as modified', () => {
+  const gitModifiedSet = new Set(['src/App.tsx']);
+  const gitAddedSet = new Set(['src/new-feature.ts']);
+  const gitUntrackedSet = new Set(['notes.txt']);
+  const dirChangesMap = { src: 2 };
+
+  const modFile: WorkspaceEntry = { name: 'App.tsx', relativePath: 'src/App.tsx', isDir: false };
+  const addFile: WorkspaceEntry = { name: 'new-feature.ts', relativePath: 'src/new-feature.ts', isDir: false };
+  const untrackedFile: WorkspaceEntry = { name: 'notes.txt', relativePath: 'notes.txt', isDir: false };
+  const cleanFile: WorkspaceEntry = { name: 'clean.ts', relativePath: 'src/clean.ts', isDir: false };
+
+  assert.strictEqual(isEntryModified(modFile, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(addFile, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(untrackedFile, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(cleanFile, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), false);
+});
+
+test('isEntryModified: identifies directories with nested changes as modified', () => {
+  const gitModifiedSet = new Set(['src/components/button.tsx']);
+  const gitAddedSet = new Set<string>();
+  const gitUntrackedSet = new Set<string>();
+  const dirChangesMap = { src: 1, 'src/components': 1 };
+
+  const srcDir: WorkspaceEntry = { name: 'src', relativePath: 'src', isDir: true };
+  const componentsDir: WorkspaceEntry = { name: 'components', relativePath: 'src/components', isDir: true };
+  const docsDir: WorkspaceEntry = { name: 'docs', relativePath: 'docs', isDir: true };
+
+  assert.strictEqual(isEntryModified(srcDir, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(componentsDir, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(docsDir, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), false);
+});
+
+test('isEntryModified: normalizes Windows backslashes and relative prefixes', () => {
+  const gitModifiedSet = new Set(['src/lib/utils.ts']);
+  const gitAddedSet = new Set<string>();
+  const gitUntrackedSet = new Set<string>();
+  const dirChangesMap = { 'src/lib': 1 };
+
+  const winFile: WorkspaceEntry = { name: 'utils.ts', relativePath: 'src\\lib\\utils.ts', isDir: false };
+  const winDir: WorkspaceEntry = { name: 'lib', relativePath: '.\\src\\lib\\', isDir: true };
+
+  assert.strictEqual(isEntryModified(winFile, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+  assert.strictEqual(isEntryModified(winDir, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), true);
+});
+
+test('isEntryModified: returns false for empty or non-repo status', () => {
+  const gitModifiedSet = new Set<string>();
+  const gitAddedSet = new Set<string>();
+  const gitUntrackedSet = new Set<string>();
+  const dirChangesMap: Record<string, number> = {};
+
+  const file: WorkspaceEntry = { name: 'file.txt', relativePath: 'file.txt', isDir: false };
+  const dir: WorkspaceEntry = { name: 'src', relativePath: 'src', isDir: true };
+
+  assert.strictEqual(isEntryModified(file, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), false);
+  assert.strictEqual(isEntryModified(dir, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap), false);
+});
+
+test('FileTree: renders Modified button without auto-expanding collapsed directories', () => {
+  const element = React.createElement(FileTree, {
+    workingDirectory: 'C:/project',
+    locale: 'en',
+    onOpenFile: () => {},
+  });
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('btn-tree-modified'), 'Must render Modified button');
+  assert.ok(markup.includes('Modified'), 'Must render label');
+  assert.strictEqual(markup.includes('btn-tree-create-folder'), false, 'Create folder button must be absent');
+});
+
 

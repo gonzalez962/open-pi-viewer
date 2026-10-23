@@ -80,6 +80,9 @@
   "file_tree.create_folder_submit": "Crear",
   "file_tree.create_folder_cancel": "Cancelar",
   "file_tree.folder_name_required": "El nombre de la carpeta es requerido",
+  "file_tree.filter_modified": "Modified",
+  "file_tree.filter_modified_hint": "Mostrar solo directorios y archivos modificados",
+  "file_tree.no_modified_files": "No se encontraron directorios ni archivos modificados",
 
   "file_viewer.binary_title": "Archivo binario",
   "file_viewer.binary_desc": "Este archivo contiene datos binarios y no puede mostrarse como texto.",
