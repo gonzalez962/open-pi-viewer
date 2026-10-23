@@ -1584,6 +1584,7 @@ export const App: React.FC = () => {
                   refreshInterval={config.fileTreeRefreshInterval}
                   refreshTrigger={fileTreeRefreshTrigger}
                   onGitStatusChange={handleGitStatusChange}
+                  isAgentWorking={isBusy}
                 />
               }
             />

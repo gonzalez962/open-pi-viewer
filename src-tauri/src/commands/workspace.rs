@@ -689,9 +689,64 @@ pub struct WorkspaceGitStatus {
     pub is_repo: bool,
     pub repo_name: Option<String>,
     pub branch: Option<String>,
+    pub upstream_branch: Option<String>,
     pub modified_files: Vec<String>,
     pub added_files: Vec<String>,
     pub untracked_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranch {
+    pub name: String,
+    pub is_current: bool,
+    pub upstream: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchList {
+    pub current: Option<String>,
+    pub default_branch: Option<String>,
+    pub branches: Vec<WorkspaceBranch>,
+    pub all_bases: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkspaceBranchesPayload {
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchWorkspaceBranchPayload {
+    pub working_directory: Option<String>,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteWorkspaceBranchPayload {
+    pub working_directory: Option<String>,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkspaceBranchPayload {
+    pub working_directory: Option<String>,
+    pub name: String,
+    pub base_branch: Option<String>,
+    pub leave_changes_in_base: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchOperationResult {
+    pub success: bool,
+    pub branch: String,
+    pub message: Option<String>,
 }
 
 /// Payload for getting git diff of a specific file
@@ -737,6 +792,7 @@ pub async fn get_workspace_git_status(
             is_repo: false,
             repo_name: None,
             branch: None,
+            upstream_branch: None,
             modified_files: Vec::new(),
             added_files: Vec::new(),
             untracked_files: Vec::new(),
@@ -784,6 +840,27 @@ pub async fn get_workspace_git_status(
         _ => None,
     };
 
+    let upstream_branch = if let Some(ref current_b) = branch {
+        let up_output = tokio::process::Command::new("git")
+            .args(["for-each-ref", "--format=%(upstream:short)", &format!("refs/heads/{current_b}")])
+            .current_dir(&canonical_root)
+            .output()
+            .await;
+        match up_output {
+            Ok(out) if out.status.success() => {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s)
+                }
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     // Git status
     let status_output = tokio::process::Command::new("git")
         .args(["status", "--porcelain=v1", "--untracked-files=all"])
@@ -822,9 +899,505 @@ pub async fn get_workspace_git_status(
         is_repo: true,
         repo_name,
         branch,
+        upstream_branch,
         modified_files,
         added_files,
         untracked_files,
+    })
+}
+
+/// Sanitizes branch name:
+/// - Replaces whitespace with hyphens
+/// - Removes hyphens adjacent to slashes ('/-' and '-/')
+/// - Collapses multiple slashes and strips leading/trailing hyphens, slashes, and dots
+pub fn sanitize_branch_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // 1. Replace whitespace with hyphens
+    let mut with_hyphens = String::with_capacity(trimmed.len());
+    let mut in_space = false;
+    for c in trimmed.chars() {
+        if c.is_whitespace() {
+            if !in_space {
+                with_hyphens.push('-');
+                in_space = true;
+            }
+        } else {
+            in_space = false;
+            with_hyphens.push(c);
+        }
+    }
+
+    // 2. Remove hyphens adjacent to slashes ('/-' -> '/', '-/' -> '/')
+    let mut no_adjacent_hyphens = String::with_capacity(with_hyphens.len());
+    let chars: Vec<char> = with_hyphens.chars().collect();
+    let len = chars.len();
+    for i in 0..len {
+        let c = chars[i];
+        if c == '-' {
+            let prev_is_slash = (0..i).rev().find(|&k| chars[k] != '-').map(|k| chars[k] == '/').unwrap_or(false);
+            let next_is_slash = ((i + 1)..len).find(|&k| chars[k] != '-').map(|k| chars[k] == '/').unwrap_or(false);
+            if prev_is_slash || next_is_slash {
+                continue;
+            }
+        }
+        no_adjacent_hyphens.push(c);
+    }
+
+    // 3. Collapse multiple consecutive slashes
+    let mut collapsed_slashes = String::with_capacity(no_adjacent_hyphens.len());
+    let mut in_slash = false;
+    for c in no_adjacent_hyphens.chars() {
+        if c == '/' {
+            if !in_slash {
+                collapsed_slashes.push('/');
+                in_slash = true;
+            }
+        } else {
+            in_slash = false;
+            collapsed_slashes.push(c);
+        }
+    }
+
+    // 4. Strip leading and trailing hyphens, slashes, and dots
+    collapsed_slashes
+        .trim_matches(|c| c == '-' || c == '/' || c == '.')
+        .to_string()
+}
+
+/// Validates a git branch name for safety and git conventions
+pub fn validate_branch_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Branch name cannot be empty".to_string());
+    }
+    if trimmed != name {
+        return Err("Branch name cannot have leading or trailing whitespace".to_string());
+    }
+    if trimmed.starts_with('-') || trimmed.starts_with('.') || trimmed.ends_with('.') || trimmed.ends_with('/') {
+        return Err("Invalid branch name prefix or suffix".to_string());
+    }
+    if trimmed.ends_with(".lock") {
+        return Err("Branch name cannot end with .lock".to_string());
+    }
+    if trimmed.contains("..") || trimmed.contains("//") || trimmed.contains("@{") {
+        return Err("Invalid branch name sequence".to_string());
+    }
+    for c in trimmed.chars() {
+        if c.is_whitespace() || c.is_ascii_control() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return Err(format!("Branch name contains forbidden character: '{c}'"));
+        }
+    }
+    Ok(())
+}
+
+/// List local branches in workspace, their upstream tracking branches, and available base branches
+#[tauri::command]
+pub async fn list_workspace_branches(
+    payload: Option<ListWorkspaceBranchesPayload>,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceBranchList, String> {
+    let working_dir_opt = payload.as_ref().and_then(|p| p.working_directory.as_deref());
+    let canonical_root = resolve_canonical_workspace_root(working_dir_opt, &state).await?;
+
+    let out = tokio::process::Command::new("git")
+        .args(["for-each-ref", "--format=%(refname:short)|%(upstream:short)|%(HEAD)", "refs/heads"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to list branches: {e}"))?;
+
+    let mut current = None;
+    let mut branches = Vec::new();
+
+    if out.status.success() {
+        let stdout_str = String::from_utf8_lossy(&out.stdout);
+        for line in stdout_str.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.split('|').collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let name = parts[0].to_string();
+            let upstream_raw = parts.get(1).map(|s| s.trim()).unwrap_or("");
+            let upstream = if upstream_raw.is_empty() {
+                None
+            } else {
+                Some(upstream_raw.to_string())
+            };
+            let head_marker = parts.get(2).map(|s| s.trim()).unwrap_or("");
+            let is_current = head_marker == "*";
+            if is_current {
+                current = Some(name.clone());
+            }
+            branches.push(WorkspaceBranch {
+                name,
+                is_current,
+                upstream,
+            });
+        }
+    }
+
+    let local_names: std::collections::HashSet<String> = branches.iter().map(|b| b.name.clone()).collect();
+    let mut all_bases: Vec<String> = branches.iter().map(|b| b.name.clone()).collect();
+    if let Ok(remotes_out) = tokio::process::Command::new("git")
+        .args(["for-each-ref", "--format=%(refname:short)", "refs/remotes"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if remotes_out.status.success() {
+            let stdout_remotes = String::from_utf8_lossy(&remotes_out.stdout);
+            for line in stdout_remotes.lines() {
+                let b = line.trim().to_string();
+                if b.is_empty() || b.ends_with("/HEAD") || !b.contains('/') {
+                    continue;
+                }
+                // If local branch already covers this (e.g. 'main' covers 'origin/main'), skip
+                let branch_part = b.split_once('/').map(|(_, rest)| rest).unwrap_or("");
+                if !branch_part.is_empty() && local_names.contains(branch_part) {
+                    continue;
+                }
+                if !all_bases.contains(&b) {
+                    all_bases.push(b);
+                }
+            }
+        }
+    }
+
+    let mut default_branch = None;
+    if let Ok(sym_out) = tokio::process::Command::new("git")
+        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if sym_out.status.success() {
+            let s = String::from_utf8_lossy(&sym_out.stdout).trim().to_string();
+            if let Some((_, branch_name)) = s.split_once('/') {
+                default_branch = Some(branch_name.to_string());
+            }
+        }
+    }
+    if default_branch.is_none() {
+        if local_names.contains("main") {
+            default_branch = Some("main".to_string());
+        } else if local_names.contains("master") {
+            default_branch = Some("master".to_string());
+        }
+    }
+
+    Ok(WorkspaceBranchList {
+        current,
+        default_branch,
+        branches,
+        all_bases,
+    })
+}
+
+/// Switch git branch in workspace
+#[tauri::command]
+pub async fn switch_workspace_branch(
+    payload: SwitchWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    validate_branch_name(&payload.branch)?;
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+
+    // 1. Identify current branch
+    let mut current_branch = String::new();
+    if let Ok(cur_out) = tokio::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if cur_out.status.success() {
+            current_branch = String::from_utf8_lossy(&cur_out.stdout).trim().to_string();
+        }
+    }
+
+    if !current_branch.is_empty() && current_branch == payload.branch {
+        return Ok(BranchOperationResult {
+            success: true,
+            branch: payload.branch,
+            message: Some("Already on branch".to_string()),
+        });
+    }
+
+    // 2. If departure branch has uncommitted changes, auto-stash them
+    let mut stashed_current = false;
+    if !current_branch.is_empty() {
+        if let Ok(status_out) = tokio::process::Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+        {
+            if status_out.status.success() && !String::from_utf8_lossy(&status_out.stdout).trim().is_empty() {
+                let stash_out = tokio::process::Command::new("git")
+                    .args(["stash", "push", "-u", "-m", &format!("Auto-stash on {current_branch}")])
+                    .current_dir(&canonical_root)
+                    .output()
+                    .await;
+                if let Ok(s) = stash_out {
+                    if s.status.success() {
+                        stashed_current = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Perform checkout
+    let out = tokio::process::Command::new("git")
+        .args(["checkout", &payload.branch])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+        .map_err(|e| format!("Checkout command failed: {e}"))?;
+
+    if !out.status.success() {
+        if stashed_current {
+            let _ = tokio::process::Command::new("git")
+                .args(["stash", "pop"])
+                .current_dir(&canonical_root)
+                .output()
+                .await;
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        let msg = if err.trim().is_empty() {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            err.trim().to_string()
+        };
+        return Err(msg);
+    }
+
+    // 4. After checkout, restore any stash saved for destination branch
+    if let Ok(stash_out) = tokio::process::Command::new("git")
+        .args(["stash", "list"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if stash_out.status.success() {
+            let stash_str = String::from_utf8_lossy(&stash_out.stdout);
+            let mut target_stash_ref = None;
+
+            for line in stash_str.lines() {
+                if let Some((stash_ref, rest)) = line.split_once(':') {
+                    let rest_trimmed = rest.trim();
+                    let branch_match = if rest_trimmed.starts_with("On ") {
+                        rest_trimmed.strip_prefix("On ").and_then(|s| s.split_once(':')).map(|(b, _)| b.trim())
+                    } else if rest_trimmed.starts_with("WIP on ") {
+                        rest_trimmed.strip_prefix("WIP on ").and_then(|s| s.split_once(':')).map(|(b, _)| b.trim())
+                    } else {
+                        None
+                    };
+
+                    if let Some(b) = branch_match {
+                        if b == payload.branch {
+                            target_stash_ref = Some(stash_ref.trim().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(ref stash_ref) = target_stash_ref {
+                let _ = tokio::process::Command::new("git")
+                    .args(["stash", "pop", stash_ref])
+                    .current_dir(&canonical_root)
+                    .output()
+                    .await;
+            }
+        }
+    }
+
+    let message = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Ok(BranchOperationResult {
+        success: true,
+        branch: payload.branch,
+        message: if message.is_empty() { None } else { Some(message) },
+    })
+}
+
+/// Create a new git branch from an optional base branch and switch to it
+#[tauri::command]
+pub async fn create_workspace_branch(
+    payload: CreateWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    let sanitized_name = sanitize_branch_name(&payload.name);
+    validate_branch_name(&sanitized_name)?;
+    if let Some(ref base) = payload.base_branch {
+        validate_branch_name(base)?;
+    }
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+
+    let mut stashed = false;
+    if payload.leave_changes_in_base == Some(true) {
+        if let Ok(status_out) = tokio::process::Command::new("git")
+            .args(["status", "--porcelain=v1"])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+        {
+            if status_out.status.success() && !String::from_utf8_lossy(&status_out.stdout).trim().is_empty() {
+                let stash_out = tokio::process::Command::new("git")
+                    .args(["stash", "push", "-u", "-m", &format!("Auto-stash before branch {sanitized_name}")])
+                    .current_dir(&canonical_root)
+                    .output()
+                    .await;
+                if let Ok(s) = stash_out {
+                    if s.status.success() {
+                        stashed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.arg("checkout").arg("-b").arg(&sanitized_name);
+    if let Some(ref base) = payload.base_branch {
+        cmd.arg(base);
+    }
+    cmd.current_dir(&canonical_root);
+
+    let out = cmd.output().await.map_err(|e| format!("Create branch command failed: {e}"))?;
+
+    if !out.status.success() {
+        if stashed {
+            let _ = tokio::process::Command::new("git")
+                .args(["stash", "pop"])
+                .current_dir(&canonical_root)
+                .output()
+                .await;
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        let msg = if err.trim().is_empty() {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            err.trim().to_string()
+        };
+        return Err(msg);
+    }
+
+    let message = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Ok(BranchOperationResult {
+        success: true,
+        branch: sanitized_name,
+        message: if message.is_empty() { None } else { Some(message) },
+    })
+}
+
+/// Delete a local git branch via `git branch -D <branch>`
+#[tauri::command]
+pub async fn delete_workspace_branch(
+    payload: DeleteWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    validate_branch_name(&payload.branch)?;
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+
+    // Protect active branch and default branch
+    let branches = list_workspace_branches(Some(ListWorkspaceBranchesPayload { working_directory: payload.working_directory.clone() }), state.clone()).await?;
+    if branches.current.as_deref() == Some(&payload.branch) {
+        return Err(format!("Cannot delete currently active branch: \"{}\"", payload.branch));
+    }
+    if branches.default_branch.as_deref() == Some(&payload.branch) {
+        return Err(format!("Cannot delete repository default branch: \"{}\"", payload.branch));
+    }
+    if payload.branch == "main" || payload.branch == "master" {
+        if branches.default_branch.as_deref() == Some(&payload.branch) || branches.default_branch.is_none() {
+            return Err(format!("Cannot delete repository default branch: \"{}\"", payload.branch));
+        }
+    }
+
+    let out = tokio::process::Command::new("git")
+        .args(["branch", "-D", &payload.branch])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+        .map_err(|e| format!("Delete branch command failed: {e}"))?;
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let msg = if err.trim().is_empty() {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            err.trim().to_string()
+        };
+        return Err(msg);
+    }
+
+    let message = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Ok(BranchOperationResult {
+        success: true,
+        branch: payload.branch,
+        message: if message.is_empty() { None } else { Some(message) },
+    })
+}
+
+/// Publish a local git branch to the remote repository and set up tracking via `git push -u <remote> <branch>`
+#[tauri::command]
+pub async fn publish_workspace_branch(
+    payload: PublishWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    validate_branch_name(&payload.branch)?;
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+
+    let remote = if let Some(ref r) = payload.remote {
+        r.clone()
+    } else {
+        let remotes_out = tokio::process::Command::new("git")
+            .args(["remote"])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+            .map_err(|e| format!("Failed to read git remotes: {e}"))?;
+        let stdout_str = String::from_utf8_lossy(&remotes_out.stdout);
+        let remotes: Vec<&str> = stdout_str.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        if remotes.contains(&"origin") {
+            "origin".to_string()
+        } else if let Some(&first) = remotes.first() {
+            first.to_string()
+        } else {
+            return Err("No git remotes configured in this repository".to_string());
+        }
+    };
+
+    let out = tokio::process::Command::new("git")
+        .args(["push", "-u", &remote, &payload.branch])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+        .map_err(|e| format!("Publish branch command failed: {e}"))?;
+
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let msg = if err.trim().is_empty() {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        } else {
+            err.trim().to_string()
+        };
+        return Err(msg);
+    }
+
+    let message = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Ok(BranchOperationResult {
+        success: true,
+        branch: payload.branch,
+        message: if message.is_empty() { None } else { Some(message) },
     })
 }
 

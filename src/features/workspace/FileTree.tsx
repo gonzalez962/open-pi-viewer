@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
-import { listWorkspaceDirPi, readWorkspaceFilePi, createWorkspaceDirPi } from '@infra/bridge';
+import { listWorkspaceDirPi, readWorkspaceFilePi } from '@infra/bridge';
 import type { WorkspaceEntry, WorkspaceFileContent, WorkspaceGitStatus } from '@core/types/workspace';
 import { formatFileSize } from '@shared/format';
 import {
@@ -12,7 +12,7 @@ import {
   pruneExpandedDirsOnRefresh,
 } from './workspace-cache';
 import { FileSearchBar } from './components/FileSearchBar';
-import { CreateFolderForm } from './components/CreateFolderForm';
+import { BranchManagerModal } from './components/BranchManagerModal';
 
 export {
   updateDirChildrenOnRefresh,
@@ -27,6 +27,7 @@ export interface FileTreeProps {
   refreshInterval?: number;
   refreshTrigger?: number;
   onGitStatusChange?: (status: WorkspaceGitStatus | null) => void;
+  isAgentWorking?: boolean;
 }
 
 
@@ -40,6 +41,30 @@ export function normalizeTreePath(p: string | null | undefined): string {
     .replace(/\\/g, '/')
     .replace(/^\.\//, '')
     .replace(/^\/+|\/+$/g, '');
+}
+
+/**
+ * Determines whether an entry (file or directory) is considered modified based on Git status.
+ * - For directories: returns true if there are modified/changed files nested within it.
+ * - For files: returns true if the file is in modifiedFiles, addedFiles, or untrackedFiles.
+ */
+export function isEntryModified(
+  entry: WorkspaceEntry,
+  gitModifiedSet: Set<string>,
+  gitAddedSet: Set<string>,
+  gitUntrackedSet: Set<string>,
+  dirChangesMap: Record<string, number>
+): boolean {
+  const normRel = normalizeTreePath(entry.relativePath);
+  if (!normRel) return false;
+  if (entry.isDir) {
+    return (dirChangesMap[normRel] || 0) > 0;
+  }
+  return (
+    gitModifiedSet.has(normRel) ||
+    gitAddedSet.has(normRel) ||
+    gitUntrackedSet.has(normRel)
+  );
 }
 
 /**
@@ -187,6 +212,7 @@ interface TreeNodeItemProps {
   gitAddedSet: Set<string>;
   gitUntrackedSet: Set<string>;
   dirChangesMap: Record<string, number>;
+  showOnlyModified?: boolean;
   onToggleDir: (path: string) => void;
   onSelectFile: (entry: WorkspaceEntry) => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
@@ -203,6 +229,7 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
   gitAddedSet,
   gitUntrackedSet,
   dirChangesMap,
+  showOnlyModified = false,
   onToggleDir,
   onSelectFile,
   t,
@@ -211,6 +238,12 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
   const isLoadingChildren = loadingDirs.has(entry.relativePath);
   const isLoadingThisFile = loadingFile === entry.relativePath;
   const children = dirChildren[entry.relativePath] || [];
+  const visibleChildren = useMemo(() => {
+    if (!showOnlyModified) return children;
+    return children.filter((child) =>
+      isEntryModified(child, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap)
+    );
+  }, [children, showOnlyModified, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap]);
 
   const normalizedRel = normalizeTreePath(entry.relativePath);
   const isGitModified = !entry.isDir && gitModifiedSet.has(normalizedRel);
@@ -311,7 +344,7 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
 
       {entry.isDir && isExpanded && (
         <div className="tree-children-container" role="group">
-          {children.map((child) => (
+          {visibleChildren.map((child) => (
             <TreeNodeItem
               key={child.relativePath}
               entry={child}
@@ -324,12 +357,13 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
               gitAddedSet={gitAddedSet}
               gitUntrackedSet={gitUntrackedSet}
               dirChangesMap={dirChangesMap}
+              showOnlyModified={showOnlyModified}
               onToggleDir={onToggleDir}
               onSelectFile={onSelectFile}
               t={t}
             />
           ))}
-          {children.length === 0 && !isLoadingChildren && (
+          {visibleChildren.length === 0 && !isLoadingChildren && (
             <div
               className="tree-empty-folder"
               style={{ paddingLeft: `${(depth + 1) * 14 + 10}px` }}
@@ -351,6 +385,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   refreshInterval: _refreshInterval,
   refreshTrigger,
   onGitStatusChange,
+  isAgentWorking = false,
 }) => {
   const initialSnapshot = getWorkspaceSnapshot(workingDirectory);
   const [rootEntries, setRootEntries] = useState<WorkspaceEntry[]>(
@@ -373,17 +408,14 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const [isSoftRefreshing, setIsSoftRefreshing] = useState<boolean>(false);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
-  const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
-  const [isSubmittingFolder, setIsSubmittingFolder] = useState<boolean>(false);
-  const [createFolderError, setCreateFolderError] = useState<string | null>(null);
+  const [showOnlyModified, setShowOnlyModified] = useState<boolean>(false);
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState<boolean>(false);
 
   // Synchronous state adjustment when workingDirectory changes without remount
   const [prevCwd, setPrevCwd] = useState(workingDirectory);
   if (workingDirectory !== prevCwd) {
     setPrevCwd(workingDirectory);
-    setIsCreatingFolder(false);
-    setIsSubmittingFolder(false);
-    setCreateFolderError(null);
+    setShowOnlyModified(false);
     const cached = getWorkspaceSnapshot(workingDirectory);
     if (cached && cached.loaded) {
       setRootEntries(cached.rootEntries);
@@ -439,9 +471,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   // Synchronize state with per-cwd cache and subscribe to cache updates
   useEffect(() => {
-    setIsCreatingFolder(false);
-    setIsSubmittingFolder(false);
-    setCreateFolderError(null);
+    setShowOnlyModified(false);
 
     const cached = getWorkspaceSnapshot(workingDirectory);
     if (cached && cached.loaded) {
@@ -550,59 +580,6 @@ export const FileTree: React.FC<FileTreeProps> = ({
     }
   }, [refreshTrigger, refreshAll]);
 
-  // Create new folder directly in active workspace root
-  const handleCreateFolder = useCallback(
-    async (folderName: string) => {
-      const targetCwd = workingDirectory;
-      const trimmed = folderName.trim();
-      if (!trimmed) {
-        setCreateFolderError(t('file_tree.folder_name_required'));
-        return;
-      }
-      setIsSubmittingFolder(true);
-      setCreateFolderError(null);
-      try {
-        await createWorkspaceDirPi({
-          workingDirectory: targetCwd,
-          name: trimmed,
-        });
-
-        // Abort state updates if active workspace changed while creating folder
-        if (activeCwdRef.current !== targetCwd) {
-          return;
-        }
-
-        setIsCreatingFolder(false);
-        setCreateFolderError(null);
-
-        // Await any existing in-flight scan so pre-mutation cache read finishes and clears
-        if (inFlightRefreshRef.current) {
-          try {
-            await inFlightRefreshRef.current;
-          } catch {}
-        }
-
-        if (activeCwdRef.current !== targetCwd) {
-          return;
-        }
-
-        // Fresh post-mutation scan guarantees new folder appears in the explorer
-        await refreshAll(false);
-      } catch (err) {
-        if (activeCwdRef.current !== targetCwd) {
-          return;
-        }
-        const msg = err instanceof Error ? err.message : String(err);
-        setCreateFolderError(msg);
-      } finally {
-        if (activeCwdRef.current === targetCwd) {
-          setIsSubmittingFolder(false);
-        }
-      }
-    },
-    [workingDirectory, refreshAll, t]
-  );
-
   const handleToggleDir = useCallback(
     async (relativePath: string) => {
       if (expandedDirs.has(relativePath)) {
@@ -688,12 +665,26 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const searchResults = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     if (!q) return null;
-    return allLoadedEntries.filter(
+    let list = allLoadedEntries;
+    if (showOnlyModified) {
+      list = list.filter((e) =>
+        isEntryModified(e, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap)
+      );
+    }
+    return list.filter(
       (e) =>
         e.name.toLowerCase().includes(q) ||
         e.relativePath.toLowerCase().includes(q)
     );
-  }, [searchTerm, allLoadedEntries]);
+  }, [searchTerm, showOnlyModified, allLoadedEntries, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap]);
+
+  // Root entries filtered by modified status when active
+  const visibleRootEntries = useMemo(() => {
+    if (!showOnlyModified) return rootEntries;
+    return rootEntries.filter((entry) =>
+      isEntryModified(entry, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap)
+    );
+  }, [showOnlyModified, rootEntries, gitModifiedSet, gitAddedSet, gitUntrackedSet, dirChangesMap]);
 
   return (
     <div className="file-tree-root" role="region" aria-label={t('file_tree.title')}>
@@ -720,7 +711,23 @@ export const FileTree: React.FC<FileTreeProps> = ({
             </span>
 
             {gitStatus.branch && (
-              <span className="git-branch-badge" title={gitStatus.branch}>
+              <span
+                className="git-branch-badge clickable"
+                onClick={() => setIsBranchModalOpen(true)}
+                title={
+                  gitStatus.upstreamBranch
+                    ? `${gitStatus.branch} -> ${gitStatus.upstreamBranch}`
+                    : gitStatus.branch
+                }
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setIsBranchModalOpen(true);
+                  }
+                }}
+              >
                 <svg
                   width="11"
                   height="11"
@@ -741,14 +748,30 @@ export const FileTree: React.FC<FileTreeProps> = ({
             )}
           </div>
 
-          {totalGitChanges > 0 && (
-            <span
-              className="git-changes-badge"
-              title={t('file_tree.git_changed_count', { count: totalGitChanges })}
+          <button
+            type="button"
+            className="btn-git-manage-branches"
+            onClick={() => setIsBranchModalOpen(true)}
+            title={t('file_tree.manage_branches')}
+            aria-label={t('file_tree.manage_branches')}
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              {totalGitChanges}
-            </span>
-          )}
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span>{t('file_tree.branches_button')}</span>
+          </button>
         </div>
       )}
 
@@ -763,15 +786,13 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
         <button
           type="button"
-          className="btn-tree-create-folder"
-          onClick={() => {
-            setIsCreatingFolder((prev) => !prev);
-            setCreateFolderError(null);
-          }}
-          title={t('file_tree.create_folder')}
-          aria-label={t('file_tree.create_folder')}
+          className={`btn-tree-modified ${showOnlyModified ? 'active' : ''}`}
+          onClick={() => setShowOnlyModified((prev) => !prev)}
+          title={t('file_tree.filter_modified_hint')}
+          aria-label={t('file_tree.filter_modified')}
+          aria-pressed={showOnlyModified}
         >
-          {t('file_tree.create_folder')}
+          {t('file_tree.filter_modified')}
         </button>
 
         <button
@@ -790,17 +811,21 @@ export const FileTree: React.FC<FileTreeProps> = ({
         </button>
       </div>
 
-      {/* Inline Create Folder Form */}
-      {isCreatingFolder && (
-        <CreateFolderForm
-          onSubmit={handleCreateFolder}
-          onCancel={() => {
-            setIsCreatingFolder(false);
-            setCreateFolderError(null);
+      {/* Branch Management Modal */}
+      {isBranchModalOpen && (
+        <BranchManagerModal
+          isOpen={isBranchModalOpen}
+          onClose={() => setIsBranchModalOpen(false)}
+          workingDirectory={workingDirectory}
+          currentBranch={gitStatus?.branch}
+          upstreamBranch={gitStatus?.upstreamBranch}
+          isAgentWorking={isAgentWorking}
+          hasUncommittedChanges={totalGitChanges > 0}
+          locale={locale}
+          onBranchSwitched={() => {
+            void refreshAll(false);
           }}
-          isLoading={isSubmittingFolder}
-          error={createFolderError}
-          t={t}
+          onError={onError}
         />
       )}
 
@@ -897,10 +922,14 @@ export const FileTree: React.FC<FileTreeProps> = ({
           <div className="sidebar-empty">
             <p className="sidebar-empty-title">{t('file_tree.empty')}</p>
           </div>
+        ) : visibleRootEntries.length === 0 && showOnlyModified ? (
+          <div className="sidebar-empty">
+            <p className="sidebar-empty-title">{t('file_tree.no_modified_files')}</p>
+          </div>
         ) : (
           /* Tree mode: Hierarchical view */
           <div className="file-tree-list" role="tree">
-            {rootEntries.map((entry) => (
+            {visibleRootEntries.map((entry) => (
               <TreeNodeItem
                 key={entry.relativePath}
                 entry={entry}
@@ -913,6 +942,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                 gitAddedSet={gitAddedSet}
                 gitUntrackedSet={gitUntrackedSet}
                 dirChangesMap={dirChangesMap}
+                showOnlyModified={showOnlyModified}
                 onToggleDir={handleToggleDir}
                 onSelectFile={handleSelectFile}
                 t={t}

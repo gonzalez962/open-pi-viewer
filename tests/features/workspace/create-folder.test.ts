@@ -15,7 +15,7 @@ test('S1: locale dictionaries contain exact "+ Folder" button label for both en 
   assert.strictEqual(esJson['file_tree.create_folder'], '+ Folder');
 });
 
-test('S1: FileTree renders "+ Folder" button beside the filter in both English and Spanish', () => {
+test('S1: FileTree renders "Modified" button beside the filter in both English and Spanish (replaces + Folder)', () => {
   // 1. English
   const enElement = React.createElement(FileTree, {
     workingDirectory: 'C:/project',
@@ -23,8 +23,9 @@ test('S1: FileTree renders "+ Folder" button beside the filter in both English a
     onOpenFile: () => {},
   });
   const enMarkup = renderToStaticMarkup(enElement);
-  assert.ok(enMarkup.includes('btn-tree-create-folder'), 'Must render create folder button');
-  assert.ok(enMarkup.includes('+ Folder'), 'Must render exact "+ Folder" label in en');
+  assert.ok(enMarkup.includes('btn-tree-modified'), 'Must render Modified button');
+  assert.ok(enMarkup.includes('Modified'), 'Must render exact "Modified" label in en');
+  assert.strictEqual(enMarkup.includes('btn-tree-create-folder'), false, 'Create folder button must be removed');
   assert.ok(enMarkup.includes('file-tree-controls'), 'Must be inside file tree controls next to filter');
 
   // 2. Spanish
@@ -34,8 +35,9 @@ test('S1: FileTree renders "+ Folder" button beside the filter in both English a
     onOpenFile: () => {},
   });
   const esMarkup = renderToStaticMarkup(esElement);
-  assert.ok(esMarkup.includes('btn-tree-create-folder'), 'Must render create folder button in es');
-  assert.ok(esMarkup.includes('+ Folder'), 'Must render exact "+ Folder" label in es');
+  assert.ok(esMarkup.includes('btn-tree-modified'), 'Must render Modified button in es');
+  assert.ok(esMarkup.includes('Modified'), 'Must render exact "Modified" label in es');
+  assert.strictEqual(esMarkup.includes('btn-tree-create-folder'), false, 'Create folder button must be removed in es');
 });
 
 // S1.1: Bridge invocation for folder creation
@@ -97,8 +99,8 @@ test('S1.3: CreateFolderForm: visibly displays error message when error is provi
   assert.ok(markup.includes('role="alert"'));
 });
 
-// S1.4 PRESERVE: Existing explorer controls (filter, refresh) remain intact beside + Folder
-test('S1.4 PRESERVE: FileTree controls preserve search input and refresh button alongside + Folder button', () => {
+// S1.4 PRESERVE: Existing explorer controls (filter, refresh) remain intact beside Modified button
+test('S1.4 PRESERVE: FileTree controls preserve search input and refresh button alongside Modified button', () => {
   const element = React.createElement(FileTree, {
     workingDirectory: 'C:/project',
     locale: 'en',
@@ -111,8 +113,9 @@ test('S1.4 PRESERVE: FileTree controls preserve search input and refresh button 
   assert.ok(markup.includes('class="sidebar-search-input"'), 'Search input element must remain');
   // Refresh button
   assert.ok(markup.includes('btn-tree-refresh'), 'Refresh button must remain');
-  // Create folder button
-  assert.ok(markup.includes('btn-tree-create-folder'), 'Create folder button must be present beside filter');
+  // Modified button
+  assert.ok(markup.includes('btn-tree-modified'), 'Modified button must be present beside filter');
+  assert.strictEqual(markup.includes('btn-tree-create-folder'), false, 'Create folder button must not be present');
 });
 
 // S1: Delete folder locale dictionary entries for both en and es

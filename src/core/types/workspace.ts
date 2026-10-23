@@ -51,9 +51,56 @@ export interface WorkspaceGitStatus {
   isRepo: boolean;
   repoName?: string | null;
   branch?: string | null;
+  upstreamBranch?: string | null;
   modifiedFiles: string[];
   addedFiles: string[];
   untrackedFiles: string[];
+}
+
+export interface WorkspaceBranch {
+  name: string;
+  isCurrent: boolean;
+  upstream?: string | null;
+}
+
+export interface WorkspaceBranchList {
+  current: string | null;
+  defaultBranch?: string | null;
+  branches: WorkspaceBranch[];
+  allBases: string[];
+}
+
+export interface ListWorkspaceBranchesPayload {
+  workingDirectory?: string;
+}
+
+export interface SwitchWorkspaceBranchPayload {
+  workingDirectory?: string;
+  branch: string;
+}
+
+export interface DeleteWorkspaceBranchPayload {
+  workingDirectory?: string;
+  branch: string;
+}
+
+export interface PublishWorkspaceBranchPayload {
+  workingDirectory?: string;
+  branch: string;
+  remote?: string;
+}
+
+export interface CreateWorkspaceBranchPayload {
+  workingDirectory?: string;
+  name: string;
+  baseBranch?: string;
+  leaveChangesInBase?: boolean;
+}
+
+export interface BranchOperationResult {
+  success: boolean;
+  branch: string;
+  message?: string;
 }
 
 export interface WorkspaceFileDiff {
