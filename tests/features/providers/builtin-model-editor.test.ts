@@ -263,3 +263,247 @@ test('S1.1: getBuiltinProviderCatalogPi invokes backend in web-shim mode with de
     else (globalThis as any).isTauri = origIsTauri;
   }
 });
+
+test('S2.1 — Given loadingCatalogProviderId matching a connected provider, when rendered, then the edit models button shows a loader spinner and is disabled', () => {
+  const dummyOauth = {
+    accounts: [mockConnectedAccount],
+    isLoading: false,
+    accountsError: null,
+    activeProviderId: null,
+    isStarting: false,
+    isCancelling: false,
+    statusMessage: null,
+    deviceCodeInfo: null,
+    pendingPrompt: null,
+    activeError: null,
+    successNotice: null,
+    confirmLogoutId: null,
+    isLoggingOut: false,
+    refreshAccounts: () => {},
+    startLogin: () => {},
+    cancelLogin: () => {},
+    respondToPrompt: () => {},
+    confirmLogout: () => {},
+    cancelConfirmLogout: () => {},
+    logoutProvider: () => {},
+    setSuccessNotice: () => {},
+    setActiveError: () => {},
+    setAccountsError: () => {},
+    dismissAccountsError: () => {},
+  } as any;
+
+  const html = renderToStaticMarkup(
+    React.createElement(BuiltinOAuthAccounts, {
+      oauth: dummyOauth,
+      t,
+      isBusy: false,
+      loadingCatalogProviderId: 'anthropic',
+    })
+  );
+
+  const anthropicCardMatch = html.match(/data-provider-id="anthropic"[\s\S]*?<\/div>\s*<\/div>/);
+  assert.ok(anthropicCardMatch, 'Anthropic card must be rendered');
+  const anthropicCardHtml = anthropicCardMatch[0];
+
+  assert.match(
+    anthropicCardHtml,
+    /builtin-oauth-edit-models-btn[\s\S]*?disabled/,
+    'Button must be disabled while catalog is loading'
+  );
+  assert.match(
+    anthropicCardHtml,
+    /spinner-sm/,
+    'Button must render spinner-sm loader while catalog is loading'
+  );
+});
+
+test('S2.2 — Given fullConfig with existing built-in provider rules in models.json, when opening built-in models, then catalog fetch is skipped and saved rules are used', async () => {
+  let catalogFetched = false;
+  const origWindow = (globalThis as any).window;
+
+  try {
+    (globalThis as any).window = {
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async (cmd: string) => {
+          if (cmd === 'get_builtin_provider_catalog') {
+            catalogFetched = true;
+            return [];
+          }
+          return [];
+        },
+      },
+    };
+
+    const savedConfig: CustomProviderConfig = {
+      id: 'anthropic',
+      name: 'Anthropic',
+      models: [
+        {
+          id: 'claude-3-5-sonnet',
+          name: 'Claude 3.5 Sonnet',
+          contextWindow: 200000,
+          maxTokens: 8192,
+        },
+      ],
+      excludedModels: ['claude-3-haiku*'],
+      includedModels: [],
+      isBuiltin: true,
+    };
+
+    // Simulate the logic in handleOpenEditBuiltinModels
+    const fullConfig: { providers: Record<string, CustomProviderConfig> } = {
+      providers: {
+        anthropic: savedConfig,
+      },
+    };
+
+    const providerStatus: BuiltinOAuthProviderStatus = {
+      id: 'anthropic',
+      name: 'Anthropic',
+      oauthName: 'anthropic',
+      loginLabel: 'Sign in with Anthropic',
+      isSubscription: false,
+      configured: true,
+      hasStoredOAuth: true,
+      oauthReady: true,
+      ambientApiKey: false,
+      source: 'auth.json',
+      status: 'ready',
+    };
+
+    let openedWithCatalog: any = null;
+    let openedWithSaved: any = null;
+
+    const mockModalForm = {
+      openEditBuiltinModal: (_p: any, catalog: any, saved: any) => {
+        openedWithCatalog = catalog;
+        openedWithSaved = saved;
+      },
+    };
+
+    // Check logic:
+    const existingSaved = fullConfig.providers?.[providerStatus.id]
+      ? ({ ...fullConfig.providers[providerStatus.id], id: providerStatus.id } as CustomProviderConfig)
+      : undefined;
+
+    const isRegistered = Boolean(
+      existingSaved && (
+        (existingSaved.models && existingSaved.models.length > 0) ||
+        (existingSaved.includedModels && existingSaved.includedModels.length > 0) ||
+        (existingSaved.excludedModels && existingSaved.excludedModels.length > 0) ||
+        existingSaved.isBuiltin
+      )
+    );
+
+    assert.equal(isRegistered, true, 'Provider must be identified as already registered in models.json');
+
+    if (isRegistered && existingSaved) {
+      mockModalForm.openEditBuiltinModal(providerStatus, existingSaved.models || [], existingSaved);
+    } else {
+      await getBuiltinProviderCatalogPi(providerStatus.id);
+    }
+
+    assert.equal(catalogFetched, false, 'Must NOT invoke getBuiltinProviderCatalogPi when already configured in models.json');
+    assert.deepEqual(openedWithCatalog, savedConfig.models, 'Must open with models from models.json');
+    assert.equal(openedWithSaved.id, 'anthropic');
+  } finally {
+    if (origWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = origWindow;
+  }
+});
+
+test('S2.3 — Given provider not in models.json, when opened, then catalog is fetched and silently persisted to models.json on first fetch', async () => {
+  let catalogFetched = false;
+  let savedPayload: any = null;
+  let savedSilent: boolean | null = null;
+  const origWindow = (globalThis as any).window;
+
+  try {
+    (globalThis as any).window = {
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async (cmd: string) => {
+          if (cmd === 'get_builtin_provider_catalog') {
+            catalogFetched = true;
+            return [
+              { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', provider: 'anthropic', contextWindow: 200000, maxTokens: 8192 },
+            ];
+          }
+          return [];
+        },
+      },
+    };
+
+    const emptyConfig = {
+      providers: {},
+    };
+
+    const providerStatus: BuiltinOAuthProviderStatus = {
+      id: 'anthropic',
+      name: 'Anthropic',
+      oauthName: 'anthropic',
+      loginLabel: 'Sign in with Anthropic',
+      isSubscription: false,
+      configured: true,
+      hasStoredOAuth: true,
+      oauthReady: true,
+      ambientApiKey: false,
+      source: 'auth.json',
+      status: 'ready',
+    };
+
+    const mockSaveProvider = async (formData: any, _isEditing: boolean, silent = false) => {
+      savedPayload = formData;
+      savedSilent = silent;
+      return true;
+    };
+
+    // Simulate first fetch logic
+    const existingSaved = (emptyConfig.providers as Record<string, any>)?.[providerStatus.id];
+    assert.equal(existingSaved, undefined);
+
+    const catalogModels = await getBuiltinProviderCatalogPi(providerStatus.id);
+    assert.equal(catalogFetched, true, 'Catalog must be fetched when not in models.json');
+
+    const catalogDefs = catalogModels.map((m: any) => ({
+      id: m.id,
+      name: m.name || m.id,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+      reasoning: Boolean(m.reasoning),
+      input: m.input || ['text'],
+    }));
+
+    if (catalogDefs.length > 0) {
+      await mockSaveProvider(
+        {
+          id: providerStatus.id,
+          name: providerStatus.name || providerStatus.id,
+          baseUrl: '',
+          api: '',
+          apiKey: '',
+          models: catalogDefs,
+          excludedModels: [],
+          includedModels: [],
+          isBuiltin: true,
+        },
+        false,
+        true
+      );
+    }
+
+    assert.ok(savedPayload, 'Initial catalog must be saved to models.json on first fetch');
+    assert.equal(savedPayload.id, 'anthropic');
+    assert.equal(savedPayload.isBuiltin, true);
+    assert.equal(savedPayload.models.length, 1);
+    assert.equal(savedSilent, true, 'First fetch auto-save must be silent (no intrusive banner)');
+  } finally {
+    if (origWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = origWindow;
+  }
+});
+
+

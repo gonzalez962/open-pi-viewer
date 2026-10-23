@@ -1,7 +1,7 @@
 import React from 'react';
 import type { SupportedLocale, TranslationKey } from '@shared/i18n';
 import type { BuiltinOAuthProviderStatus } from '@core/types/oauth';
-import type { CustomProviderConfig } from '@core/types/providers';
+import type { CustomModelDefinition, CustomProviderConfig } from '@core/types/providers';
 import type { ModelInfo } from '@core/types/models';
 import { getBuiltinProviderCatalogPi } from '@infra/bridge';
 import { isPiBuiltinProvider } from './providers';
@@ -46,19 +46,90 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
     return (data.providers || []).filter((p) => !isPiBuiltinProvider(p));
   }, [data.providers]);
 
-  const handleOpenEditBuiltinModels = async (provider: BuiltinOAuthProviderStatus) => {
-    let catalogModels: ModelInfo[] = [];
-    try {
-      catalogModels = await getBuiltinProviderCatalogPi(provider.id);
-    } catch {
-      // Proceed with empty catalog fallback
-    }
+  const [loadingCatalogProviderId, setLoadingCatalogProviderId] = React.useState<string | null>(null);
 
+  const handleOpenEditBuiltinModels = async (provider: BuiltinOAuthProviderStatus) => {
     const savedConfig = data.fullConfig.providers?.[provider.id]
       ? ({ id: provider.id, ...data.fullConfig.providers[provider.id] } as CustomProviderConfig)
       : undefined;
 
-    modalForm.openEditBuiltinModal(provider, catalogModels, savedConfig);
+    const isRegisteredInModelsJson = Boolean(
+      savedConfig && (
+        (savedConfig.models && savedConfig.models.length > 0) ||
+        (savedConfig.includedModels && savedConfig.includedModels.length > 0) ||
+        (savedConfig.excludedModels && savedConfig.excludedModels.length > 0) ||
+        savedConfig.isBuiltin
+      )
+    );
+
+    if (isRegisteredInModelsJson && savedConfig) {
+      modalForm.openEditBuiltinModal(provider, savedConfig.models || [], savedConfig);
+      return;
+    }
+
+    setLoadingCatalogProviderId(provider.id);
+    try {
+      let catalogModels: ModelInfo[] = [];
+      try {
+        catalogModels = await getBuiltinProviderCatalogPi(provider.id);
+      } catch {
+        // Proceed with empty catalog fallback
+      }
+
+      const catalogDefs: CustomModelDefinition[] = catalogModels
+        .filter(
+          (m) =>
+            typeof m.id === 'string' &&
+            m.id.trim() !== '' &&
+            (!('provider' in m) || !m.provider || m.provider.toLowerCase() === provider.id.toLowerCase())
+        )
+        .map((m) => ({
+          id: (m.id || '').trim(),
+          name: m.name || m.id,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          reasoning: m.reasoning,
+          reasoningEfforts: (m as any).reasoningEfforts,
+          input: m.input || (m as any).input_modalities || ['text'],
+          thinkingLevel: m.thinkingLevel,
+          defaultThinkingLevel: m.defaultThinkingLevel,
+        }));
+
+      const initialBuiltinConfig: CustomProviderConfig = {
+        id: provider.id,
+        name: provider.name || provider.id,
+        models: catalogDefs,
+        excludedModels: [],
+        includedModels: [],
+        isBuiltin: true,
+      };
+
+      if (catalogDefs.length > 0) {
+        try {
+          await data.saveProvider(
+            {
+              id: provider.id,
+              name: provider.name || provider.id,
+              baseUrl: '',
+              api: '',
+              apiKey: '',
+              models: catalogDefs,
+              excludedModels: [],
+              includedModels: [],
+              isBuiltin: true,
+            },
+            false,
+            true
+          );
+        } catch {
+          // Proceed to open modal even if silent auto-persist failed
+        }
+      }
+
+      modalForm.openEditBuiltinModal(provider, catalogDefs, initialBuiltinConfig);
+    } finally {
+      setLoadingCatalogProviderId(null);
+    }
   };
 
   return (
@@ -100,6 +171,7 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
           t={t}
           isBusy={isBusy}
           onOpenEditModels={handleOpenEditBuiltinModels}
+          loadingCatalogProviderId={loadingCatalogProviderId}
         />
 
         {/* Separate Custom Provider Editor Section (models.json) */}

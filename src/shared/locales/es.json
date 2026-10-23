@@ -685,6 +685,7 @@
   "providers.oauth.btn_connect": "Conectar",
   "providers.oauth.btn_disconnect": "Desconectar",
   "providers.oauth.btn_edit_models": "Editar modelos",
+  "providers.oauth.loading_catalog": "Cargando modelos...",
   "providers.oauth.edit_models_title": "Editar modelos integrados: {id}",
   "providers.oauth.builtin_info": "Proveedor integrado — Las credenciales de conexión y los endpoints del catálogo se gestionan automáticamente.",
   "providers.oauth.btn_reconnect": "Reconectar",

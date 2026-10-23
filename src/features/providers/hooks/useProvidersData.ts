@@ -102,7 +102,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
   }, [loadProviders]);
 
   const saveProvider = useCallback(
-    async (formData: ProviderFormData, isEditing: boolean): Promise<boolean> => {
+    async (formData: ProviderFormData, isEditing: boolean, silent = false): Promise<boolean> => {
       const providerToValidate = prepareProviderPayload(formData);
 
       const validation = validateProviderConfig(providerToValidate);
@@ -134,11 +134,13 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
           }).catch(() => {});
         }
 
-        setSuccessNotice(
-          isEditing
-            ? t('providers.notice_updated', { id: providerToValidate.id })
-            : t('providers.notice_added', { id: providerToValidate.id })
-        );
+        if (!silent) {
+          setSuccessNotice(
+            isEditing
+              ? t('providers.notice_updated', { id: providerToValidate.id })
+              : t('providers.notice_added', { id: providerToValidate.id })
+          );
+        }
 
         if (onRefreshModels) {
           onRefreshModels().catch(() => {});
