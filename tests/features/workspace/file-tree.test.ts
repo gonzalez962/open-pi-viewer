@@ -14,11 +14,12 @@ import {
   createWorkspaceBranchPi,
   deleteWorkspaceBranchPi,
   publishWorkspaceBranchPi,
+  listWorkspaceBranchCommitsPi,
 } from '@infra/bridge';
-import { BranchManagerModal } from '@features/workspace/components/BranchManagerModal';
+import { BranchManagerModal, sortBranchesMainFirst } from '@features/workspace/components/BranchManagerModal';
+import { BranchCommitsModal } from '@features/workspace/components/BranchCommitsModal';
 import { isValidGitBranchName, deduplicateBaseBranches, sanitizeBranchName } from '@server/bridge/paths';
 import type {
-  WorkspaceBranch,
   WorkspaceBranchList,
   BranchOperationResult,
 } from '@core/types/workspace';
@@ -508,6 +509,16 @@ test('i18n: file tree and auto-refresh settings keys exist with exact parity in 
     'file_tree.publish_branch_action',
     'file_tree.publish_confirm_title',
     'file_tree.publish_confirm_msg',
+    'file_tree.view_commits_btn',
+    'file_tree.load_more_commits',
+    'file_tree.loading_commits',
+    'file_tree.no_commits_found',
+    'file_tree.copy_commit_hash',
+    'file_tree.commit_hash_copied',
+    'file_tree.commit_unpushed_title',
+    'file_tree.branch_commits_modal_title',
+    'file_tree.branch_commits_back',
+    'file_tree.branch_actions_toggle',
     'settings.file_tree_heading',
     'settings.file_tree_hint',
     'settings.file_tree_interval_label',
@@ -1006,6 +1017,104 @@ test('Bridge: publishWorkspaceBranchPi invokes publish_workspace_branch with pay
   assert.strictEqual(res.success, true);
   assert.strictEqual(res.branch, 'feat/local-only');
 });
+
+test('Bridge: listWorkspaceBranchCommitsPi invokes list_workspace_branch_commits with payload', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult = {
+    branch: 'feat/test',
+    commits: [
+      {
+        hash: 'abc123456789',
+        shortHash: 'abc1234',
+        subject: 'test commit',
+        author: 'Tester',
+        date: '2026-10-23',
+        isUnpushed: true,
+      },
+    ],
+    hasMore: false,
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await listWorkspaceBranchCommitsPi('feat/test', 10, 0, 'C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'list_workspace_branch_commits');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: {
+      branch: 'feat/test',
+      limit: 10,
+      offset: 0,
+      workingDirectory: 'C:/project',
+    },
+  });
+  assert.strictEqual(res.branch, 'feat/test');
+  assert.strictEqual(res.commits.length, 1);
+  assert.strictEqual(res.commits[0].isUnpushed, true);
+});
+
+test('BranchManagerModal: renders view commits button in branch actions', () => {
+  const element = React.createElement(BranchManagerModal, {
+    isOpen: true,
+    onClose: () => {},
+    workingDirectory: 'C:/project',
+    currentBranch: 'main',
+    isAgentWorking: false,
+    locale: 'es',
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('btn-branch-new'));
+  assert.ok(markup.includes('branch-modal-container'));
+});
+
+test('BranchCommitsModal: renders dedicated modal container and header with branch name', () => {
+  const element = React.createElement(BranchCommitsModal, {
+    isOpen: true,
+    onClose: () => {},
+    branchName: 'feature/new-ui',
+    workingDirectory: 'C:/project',
+    locale: 'es',
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('branch-commits-modal-container'));
+  assert.ok(markup.includes('Commits en feature/new-ui'));
+});
+
+test('sortBranchesMainFirst: guarantees main is always first in the list', () => {
+  const branches = [
+    { name: 'feature/zebra', isCurrent: false },
+    { name: 'fix/alpha', isCurrent: false },
+    { name: 'main', isCurrent: false },
+    { name: 'develop', isCurrent: true },
+  ];
+
+  const sorted = sortBranchesMainFirst(branches, 'main');
+  assert.equal(sorted[0].name, 'main');
+  assert.deepEqual(
+    sorted.map((b) => b.name),
+    ['main', 'develop', 'feature/zebra', 'fix/alpha']
+  );
+});
+
+test('BranchManagerModal: renders slidable actions drawer and toggle button', () => {
+  const element = React.createElement(BranchManagerModal, {
+    isOpen: true,
+    onClose: () => {},
+    workingDirectory: 'C:/project',
+    currentBranch: 'main',
+    isAgentWorking: false,
+    locale: 'es',
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('branch-modal-container'));
+});
+
 
 
 

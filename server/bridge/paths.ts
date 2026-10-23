@@ -11,6 +11,8 @@ import type {
   WorkspaceBranch,
   WorkspaceBranchList,
   BranchOperationResult,
+  WorkspaceBranchCommit,
+  WorkspaceBranchCommitsResult,
 } from '../../src/core/types/workspace';
 import {
   MAX_TEXT_FILE_BYTES,
@@ -861,7 +863,7 @@ export function isValidGitBranchName(name: string): boolean {
   if (!trimmed || trimmed !== name) return false;
   if (trimmed.startsWith('-') || trimmed.startsWith('.') || trimmed.endsWith('.') || trimmed.endsWith('/')) return false;
   if (trimmed.endsWith('.lock')) return false;
-  if (/[\s~^:?*\[\\\]\x00-\x1f\x7f]/.test(trimmed)) return false;
+  if (/[\s~^:?*\[\\\]\x00-\x1f\x7f;|&$<>'"{}]/.test(trimmed)) return false;
   if (trimmed.includes('..') || trimmed.includes('//') || trimmed.includes('@{')) return false;
   return true;
 }
@@ -1274,5 +1276,140 @@ export function handlePublishWorkspaceBranch(args: any = {}): BranchOperationRes
     success: true,
     branch,
     message: (res.stderr || res.stdout || '').trim(),
+  };
+}
+
+/**
+ * Lists paginated commits for a specific git branch and marks unpushed commits.
+ */
+export function handleListWorkspaceBranchCommits(args: any = {}): WorkspaceBranchCommitsResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const branch = (payload.branch || '').trim();
+
+  if (!isValidGitBranchName(branch)) {
+    throw new Error(`Invalid branch name: ${branch}`);
+  }
+
+  if (!fs.existsSync(targetCwd)) {
+    throw new Error(`Workspace path does not exist: ${targetCwd}`);
+  }
+
+  const limit = Math.max(1, Math.min(100, Number(payload.limit) || 10));
+  const offset = Math.max(0, Number(payload.offset) || 0);
+
+  // 1. Determine unpushed commits for this branch
+  const unpushedSet = new Set<string>();
+  let checkedUpstream = false;
+
+  // Try branch@{upstream}..branch first
+  try {
+    const upstreamCommits = execFileSync(
+      'git',
+      ['rev-list', `${branch}@{upstream}..${branch}`],
+      { cwd: targetCwd, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    checkedUpstream = true;
+    for (const h of upstreamCommits.split('\n')) {
+      const trimmed = h.trim();
+      if (trimmed) {
+        unpushedSet.add(trimmed);
+      }
+    }
+  } catch {
+    // Upstream not configured, or tracking branch gone/invalid
+  }
+
+  // Fallback if upstream wasn't checked: check against all remotes
+  if (!checkedUpstream) {
+    try {
+      const remotesCheck = execFileSync(
+        'git',
+        ['remote'],
+        { cwd: targetCwd, encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }
+      ).trim();
+      if (remotesCheck) {
+        const notRemotes = execFileSync(
+          'git',
+          ['rev-list', branch, '--not', '--remotes'],
+          { cwd: targetCwd, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
+        );
+        for (const h of notRemotes.split('\n')) {
+          const trimmed = h.trim();
+          if (trimmed) {
+            unpushedSet.add(trimmed);
+          }
+        }
+      } else {
+        // No remotes exist at all, all commits are considered local / unpushed
+        const allLocal = execFileSync(
+          'git',
+          ['rev-list', branch],
+          { cwd: targetCwd, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
+        );
+        for (const h of allLocal.split('\n')) {
+          const trimmed = h.trim();
+          if (trimmed) {
+            unpushedSet.add(trimmed);
+          }
+        }
+      }
+    } catch {
+      // Ignore rev-list failures on unpushed detection
+    }
+  }
+
+  // 2. Fetch limit + 1 commits with git log to determine hasMore
+  const fetchCount = limit + 1;
+  const logArgs = [
+    'log',
+    `-n`,
+    String(fetchCount),
+    `--skip=${offset}`,
+    branch,
+    '--format=%H%x1f%h%x1f%s%x1f%an%x1f%cI',
+  ];
+
+  let rawLog = '';
+  try {
+    rawLog = execFileSync('git', logArgs, {
+      cwd: targetCwd,
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch (err: any) {
+    throw new Error(err.message || `Failed to read commits for branch ${branch}`);
+  }
+
+  const rawLines = rawLog.split('\n').filter((l) => l.trim().length > 0);
+  const hasMore = rawLines.length > limit;
+  const targetLines = hasMore ? rawLines.slice(0, limit) : rawLines;
+
+  const commits: WorkspaceBranchCommit[] = [];
+  for (const line of targetLines) {
+    const parts = line.split('\x1f');
+    if (parts.length >= 2) {
+      const hash = parts[0]?.trim() || '';
+      const shortHash = parts[1]?.trim() || hash.slice(0, 7);
+      const subject = parts[2]?.trim() || '';
+      const author = parts[3]?.trim() || '';
+      const date = parts[4]?.trim() || '';
+
+      commits.push({
+        hash,
+        shortHash,
+        subject,
+        author,
+        date,
+        isUnpushed: unpushedSet.has(hash),
+      });
+    }
+  }
+
+  return {
+    branch,
+    commits,
+    hasMore,
   };
 }

@@ -77,6 +77,7 @@ pub fn run() {
             commands::create_workspace_branch,
             commands::delete_workspace_branch,
             commands::publish_workspace_branch,
+            commands::list_workspace_branch_commits,
             commands::get_available_models,
             commands::set_model,
             commands::get_available_thinking_levels,

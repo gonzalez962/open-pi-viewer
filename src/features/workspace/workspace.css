@@ -1446,6 +1446,8 @@
   padding: 8px 16px;
   border-bottom: 1px solid var(--border-subtle);
   transition: background-color 0.12s ease;
+  position: relative;
+  overflow: hidden;
 }
 
 .branch-item:hover {
@@ -1454,6 +1456,10 @@
 
 .branch-item.is-active {
   background-color: var(--bg-subtle);
+}
+
+.branch-item.actions-open {
+  background-color: var(--bg-subtle-hover);
 }
 
 .branch-item-left {
@@ -1504,6 +1510,66 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.branch-item-actions-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: 8px;
+  position: relative;
+}
+
+.branch-item-actions-drawer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  max-width: 0;
+  transform: translateX(12px);
+  pointer-events: none;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.18s ease,
+              transform 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.branch-item-actions-drawer.is-expanded {
+  opacity: 1;
+  max-width: 320px;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+
+.btn-branch-actions-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-muted);
+  background-color: var(--bg-surface);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.btn-branch-actions-toggle:hover {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--accent-primary);
+  color: var(--fg-default);
+}
+
+.btn-branch-actions-toggle.is-active {
+  background-color: var(--accent-subtle, rgba(59, 130, 246, 0.12));
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+  transform: rotate(90deg);
 }
 
 .branch-item-actions {
@@ -1612,6 +1678,222 @@
 .btn-branch-publish:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.btn-branch-commits {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-muted);
+  background-color: var(--bg-surface);
+  color: var(--fg-default);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  white-space: nowrap;
+}
+
+.btn-branch-commits:hover:not(:disabled) {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.btn-branch-commits.is-active {
+  background-color: var(--accent-subtle, rgba(59, 130, 246, 0.12));
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.btn-branch-commits:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Branch Commits Panel */
+.branch-commits-panel {
+  background-color: var(--bg-inset, rgba(0, 0, 0, 0.08));
+  border-top: 1px solid var(--border-subtle);
+  padding: 10px 16px 12px 24px;
+}
+
+.branch-commits-loading,
+.branch-commits-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.branch-commits-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm, 4px);
+  background-color: var(--status-red-bg, rgba(239, 68, 68, 0.1));
+  border: 1px solid var(--status-red-border, rgba(239, 68, 68, 0.25));
+  color: var(--status-red-fg, #ef4444);
+  font-size: 11.5px;
+}
+
+.branch-commits-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.branch-commit-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm, 4px);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  transition: background-color 0.12s ease;
+}
+
+.branch-commit-item:hover {
+  background-color: var(--bg-subtle-hover);
+}
+
+.branch-commit-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.branch-commit-subject {
+  font-size: 12px;
+  font-weight: 450;
+  color: var(--fg-default);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-commit-unpushed-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent-primary, #3b82f6);
+  cursor: default;
+  user-select: none;
+}
+
+.btn-branch-commit-hash {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs, 3px);
+  border: 1px solid var(--border-muted);
+  background-color: var(--bg-surface);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+  flex-shrink: 0;
+}
+
+.btn-branch-commit-hash code {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+.btn-branch-commit-hash:hover {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--accent-primary);
+  color: var(--fg-default);
+}
+
+.btn-branch-commit-hash.is-copied {
+  border-color: var(--status-green-border, #10b981);
+  background-color: var(--status-green-bg, rgba(16, 185, 129, 0.15));
+  color: var(--status-green-fg, #10b981);
+}
+
+.branch-commits-load-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+  margin-top: 6px;
+  border-top: 1px dashed var(--border-subtle);
+}
+
+.btn-branch-load-more-commits {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-muted);
+  background-color: var(--bg-surface);
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-branch-load-more-commits:hover:not(:disabled) {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--accent-primary);
+  color: var(--fg-default);
+}
+
+.btn-branch-load-more-commits:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Dedicated Branch Commits Modal */
+.branch-commits-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(2px);
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.branch-commits-modal-container {
+  width: 100%;
+  max-width: 520px;
+  max-height: 80vh;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: branchModalFadeIn 0.15s ease-out;
+}
+
+.branch-commits-modal-body {
+  padding: 14px 16px 16px 16px;
+  overflow-y: auto;
+  max-height: calc(80vh - 60px);
+  display: flex;
+  flex-direction: column;
 }
 
 

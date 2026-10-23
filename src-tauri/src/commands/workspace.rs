@@ -749,6 +749,43 @@ pub struct BranchOperationResult {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishWorkspaceBranchPayload {
+    pub working_directory: Option<String>,
+    pub branch: String,
+    pub remote: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+    pub is_unpushed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchCommitsResult {
+    pub branch: String,
+    pub commits: Vec<WorkspaceBranchCommit>,
+    pub has_more: bool,
+    pub total: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListWorkspaceBranchCommitsPayload {
+    pub working_directory: Option<String>,
+    pub branch: String,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
 /// Payload for getting git diff of a specific file
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -987,7 +1024,7 @@ pub fn validate_branch_name(name: &str) -> Result<(), String> {
         return Err("Invalid branch name sequence".to_string());
     }
     for c in trimmed.chars() {
-        if c.is_whitespace() || c.is_ascii_control() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+        if c.is_whitespace() || c.is_ascii_control() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\' | ';' | '|' | '&' | '$' | '<' | '>' | '\'' | '"' | '{' | '}') {
             return Err(format!("Branch name contains forbidden character: '{c}'"));
         }
     }
@@ -1452,6 +1489,145 @@ pub async fn get_workspace_file_diff(
     })
 }
 
+/// List paginated commits for a specific git branch and marks unpushed commits
+#[tauri::command]
+pub async fn list_workspace_branch_commits(
+    payload: ListWorkspaceBranchCommitsPayload,
+    state: State<'_, AppState>,
+) -> Result<WorkspaceBranchCommitsResult, String> {
+    validate_branch_name(&payload.branch)?;
+    let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+
+    let limit = payload.limit.unwrap_or(10).clamp(1, 100);
+    let offset = payload.offset.unwrap_or(0);
+
+    // 1. Determine unpushed commits
+    let mut unpushed_set = std::collections::HashSet::new();
+    let mut checked_upstream = false;
+
+    let upstream_rev = format!("{}@{{upstream}}..{}", payload.branch, payload.branch);
+    if let Ok(out) = tokio::process::Command::new("git")
+        .args(["rev-list", &upstream_rev])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if out.status.success() {
+            checked_upstream = true;
+            let stdout_str = String::from_utf8_lossy(&out.stdout);
+            for line in stdout_str.lines() {
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    unpushed_set.insert(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    if !checked_upstream {
+        let has_remotes = if let Ok(remotes_out) = tokio::process::Command::new("git")
+            .args(["remote"])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+        {
+            remotes_out.status.success() && !String::from_utf8_lossy(&remotes_out.stdout).trim().is_empty()
+        } else {
+            false
+        };
+
+        if has_remotes {
+            if let Ok(not_remotes_out) = tokio::process::Command::new("git")
+                .args(["rev-list", &payload.branch, "--not", "--remotes"])
+                .current_dir(&canonical_root)
+                .output()
+                .await
+            {
+                if not_remotes_out.status.success() {
+                    let stdout_str = String::from_utf8_lossy(&not_remotes_out.stdout);
+                    for line in stdout_str.lines() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            unpushed_set.insert(trimmed.to_string());
+                        }
+                    }
+                }
+            }
+        } else if let Ok(all_local_out) = tokio::process::Command::new("git")
+            .args(["rev-list", &payload.branch])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+        {
+            if all_local_out.status.success() {
+                let stdout_str = String::from_utf8_lossy(&all_local_out.stdout);
+                for line in stdout_str.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() {
+                        unpushed_set.insert(trimmed.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fetch limit + 1 commits
+    let fetch_count = limit + 1;
+    let skip_arg = format!("--skip={}", offset);
+    let log_out = tokio::process::Command::new("git")
+        .args([
+            "log",
+            "-n",
+            &fetch_count.to_string(),
+            &skip_arg,
+            &payload.branch,
+            "--format=%H\x1f%h\x1f%s\x1f%an\x1f%cI",
+        ])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+        .map_err(|e| format!("Failed to read git commits: {e}"))?;
+
+    if !log_out.status.success() {
+        let err = String::from_utf8_lossy(&log_out.stderr).trim().to_string();
+        return Err(if err.is_empty() { format!("Failed to fetch commits for branch {}", payload.branch) } else { err });
+    }
+
+    let stdout_str = String::from_utf8_lossy(&log_out.stdout);
+    let lines: Vec<&str> = stdout_str.lines().filter(|l| !l.trim().is_empty()).collect();
+    let has_more = lines.len() > limit;
+    let target_lines = if has_more { &lines[..limit] } else { &lines[..] };
+
+    let mut commits = Vec::new();
+    for line in target_lines {
+        let parts: Vec<&str> = line.split('\x1f').collect();
+        if parts.len() >= 2 {
+            let hash = parts[0].trim().to_string();
+            let short_hash = parts.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(&hash[..hash.len().min(7)]).to_string();
+            let subject = parts.get(2).map(|s| s.trim()).unwrap_or("").to_string();
+            let author = parts.get(3).map(|s| s.trim()).unwrap_or("").to_string();
+            let date = parts.get(4).map(|s| s.trim()).unwrap_or("").to_string();
+            let is_unpushed = unpushed_set.contains(&hash);
+
+            commits.push(WorkspaceBranchCommit {
+                hash,
+                short_hash,
+                subject,
+                author,
+                date,
+                is_unpushed,
+            });
+        }
+    }
+
+    Ok(WorkspaceBranchCommitsResult {
+        branch: payload.branch,
+        commits,
+        has_more,
+        total: None,
+    })
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1588,6 +1764,7 @@ mod tests {
             is_repo: true,
             repo_name: Some("test-repo".to_string()),
             branch: Some("main".to_string()),
+            upstream_branch: Some("origin/main".to_string()),
             modified_files: vec!["src/main.rs".to_string()],
             added_files: vec!["README.md".to_string()],
             untracked_files: vec!["sample.bin".to_string()],
@@ -1656,6 +1833,39 @@ mod tests {
         assert!(delete_result_json.contains("\"success\":true"));
         let deserialized_del_res: DeleteWorkspaceDirResult = serde_json::from_str(&delete_result_json).unwrap();
         assert_eq!(deserialized_del_res, delete_result);
+
+        // Branch commit payload & result serde test
+        let commit_payload = ListWorkspaceBranchCommitsPayload {
+            working_directory: Some("C:/test".to_string()),
+            branch: "feature/test".to_string(),
+            limit: Some(10),
+            offset: Some(0),
+        };
+        let commit_payload_json = serde_json::to_string(&commit_payload).unwrap();
+        assert!(commit_payload_json.contains("\"branch\":\"feature/test\""));
+        assert!(commit_payload_json.contains("\"limit\":10"));
+        let deserialized_commit_payload: ListWorkspaceBranchCommitsPayload = serde_json::from_str(&commit_payload_json).unwrap();
+        assert_eq!(deserialized_commit_payload, commit_payload);
+
+        let branch_commit = WorkspaceBranchCommit {
+            hash: "abc123456789".to_string(),
+            short_hash: "abc1234".to_string(),
+            subject: "test commit".to_string(),
+            author: "Tester".to_string(),
+            date: "2026-10-23".to_string(),
+            is_unpushed: true,
+        };
+        let commit_result = WorkspaceBranchCommitsResult {
+            branch: "feature/test".to_string(),
+            commits: vec![branch_commit],
+            has_more: false,
+            total: None,
+        };
+        let commit_result_json = serde_json::to_string(&commit_result).unwrap();
+        assert!(commit_result_json.contains("\"isUnpushed\":true"));
+        assert!(commit_result_json.contains("\"shortHash\":\"abc1234\""));
+        let deserialized_commit_res: WorkspaceBranchCommitsResult = serde_json::from_str(&commit_result_json).unwrap();
+        assert_eq!(deserialized_commit_res, commit_result);
     }
 
 }

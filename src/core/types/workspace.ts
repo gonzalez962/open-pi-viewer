@@ -108,3 +108,27 @@ export interface WorkspaceFileDiff {
   hasDiff: boolean;
   diff: string;
 }
+
+export interface WorkspaceBranchCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+  isUnpushed: boolean;
+}
+
+export interface WorkspaceBranchCommitsResult {
+  branch: string;
+  commits: WorkspaceBranchCommit[];
+  hasMore: boolean;
+  total?: number;
+}
+
+export interface ListWorkspaceBranchCommitsPayload {
+  workingDirectory?: string;
+  branch: string;
+  limit?: number;
+  offset?: number;
+}
+

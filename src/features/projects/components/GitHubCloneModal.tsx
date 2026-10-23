@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   createGitHubCloneController,
   getSavedGitHubPat,
@@ -345,7 +346,7 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
+  const modalContent = (
     <>
       <div
         className="github-clone-overlay"
@@ -811,6 +812,10 @@ export const GitHubCloneModal: React.FC<GitHubCloneModalProps> = ({
       )}
     </>
   );
+
+  return typeof document !== 'undefined' && document.body
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 };
 
 export default GitHubCloneModal;
