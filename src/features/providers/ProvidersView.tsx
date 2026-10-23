@@ -4,6 +4,7 @@ import type { BuiltinOAuthProviderStatus } from '@core/types/oauth';
 import type { CustomProviderConfig } from '@core/types/providers';
 import type { ModelInfo } from '@core/types/models';
 import { getBuiltinProviderCatalogPi } from '@infra/bridge';
+import { isPiBuiltinProvider } from './providers';
 import { useProvidersData } from './hooks/useProvidersData';
 import { useProviderModalForm } from './hooks/useProviderModalForm';
 import { useBuiltinOAuthAccounts } from './hooks/useBuiltinOAuthAccounts';
@@ -40,6 +41,10 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
     updateModelThinkingLevelsMap: data.updateModelThinkingLevelsMap,
     saveProvider: data.saveProvider,
   });
+
+  const customProviders = React.useMemo(() => {
+    return (data.providers || []).filter((p) => !isPiBuiltinProvider(p));
+  }, [data.providers]);
 
   const handleOpenEditBuiltinModels = async (provider: BuiltinOAuthProviderStatus) => {
     let catalogModels: ModelInfo[] = [];
@@ -105,7 +110,7 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
                 <h2 id="custom-providers-heading" className="custom-providers-title">
                   {t('providers.custom_section_title')}
                 </h2>
-                <span className="badge badge-subtle">{data.providers.length}</span>
+                <span className="badge badge-subtle">{customProviders.length}</span>
               </div>
               <p className="custom-providers-subtitle">
                 {t('providers.custom_section_subtitle')}
@@ -143,7 +148,7 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
               <div className="spinner" />
               <span>{t('providers.loading')}</span>
             </div>
-          ) : data.providers.length === 0 ? (
+          ) : customProviders.length === 0 ? (
             <div className="providers-empty-state">
               <div className="providers-empty-icon" aria-hidden="true">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -165,7 +170,7 @@ export const ProvidersView: React.FC<ProvidersViewProps> = ({
             </div>
           ) : (
             <div className="providers-grid">
-              {data.providers.map((provider) => (
+              {customProviders.map((provider) => (
                 <ProviderCard
                   key={provider.id}
                   provider={provider}

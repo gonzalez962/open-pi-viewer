@@ -49,6 +49,73 @@ export function getSupportedReasoningEffortsForModel(
 
 export const getSupportedThinkingLevelsForModel = getSupportedReasoningEffortsForModel;
 
+/**
+ * Canonical built-in Pi provider identifiers.
+ * These providers are supported natively by Pi runtime and should not appear
+ * in the Custom Providers section of the UI.
+ */
+export const PI_BUILTIN_PROVIDER_IDS = new Set<string>([
+  'amazon-bedrock',
+  'ant-ling',
+  'anthropic',
+  'azure',
+  'baseten',
+  'cerebras',
+  'cloudflare-ai-gateway',
+  'cloudflare-workers-ai',
+  'deepseek',
+  'fireworks',
+  'github-copilot',
+  'google',
+  'google-vertex',
+  'groq',
+  'huggingface',
+  'kimi-coding',
+  'meta',
+  'minimax',
+  'minimax-cn',
+  'mistral',
+  'moonshotai',
+  'moonshotai-cn',
+  'nvidia',
+  'openai',
+  'openai-codex',
+  'opencode',
+  'opencode-go',
+  'openrouter',
+  'qwen-token-plan',
+  'qwen-token-plan-cn',
+  'qwen-token-plan-individual',
+  'radius',
+  'together',
+  'typesafe',
+  'vercel-ai-gateway',
+  'xai',
+  'xiaomi',
+  'xiaomi-token-plan-ams',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-sgp',
+  'zai',
+  'zai-coding-cn',
+]);
+
+/**
+ * Checks if a provider configuration represents a built-in Pi provider
+ * (either marked as isBuiltin, matching a known Pi built-in ID, or an override without baseUrl and api protocol).
+ */
+export function isPiBuiltinProvider(provider: {
+  id: string;
+  isBuiltin?: boolean;
+  baseUrl?: string;
+  api?: string;
+}): boolean {
+  if (provider.isBuiltin) return true;
+  const cleanId = (provider.id || '').trim().toLowerCase();
+  if (PI_BUILTIN_PROVIDER_IDS.has(cleanId)) return true;
+  if (!provider.baseUrl && !provider.api) return true;
+  return false;
+}
+
 
 
 /**

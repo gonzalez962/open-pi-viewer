@@ -11,6 +11,7 @@ import type { TranslationKey } from '@shared/i18n';
 import type { CustomProviderConfig, ModelsConfigFile } from '@core/types/providers';
 import type { ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import {
+  isPiBuiltinProvider,
   mapProvidersToArray,
   validateProviderConfig,
 } from '../providers';
@@ -86,7 +87,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
       ]);
       setFullConfig(config);
       const list = mapProvidersToArray(config.providers || {});
-      setProviders(list);
+      setProviders(list.filter((p) => !isPiBuiltinProvider(p)));
       setModelThinkingLevels(thinkingLevels);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -118,7 +119,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
         const activeCwd = resolveActiveCwd();
         const savedConfig = await upsertCustomProviderPi(providerToValidate, activeCwd);
         setFullConfig(savedConfig);
-        setProviders(mapProvidersToArray(savedConfig.providers || {}));
+        setProviders(mapProvidersToArray(savedConfig.providers || {}).filter((p) => !isPiBuiltinProvider(p)));
 
         const levelUpdates: Record<string, ThinkingLevel | null> = {};
         for (const m of formData.models) {
@@ -157,7 +158,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
       try {
         const savedConfig = await deleteCustomProviderPi(idToDelete);
         setFullConfig(savedConfig);
-        setProviders(mapProvidersToArray(savedConfig.providers || {}));
+        setProviders(mapProvidersToArray(savedConfig.providers || {}).filter((p) => !isPiBuiltinProvider(p)));
 
         const prefix = `${idToDelete}/`;
         const levelUpdates: Record<string, ThinkingLevel | null> = {};
