@@ -199,6 +199,15 @@ test('S1.2: CSS rules keep compact cards, four desktop columns, and responsive m
 
   // Responsive reduction for smaller viewports without overflow
   assert.match(css, /@media[^{]+\{[^}]*\.builtin-oauth-grid\s*\{[^}]*grid-template-columns/);
+
+  // Refresh accounts button has gap between icon and text
+  assert.match(css, /\.builtin-oauth-refresh-btn\s*\{[^}]*gap:\s*6px/);
+});
+
+test('Refresh accounts button has builtin-oauth-refresh-btn class and gap styling', () => {
+  const oauth = createMockOAuthState();
+  const html = renderToStaticMarkup(React.createElement(BuiltinOAuthAccounts, { oauth, t }));
+  assert.match(html, /class="[^"]*builtin-oauth-refresh-btn[^"]*"/, 'Refresh button must have builtin-oauth-refresh-btn class');
 });
 
 // ============================================================================

@@ -543,8 +543,23 @@ export function getAvailableModelsImpl() {
       const parsed = JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
       if (parsed.providers) {
         for (const [providerId, p] of Object.entries<any>(parsed.providers)) {
+          const excludedList: string[] = Array.isArray(p.excludedModels)
+            ? p.excludedModels.map((x: any) => String(x).trim().toLowerCase())
+            : [];
           if (Array.isArray(p.models)) {
             for (const m of p.models) {
+              const cleanId = (m.id || '').trim().toLowerCase();
+              if (
+                excludedList.some(
+                  (pat: string) =>
+                    cleanId === pat ||
+                    (pat.endsWith('*') && cleanId.startsWith(pat.slice(0, -1))) ||
+                    (pat.startsWith('*') && cleanId.endsWith(pat.slice(1))) ||
+                    (pat.includes('*') && new RegExp(`^${pat.replace(/\*/g, '.*')}$`).test(cleanId))
+                )
+              ) {
+                continue;
+              }
               list.push({
                 id: m.id,
                 name: m.name || m.id,
@@ -670,6 +685,48 @@ export function handleGetEnabledModels(): string[] {
     }
   }
   return [];
+}
+
+export function handleSaveEnabledModels(args: any = {}): string[] {
+  const rawModels = Array.isArray(args)
+    ? args
+    : Array.isArray(args.models)
+      ? args.models
+      : Array.isArray(args.enabledModels)
+        ? args.enabledModels
+        : null;
+
+  if (!rawModels) {
+    throw new Error('Enabled models must be an array of strings');
+  }
+
+  const cleanModels: string[] = [];
+  for (const item of rawModels) {
+    if (typeof item !== 'string') {
+      throw new Error('Each enabled model pattern must be a string');
+    }
+    const trimmed = item.trim();
+    if (trimmed && !cleanModels.includes(trimmed)) {
+      cleanModels.push(trimmed);
+    }
+  }
+
+  const settingsFile = path.join(getPiAgentDir(), 'settings.json');
+  let settings: any = {};
+  if (fs.existsSync(settingsFile)) {
+    try {
+      const raw = fs.readFileSync(settingsFile, 'utf8');
+      if (raw.trim()) {
+        settings = JSON.parse(raw);
+      }
+    } catch (err: any) {
+      throw new Error(`Failed to parse settings.json: ${err.message}`);
+    }
+  }
+
+  settings.enabledModels = cleanModels;
+  fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  return cleanModels;
 }
 
 export function handleGetModelThinkingLevels() {

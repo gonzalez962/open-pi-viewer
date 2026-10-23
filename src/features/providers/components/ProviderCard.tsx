@@ -2,6 +2,7 @@ import React from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomProviderConfig } from '@core/types/providers';
 import type { ModelThinkingLevelsMap } from '@core/types/models';
+import { isModelAllowed } from '../providers';
 
 export interface ProviderCardProps {
   provider: CustomProviderConfig;
@@ -26,7 +27,12 @@ export const ProviderCard: React.FC<ProviderCardProps> = ({
   onDeleteProvider,
   t,
 }) => {
-  const modelCount = provider.models?.length || 0;
+  const policy = {
+    includedModels: provider.includedModels,
+    excludedModels: provider.excludedModels,
+  };
+  const activeModels = (provider.models || []).filter((m) => isModelAllowed(m.id, policy));
+  const modelCount = activeModels.length;
 
   return (
     <div className="provider-card" data-provider-id={provider.id}>

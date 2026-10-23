@@ -25,6 +25,203 @@ export interface UseProviderModalFormOptions {
   saveProvider: (formData: ProviderFormData, isEditing: boolean) => Promise<boolean>;
 }
 
+/**
+ * Removes a model from the provider draft models list and adds its ID to excludedModels.
+ */
+export function removeModelFromDraft(
+  prev: ProviderFormData,
+  modelIdToRemove: string
+): ProviderFormData {
+  const trimmedId = modelIdToRemove.trim();
+  if (!trimmedId) return prev;
+  return {
+    ...prev,
+    models: prev.models.filter((m) => m.id !== trimmedId),
+    excludedModels: prev.excludedModels.includes(trimmedId)
+      ? prev.excludedModels
+      : [...prev.excludedModels, trimmedId],
+  };
+}
+
+/**
+ * Restores an excluded model pattern to the provider draft models list when removed from excludedModels.
+ * Matches against known catalog models preserving full metadata, or creates clean fallback entry if exact ID.
+ */
+export function restoreExcludedModelToDraft(
+  prev: ProviderFormData,
+  patternToRemove: string,
+  knownCatalogModels?: Map<string, CustomModelDefinition> | CustomModelDefinition[]
+): ProviderFormData {
+  const cleanPattern = patternToRemove.trim();
+  if (!cleanPattern) return prev;
+
+  const nextExcluded = prev.excludedModels.filter((p) => p !== cleanPattern);
+  const nextPolicy = {
+    includedModels: prev.includedModels,
+    excludedModels: nextExcluded,
+  };
+
+  const nextModels = [...prev.models];
+  const existingIds = new Set(nextModels.map((m) => m.id.toLowerCase()));
+
+  // 1. Check known catalog models map / array
+  const candidates: CustomModelDefinition[] = [];
+  if (knownCatalogModels) {
+    const list =
+      knownCatalogModels instanceof Map
+        ? Array.from(knownCatalogModels.values())
+        : knownCatalogModels;
+    for (const m of list) {
+      if (m && m.id && !existingIds.has(m.id.toLowerCase())) {
+        candidates.push(m);
+      }
+    }
+  }
+
+  for (const m of candidates) {
+    const wasBlocked = !isModelAllowed(m.id, {
+      includedModels: prev.includedModels,
+      excludedModels: prev.excludedModels,
+    });
+    const nowAllowed = isModelAllowed(m.id, nextPolicy);
+
+    if (wasBlocked && nowAllowed) {
+      nextModels.push(m);
+      existingIds.add(m.id.toLowerCase());
+    }
+  }
+
+  // 2. If it was a literal model ID (no wildcards) and was not restored from candidates
+  if (!cleanPattern.includes('*') && !cleanPattern.includes('?') && !cleanPattern.includes('[')) {
+    if (!existingIds.has(cleanPattern.toLowerCase()) && isModelAllowed(cleanPattern, nextPolicy)) {
+      nextModels.push({
+        id: cleanPattern,
+        name: cleanPattern,
+      });
+    }
+  }
+
+  return {
+    ...prev,
+    models: nextModels,
+    excludedModels: nextExcluded,
+  };
+}
+
+/**
+ * Builds the initial draft form state and known catalog models for editing a built-in provider.
+ * Excludes any models that match the provider's excludedModels policy from the initial models list.
+ */
+export function buildInitialBuiltinProviderDraft(
+  provider: { id: string; name?: string },
+  catalogModels: (ModelInfo | CustomModelDefinition)[] = [],
+  savedConfig?: CustomProviderConfig
+): {
+  formData: ProviderFormData;
+  knownModels: Map<string, CustomModelDefinition>;
+} {
+  const providerId = provider.id;
+  const catalogDefs: CustomModelDefinition[] = catalogModels
+    .filter(
+      (m) =>
+        typeof m.id === 'string' &&
+        m.id.trim() !== '' &&
+        (!('provider' in m) || !m.provider || m.provider.toLowerCase() === providerId.toLowerCase())
+    )
+    .map((m) => ({
+      id: (m.id || '').trim(),
+      name: m.name || m.id,
+      contextWindow: m.contextWindow,
+      maxTokens: m.maxTokens,
+      reasoning: m.reasoning,
+      reasoningEfforts: (m as any).reasoningEfforts,
+      input: m.input || (m as any).input_modalities || ['text'],
+      thinkingLevel: m.thinkingLevel,
+      defaultThinkingLevel: m.defaultThinkingLevel,
+    }));
+
+  const savedModels = savedConfig?.models || [];
+  const existingMap = new Map(savedModels.map((m) => [m.id, m]));
+  const mergedModels: CustomModelDefinition[] = [];
+
+  for (const cat of catalogDefs) {
+    const saved = existingMap.get(cat.id);
+    if (saved) {
+      mergedModels.push({
+        ...cat,
+        ...saved,
+      });
+      existingMap.delete(cat.id);
+    } else {
+      mergedModels.push(cat);
+    }
+  }
+  for (const extra of existingMap.values()) {
+    mergedModels.push(extra);
+  }
+
+  const knownModels = new Map<string, CustomModelDefinition>();
+  for (const cat of catalogDefs) knownModels.set(cat.id, cat);
+  for (const saved of savedModels) knownModels.set(saved.id, saved);
+  for (const m of mergedModels) knownModels.set(m.id, m);
+
+  const excludedModels = savedConfig?.excludedModels ? [...savedConfig.excludedModels] : [];
+  const includedModels = savedConfig?.includedModels ? [...savedConfig.includedModels] : [];
+  const policy = { includedModels, excludedModels };
+
+  // Main models draft list must only show models allowed by policy
+  const allowedModels = mergedModels.filter((m) => isModelAllowed(m.id, policy));
+
+  const formData: ProviderFormData = {
+    id: providerId,
+    name: provider.name || providerId,
+    baseUrl: '',
+    api: '',
+    apiKey: '',
+    models: allowedModels,
+    excludedModels,
+    includedModels,
+    isBuiltin: true,
+  };
+
+  return { formData, knownModels };
+}
+
+/**
+ * Builds the initial draft form state and known catalog models for editing a custom provider.
+ * Excludes any models that match the provider's excludedModels policy from the initial models list.
+ */
+export function buildInitialCustomProviderDraft(
+  provider: CustomProviderConfig
+): {
+  formData: ProviderFormData;
+  knownModels: Map<string, CustomModelDefinition>;
+} {
+  const excludedModels = provider.excludedModels ? [...provider.excludedModels] : [];
+  const includedModels = provider.includedModels ? [...provider.includedModels] : [];
+  const policy = { includedModels, excludedModels };
+
+  const knownModels = new Map<string, CustomModelDefinition>();
+  for (const m of provider.models || []) knownModels.set(m.id, m);
+
+  // Main models draft list must only show models allowed by policy
+  const allowedModels = (provider.models || []).filter((m) => isModelAllowed(m.id, policy));
+
+  const formData: ProviderFormData = {
+    id: provider.id,
+    name: provider.name || '',
+    baseUrl: provider.baseUrl || '',
+    api: provider.api || '',
+    apiKey: provider.apiKey || '',
+    models: allowedModels,
+    excludedModels,
+    includedModels,
+    isBuiltin: false,
+  };
+
+  return { formData, knownModels };
+}
+
 export function useProviderModalForm({
   t,
   modelThinkingLevels,
@@ -53,6 +250,7 @@ export function useProviderModalForm({
   const [modelError, setModelError] = useState<string | null>(null);
   const [newExcludedInput, setNewExcludedInput] = useState('');
   const [newIncludedInput, setNewIncludedInput] = useState('');
+  const knownCatalogModelsRef = useRef<Map<string, CustomModelDefinition>>(new Map());
 
   const [isAddModelOpen, setIsAddModelOpen] = useState(false);
   const [isExcludedOpen, setIsExcludedOpen] = useState(false);
@@ -116,6 +314,7 @@ export function useProviderModalForm({
   };
 
   const openAddModal = () => {
+    knownCatalogModelsRef.current.clear();
     setFormData(EMPTY_FORM); setIsEditing(false); setShowApiKey(false);
     setAutoDiscoveredEndpoint(null); resetModalState(); setIsModalOpen(true);
   };
@@ -125,57 +324,13 @@ export function useProviderModalForm({
     catalogModels: (ModelInfo | CustomModelDefinition)[] = [],
     savedConfig?: CustomProviderConfig
   ) => {
-    const providerId = provider.id;
-    const catalogDefs: CustomModelDefinition[] = catalogModels
-      .filter(
-        (m) =>
-          typeof m.id === 'string' &&
-          m.id.trim() !== '' &&
-          (!('provider' in m) || !m.provider || m.provider.toLowerCase() === providerId.toLowerCase())
-      )
-      .map((m) => ({
-        id: (m.id || '').trim(),
-        name: m.name || m.id,
-        contextWindow: m.contextWindow,
-        maxTokens: m.maxTokens,
-        reasoning: m.reasoning,
-        reasoningEfforts: (m as any).reasoningEfforts,
-        input: m.input || (m as any).input_modalities || ['text'],
-        thinkingLevel: m.thinkingLevel,
-        defaultThinkingLevel: m.defaultThinkingLevel,
-      }));
-
-    const savedModels = savedConfig?.models || [];
-    const existingMap = new Map(savedModels.map((m) => [m.id, m]));
-    const mergedModels: CustomModelDefinition[] = [];
-
-    for (const cat of catalogDefs) {
-      const saved = existingMap.get(cat.id);
-      if (saved) {
-        mergedModels.push({
-          ...cat,
-          ...saved,
-        });
-        existingMap.delete(cat.id);
-      } else {
-        mergedModels.push(cat);
-      }
-    }
-    for (const extra of existingMap.values()) {
-      mergedModels.push(extra);
-    }
-
-    setFormData({
-      id: providerId,
-      name: provider.name || providerId,
-      baseUrl: '',
-      api: '',
-      apiKey: '',
-      models: mergedModels,
-      excludedModels: savedConfig?.excludedModels ? [...savedConfig.excludedModels] : [],
-      includedModels: savedConfig?.includedModels ? [...savedConfig.includedModels] : [],
-      isBuiltin: true,
-    });
+    const { formData: initialForm, knownModels } = buildInitialBuiltinProviderDraft(
+      provider,
+      catalogModels,
+      savedConfig
+    );
+    knownCatalogModelsRef.current = knownModels;
+    setFormData(initialForm);
     setIsEditing(true);
     setShowApiKey(false);
     setAutoDiscoveredEndpoint(null);
@@ -188,23 +343,16 @@ export function useProviderModalForm({
       openEditBuiltinModal(provider, provider.models || [], provider);
       return;
     }
-    setFormData({
-      id: provider.id,
-      name: provider.name || '',
-      baseUrl: provider.baseUrl || '',
-      api: provider.api || '',
-      apiKey: provider.apiKey || '',
-      models: [...provider.models],
-      excludedModels: provider.excludedModels ? [...provider.excludedModels] : [],
-      includedModels: provider.includedModels ? [...provider.includedModels] : [],
-      isBuiltin: false,
-    });
+    const { formData: initialForm, knownModels } = buildInitialCustomProviderDraft(provider);
+    knownCatalogModelsRef.current = knownModels;
+
+    setFormData(initialForm);
     setIsEditing(true); setShowApiKey(false);
     setAutoDiscoveredEndpoint(`${provider.baseUrl || ''}::${provider.api || ''}::${provider.apiKey || ''}`);
     resetModalState();
 
     if (initialEditModelId) {
-      const targetModel = provider.models.find((m) => m.id === initialEditModelId);
+      const targetModel = initialForm.models.find((m) => m.id === initialEditModelId);
       if (targetModel) populateModelInputs(provider.id, targetModel);
       setIsAddModelOpen(true);
     }
@@ -287,6 +435,7 @@ export function useProviderModalForm({
           })
         );
 
+        for (const cat of catalogDefs) knownCatalogModelsRef.current.set(cat.id, cat);
         setFormData((prev) => ({
           ...prev,
           models:
@@ -327,6 +476,7 @@ export function useProviderModalForm({
         })
       );
 
+      for (const m of allowedFetched) knownCatalogModelsRef.current.set(m.id, m);
       setFormData((prev) => ({
         ...prev,
         models: prev.models.length === 0
@@ -400,6 +550,7 @@ export function useProviderModalForm({
       return;
     }
 
+    knownCatalogModelsRef.current.set(trimmedId, updatedModel);
     setFormData((prev) => ({
       ...prev,
       models: prev.models.map((m) => (m.id === editingModelId ? updatedModel : m)),
@@ -418,26 +569,24 @@ export function useProviderModalForm({
 
   const handleExcludeModel = (modelId: string) => {
     const trimmedId = modelId.trim();
-    setFormData((prev) => ({
-      ...prev,
-      models: prev.models.filter((m) => m.id !== trimmedId),
-      excludedModels: prev.excludedModels.includes(trimmedId)
-        ? prev.excludedModels
-        : [...prev.excludedModels, trimmedId],
-    }));
+    const modelToExclude = formData.models.find((m) => m.id === trimmedId);
+    if (modelToExclude) {
+      knownCatalogModelsRef.current.set(trimmedId, modelToExclude);
+    }
+    setFormData((prev) => removeModelFromDraft(prev, trimmedId));
 
     if (editingModelId === trimmedId) {
       handleCancelEditModel();
     }
 
+    updateModelThinkingLevelsMap({ [`${formData.id}/${trimmedId}`]: null });
     setAutoDiscoveryNotice(t('providers.model_excluded_notice', { id: trimmedId }));
   };
 
   const handleRemoveExcludedModel = (patternToRemove: string) => {
-    setFormData((prev) => ({
-      ...prev,
-      excludedModels: prev.excludedModels.filter((p) => p !== patternToRemove),
-    }));
+    setFormData((prev) =>
+      restoreExcludedModelToDraft(prev, patternToRemove, knownCatalogModelsRef.current)
+    );
   };
 
   const handleRemoveIncludedModel = (patternToRemove: string) => {
@@ -555,17 +704,23 @@ export function useProviderModalForm({
       return;
     }
 
+    knownCatalogModelsRef.current.set(newModel.id, newModel);
     setFormData((prev) => ({ ...prev, models: [...prev.models, newModel] }));
     resetNewModelInputs();
   };
 
   const handleRemoveModelFromDraft = (modelIdToRemove: string) => {
-    setFormData((prev) => ({ ...prev, models: prev.models.filter((m) => m.id !== modelIdToRemove) }));
-    if (editingModelId === modelIdToRemove) {
+    const trimmedId = modelIdToRemove.trim();
+    const modelToRemove = formData.models.find((m) => m.id === trimmedId);
+    if (modelToRemove) {
+      knownCatalogModelsRef.current.set(trimmedId, modelToRemove);
+    }
+    setFormData((prev) => removeModelFromDraft(prev, trimmedId));
+    if (editingModelId === trimmedId) {
       setEditingModelId(null);
       resetNewModelInputs();
     }
-    updateModelThinkingLevelsMap({ [`${formData.id}/${modelIdToRemove}`]: null });
+    updateModelThinkingLevelsMap({ [`${formData.id}/${trimmedId}`]: null });
   };
 
   const handleSaveProvider = async (e: React.FormEvent) => {

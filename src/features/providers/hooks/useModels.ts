@@ -4,6 +4,7 @@ import {
   getAvailableThinkingLevelsPi,
   getCustomProvidersPi,
   getEnabledModelsPi,
+  saveEnabledModelsPi,
   getModelThinkingLevelsPi,
   getSessionStatsPi,
   setThinkingLevelPi,
@@ -13,6 +14,9 @@ import {
   filterByEnabledModels,
   filterExcludedModels,
   resolveModelDefaultThinkingLevel,
+  syncEnabledModelsWithConfiguredBuiltins,
+  extractApprovedProviderModels,
+  mergeProfileCatalog,
 } from '../providers';
 import { executeModelSelection } from '../lib/modelSelection';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
@@ -119,8 +123,22 @@ export function useModels({
         getAvailableModelsPi(),
         getCustomProvidersPi().catch(() => ({ providers: {} })),
       ]);
-      if (models && models.length > 0) {
-        const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
+
+      if (currentEnabled && currentEnabled.length > 0 && customProvidersConfig?.providers) {
+        const syncResult = syncEnabledModelsWithConfiguredBuiltins(currentEnabled, customProvidersConfig.providers);
+        if (syncResult.hasChanges && syncResult.nextEnabled) {
+          currentEnabled = syncResult.nextEnabled;
+          enabledModelsRef.current = currentEnabled;
+          void saveEnabledModelsPi(currentEnabled).catch((err) => {
+            console.warn('Failed to auto-sync enabledModels:', err);
+          });
+        }
+      }
+
+      const approved = extractApprovedProviderModels(customProvidersConfig?.providers);
+      const allModels = mergeProfileCatalog(approved, models || [], customProvidersConfig?.providers || {});
+      if (allModels && allModels.length > 0) {
+        const enriched = enrichAvailableModelsWithConfig(allModels, customProvidersConfig?.providers);
         const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
         const activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
         dispatch({
@@ -172,9 +190,24 @@ export function useModels({
 
         setModelThinkingLevels(thinkingLevels);
 
+        if (currentEnabled && currentEnabled.length > 0 && customProvidersConfig?.providers) {
+          const syncResult = syncEnabledModelsWithConfiguredBuiltins(currentEnabled, customProvidersConfig.providers);
+          if (syncResult.hasChanges && syncResult.nextEnabled) {
+            currentEnabled = syncResult.nextEnabled;
+            if (isSubscribed) {
+              enabledModelsRef.current = currentEnabled;
+            }
+            void saveEnabledModelsPi(currentEnabled).catch((err) => {
+              console.warn('Failed to auto-sync enabledModels:', err);
+            });
+          }
+        }
+
+        const approved = extractApprovedProviderModels(customProvidersConfig?.providers);
+        const allModels = mergeProfileCatalog(approved, models || [], customProvidersConfig?.providers || {});
         let activeModels: ModelInfo[] = [];
-        if (models && models.length > 0) {
-          const enriched = enrichAvailableModelsWithConfig(models, customProvidersConfig?.providers);
+        if (allModels && allModels.length > 0) {
+          const enriched = enrichAvailableModelsWithConfig(allModels, customProvidersConfig?.providers);
           const providerFiltered = filterExcludedModels(enriched, customProvidersConfig?.providers);
           activeModels = filterByEnabledModels(providerFiltered, currentEnabled);
           dispatch({

@@ -5,15 +5,20 @@ import {
   deleteCustomProviderPi,
   getModelThinkingLevelsPi,
   saveModelThinkingLevelsPi,
+  getEnabledModelsPi,
+  saveEnabledModelsPi,
 } from '@infra/bridge';
 import { copyText } from '@shared/clipboard';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomProviderConfig, ModelsConfigFile } from '@core/types/providers';
 import type { ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import {
+  isModelAllowed,
   isPiBuiltinProvider,
   mapProvidersToArray,
   validateProviderConfig,
+  addBuiltinModelsToEnabledList,
+  stripThinkingLevelFromPattern,
 } from '../providers';
 import type { ProviderFormData } from '../types';
 
@@ -29,15 +34,31 @@ export function prepareProviderPayload(formData: ProviderFormData): CustomProvid
   const apiTrimmed = formData.api ? formData.api.trim() : '';
   const apiKeyTrimmed = formData.apiKey ? formData.apiKey.trim() : '';
 
+  const excludedModels = Array.isArray(formData.excludedModels) ? formData.excludedModels : [];
+  const includedModels = Array.isArray(formData.includedModels) ? formData.includedModels : [];
+  const policy = { includedModels, excludedModels };
+
   return {
     id: formData.id.trim(),
     name: formData.name.trim() || undefined,
     baseUrl: baseUrlTrimmed ? baseUrlTrimmed : (isBuiltin ? undefined : ''),
     api: apiTrimmed ? apiTrimmed : (isBuiltin ? undefined : ''),
     apiKey: apiKeyTrimmed || undefined,
-    models: formData.models,
-    excludedModels: Array.isArray(formData.excludedModels) ? formData.excludedModels : [],
-    includedModels: Array.isArray(formData.includedModels) ? formData.includedModels : [],
+    models: formData.models
+      .filter((m) => isModelAllowed(m.id.trim(), policy))
+      .map((m) => ({
+        id: m.id.trim(),
+        name: m.name ? m.name.trim() : undefined,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        reasoning: m.reasoning,
+        reasoningEfforts: m.reasoningEfforts,
+        input: m.input,
+        thinkingLevel: m.thinkingLevel,
+        defaultThinkingLevel: m.defaultThinkingLevel,
+      })),
+    excludedModels,
+    includedModels,
     isBuiltin: isBuiltin ? true : undefined,
   };
 }
@@ -134,6 +155,30 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
           }).catch(() => {});
         }
 
+        // If this is a built-in provider and settings.json has enabledModels, add newly saved models
+        if (isPiBuiltinProvider(providerToValidate)) {
+          try {
+            const currentEnabled = await getEnabledModelsPi();
+            if (currentEnabled && currentEnabled.length > 0) {
+              const nextEnabled = addBuiltinModelsToEnabledList(
+                currentEnabled,
+                formData.id,
+                formData.models,
+                formData.excludedModels,
+                {
+                  includedModels: formData.includedModels,
+                  excludedModels: formData.excludedModels,
+                }
+              );
+              if (nextEnabled && JSON.stringify(nextEnabled) !== JSON.stringify(currentEnabled)) {
+                await saveEnabledModelsPi(nextEnabled);
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to update enabledModels in settings.json for built-in provider:', err);
+          }
+        }
+
         if (!silent) {
           setSuccessNotice(
             isEditing
@@ -180,6 +225,27 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
           void saveModelThinkingLevelsPi(levelUpdates).then((updated) => {
             setModelThinkingLevels(updated);
           }).catch(() => {});
+        }
+
+        try {
+          const currentEnabled = await getEnabledModelsPi();
+          if (currentEnabled && currentEnabled.length > 0) {
+            const cleanProvId = idToDelete.trim().toLowerCase();
+            const nextEnabled = currentEnabled.filter((pattern) => {
+              const trimmed = stripThinkingLevelFromPattern(pattern).trim().toLowerCase();
+              const slashIdx = trimmed.indexOf('/');
+              if (slashIdx !== -1) {
+                const prov = trimmed.substring(0, slashIdx).trim();
+                return prov !== cleanProvId;
+              }
+              return true;
+            });
+            if (nextEnabled && JSON.stringify(nextEnabled) !== JSON.stringify(currentEnabled)) {
+              await saveEnabledModelsPi(nextEnabled);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to update enabledModels in settings.json on provider deletion:', err);
         }
 
         setSuccessNotice(t('providers.notice_deleted', { id: idToDelete }));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { discoverPiCli, extractCliJsFromShim, getAgnosticExecEnv } from '../../server/config';
+import { discoverPiCli, extractCliJsFromShim, getAgnosticExecEnv } from '@server/config';
 
 test('extractCliJsFromShim: returns canonical path for direct cli.js file', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-cli-test-'));

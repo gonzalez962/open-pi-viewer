@@ -884,6 +884,19 @@ export async function getEnabledModelsPi(
   return await invokeFn<string[]>('get_enabled_models');
 }
 
+export async function saveEnabledModelsPi(
+  models: string[],
+  invokeFn = invoke
+): Promise<string[]> {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
+    try {
+      localStorage.setItem(MOCK_ENABLED_MODELS_STORAGE_KEY, JSON.stringify(models));
+    } catch {}
+    return models;
+  }
+  return await invokeFn<string[]>('save_enabled_models', { models });
+}
+
 export async function getModelThinkingLevelsPi(
   invokeFn = invoke
 ): Promise<ModelThinkingLevelsMap> {

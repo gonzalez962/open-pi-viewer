@@ -84,7 +84,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
         <div className="builtin-oauth-header-actions">
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-secondary btn-sm builtin-oauth-refresh-btn"
             onClick={refreshAccounts}
             disabled={isLoading || Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
             title={t('providers.oauth.reload')}

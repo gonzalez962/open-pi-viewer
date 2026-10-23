@@ -66,6 +66,7 @@ export interface PromptControlsProps {
   defaultCloudPopoverOpen?: boolean;
   defaultEnrollConfirmOpen?: boolean;
   defaultExtPopoverOpen?: boolean;
+  defaultModelPopoverOpen?: boolean;
   attachedFiles?: AttachedFile[];
   onAttachFiles?: (files: AttachedFile[]) => void;
   supportsFiles?: boolean;
@@ -112,13 +113,14 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   defaultCloudPopoverOpen = false,
   defaultEnrollConfirmOpen = false,
   defaultExtPopoverOpen = false,
+  defaultModelPopoverOpen = false,
   attachedFiles: _attachedFiles,
   onAttachFiles,
   supportsFiles: supportsFilesProp,
   defaultFileAttachOpen = false,
   t,
 }) => {
-  const [isModelOpen, setIsModelOpen] = useState(false);
+  const [isModelOpen, setIsModelOpen] = useState(defaultModelPopoverOpen);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isFileAttachOpen, setIsFileAttachOpen] = useState(defaultFileAttachOpen);
   const [isMcpOpen, setIsMcpOpen] = useState(false);
@@ -799,6 +801,9 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
               ) : (
                 filteredModels.map((m) => {
                   const isSelected = m.id === activeModelId;
+                  const fullName = m.name || m.id || '';
+                  const displayName =
+                    fullName.length > 20 ? `${fullName.slice(0, 20)}...` : fullName;
                   return (
                     <button
                       key={`${m.provider}-${m.id}`}
@@ -807,9 +812,10 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
                       role="option"
                       aria-selected={isSelected}
                       onClick={() => void handleModelClick(m)}
+                      title={fullName}
                     >
                       <div className="model-option-main">
-                        <span className="model-option-name">{m.name || m.id}</span>
+                        <span className="model-option-name" title={fullName}>{displayName}</span>
                         {m.provider && <span className="model-provider-badge">{m.provider}</span>}
                       </div>
                       <div className="model-option-meta">

@@ -9,6 +9,11 @@ import { translate } from '@shared/i18n';
 import {
   prepareProviderPayload,
 } from '@features/providers/hooks/useProvidersData';
+import {
+  removeModelFromDraft,
+  restoreExcludedModelToDraft,
+  buildInitialBuiltinProviderDraft,
+} from '@features/providers/hooks/useProviderModalForm';
 import { validateProviderConfig } from '@features/providers/providers';
 import type { ProviderFormData } from '@features/providers/types';
 import { getBuiltinProviderCatalogPi } from '@infra/bridge';
@@ -504,6 +509,133 @@ test('S2.3 — Given provider not in models.json, when opened, then catalog is f
     if (origWindow === undefined) delete (globalThis as any).window;
     else (globalThis as any).window = origWindow;
   }
+});
+
+test('removeModelFromDraft — Deleting a model removes it from models and adds it to excludedModels', () => {
+  const prev = {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: '',
+    api: '',
+    apiKey: '',
+    models: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] as any[],
+    excludedModels: ['old-excluded'],
+    includedModels: [] as string[],
+    isBuiltin: true,
+  };
+
+  const next = removeModelFromDraft(prev, 'gpt-4o');
+
+  assert.deepEqual(next.models, [{ id: 'gpt-4o-mini' }], 'Deleted model must be removed from models array');
+  assert.deepEqual(next.excludedModels, ['old-excluded', 'gpt-4o'], 'Deleted model must be added to excludedModels');
+
+  // Deleting again or non-existent does not duplicate
+  const next2 = removeModelFromDraft(next, 'gpt-4o');
+  assert.deepEqual(next2.excludedModels, ['old-excluded', 'gpt-4o']);
+});
+
+test('restoreExcludedModelToDraft — Removing a model from excludedModels restores it to the main models list', () => {
+  const initialForm = {
+    id: 'openai',
+    name: 'OpenAI',
+    baseUrl: '',
+    api: '',
+    apiKey: '',
+    models: [{ id: 'gpt-4o-mini', name: 'GPT-4o Mini' }],
+    excludedModels: ['gpt-4o'],
+    includedModels: [],
+    isBuiltin: true,
+  };
+
+  const knownCatalog = new Map<string, any>([
+    [
+      'gpt-4o',
+      {
+        id: 'gpt-4o',
+        name: 'GPT-4o',
+        contextWindow: 128000,
+        maxTokens: 16384,
+        reasoning: false,
+      },
+    ],
+  ]);
+
+  const restored = restoreExcludedModelToDraft(initialForm, 'gpt-4o', knownCatalog);
+
+  assert.deepEqual(restored.excludedModels, [], 'Excluded models must no longer contain gpt-4o');
+  assert.equal(restored.models.length, 2, 'Main models list must now have 2 models');
+  const found = restored.models.find((m) => m.id === 'gpt-4o');
+  assert.ok(found, 'gpt-4o must be restored in the main models list');
+  assert.equal(found?.contextWindow, 128000, 'Restored model must preserve its metadata');
+  assert.equal(found?.maxTokens, 16384);
+});
+
+test('restoreExcludedModelToDraft — Removing a wildcard pattern restores all matching known models', () => {
+  const initialForm = {
+    id: 'anthropic',
+    name: 'Anthropic',
+    baseUrl: '',
+    api: '',
+    apiKey: '',
+    models: [{ id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet' }],
+    excludedModels: ['*haiku*'],
+    includedModels: [],
+    isBuiltin: true,
+  };
+
+  const knownCatalog = [
+    { id: 'claude-3-haiku', name: 'Claude 3 Haiku' },
+    { id: 'claude-3-5-haiku', name: 'Claude 3.5 Haiku' },
+  ];
+
+  const restored = restoreExcludedModelToDraft(initialForm, '*haiku*', knownCatalog);
+  assert.deepEqual(restored.excludedModels, []);
+  assert.equal(restored.models.length, 3);
+  assert.ok(restored.models.some((m) => m.id === 'claude-3-haiku'));
+  assert.ok(restored.models.some((m) => m.id === 'claude-3-5-haiku'));
+});
+
+test('restoreExcludedModelToDraft — Removing an exact model ID without catalog definition creates clean fallback in models list', () => {
+  const initialForm = {
+    id: 'custom',
+    name: 'Custom',
+    baseUrl: 'http://localhost',
+    api: 'openai-completions',
+    apiKey: '',
+    models: [],
+    excludedModels: ['my-custom-model'],
+    includedModels: [],
+    isBuiltin: false,
+  };
+
+  const restored = restoreExcludedModelToDraft(initialForm, 'my-custom-model');
+  assert.deepEqual(restored.excludedModels, []);
+  assert.equal(restored.models.length, 1);
+  assert.equal(restored.models[0].id, 'my-custom-model');
+});
+
+test('buildInitialBuiltinProviderDraft — Does not list excluded models in the main models draft list', () => {
+  const provider = { id: 'openai-codex', name: 'OpenAI Codex' };
+  const catalogModels = [
+    { id: 'gpt-6.1-sol', name: 'GPT-6.1 Sol' },
+    { id: 'gpt-6-luna', name: 'GPT-6 Luna' },
+    { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+  ];
+  const savedConfig: CustomProviderConfig = {
+    id: 'openai-codex',
+    models: catalogModels,
+    excludedModels: ['gpt-5.6*'],
+    includedModels: [],
+    isBuiltin: true,
+  };
+
+  const { formData } = buildInitialBuiltinProviderDraft(provider, catalogModels, savedConfig);
+
+  assert.equal(formData.models.length, 2, 'Main list must not contain excluded models');
+  const mainModelIds = formData.models.map((m: any) => m.id);
+  assert.deepEqual(mainModelIds, ['gpt-6.1-sol', 'gpt-6-luna']);
+  assert.deepEqual(formData.excludedModels, ['gpt-5.6*']);
 });
 
 

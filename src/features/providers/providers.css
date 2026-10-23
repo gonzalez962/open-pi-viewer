@@ -21,6 +21,12 @@
   gap: 6px;
 }
 
+.btn-toggle-raw-json {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .providers-success-banner {
   background-color: rgba(46, 160, 67, 0.15);
   border-color: rgba(46, 160, 67, 0.4);
@@ -972,6 +978,12 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.builtin-oauth-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .builtin-oauth-empty-state {

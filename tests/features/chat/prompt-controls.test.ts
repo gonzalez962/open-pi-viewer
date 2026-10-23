@@ -174,3 +174,29 @@ test('PromptControls popover: regular declared names and package names preserved
   assert.ok(html.includes('custom-helper.ts'), 'Regular extension name should be preserved');
   assert.ok(html.includes('@scope/analytics'), 'Package name must be preserved unchanged');
 });
+
+test('PromptControls popover: model list truncates names longer than 20 characters and provides full name in title', () => {
+  const longModel = {
+    id: 'claude-3-5-sonnet-20241022',
+    name: 'Claude 3.5 Sonnet (20241022)',
+    provider: 'anthropic',
+  };
+  const shortModel = {
+    id: 'gpt-4o',
+    name: 'GPT-4o',
+    provider: 'openai',
+  };
+
+  const html = renderControls({
+    availableModels: [longModel, shortModel],
+    defaultModelPopoverOpen: true,
+  });
+
+  assert.ok(html.includes('Claude 3.5 Sonnet (2...'), 'Model name longer than 20 chars must be truncated');
+  assert.ok(
+    html.includes('title="Claude 3.5 Sonnet (20241022)"'),
+    'Full model name must be provided in title attribute'
+  );
+  assert.ok(html.includes('>GPT-4o<'), 'Short model name must be displayed completely');
+  assert.ok(html.includes('title="GPT-4o"'), 'Short model name also has title attribute');
+});

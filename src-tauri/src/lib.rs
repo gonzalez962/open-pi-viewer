@@ -79,6 +79,7 @@ pub fn run() {
             commands::get_session_stats,
             commands::get_custom_providers,
             commands::get_enabled_models,
+            commands::save_enabled_models,
             commands::save_custom_providers,
             commands::upsert_custom_provider,
             commands::delete_custom_provider,

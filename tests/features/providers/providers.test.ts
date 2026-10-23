@@ -1,6 +1,11 @@
 import assert from 'node:assert';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { invoke } from '@tauri-apps/api/core';
+import { ProvidersHeader } from '@features/providers/components/ProvidersHeader';
 
 import {
   arrayToProvidersMap,
@@ -2311,6 +2316,24 @@ test('ProvidersView: does NOT render Pi built-in providers in the Custom Provide
 
   // Badge count should be 1 (only Ollama Local), not 3
   assert.ok(html.includes('<span class="badge badge-subtle">1</span>'), 'custom providers count badge should be 1');
+});
+
+test('ProvidersHeader: toggle raw JSON button has btn-toggle-raw-json class and gap styling', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProvidersHeader, {
+      t: ((k: string) => k) as any,
+      showRawJson: false,
+      onToggleRawJson: () => {},
+      onOpenAddModal: () => {},
+      isSaving: false,
+      isBusy: false,
+    })
+  );
+  assert.match(html, /class="[^"]*btn-toggle-raw-json[^"]*"/);
+
+  const cssPath = path.resolve(process.cwd(), 'src/features/providers/providers.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+  assert.match(css, /\.btn-toggle-raw-json\s*\{[^}]*gap:\s*6px/);
 });
 
 
