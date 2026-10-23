@@ -12,6 +12,7 @@ import {
   pruneExpandedDirsOnRefresh,
 } from './workspace-cache';
 import { FileSearchBar } from './components/FileSearchBar';
+import { BranchManagerModal } from './components/BranchManagerModal';
 
 export {
   updateDirChildrenOnRefresh,
@@ -26,6 +27,7 @@ export interface FileTreeProps {
   refreshInterval?: number;
   refreshTrigger?: number;
   onGitStatusChange?: (status: WorkspaceGitStatus | null) => void;
+  isAgentWorking?: boolean;
 }
 
 
@@ -383,6 +385,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   refreshInterval: _refreshInterval,
   refreshTrigger,
   onGitStatusChange,
+  isAgentWorking = false,
 }) => {
   const initialSnapshot = getWorkspaceSnapshot(workingDirectory);
   const [rootEntries, setRootEntries] = useState<WorkspaceEntry[]>(
@@ -406,6 +409,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [showOnlyModified, setShowOnlyModified] = useState<boolean>(false);
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState<boolean>(false);
 
   // Synchronous state adjustment when workingDirectory changes without remount
   const [prevCwd, setPrevCwd] = useState(workingDirectory);
@@ -707,7 +711,23 @@ export const FileTree: React.FC<FileTreeProps> = ({
             </span>
 
             {gitStatus.branch && (
-              <span className="git-branch-badge" title={gitStatus.branch}>
+              <span
+                className="git-branch-badge clickable"
+                onClick={() => setIsBranchModalOpen(true)}
+                title={
+                  gitStatus.upstreamBranch
+                    ? `${gitStatus.branch} -> ${gitStatus.upstreamBranch}`
+                    : gitStatus.branch
+                }
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setIsBranchModalOpen(true);
+                  }
+                }}
+              >
                 <svg
                   width="11"
                   height="11"
@@ -728,14 +748,30 @@ export const FileTree: React.FC<FileTreeProps> = ({
             )}
           </div>
 
-          {totalGitChanges > 0 && (
-            <span
-              className="git-changes-badge"
-              title={t('file_tree.git_changed_count', { count: totalGitChanges })}
+          <button
+            type="button"
+            className="btn-git-manage-branches"
+            onClick={() => setIsBranchModalOpen(true)}
+            title={t('file_tree.manage_branches')}
+            aria-label={t('file_tree.manage_branches')}
+          >
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             >
-              {totalGitChanges}
-            </span>
-          )}
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span>{t('file_tree.branches_button')}</span>
+          </button>
         </div>
       )}
 
@@ -774,6 +810,24 @@ export const FileTree: React.FC<FileTreeProps> = ({
           </svg>
         </button>
       </div>
+
+      {/* Branch Management Modal */}
+      {isBranchModalOpen && (
+        <BranchManagerModal
+          isOpen={isBranchModalOpen}
+          onClose={() => setIsBranchModalOpen(false)}
+          workingDirectory={workingDirectory}
+          currentBranch={gitStatus?.branch}
+          upstreamBranch={gitStatus?.upstreamBranch}
+          isAgentWorking={isAgentWorking}
+          hasUncommittedChanges={totalGitChanges > 0}
+          locale={locale}
+          onBranchSwitched={() => {
+            void refreshAll(false);
+          }}
+          onError={onError}
+        />
+      )}
 
       {/* Body / Tree View */}
       <div className="file-tree-body">

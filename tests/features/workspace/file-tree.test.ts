@@ -9,7 +9,19 @@ import {
   readWorkspaceFilePi,
   getWorkspaceGitStatusPi,
   getWorkspaceFileDiffPi,
+  listWorkspaceBranchesPi,
+  switchWorkspaceBranchPi,
+  createWorkspaceBranchPi,
+  deleteWorkspaceBranchPi,
+  publishWorkspaceBranchPi,
 } from '@infra/bridge';
+import { BranchManagerModal } from '@features/workspace/components/BranchManagerModal';
+import { isValidGitBranchName, deduplicateBaseBranches, sanitizeBranchName } from '@server/bridge/paths';
+import type {
+  WorkspaceBranch,
+  WorkspaceBranchList,
+  BranchOperationResult,
+} from '@core/types/workspace';
 import { parseUnifiedDiff } from '@features/workspace/FileViewerModal';
 import {
   FileTree,
@@ -467,6 +479,35 @@ test('i18n: file tree and auto-refresh settings keys exist with exact parity in 
     'file_tree.filter_modified',
     'file_tree.filter_modified_hint',
     'file_tree.no_modified_files',
+    'file_tree.manage_branches',
+    'file_tree.branches_button',
+    'file_tree.tracking',
+    'file_tree.no_upstream',
+    'file_tree.current_branch',
+    'file_tree.create_branch_btn',
+    'file_tree.branch_name_placeholder',
+    'file_tree.base_branch_label',
+    'file_tree.create_branch_submit',
+    'file_tree.branch_name_required',
+    'file_tree.switch_branch_btn',
+    'file_tree.switch_confirm_title',
+    'file_tree.switch_confirm_msg',
+    'file_tree.switch_confirm_action',
+    'file_tree.search_branches',
+    'file_tree.no_branches_found',
+    'file_tree.uncommitted_changes_title',
+    'file_tree.uncommitted_changes_msg',
+    'file_tree.carry_changes_btn',
+    'file_tree.leave_changes_btn',
+    'file_tree.delete_branch_btn',
+    'file_tree.delete_confirm_title',
+    'file_tree.delete_confirm_msg',
+    'file_tree.delete_branch_action',
+    'file_tree.default_branch_badge',
+    'file_tree.publish_branch_btn',
+    'file_tree.publish_branch_action',
+    'file_tree.publish_confirm_title',
+    'file_tree.publish_confirm_msg',
     'settings.file_tree_heading',
     'settings.file_tree_hint',
     'settings.file_tree_interval_label',
@@ -734,5 +775,237 @@ test('FileTree: renders Modified button without auto-expanding collapsed directo
   assert.ok(markup.includes('Modified'), 'Must render label');
   assert.strictEqual(markup.includes('btn-tree-create-folder'), false, 'Create folder button must be absent');
 });
+
+/* ========================================================================= */
+/* Git Branch Management & Tracking Tests                                    */
+/* ========================================================================= */
+
+test('Bridge: listWorkspaceBranchesPi invokes list_workspace_branches command', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult: WorkspaceBranchList = {
+    current: 'feat/test',
+    branches: [
+      { name: 'main', isCurrent: false, upstream: 'origin/main' },
+      { name: 'feat/test', isCurrent: true, upstream: 'origin/feat/test' },
+    ],
+    allBases: ['main', 'feat/test', 'origin/main'],
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await listWorkspaceBranchesPi('C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'list_workspace_branches');
+  assert.deepStrictEqual(calls[0].args, { payload: { workingDirectory: 'C:/project' } });
+  assert.strictEqual(res.current, 'feat/test');
+  assert.strictEqual(res.branches.length, 2);
+  assert.strictEqual(res.branches[1].upstream, 'origin/feat/test');
+});
+
+test('Bridge: switchWorkspaceBranchPi invokes switch_workspace_branch with payload', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult: BranchOperationResult = {
+    success: true,
+    branch: 'main',
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await switchWorkspaceBranchPi('main', 'C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'switch_workspace_branch');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: { branch: 'main', workingDirectory: 'C:/project' },
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.branch, 'main');
+});
+
+test('Bridge: createWorkspaceBranchPi invokes create_workspace_branch with name, base, and leaveChangesInBase', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult: BranchOperationResult = {
+    success: true,
+    branch: 'feat/new',
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await createWorkspaceBranchPi('feat/new', 'main', true, 'C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'create_workspace_branch');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: {
+      name: 'feat/new',
+      baseBranch: 'main',
+      leaveChangesInBase: true,
+      workingDirectory: 'C:/project',
+    },
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.branch, 'feat/new');
+});
+
+test('isValidGitBranchName: validates safe branch names and rejects dangerous or invalid patterns', () => {
+  assert.strictEqual(isValidGitBranchName('main'), true);
+  assert.strictEqual(isValidGitBranchName('feat/new-branches'), true);
+  assert.strictEqual(isValidGitBranchName('fix_123'), true);
+  assert.strictEqual(isValidGitBranchName('v1.0.0'), true);
+
+  // Invalid patterns
+  assert.strictEqual(isValidGitBranchName(''), false);
+  assert.strictEqual(isValidGitBranchName('-bad'), false);
+  assert.strictEqual(isValidGitBranchName('.bad'), false);
+  assert.strictEqual(isValidGitBranchName('bad.'), false);
+  assert.strictEqual(isValidGitBranchName('bad/'), false);
+  assert.strictEqual(isValidGitBranchName('bad.lock'), false);
+  assert.strictEqual(isValidGitBranchName('bad name'), false);
+  assert.strictEqual(isValidGitBranchName('bad~1'), false);
+  assert.strictEqual(isValidGitBranchName('bad^1'), false);
+  assert.strictEqual(isValidGitBranchName('bad:1'), false);
+  assert.strictEqual(isValidGitBranchName('bad?1'), false);
+  assert.strictEqual(isValidGitBranchName('bad*1'), false);
+  assert.strictEqual(isValidGitBranchName('bad[1'), false);
+  assert.strictEqual(isValidGitBranchName('bad\\1'), false);
+  assert.strictEqual(isValidGitBranchName('bad..name'), false);
+  assert.strictEqual(isValidGitBranchName('bad//name'), false);
+  assert.strictEqual(isValidGitBranchName('bad@{name}'), false);
+});
+
+test('BranchManagerModal: renders modal container and controls without branch-current-banner', () => {
+  const element = React.createElement(BranchManagerModal, {
+    isOpen: true,
+    onClose: () => {},
+    workingDirectory: 'C:/project',
+    currentBranch: 'feat/branch-mgr',
+    upstreamBranch: 'origin/feat/branch-mgr',
+    isAgentWorking: false,
+    locale: 'en',
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('branch-modal-container'), 'Must render modal container');
+  assert.ok(markup.includes('btn-branch-new'), 'Must have create branch button');
+  assert.strictEqual(markup.includes('branch-current-banner'), false, 'branch-current-banner must be removed');
+});
+
+test('BranchManagerModal: renders confirmation dialog structure for when agent is working', () => {
+  const element = React.createElement(BranchManagerModal, {
+    isOpen: true,
+    onClose: () => {},
+    workingDirectory: 'C:/project',
+    currentBranch: 'feat/test',
+    upstreamBranch: 'origin/main',
+    isAgentWorking: true,
+    locale: 'es',
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.ok(markup.includes('branch-modal-container'));
+  assert.ok(markup.includes('Administrar ramas'));
+});
+
+test('FileTree: renders git branch badge without git-upstream-info element', () => {
+  const element = React.createElement(FileTree, {
+    workingDirectory: 'C:/project',
+    locale: 'en',
+    onOpenFile: () => {},
+  });
+
+  const markup = renderToStaticMarkup(element);
+  assert.strictEqual(markup.includes('git-upstream-info'), false, 'git-upstream-info element must be removed');
+});
+
+test('deduplicateBaseBranches: suppresses redundant origin/main and bare origin when main exists', () => {
+  const localBranches = ['main', 'feat/test'];
+  const remoteRefs = [
+    'origin',
+    'origin/main',
+    'origin/feat/test',
+    'origin/remote-only-feature',
+    'github-desktop-Rafaeldelinares',
+    'github-desktop-Rafaeldelinares/main',
+  ];
+
+  const result = deduplicateBaseBranches(localBranches, remoteRefs);
+
+  // 'main' is preserved, 'origin' is discarded, 'origin/main' is discarded
+  assert.deepStrictEqual(result, ['main', 'feat/test', 'origin/remote-only-feature']);
+  assert.strictEqual(result.includes('origin'), false, 'Bare origin remote must not be included');
+  assert.strictEqual(result.includes('origin/main'), false, 'Redundant origin/main must not be included when main exists');
+  assert.strictEqual(result.includes('main'), true, 'Local main must be present');
+});
+
+test('sanitizeBranchName: replaces spaces with hyphens and strips hyphens adjacent to slashes', () => {
+  assert.strictEqual(sanitizeBranchName('my new branch'), 'my-new-branch');
+  assert.strictEqual(sanitizeBranchName('feat / my branch'), 'feat/my-branch');
+  assert.strictEqual(sanitizeBranchName('feature/ - test'), 'feature/test');
+  assert.strictEqual(sanitizeBranchName('bugfix - /login'), 'bugfix/login');
+  assert.strictEqual(sanitizeBranchName('feat - / - branch'), 'feat/branch');
+  assert.strictEqual(sanitizeBranchName('-feat/branch-'), 'feat/branch');
+  assert.strictEqual(sanitizeBranchName('feat---/---branch'), 'feat/branch');
+  assert.strictEqual(sanitizeBranchName('feature /// branch'), 'feature/branch');
+  assert.strictEqual(sanitizeBranchName(''), '');
+});
+
+test('Bridge: deleteWorkspaceBranchPi invokes delete_workspace_branch with payload', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult: BranchOperationResult = {
+    success: true,
+    branch: 'feat/old',
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await deleteWorkspaceBranchPi('feat/old', 'C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'delete_workspace_branch');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: {
+      branch: 'feat/old',
+      workingDirectory: 'C:/project',
+    },
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.branch, 'feat/old');
+});
+
+test('Bridge: publishWorkspaceBranchPi invokes publish_workspace_branch with payload', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const mockResult: BranchOperationResult = {
+    success: true,
+    branch: 'feat/local-only',
+  };
+
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return mockResult as T;
+  };
+
+  const res = await publishWorkspaceBranchPi('feat/local-only', 'origin', 'C:/project', mockInvoke);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cmd, 'publish_workspace_branch');
+  assert.deepStrictEqual(calls[0].args, {
+    payload: {
+      branch: 'feat/local-only',
+      remote: 'origin',
+      workingDirectory: 'C:/project',
+    },
+  });
+  assert.strictEqual(res.success, true);
+  assert.strictEqual(res.branch, 'feat/local-only');
+});
+
 
 

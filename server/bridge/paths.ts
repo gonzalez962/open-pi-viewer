@@ -3,7 +3,15 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { HOME_DIR, getActiveCwd } from './state';
-import type { WorkspaceGitStatus, WorkspaceFileDiff, WorkspaceEntry, DeleteWorkspaceDirResult } from '../../src/core/types/workspace';
+import type {
+  WorkspaceGitStatus,
+  WorkspaceFileDiff,
+  WorkspaceEntry,
+  DeleteWorkspaceDirResult,
+  WorkspaceBranch,
+  WorkspaceBranchList,
+  BranchOperationResult,
+} from '../../src/core/types/workspace';
 import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
@@ -707,6 +715,7 @@ export function handleGetWorkspaceGitStatus(args: any = {}): WorkspaceGitStatus 
     }
 
     let branchOut = 'main';
+    let upstreamBranch: string | null = null;
     try {
       branchOut = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
         cwd: targetCwd,
@@ -714,6 +723,15 @@ export function handleGetWorkspaceGitStatus(args: any = {}): WorkspaceGitStatus 
         timeout: 1000,
         stdio: ['ignore', 'pipe', 'ignore'],
       }).trim();
+
+      if (branchOut && branchOut !== 'HEAD') {
+        const up = execFileSync(
+          'git',
+          ['for-each-ref', '--format=%(upstream:short)', `refs/heads/${branchOut}`],
+          { cwd: targetCwd, encoding: 'utf8', timeout: 1000, stdio: ['ignore', 'pipe', 'ignore'] }
+        ).trim();
+        upstreamBranch = up || null;
+      }
     } catch {}
 
     const out = execFileSync(
@@ -798,6 +816,7 @@ export function handleGetWorkspaceGitStatus(args: any = {}): WorkspaceGitStatus 
       isRepo: true,
       repoName,
       branch: branchOut || 'main',
+      upstreamBranch,
       modifiedFiles,
       addedFiles,
       untrackedFiles,
@@ -810,4 +829,450 @@ export function handleGetWorkspaceGitStatus(args: any = {}): WorkspaceGitStatus 
       untrackedFiles: [],
     };
   }
+}
+
+/**
+ * Sanitizes a candidate git branch name:
+ * - Replaces whitespace with hyphens (-).
+ * - Removes hyphens adjacent to slashes (e.g. '-/' or '/-' becomes '/').
+ * - Collapses consecutive slashes and strips leading/trailing hyphens, slashes, and dots.
+ */
+export function sanitizeBranchName(name: string): string {
+  if (!name || typeof name !== 'string') return '';
+  let sanitized = name.trim();
+  // 1. Replace all whitespace with hyphens
+  sanitized = sanitized.replace(/\s+/g, '-');
+  // 2. Remove hyphens adjacent to slashes
+  sanitized = sanitized.replace(/-+\/+/g, '/');
+  sanitized = sanitized.replace(/\/+-+/g, '/');
+  // 3. Collapse multiple consecutive slashes
+  sanitized = sanitized.replace(/\/+/g, '/');
+  // 4. Strip leading or trailing hyphens, slashes, or dots
+  sanitized = sanitized.replace(/^[-/.]+|[-/.]+$/g, '');
+  return sanitized;
+}
+
+/**
+ * Validates a git branch name for safety and git conventions.
+ */
+export function isValidGitBranchName(name: string): boolean {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  if (!trimmed || trimmed !== name) return false;
+  if (trimmed.startsWith('-') || trimmed.startsWith('.') || trimmed.endsWith('.') || trimmed.endsWith('/')) return false;
+  if (trimmed.endsWith('.lock')) return false;
+  if (/[\s~^:?*\[\\\]\x00-\x1f\x7f]/.test(trimmed)) return false;
+  if (trimmed.includes('..') || trimmed.includes('//') || trimmed.includes('@{')) return false;
+  return true;
+}
+
+/**
+ * Deduplicates base branch options:
+ * - Prioritizes local branch names.
+ * - Filters out bare remote names (e.g. 'origin', 'upstream') and '/HEAD'.
+ * - If a local branch exists (e.g. 'main'), suppresses redundant remote counterparts (e.g. 'origin/main').
+ */
+export function deduplicateBaseBranches(localBranches: string[], remoteRefs: string[]): string[] {
+  const result: string[] = [];
+  const localSet = new Set(localBranches.map((b) => b.trim()).filter(Boolean));
+
+  for (const b of localBranches) {
+    const trimmed = b.trim();
+    if (trimmed && !result.includes(trimmed)) {
+      result.push(trimmed);
+    }
+  }
+
+  for (const remote of remoteRefs) {
+    const trimmed = remote.trim();
+    if (!trimmed) continue;
+    // Skip bare remote names (like 'origin') and HEAD pointers
+    if (!trimmed.includes('/') || trimmed.endsWith('/HEAD')) continue;
+
+    const slashIdx = trimmed.indexOf('/');
+    const branchPart = trimmed.slice(slashIdx + 1);
+
+    // If local branch already covers this (e.g. 'main' vs 'origin/main'), skip
+    if (localSet.has(branchPart)) {
+      continue;
+    }
+
+    if (!result.includes(trimmed)) {
+      result.push(trimmed);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Lists all local workspace branches, their upstream tracking branches, the active branch,
+ * and available base branches (including remotes) for branching off.
+ */
+export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+
+  try {
+    if (!fs.existsSync(targetCwd)) {
+      return { current: null, branches: [], allBases: [] };
+    }
+
+    const out = execFileSync(
+      'git',
+      ['for-each-ref', '--format=%(refname:short)|%(upstream:short)|%(HEAD)', 'refs/heads'],
+      { cwd: targetCwd, encoding: 'utf8', timeout: 2500, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+
+    let current: string | null = null;
+    const branches: WorkspaceBranch[] = [];
+
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const [name, upstream, head] = trimmed.split('|');
+      if (!name) continue;
+      const isCurrent = (head || '').trim() === '*';
+      if (isCurrent) {
+        current = name;
+      }
+      branches.push({
+        name,
+        isCurrent,
+        upstream: upstream && upstream.trim() ? upstream.trim() : null,
+      });
+    }
+
+    const localNames = branches.map((b) => b.name);
+    const remoteRefs: string[] = [];
+    try {
+      const remotesOut = execFileSync(
+        'git',
+        ['for-each-ref', '--format=%(refname:short)', 'refs/remotes'],
+        { cwd: targetCwd, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }
+      );
+      for (const line of remotesOut.split('\n')) {
+        const b = line.trim();
+        if (b) {
+          remoteRefs.push(b);
+        }
+      }
+    } catch {}
+
+    const allBases = deduplicateBaseBranches(localNames, remoteRefs);
+
+    let defaultBranch: string | null = null;
+    try {
+      const symRef = execFileSync(
+        'git',
+        ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+        { cwd: targetCwd, encoding: 'utf8', timeout: 1500, stdio: ['ignore', 'pipe', 'ignore'] }
+      ).trim();
+      if (symRef && symRef.includes('/')) {
+        defaultBranch = symRef.slice(symRef.indexOf('/') + 1);
+      }
+    } catch {}
+
+    if (!defaultBranch) {
+      if (localNames.includes('main')) {
+        defaultBranch = 'main';
+      } else if (localNames.includes('master')) {
+        defaultBranch = 'master';
+      }
+    }
+
+    return {
+      current,
+      defaultBranch,
+      branches,
+      allBases,
+    };
+  } catch {
+    return {
+      current: null,
+      defaultBranch: null,
+      branches: [],
+      allBases: [],
+    };
+  }
+}
+
+/**
+ * Switches the active git branch via `git checkout <branch>`.
+ * Automatically isolates uncommitted changes per-branch:
+ * - Stashes uncommitted working changes of the departure branch so they don't leak into other branches.
+ * - Restores any stashed working changes previously saved for the destination branch.
+ */
+export function handleSwitchWorkspaceBranch(args: any = {}): BranchOperationResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const branch = (payload.branch || '').trim();
+
+  if (!isValidGitBranchName(branch)) {
+    throw new Error(`Invalid branch name: "${branch}"`);
+  }
+
+  // 1. Identify current branch before switching
+  let currentBranch = '';
+  try {
+    currentBranch = execFileSync('git', ['branch', '--show-current'], {
+      cwd: targetCwd,
+      encoding: 'utf8',
+      timeout: 1500,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {}
+
+  if (currentBranch && currentBranch === branch) {
+    return {
+      success: true,
+      branch,
+      message: 'Already on branch',
+    };
+  }
+
+  // 2. If departure branch has uncommitted changes, auto-stash them to preserve them on that branch
+  let stashedCurrent = false;
+  if (currentBranch) {
+    try {
+      const statusOut = execFileSync('git', ['status', '--porcelain=v1'], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 2500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (statusOut.trim()) {
+        const stashRes = spawnSync('git', ['stash', 'push', '-u', '-m', `Auto-stash on ${currentBranch}`], {
+          cwd: targetCwd,
+          encoding: 'utf8',
+          timeout: 10000,
+        });
+        if (stashRes.status === 0) {
+          stashedCurrent = true;
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Perform git checkout to destination branch
+  const res = spawnSync('git', ['checkout', branch], {
+    cwd: targetCwd,
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+
+  if (res.status !== 0) {
+    if (stashedCurrent) {
+      try {
+        spawnSync('git', ['stash', 'pop'], { cwd: targetCwd, timeout: 5000 });
+      } catch {}
+    }
+    const err = (res.stderr || res.stdout || 'Failed to switch branch').trim();
+    throw new Error(err);
+  }
+
+  // 4. After checkout, restore any stash saved for destination branch
+  try {
+    const stashListOut = execFileSync('git', ['stash', 'list'], {
+      cwd: targetCwd,
+      encoding: 'utf8',
+      timeout: 2500,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+
+    const lines = stashListOut.split('\n');
+    let targetStashRef: string | null = null;
+
+    for (const line of lines) {
+      const match = line.match(/^stash@\{(\d+)\}:\s*(?:On|WIP on)\s+([^:]+):\s*(.*)$/);
+      if (match) {
+        const stashIndex = match[1];
+        const stashBranch = match[2].trim();
+        if (stashBranch === branch) {
+          targetStashRef = `stash@{${stashIndex}}`;
+          break;
+        }
+      }
+    }
+
+    if (targetStashRef) {
+      spawnSync('git', ['stash', 'pop', targetStashRef], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 10000,
+      });
+    }
+  } catch {}
+
+  return {
+    success: true,
+    branch,
+    message: (res.stderr || res.stdout || '').trim(),
+  };
+}
+
+/**
+ * Creates and switches to a new git branch from an optional base branch via `git checkout -b <name> [baseBranch]`.
+ * If `leaveChangesInBase` is true, any uncommitted working changes are stashed prior to checkout,
+ * ensuring the new branch starts clean and changes remain in the base branch's stash.
+ */
+export function handleCreateWorkspaceBranch(args: any = {}): BranchOperationResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const rawName = (payload.name || '').trim();
+  const name = sanitizeBranchName(rawName);
+  const baseBranch = (payload.baseBranch || '').trim();
+  const leaveChangesInBase = Boolean(payload.leaveChangesInBase);
+
+  if (!name || !isValidGitBranchName(name)) {
+    throw new Error(`Invalid branch name: "${rawName}"`);
+  }
+
+  if (baseBranch && !isValidGitBranchName(baseBranch)) {
+    throw new Error(`Invalid base branch name: "${baseBranch}"`);
+  }
+
+  let stashed = false;
+  if (leaveChangesInBase) {
+    try {
+      const statusOut = execFileSync('git', ['status', '--porcelain=v1'], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 2500,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (statusOut.trim()) {
+        const stashRes = spawnSync('git', ['stash', 'push', '-u', '-m', `Auto-stash before branch ${name}`], {
+          cwd: targetCwd,
+          encoding: 'utf8',
+          timeout: 10000,
+        });
+        if (stashRes.status === 0) {
+          stashed = true;
+        }
+      }
+    } catch {}
+  }
+
+  const gitArgs = baseBranch
+    ? ['checkout', '-b', name, baseBranch]
+    : ['checkout', '-b', name];
+
+  const res = spawnSync('git', gitArgs, {
+    cwd: targetCwd,
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+
+  if (res.status !== 0) {
+    if (stashed) {
+      try {
+        spawnSync('git', ['stash', 'pop'], { cwd: targetCwd, timeout: 5000 });
+      } catch {}
+    }
+    const err = (res.stderr || res.stdout || 'Failed to create branch').trim();
+    throw new Error(err);
+  }
+
+  return {
+    success: true,
+    branch: name,
+    message: (res.stderr || res.stdout || '').trim(),
+  };
+}
+
+/**
+ * Deletes a local git branch via `git branch -D <branch>`.
+ * Refuses to delete the current branch or the repository default branch.
+ */
+export function handleDeleteWorkspaceBranch(args: any = {}): BranchOperationResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const branch = (payload.branch || '').trim();
+
+  if (!isValidGitBranchName(branch)) {
+    throw new Error(`Invalid branch name: "${branch}"`);
+  }
+
+  const branchList = handleListWorkspaceBranches({ workingDirectory: targetCwd });
+  if (branchList.current === branch) {
+    throw new Error(`Cannot delete currently active branch: "${branch}"`);
+  }
+  if (branchList.defaultBranch && branchList.defaultBranch === branch) {
+    throw new Error(`Cannot delete repository default branch: "${branch}"`);
+  }
+  if (branch === 'main' || branch === 'master') {
+    if (branchList.defaultBranch === branch || !branchList.defaultBranch) {
+      throw new Error(`Cannot delete repository default branch: "${branch}"`);
+    }
+  }
+
+  const res = spawnSync('git', ['branch', '-D', branch], {
+    cwd: targetCwd,
+    encoding: 'utf8',
+    timeout: 10000,
+  });
+
+  if (res.status !== 0) {
+    const err = (res.stderr || res.stdout || 'Failed to delete branch').trim();
+    throw new Error(err);
+  }
+
+  return {
+    success: true,
+    branch,
+    message: (res.stderr || res.stdout || '').trim(),
+  };
+}
+
+/**
+ * Publishes a local branch to the remote repository and sets up tracking via `git push -u <remote> <branch>`.
+ */
+export function handlePublishWorkspaceBranch(args: any = {}): BranchOperationResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const branch = (payload.branch || '').trim();
+
+  if (!isValidGitBranchName(branch)) {
+    throw new Error(`Invalid branch name: "${branch}"`);
+  }
+
+  let remote = (payload.remote || '').trim();
+  if (!remote) {
+    try {
+      const remotesOut = execFileSync('git', ['remote'], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      const remoteList = remotesOut.split('\n').map((r) => r.trim()).filter(Boolean);
+      if (remoteList.includes('origin')) {
+        remote = 'origin';
+      } else if (remoteList.length > 0) {
+        remote = remoteList[0];
+      } else {
+        throw new Error('No git remotes configured in this repository');
+      }
+    } catch (err: any) {
+      throw new Error(err.message || 'Failed to detect git remotes');
+    }
+  }
+
+  const res = spawnSync('git', ['push', '-u', remote, branch], {
+    cwd: targetCwd,
+    encoding: 'utf8',
+    timeout: 30000,
+  });
+
+  if (res.status !== 0) {
+    const err = (res.stderr || res.stdout || 'Failed to publish branch').trim();
+    throw new Error(err);
+  }
+
+  return {
+    success: true,
+    branch,
+    message: (res.stderr || res.stdout || '').trim(),
+  };
 }

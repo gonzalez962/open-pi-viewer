@@ -94,6 +94,11 @@ import {
   handleReadWorkspaceFile,
   handleGetWorkspaceGitStatus,
   handleGetWorkspaceFileDiff,
+  handleListWorkspaceBranches,
+  handleSwitchWorkspaceBranch,
+  handleCreateWorkspaceBranch,
+  handleDeleteWorkspaceBranch,
+  handlePublishWorkspaceBranch,
 } from './bridge/paths';
 
 import {
@@ -304,6 +309,16 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetWorkspaceGitStatus(args);
     case 'get_workspace_file_diff':
       return handleGetWorkspaceFileDiff(args);
+    case 'list_workspace_branches':
+      return handleListWorkspaceBranches(args);
+    case 'switch_workspace_branch':
+      return handleSwitchWorkspaceBranch(args);
+    case 'create_workspace_branch':
+      return handleCreateWorkspaceBranch(args);
+    case 'delete_workspace_branch':
+      return handleDeleteWorkspaceBranch(args);
+    case 'publish_workspace_branch':
+      return handlePublishWorkspaceBranch(args);
     case 'get_session_stats':
       return await handleGetSessionStats();
     case 'get_session_persistence_status':

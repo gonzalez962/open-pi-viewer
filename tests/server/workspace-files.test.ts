@@ -10,6 +10,8 @@ import {
   handleGetWorkspaceGitStatus,
   handleCreateWorkspaceDir,
   handleDeleteWorkspaceDir,
+  handleCreateWorkspaceBranch,
+  handleSwitchWorkspaceBranch,
 } from '@server/bridge/paths';
 import { execSync } from 'node:child_process';
 import {
@@ -837,6 +839,78 @@ test('server bridge S2.3: handleDeleteWorkspaceDir rejects symlink/junction targ
       'precious external data',
       'External symlink target contents must be completely preserved!'
     );
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('server bridge: create branch with leaveChangesInBase stashes changes, and switching back automatically restores them', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-branch-stash-'));
+  try {
+    execSync('git init -b main', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.email "test@example.com"', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git config user.name "Test User"', { cwd: tempDir, stdio: 'ignore' });
+
+    fs.writeFileSync(path.join(tempDir, 'initial.txt'), 'hello main');
+    execSync('git add .', { cwd: tempDir, stdio: 'ignore' });
+    execSync('git commit -m "initial commit"', { cwd: tempDir, stdio: 'ignore' });
+
+    // Make an uncommitted change on main
+    fs.writeFileSync(path.join(tempDir, 'wip.txt'), 'work in progress on main');
+
+    // Create a new branch and choose leaveChangesInBase: true
+    const createRes = handleCreateWorkspaceBranch({
+      payload: {
+        workingDirectory: tempDir,
+        name: 'feat/new-isolated-feature',
+        leaveChangesInBase: true,
+      },
+    });
+
+    assert.strictEqual(createRes.success, true);
+    assert.strictEqual(createRes.branch, 'feat/new-isolated-feature');
+
+    // New branch must be clean and not have wip.txt
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'wip.txt')), false, 'New branch must start clean without uncommitted WIP');
+
+    // Now switch back to main
+    const switchRes = handleSwitchWorkspaceBranch({
+      payload: {
+        workingDirectory: tempDir,
+        branch: 'main',
+      },
+    });
+
+    assert.strictEqual(switchRes.success, true);
+    assert.strictEqual(switchRes.branch, 'main');
+
+    // The WIP file that was left in the base branch must be automatically restored!
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'wip.txt')), true, 'WIP file must be automatically restored on main');
+    assert.strictEqual(
+      fs.readFileSync(path.join(tempDir, 'wip.txt'), 'utf8'),
+      'work in progress on main'
+    );
+
+    // Now switch again to feat/new-isolated-feature:
+    // main's uncommitted changes must be auto-stashed, leaving feat/new-isolated-feature clean!
+    const switchAgain = handleSwitchWorkspaceBranch({
+      payload: {
+        workingDirectory: tempDir,
+        branch: 'feat/new-isolated-feature',
+      },
+    });
+    assert.strictEqual(switchAgain.success, true);
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'wip.txt')), false, 'Branch must remain clean when switching from main with uncommitted changes');
+
+    // And returning to main restores wip.txt again!
+    const returnToMain = handleSwitchWorkspaceBranch({
+      payload: {
+        workingDirectory: tempDir,
+        branch: 'main',
+      },
+    });
+    assert.strictEqual(returnToMain.success, true);
+    assert.strictEqual(fs.existsSync(path.join(tempDir, 'wip.txt')), true, 'wip.txt must be restored once more when returning to main');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

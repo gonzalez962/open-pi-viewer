@@ -26,6 +26,9 @@ import type {
   DeleteWorkspaceDirResult,
   WorkspaceGitStatus,
   WorkspaceFileDiff,
+  WorkspaceBranch,
+  WorkspaceBranchList,
+  BranchOperationResult,
 } from '@core/types/workspace';
 import type { CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '@core/types/providers';
 import type {
@@ -573,6 +576,91 @@ export async function getWorkspaceFileDiffPi(
     workingDirectory: workingDirectory || undefined,
   };
   return await invokeFn<WorkspaceFileDiff>('get_workspace_file_diff', { payload });
+}
+
+/**
+ * Lists workspace git branches, tracking upstreams, and available base branches.
+ */
+export async function listWorkspaceBranchesPi(
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<WorkspaceBranchList> {
+  if (!isTauri() && invokeFn === invoke) {
+    return {
+      current: null,
+      branches: [],
+      allBases: [],
+    };
+  }
+
+  const payload = workingDirectory ? { workingDirectory } : undefined;
+  return await invokeFn<WorkspaceBranchList>('list_workspace_branches', payload ? { payload } : undefined);
+}
+
+/**
+ * Switches the active git branch in the workspace.
+ */
+export async function switchWorkspaceBranchPi(
+  branch: string,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BranchOperationResult> {
+  const payload = {
+    branch,
+    workingDirectory: workingDirectory || undefined,
+  };
+  return await invokeFn<BranchOperationResult>('switch_workspace_branch', { payload });
+}
+
+/**
+ * Creates and switches to a new git branch from an optional base branch in the workspace.
+ */
+export async function createWorkspaceBranchPi(
+  name: string,
+  baseBranch?: string,
+  leaveChangesInBase?: boolean,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BranchOperationResult> {
+  const payload = {
+    name,
+    baseBranch: baseBranch || undefined,
+    leaveChangesInBase: leaveChangesInBase || undefined,
+    workingDirectory: workingDirectory || undefined,
+  };
+  return await invokeFn<BranchOperationResult>('create_workspace_branch', { payload });
+}
+
+/**
+ * Deletes a local git branch via Tauri IPC or Web IPC.
+ */
+export async function deleteWorkspaceBranchPi(
+  branch: string,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BranchOperationResult> {
+  const payload = {
+    branch,
+    workingDirectory: workingDirectory || undefined,
+  };
+  return await invokeFn<BranchOperationResult>('delete_workspace_branch', { payload });
+}
+
+/**
+ * Publishes a local git branch to the remote repository via Tauri IPC or Web IPC.
+ */
+export async function publishWorkspaceBranchPi(
+  branch: string,
+  remote?: string,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BranchOperationResult> {
+  const payload = {
+    branch,
+    remote: remote || undefined,
+    workingDirectory: workingDirectory || undefined,
+  };
+  return await invokeFn<BranchOperationResult>('publish_workspace_branch', { payload });
 }
 
 
