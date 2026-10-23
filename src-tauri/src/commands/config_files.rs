@@ -1073,6 +1073,83 @@ pub async fn get_enabled_models() -> Result<Vec<String>, String> {
     get_enabled_models_impl(&path)
 }
 
+/// Saves `enabledModels` array into `settings.json`, preserving unrelated keys.
+pub fn save_enabled_models_impl(
+    config_path: &Path,
+    models: &Value,
+) -> Result<Vec<String>, String> {
+    let models_arr = if let Some(arr) = models.as_array() {
+        arr
+    } else if let Some(obj) = models.as_object() {
+        if let Some(arr) = obj.get("models").and_then(|v| v.as_array()) {
+            arr
+        } else if let Some(arr) = obj.get("enabledModels").and_then(|v| v.as_array()) {
+            arr
+        } else {
+            return Err("Enabled models must be a JSON array of strings".to_string());
+        }
+    } else {
+        return Err("Enabled models must be a JSON array of strings".to_string());
+    };
+
+    let mut clean_models: Vec<String> = Vec::new();
+    for item in models_arr {
+        let s = item
+            .as_str()
+            .ok_or_else(|| "Each enabled model pattern must be a string".to_string())?;
+        let trimmed = s.trim();
+        if !trimmed.is_empty() && !clean_models.iter().any(|existing| existing == trimmed) {
+            clean_models.push(trimmed.to_string());
+        }
+    }
+
+    if let Some(parent) = config_path.parent() {
+        if !parent.exists() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+        }
+    }
+
+    let mut root_obj = if config_path.exists() {
+        let content = std::fs::read_to_string(config_path)
+            .map_err(|e| format!("Failed to read settings.json: {}", e))?;
+        if content.trim().is_empty() {
+            serde_json::Map::new()
+        } else {
+            let parsed: Value = serde_json::from_str(&content)
+                .map_err(|e| format!("Failed to parse settings.json: {}", e))?;
+            parsed
+                .as_object()
+                .cloned()
+                .ok_or_else(|| "settings.json root must be a JSON object".to_string())?
+        }
+    } else {
+        serde_json::Map::new()
+    };
+
+    let new_arr: Vec<Value> = clean_models.iter().map(|s| Value::String(s.clone())).collect();
+    root_obj.insert("enabledModels".to_string(), Value::Array(new_arr));
+
+    let serialized = serde_json::to_string_pretty(&Value::Object(root_obj))
+        .map_err(|e| format!("Failed to serialize settings.json: {}", e))?;
+
+    let temp_path = config_path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&temp_path, serialized.as_bytes())
+        .map_err(|e| format!("Failed to write temporary settings.json: {}", e))?;
+
+    std::fs::rename(&temp_path, config_path)
+        .map_err(|e| format!("Failed to rename temporary settings.json to destination: {}", e))?;
+
+    Ok(clean_models)
+}
+
+#[tauri::command]
+pub async fn save_enabled_models(models: Value) -> Result<Vec<String>, String> {
+    let path = resolve_settings_config_path()
+        .ok_or_else(|| "Could not determine user profile directory".to_string())?;
+    save_enabled_models_impl(&path, &models)
+}
+
 #[tauri::command]
 pub async fn get_model_thinking_levels() -> Result<Value, String> {
     let path = resolve_settings_config_path()
@@ -7843,6 +7920,28 @@ mod tests {
         // Preserves file on disk without modifying
         let after_contents = std::fs::read_to_string(&valid_path).unwrap();
         assert_eq!(after_contents, initial_json);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_save_enabled_models_impl() {
+        let temp_dir = std::env::temp_dir().join(format!("test_save_enabled_models_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config_path = temp_dir.join("settings.json");
+
+        std::fs::write(&config_path, r#"{"theme": "dark", "enabledModels": ["anthropic/*"]}"#).unwrap();
+
+        let updates = serde_json::json!(["anthropic/*", "openai/gpt-6-astra", "  openai/gpt-6-astra  "]);
+        let saved = save_enabled_models_impl(&config_path, &updates).unwrap();
+        assert_eq!(saved, vec!["anthropic/*", "openai/gpt-6-astra"]);
+
+        let on_disk: Value = serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
+        assert_eq!(on_disk["theme"], "dark");
+        assert_eq!(
+            on_disk["enabledModels"],
+            serde_json::json!(["anthropic/*", "openai/gpt-6-astra"])
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -145,6 +145,7 @@ import {
 import {
   handleGetAvailableModels,
   handleGetEnabledModels,
+  handleSaveEnabledModels,
   handleSetModel,
   handleGetAvailableThinkingLevels,
   handleSetThinkingLevel,
@@ -231,6 +232,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetAvailableModels();
     case 'get_enabled_models':
       return handleGetEnabledModels();
+    case 'save_enabled_models':
+      return handleSaveEnabledModels(args.payload || args);
     case 'set_model':
       return await handleSetModel(args);
     case 'get_available_thinking_levels':

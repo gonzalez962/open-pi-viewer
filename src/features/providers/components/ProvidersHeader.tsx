@@ -26,7 +26,7 @@ export const ProvidersHeader: React.FC<ProvidersHeaderProps> = ({
       <div className="providers-header-actions">
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-secondary btn-sm btn-toggle-raw-json"
           onClick={onToggleRawJson}
           title={showRawJson ? t('providers.hide_json') : t('providers.view_json')}
         >

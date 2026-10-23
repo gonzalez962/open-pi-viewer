@@ -5,6 +5,10 @@ import {
   filterByEnabledModels,
   filterExcludedModels,
   isModelAllowedByEnabledModels,
+  updateEnabledModelsForProvider,
+  addBuiltinModelsToEnabledList,
+  removeModelFromEnabledList,
+  syncEnabledModelsWithConfiguredBuiltins,
 } from '@features/providers/providers';
 
 const sampleModels: ModelInfo[] = [
@@ -165,4 +169,181 @@ test('PRESERVE — filterExcludedModels still honors includedModels and excluded
   const anthropicModels = filtered.filter((m) => m.provider === 'anthropic');
   assert.equal(anthropicModels.length, 1);
   assert.equal(anthropicModels[0].id, 'claude-3-5-sonnet-20241022');
+});
+
+test('updateEnabledModelsForProvider — Given restrictive enabledModels, updates provider models while preserving other providers', () => {
+  const currentEnabled = [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/old-model',
+  ];
+
+  const updatedModels = [
+    { id: 'gpt-6-astra', name: 'GPT-6 Astra' },
+    { id: 'gpt-6-luna', name: 'GPT-6 Luna' },
+  ];
+
+  const next = updateEnabledModelsForProvider(currentEnabled, 'openai', updatedModels);
+  assert.deepEqual(next, [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-astra',
+    'openai/gpt-6-luna',
+  ]);
+});
+
+test('updateEnabledModelsForProvider — Given undefined or empty enabledModels, returns input without synthesizing restriction', () => {
+  const models = [{ id: 'gpt-6-astra' }];
+  assert.equal(updateEnabledModelsForProvider(undefined, 'openai', models), undefined);
+  assert.deepEqual(updateEnabledModelsForProvider([], 'openai', models), []);
+});
+
+test('updateEnabledModelsForProvider — Given provider deletion with empty models, removes provider from enabledModels', () => {
+  const currentEnabled = [
+    'cpam/codex/gpt-5.6-sol',
+    'openai/gpt-6-astra',
+    'openai/gpt-6-luna',
+  ];
+  const next = updateEnabledModelsForProvider(currentEnabled, 'openai', []);
+  assert.deepEqual(next, ['cpam/codex/gpt-5.6-sol']);
+});
+
+test('syncEnabledModelsWithConfiguredBuiltins — Automatically adds configured built-in models if missing from enabledModels', () => {
+  const currentEnabled = [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+  ];
+
+  const customProviders = {
+    openai: {
+      id: 'openai',
+      name: 'OpenAI',
+      isBuiltin: true,
+      models: [
+        { id: 'gpt-6-astra', name: 'GPT-6 Astra' },
+        { id: 'gpt-6-luna', name: 'GPT-6 Luna' },
+      ],
+      includedModels: ['gpt-6*'],
+      excludedModels: [],
+    },
+    cpam: {
+      id: 'cpam',
+      name: 'CPAM',
+      baseUrl: 'http://custom.com',
+      api: 'openai-completions',
+      models: [{ id: 'custom-1', name: 'Custom' }],
+    },
+  };
+
+  const { nextEnabled, hasChanges } = syncEnabledModelsWithConfiguredBuiltins(
+    currentEnabled,
+    customProviders as any
+  );
+
+  assert.equal(hasChanges, true);
+  assert.deepEqual(nextEnabled, [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-astra',
+    'openai/gpt-6-luna',
+  ]);
+});
+
+test('syncEnabledModelsWithConfiguredBuiltins — Returns hasChanges: false when built-in models are already covered by pattern or exact match', () => {
+  const currentEnabled = [
+    'openai/*',
+    'cpam/codex/gpt-5.6-sol',
+  ];
+
+  const customProviders = {
+    openai: {
+      id: 'openai',
+      isBuiltin: true,
+      models: [{ id: 'gpt-6-astra' }],
+    },
+  };
+
+  const { nextEnabled, hasChanges } = syncEnabledModelsWithConfiguredBuiltins(
+    currentEnabled,
+    customProviders as any
+  );
+
+  assert.equal(hasChanges, false);
+  assert.deepEqual(nextEnabled, currentEnabled);
+});
+
+test('addBuiltinModelsToEnabledList — Adds built-in models without overwriting other providers in enabledModels', () => {
+  const currentEnabled = [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'cpam-wilox/Pool-01-gemini',
+    'openai/gpt-4o',
+  ];
+
+  const savedModels = [
+    { id: 'gpt-6-astra', name: 'GPT-6 Astra' },
+    { id: 'gpt-6-luna', name: 'GPT-6 Luna' },
+  ];
+
+  // User saved gpt-6-astra and gpt-6-luna, and specifically excluded gpt-4o
+  const next = addBuiltinModelsToEnabledList(
+    currentEnabled,
+    'openai',
+    savedModels,
+    ['gpt-4o']
+  );
+
+  assert.deepEqual(next, [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'cpam-wilox/Pool-01-gemini',
+    'openai/gpt-6-astra',
+    'openai/gpt-6-luna',
+  ], 'Must keep other providers intact and only remove the specifically excluded model');
+});
+
+test('removeModelFromEnabledList — Only removes the specific model, keeping all other entries intact', () => {
+  const currentEnabled = [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-astra',
+    'openai/gpt-6-luna',
+  ];
+
+  const next = removeModelFromEnabledList(currentEnabled, 'openai', 'gpt-6-astra');
+  assert.deepEqual(next, [
+    'cpam/codex/gpt-5.6-sol',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-luna',
+  ]);
+});
+
+test('filterByEnabledModels — Preserves models with multi-segment IDs like cpam/codex/gpt-5.6-sol alongside built-ins', () => {
+  const enabledList = [
+    'cpam/codex/gpt-5.6-sol',
+    'cpam/codex/gpt-6-astra',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-astra',
+    'openai-codex/gpt-5.6-luna',
+  ];
+
+  const allCandidateModels: ModelInfo[] = [
+    { id: 'codex/gpt-5.6-sol', provider: 'cpam', name: 'GPT-5.6 Sol' },
+    { id: 'codex/gpt-6-astra', provider: 'cpam', name: 'GPT-6 Astra' },
+    { id: 'claude-sonnet-5-5', provider: 'claude-bridge', name: 'Claude Sonnet 5.5' },
+    { id: 'gpt-6-astra', provider: 'openai', name: 'GPT-6 Astra' },
+    { id: 'gpt-5.6-luna', provider: 'openai-codex', name: 'GPT-5.6 Luna' },
+    { id: 'should-be-filtered', provider: 'other', name: 'Other' },
+  ];
+
+  const filtered = filterByEnabledModels(allCandidateModels, enabledList);
+  const filteredRefs = filtered.map((m) => `${m.provider}/${m.id}`);
+
+  assert.deepEqual(filteredRefs, [
+    'cpam/codex/gpt-5.6-sol',
+    'cpam/codex/gpt-6-astra',
+    'claude-bridge/claude-sonnet-5-5',
+    'openai/gpt-6-astra',
+    'openai-codex/gpt-5.6-luna',
+  ]);
 });

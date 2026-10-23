@@ -45,6 +45,7 @@ pub const KNOWN_BUILTIN_OAUTH_PROVIDERS: &[&str] = &[
     "github-copilot",
     "kimi-coding",
     "meta",
+    "openai",
     "openai-codex",
     "openrouter",
     "radius",
@@ -2305,7 +2306,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_helper_list_if_environment_discovered() {
-        let discovered = crate::commands::discovery::discover_environment_impl(None, None, None);
+        let os_path = std::env::var("PATH").ok();
+        let discovered = crate::commands::discovery::discover_environment_impl(os_path.as_deref(), None, None);
         if let (Some(node_str), Some(entry_str)) = (discovered.node_path, discovered.entrypoint.path) {
             let helper_res = resolve_oauth_helper_path(None);
             if let Ok(helper_path) = helper_res {
@@ -2322,6 +2324,7 @@ mod tests {
 
                 let ids: Vec<String> = list.iter().map(|p| p.id.clone()).collect();
                 assert!(ids.contains(&"anthropic".to_string()));
+                assert!(ids.contains(&"openai".to_string()));
                 assert!(ids.contains(&"openai-codex".to_string()));
                 assert!(ids.contains(&"github-copilot".to_string()));
 
@@ -2338,7 +2341,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_live_helper_login_cancellation() {
-        let discovered = crate::commands::discovery::discover_environment_impl(None, None, None);
+        let os_path = std::env::var("PATH").ok();
+        let discovered = crate::commands::discovery::discover_environment_impl(os_path.as_deref(), None, None);
         if let (Some(node_str), Some(entry_str)) = (discovered.node_path, discovered.entrypoint.path) {
             let helper_res = resolve_oauth_helper_path(None);
             if let Ok(helper_path) = helper_res {

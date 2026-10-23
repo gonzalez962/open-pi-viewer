@@ -39,6 +39,7 @@ export const KNOWN_BUILTIN_OAUTH_PROVIDERS = new Set<string>([
   'github-copilot',
   'kimi-coding',
   'meta',
+  'openai',
   'openai-codex',
   'openrouter',
   'radius',
@@ -275,6 +276,28 @@ interface InFlightHelper {
 // Implementation Class
 // ---------------------------------------------------------------------------
 
+export function resolveOAuthHelperScript(customPath?: string): string {
+  if (customPath && fs.existsSync(customPath)) {
+    return path.resolve(customPath);
+  }
+  if (process.env.PI_OAUTH_HELPER_PATH && fs.existsSync(process.env.PI_OAUTH_HELPER_PATH)) {
+    return path.resolve(process.env.PI_OAUTH_HELPER_PATH);
+  }
+  const cwd = process.cwd();
+  const candidates = [
+    path.resolve(cwd, 'src-tauri', 'pi-oauth-helper.mjs'),
+    path.resolve(cwd, 'pi-oauth-helper.mjs'),
+    path.resolve(cwd, '..', 'src-tauri', 'pi-oauth-helper.mjs'),
+    path.resolve(cwd, 'resources', 'pi-oauth-helper.mjs'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      return c;
+    }
+  }
+  return path.resolve(cwd, 'src-tauri', 'pi-oauth-helper.mjs');
+}
+
 class DefaultOAuthManager implements OAuthManager {
   private helperPath: string;
   private nodePath?: string;
@@ -291,10 +314,7 @@ class DefaultOAuthManager implements OAuthManager {
   private isDisposed = false;
 
   constructor(options?: OAuthManagerOptions) {
-    this.helperPath =
-      options?.helperPath ||
-      process.env.PI_OAUTH_HELPER_PATH ||
-      path.resolve(process.cwd(), 'src-tauri', 'pi-oauth-helper.mjs');
+    this.helperPath = resolveOAuthHelperScript(options?.helperPath);
 
     this.nodePath = options?.nodePath;
     this.entrypoint = options?.entrypoint;

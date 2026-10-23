@@ -21,6 +21,12 @@
   gap: 6px;
 }
 
+.btn-toggle-raw-json {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .providers-success-banner {
   background-color: rgba(46, 160, 67, 0.15);
   border-color: rgba(46, 160, 67, 0.4);
@@ -94,21 +100,39 @@
 
 /* Providers Grid & Cards */
 .providers-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 16px;
+}
+
+@media (max-width: 1024px) {
+  .providers-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+}
+
+@media (max-width: 640px) {
+  .providers-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
 }
 
 .provider-card {
+  min-width: 0;
   background-color: var(--bg-surface);
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-md);
-  padding: 18px 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 12px;
+  box-sizing: border-box;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .provider-card:hover {
@@ -117,17 +141,16 @@
 
 .provider-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .provider-title-group {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .provider-card-title {
@@ -135,39 +158,22 @@
   font-weight: 600;
   color: var(--fg-default);
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.provider-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.provider-id-badge {
-  background-color: rgba(88, 166, 255, 0.15);
-  color: var(--accent-primary);
-  border: 1px solid rgba(88, 166, 255, 0.3);
-  border-radius: var(--radius-sm);
-  padding: 1px 7px;
-  font-size: 11px;
-  font-family: var(--font-mono, monospace);
-  font-weight: 600;
-}
-
-.provider-protocol-badge {
-  background-color: var(--bg-canvas);
+.provider-models-count {
+  font-size: 12px;
   color: var(--fg-muted);
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-sm);
-  padding: 1px 6px;
-  font-size: 10px;
-  font-family: var(--font-mono, monospace);
+  font-weight: 500;
 }
 
 .provider-card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-top: auto;
 }
 
 .provider-delete-confirm {
@@ -972,6 +978,12 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.builtin-oauth-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .builtin-oauth-empty-state {

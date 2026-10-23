@@ -49,6 +49,193 @@ export function getSupportedReasoningEffortsForModel(
 
 export const getSupportedThinkingLevelsForModel = getSupportedReasoningEffortsForModel;
 
+/**
+ * Canonical built-in Pi provider identifiers.
+ * These providers are supported natively by Pi runtime and should not appear
+ * in the Custom Providers section of the UI.
+ */
+export const PI_BUILTIN_PROVIDER_IDS = new Set<string>([
+  'amazon-bedrock',
+  'ant-ling',
+  'anthropic',
+  'azure',
+  'baseten',
+  'cerebras',
+  'cloudflare-ai-gateway',
+  'cloudflare-workers-ai',
+  'deepseek',
+  'fireworks',
+  'github-copilot',
+  'google',
+  'google-vertex',
+  'groq',
+  'huggingface',
+  'kimi-coding',
+  'meta',
+  'minimax',
+  'minimax-cn',
+  'mistral',
+  'moonshotai',
+  'moonshotai-cn',
+  'nvidia',
+  'openai',
+  'openai-codex',
+  'opencode',
+  'opencode-go',
+  'openrouter',
+  'qwen-token-plan',
+  'qwen-token-plan-cn',
+  'qwen-token-plan-individual',
+  'radius',
+  'together',
+  'typesafe',
+  'vercel-ai-gateway',
+  'xai',
+  'xiaomi',
+  'xiaomi-token-plan-ams',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-sgp',
+  'zai',
+  'zai-coding-cn',
+]);
+
+/**
+ * Ensures a model ID is qualified with its provider ID unambiguously.
+ * If modelId already starts with `${providerId}/`, it is returned unchanged.
+ */
+export function qualifyModelId(providerId: string, modelId: string): string {
+  const cleanProv = (providerId || '').trim();
+  const cleanModel = (modelId || '').trim();
+  if (!cleanProv) return cleanModel;
+  if (!cleanModel) return cleanProv;
+
+  if (cleanModel.startsWith(`${cleanProv}/`)) {
+    return cleanModel;
+  }
+  return `${cleanProv}/${cleanModel}`;
+}
+
+/**
+ * Extracts all approved models from custom providers configuration (from ~/.pi/agent/models.json).
+ * Applies provider isModelAllowed policy and qualifies model IDs unambiguously.
+ */
+export function extractApprovedProviderModels(
+  providersMap?: CustomProvidersMap | Record<string, unknown>
+): ModelInfo[] {
+  if (!providersMap || typeof providersMap !== 'object') {
+    return [];
+  }
+
+  const approved: ModelInfo[] = [];
+  const seenIds = new Set<string>();
+
+  for (const [provKey, provVal] of Object.entries(providersMap)) {
+    if (!provVal || typeof provVal !== 'object') continue;
+    const providerConfig = provVal as {
+      id?: string;
+      name?: string;
+      models?: Array<Record<string, unknown>>;
+      includedModels?: string[];
+      excludedModels?: string[];
+    };
+    const providerId = (providerConfig.id || provKey).trim();
+    if (!providerId) continue;
+
+    const policy = {
+      includedModels: Array.isArray(providerConfig.includedModels) ? providerConfig.includedModels : undefined,
+      excludedModels: Array.isArray(providerConfig.excludedModels) ? providerConfig.excludedModels : undefined,
+    };
+
+    const models = providerConfig.models;
+    if (!Array.isArray(models)) continue;
+
+    for (const rawModel of models) {
+      if (!rawModel || typeof rawModel !== 'object' || !rawModel.id || typeof rawModel.id !== 'string') {
+        continue;
+      }
+      const rawModelId = rawModel.id.trim();
+      if (!rawModelId) continue;
+
+      if (!isModelAllowed(rawModelId, policy)) {
+        continue;
+      }
+
+      const qualifiedId = qualifyModelId(providerId, rawModelId);
+      if (seenIds.has(qualifiedId)) {
+        continue;
+      }
+      seenIds.add(qualifiedId);
+
+      const modelName =
+        typeof rawModel.name === 'string' && rawModel.name.trim() !== ''
+          ? rawModel.name.trim()
+          : rawModelId;
+
+      approved.push({
+        id: rawModelId,
+        name: modelName,
+        provider: providerId,
+        reasoning:
+          typeof rawModel.reasoning === 'boolean'
+            ? rawModel.reasoning
+            : Array.isArray(rawModel.reasoningEfforts) && rawModel.reasoningEfforts.length > 0
+              ? true
+              : undefined,
+        reasoningEfforts: Array.isArray(rawModel.reasoningEfforts)
+          ? (rawModel.reasoningEfforts as string[])
+          : undefined,
+        contextWindow: typeof rawModel.contextWindow === 'number' ? rawModel.contextWindow : undefined,
+        maxTokens: typeof rawModel.maxTokens === 'number' ? rawModel.maxTokens : undefined,
+        input: Array.isArray(rawModel.input) ? (rawModel.input as string[]) : undefined,
+        input_modalities: Array.isArray(rawModel.input_modalities)
+          ? (rawModel.input_modalities as string[])
+          : undefined,
+      });
+    }
+  }
+
+  return approved;
+}
+
+/**
+ * Merges models defined in models.json with runtime RPC models.
+ */
+export function mergeProfileCatalog(
+  approved: ModelInfo[],
+  runtimeModels: ModelInfo[],
+  providers: CustomProvidersMap
+): ModelInfo[] {
+  const result = [...approved];
+  const seen = new Set(result.map((model) => qualifyModelId(model.provider || '', model.id || '').toLowerCase()));
+  for (const model of runtimeModels) {
+    if (!model.id || !model.provider) continue;
+    const qualified = qualifyModelId(model.provider, model.id).toLowerCase();
+    const policy = providers[model.provider];
+    if (policy && !isModelAllowed(model.id, policy)) continue;
+    if (seen.has(qualified)) continue;
+    seen.add(qualified);
+    result.push({ ...model });
+  }
+  return result;
+}
+
+/**
+ * Checks if a provider configuration represents a built-in Pi provider
+ * (either marked as isBuiltin, matching a known Pi built-in ID, or an override without baseUrl and api protocol).
+ */
+export function isPiBuiltinProvider(provider: {
+  id?: string;
+  isBuiltin?: boolean;
+  baseUrl?: string;
+  api?: string;
+}): boolean {
+  if (provider.isBuiltin) return true;
+  const cleanId = (provider.id || '').trim().toLowerCase();
+  if (PI_BUILTIN_PROVIDER_IDS.has(cleanId)) return true;
+  if (!provider.baseUrl && !provider.api) return true;
+  return false;
+}
+
 
 
 /**
@@ -674,7 +861,10 @@ export function findExactModelReferenceMatch(
   }
   const normalizedReference = trimmedReference.toLowerCase();
   const canonicalMatches = availableModels.filter(
-    (model) => model.id && `${model.provider || ''}/${model.id}`.toLowerCase() === normalizedReference
+    (model) =>
+      model.id &&
+      (qualifyModelId(model.provider || '', model.id).toLowerCase() === normalizedReference ||
+        model.id.toLowerCase() === normalizedReference)
   );
   if (canonicalMatches.length === 1) {
     return canonicalMatches[0];
@@ -691,7 +881,8 @@ export function findExactModelReferenceMatch(
         (model) =>
           model.id &&
           (model.provider || '').toLowerCase() === provider.toLowerCase() &&
-          model.id.toLowerCase() === modelId.toLowerCase()
+          (model.id.toLowerCase() === modelId.toLowerCase() ||
+            qualifyModelId(provider, model.id).toLowerCase() === normalizedReference)
       );
       if (providerMatches.length === 1) {
         return providerMatches[0];
@@ -871,12 +1062,198 @@ export function filterByEnabledModels(
   const scopedSet = new Set(
     scoped
       .filter((sm) => Boolean(sm.model.id))
-      .map((sm) => `${(sm.model.provider || '').toLowerCase()}/${sm.model.id!.toLowerCase()}`)
+      .map((sm) => qualifyModelId(sm.model.provider || '', sm.model.id!).toLowerCase())
   );
 
   return models.filter((m) =>
-    Boolean(m.id && scopedSet.has(`${(m.provider || '').toLowerCase()}/${m.id.toLowerCase()}`))
+    Boolean(
+      m.id &&
+        (scopedSet.has(qualifyModelId(m.provider || '', m.id).toLowerCase()) ||
+          scopedSet.has(m.id.toLowerCase()))
+    )
   );
+}
+
+/**
+ * Synchronizes enabledModels with configured built-in provider models when a restrictive
+ * enabledModels configuration exists in settings.json. Missing or empty enabledModels
+ * preserves unrestricted behavior (returns hasChanges: false).
+ */
+export function syncEnabledModelsWithConfiguredBuiltins(
+  currentEnabled: string[] | undefined,
+  providersMap?: CustomProvidersMap
+): { nextEnabled: string[] | undefined; hasChanges: boolean } {
+  if (!currentEnabled || currentEnabled.length === 0 || !providersMap) {
+    return { nextEnabled: currentEnabled, hasChanges: false };
+  }
+
+  const approved = extractApprovedProviderModels(providersMap);
+  const builtinApproved = approved.filter((m) => {
+    const provKey = m.provider || '';
+    const provConfig = providersMap[provKey.toLowerCase()] || providersMap[provKey];
+    return provConfig && isPiBuiltinProvider({ id: (provConfig as { id?: string }).id || provKey, ...provConfig });
+  });
+
+  if (builtinApproved.length === 0) {
+    return { nextEnabled: currentEnabled, hasChanges: false };
+  }
+
+  const nextSet = new Set(currentEnabled);
+  let hasChanges = false;
+
+  for (const m of builtinApproved) {
+    if (!m.id || !m.provider) continue;
+    const qualifiedId = qualifyModelId(m.provider, m.id);
+    if (!isModelAllowedByEnabledModels(m, currentEnabled, builtinApproved)) {
+      nextSet.add(qualifiedId);
+      hasChanges = true;
+    }
+  }
+
+  if (!hasChanges) {
+    return { nextEnabled: currentEnabled, hasChanges: false };
+  }
+
+  return { nextEnabled: Array.from(nextSet), hasChanges: true };
+}
+
+/**
+ * Updates an existing restrictive enabledModels array for a specific provider.
+ * Replaces existing explicit entries for providerId with newly allowed models.
+ * If currentEnabled is undefined or empty, returns input untouched (never synthesizes restriction).
+ */
+export function updateEnabledModelsForProvider(
+  currentEnabled: string[] | undefined,
+  providerId: string,
+  models: Array<{ id: string }>,
+  policy?: { includedModels?: string[]; excludedModels?: string[] }
+): string[] | undefined {
+  if (!currentEnabled || currentEnabled.length === 0) {
+    return currentEnabled;
+  }
+
+  const cleanProvId = (providerId || '').trim().toLowerCase();
+  if (!cleanProvId) return currentEnabled;
+
+  const remaining = currentEnabled.filter((pattern) => {
+    const trimmed = stripThinkingLevelFromPattern(pattern).trim().toLowerCase();
+    const slashIdx = trimmed.indexOf('/');
+    if (slashIdx !== -1) {
+      const prov = trimmed.substring(0, slashIdx).trim();
+      return prov !== cleanProvId;
+    }
+    return true;
+  });
+
+  const nextModels: string[] = [];
+  for (const m of models) {
+    if (!m.id || typeof m.id !== 'string') continue;
+    const cleanId = m.id.trim();
+    if (isModelAllowed(cleanId, policy)) {
+      nextModels.push(qualifyModelId(cleanProvId, cleanId));
+    }
+  }
+
+  if (nextModels.length === 0 && policy?.includedModels && policy.includedModels.length > 0) {
+    for (const pat of policy.includedModels) {
+      if (typeof pat === 'string' && pat.trim()) {
+        nextModels.push(qualifyModelId(cleanProvId, pat.trim()));
+      }
+    }
+  }
+
+  return Array.from(new Set([...remaining, ...nextModels]));
+}
+
+/**
+ * Adds newly configured models of a built-in provider to enabledModels if enabledModels exists,
+ * and removes only specifically excluded models, preserving all other entries in the list.
+ */
+export function addBuiltinModelsToEnabledList(
+  currentEnabled: string[] | undefined,
+  providerId: string,
+  models: Array<{ id: string }>,
+  excludedModelIds?: string[],
+  policy?: { includedModels?: string[]; excludedModels?: string[] }
+): string[] | undefined {
+  if (!currentEnabled || currentEnabled.length === 0) {
+    return currentEnabled;
+  }
+
+  const cleanProvId = (providerId || '').trim().toLowerCase();
+  if (!cleanProvId) return currentEnabled;
+
+  const toRemove = new Set<string>();
+  if (Array.isArray(excludedModelIds)) {
+    for (const id of excludedModelIds) {
+      if (typeof id === 'string' && id.trim()) {
+        const clean = id.trim().toLowerCase();
+        toRemove.add(clean);
+        toRemove.add(qualifyModelId(cleanProvId, clean).toLowerCase());
+      }
+    }
+  }
+  if (Array.isArray(policy?.excludedModels)) {
+    for (const pat of policy.excludedModels) {
+      if (typeof pat === 'string' && pat.trim()) {
+        const clean = pat.trim().toLowerCase();
+        toRemove.add(clean);
+        toRemove.add(qualifyModelId(cleanProvId, clean).toLowerCase());
+      }
+    }
+  }
+
+  // Filter out only the specifically excluded/deleted models
+  const remaining = currentEnabled.filter((pattern) => {
+    const cleanPattern = pattern.trim().toLowerCase();
+    const qualified = qualifyModelId(cleanProvId, cleanPattern).toLowerCase();
+    return !toRemove.has(cleanPattern) && !toRemove.has(qualified);
+  });
+
+  // Add the newly saved models for this built-in provider
+  const nextModels: string[] = [];
+  for (const m of models) {
+    if (!m.id || typeof m.id !== 'string') continue;
+    const cleanId = m.id.trim();
+    if (isModelAllowed(cleanId, policy)) {
+      nextModels.push(qualifyModelId(cleanProvId, cleanId));
+    }
+  }
+
+  if (nextModels.length === 0 && policy?.includedModels && policy.includedModels.length > 0) {
+    for (const pat of policy.includedModels) {
+      if (typeof pat === 'string' && pat.trim()) {
+        nextModels.push(qualifyModelId(cleanProvId, pat.trim()));
+      }
+    }
+  }
+
+  return Array.from(new Set([...remaining, ...nextModels]));
+}
+
+/**
+ * Removes only specific model references from enabledModels, preserving the rest of the list.
+ */
+export function removeModelFromEnabledList(
+  currentEnabled: string[] | undefined,
+  providerId: string,
+  modelId: string
+): string[] | undefined {
+  if (!currentEnabled || currentEnabled.length === 0) {
+    return currentEnabled;
+  }
+
+  const cleanProvId = (providerId || '').trim().toLowerCase();
+  const cleanModelId = (modelId || '').trim().toLowerCase();
+  if (!cleanProvId || !cleanModelId) return currentEnabled;
+
+  const targetQualified = qualifyModelId(cleanProvId, cleanModelId).toLowerCase();
+
+  return currentEnabled.filter((pattern) => {
+    const trimmed = pattern.trim().toLowerCase();
+    const qualified = qualifyModelId(cleanProvId, trimmed).toLowerCase();
+    return trimmed !== cleanModelId && trimmed !== targetQualified && qualified !== targetQualified;
+  });
 }
 
 export interface FetchModelsOptions {

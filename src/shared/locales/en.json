@@ -685,6 +685,7 @@
   "providers.oauth.btn_connect": "Connect",
   "providers.oauth.btn_disconnect": "Disconnect",
   "providers.oauth.btn_edit_models": "Edit Models",
+  "providers.oauth.loading_catalog": "Loading models...",
   "providers.oauth.edit_models_title": "Edit Built-in Models: {id}",
   "providers.oauth.builtin_info": "Built-in Provider — Connection credentials and catalog endpoints are managed automatically.",
   "providers.oauth.btn_reconnect": "Reconnect",

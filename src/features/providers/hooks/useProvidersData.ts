@@ -5,14 +5,20 @@ import {
   deleteCustomProviderPi,
   getModelThinkingLevelsPi,
   saveModelThinkingLevelsPi,
+  getEnabledModelsPi,
+  saveEnabledModelsPi,
 } from '@infra/bridge';
 import { copyText } from '@shared/clipboard';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomProviderConfig, ModelsConfigFile } from '@core/types/providers';
 import type { ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import {
+  isModelAllowed,
+  isPiBuiltinProvider,
   mapProvidersToArray,
   validateProviderConfig,
+  addBuiltinModelsToEnabledList,
+  stripThinkingLevelFromPattern,
 } from '../providers';
 import type { ProviderFormData } from '../types';
 
@@ -28,15 +34,31 @@ export function prepareProviderPayload(formData: ProviderFormData): CustomProvid
   const apiTrimmed = formData.api ? formData.api.trim() : '';
   const apiKeyTrimmed = formData.apiKey ? formData.apiKey.trim() : '';
 
+  const excludedModels = Array.isArray(formData.excludedModels) ? formData.excludedModels : [];
+  const includedModels = Array.isArray(formData.includedModels) ? formData.includedModels : [];
+  const policy = { includedModels, excludedModels };
+
   return {
     id: formData.id.trim(),
     name: formData.name.trim() || undefined,
     baseUrl: baseUrlTrimmed ? baseUrlTrimmed : (isBuiltin ? undefined : ''),
     api: apiTrimmed ? apiTrimmed : (isBuiltin ? undefined : ''),
     apiKey: apiKeyTrimmed || undefined,
-    models: formData.models,
-    excludedModels: Array.isArray(formData.excludedModels) ? formData.excludedModels : [],
-    includedModels: Array.isArray(formData.includedModels) ? formData.includedModels : [],
+    models: formData.models
+      .filter((m) => isModelAllowed(m.id.trim(), policy))
+      .map((m) => ({
+        id: m.id.trim(),
+        name: m.name ? m.name.trim() : undefined,
+        contextWindow: m.contextWindow,
+        maxTokens: m.maxTokens,
+        reasoning: m.reasoning,
+        reasoningEfforts: m.reasoningEfforts,
+        input: m.input,
+        thinkingLevel: m.thinkingLevel,
+        defaultThinkingLevel: m.defaultThinkingLevel,
+      })),
+    excludedModels,
+    includedModels,
     isBuiltin: isBuiltin ? true : undefined,
   };
 }
@@ -86,7 +108,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
       ]);
       setFullConfig(config);
       const list = mapProvidersToArray(config.providers || {});
-      setProviders(list);
+      setProviders(list.filter((p) => !isPiBuiltinProvider(p)));
       setModelThinkingLevels(thinkingLevels);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -101,7 +123,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
   }, [loadProviders]);
 
   const saveProvider = useCallback(
-    async (formData: ProviderFormData, isEditing: boolean): Promise<boolean> => {
+    async (formData: ProviderFormData, isEditing: boolean, silent = false): Promise<boolean> => {
       const providerToValidate = prepareProviderPayload(formData);
 
       const validation = validateProviderConfig(providerToValidate);
@@ -118,7 +140,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
         const activeCwd = resolveActiveCwd();
         const savedConfig = await upsertCustomProviderPi(providerToValidate, activeCwd);
         setFullConfig(savedConfig);
-        setProviders(mapProvidersToArray(savedConfig.providers || {}));
+        setProviders(mapProvidersToArray(savedConfig.providers || {}).filter((p) => !isPiBuiltinProvider(p)));
 
         const levelUpdates: Record<string, ThinkingLevel | null> = {};
         for (const m of formData.models) {
@@ -133,11 +155,37 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
           }).catch(() => {});
         }
 
-        setSuccessNotice(
-          isEditing
-            ? t('providers.notice_updated', { id: providerToValidate.id })
-            : t('providers.notice_added', { id: providerToValidate.id })
-        );
+        // If this is a built-in provider and settings.json has enabledModels, add newly saved models
+        if (isPiBuiltinProvider(providerToValidate)) {
+          try {
+            const currentEnabled = await getEnabledModelsPi();
+            if (currentEnabled && currentEnabled.length > 0) {
+              const nextEnabled = addBuiltinModelsToEnabledList(
+                currentEnabled,
+                formData.id,
+                formData.models,
+                formData.excludedModels,
+                {
+                  includedModels: formData.includedModels,
+                  excludedModels: formData.excludedModels,
+                }
+              );
+              if (nextEnabled && JSON.stringify(nextEnabled) !== JSON.stringify(currentEnabled)) {
+                await saveEnabledModelsPi(nextEnabled);
+              }
+            }
+          } catch (err) {
+            console.warn('Failed to update enabledModels in settings.json for built-in provider:', err);
+          }
+        }
+
+        if (!silent) {
+          setSuccessNotice(
+            isEditing
+              ? t('providers.notice_updated', { id: providerToValidate.id })
+              : t('providers.notice_added', { id: providerToValidate.id })
+          );
+        }
 
         if (onRefreshModels) {
           onRefreshModels().catch(() => {});
@@ -157,7 +205,7 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
       try {
         const savedConfig = await deleteCustomProviderPi(idToDelete);
         setFullConfig(savedConfig);
-        setProviders(mapProvidersToArray(savedConfig.providers || {}));
+        setProviders(mapProvidersToArray(savedConfig.providers || {}).filter((p) => !isPiBuiltinProvider(p)));
 
         const prefix = `${idToDelete}/`;
         const levelUpdates: Record<string, ThinkingLevel | null> = {};
@@ -177,6 +225,27 @@ export function useProvidersData({ t, onRefreshModels, cwd }: UseProvidersDataOp
           void saveModelThinkingLevelsPi(levelUpdates).then((updated) => {
             setModelThinkingLevels(updated);
           }).catch(() => {});
+        }
+
+        try {
+          const currentEnabled = await getEnabledModelsPi();
+          if (currentEnabled && currentEnabled.length > 0) {
+            const cleanProvId = idToDelete.trim().toLowerCase();
+            const nextEnabled = currentEnabled.filter((pattern) => {
+              const trimmed = stripThinkingLevelFromPattern(pattern).trim().toLowerCase();
+              const slashIdx = trimmed.indexOf('/');
+              if (slashIdx !== -1) {
+                const prov = trimmed.substring(0, slashIdx).trim();
+                return prov !== cleanProvId;
+              }
+              return true;
+            });
+            if (nextEnabled && JSON.stringify(nextEnabled) !== JSON.stringify(currentEnabled)) {
+              await saveEnabledModelsPi(nextEnabled);
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to update enabledModels in settings.json on provider deletion:', err);
         }
 
         setSuccessNotice(t('providers.notice_deleted', { id: idToDelete }));

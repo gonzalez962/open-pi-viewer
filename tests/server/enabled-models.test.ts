@@ -6,7 +6,7 @@ import {
   handleIpcCommand,
   setPiAgentDirForTest,
 } from '@server/web-ipc-bridge';
-import { getEnabledModelsPi } from '@infra/bridge';
+import { getEnabledModelsPi, saveEnabledModelsPi } from '@infra/bridge';
 
 function createIsolatedFixture() {
   const root = fs.mkdtempSync(path.join(process.cwd(), '.workspace-enabled-models-test-'));
@@ -229,5 +229,71 @@ test('R3-001 — getEnabledModelsPi routes to server get_enabled_models IPC in w
     f.cleanup();
   }
 });
+
+test('save_enabled_models persists array to settings.json preserving other keys', async () => {
+  const f = createIsolatedFixture();
+  try {
+    f.writeSettings({
+      theme: 'dark',
+      defaultProvider: 'anthropic',
+      enabledModels: ['anthropic/*'],
+    });
+
+    const result = await handleIpcCommand('save_enabled_models', {
+      models: ['anthropic/*', 'openai/gpt-6-astra'],
+    });
+    assert.deepEqual(result, ['anthropic/*', 'openai/gpt-6-astra']);
+
+    const onDisk = JSON.parse(f.readSettingsRaw());
+    assert.equal(onDisk.theme, 'dark');
+    assert.equal(onDisk.defaultProvider, 'anthropic');
+    assert.deepEqual(onDisk.enabledModels, ['anthropic/*', 'openai/gpt-6-astra']);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('saveEnabledModelsPi routes to server save_enabled_models IPC in web-shim mode', async () => {
+  const f = createIsolatedFixture();
+  try {
+    f.writeSettings({
+      theme: 'dark',
+      enabledModels: ['cpam/*'],
+    });
+
+    const origWindow = (globalThis as any).window;
+    const origIsTauri = (globalThis as any).isTauri;
+
+    let calledCmd: string | null = null;
+    let calledArgs: any = null;
+    (globalThis as any).isTauri = false;
+    (globalThis as any).window = {
+      __IS_WEB_IPC__: true,
+      __TAURI_INTERNALS__: {
+        __isWebIpc: true,
+        invoke: async (cmd: string, args: any) => {
+          calledCmd = cmd;
+          calledArgs = args;
+          return await handleIpcCommand(cmd, args);
+        },
+      },
+    };
+
+    try {
+      const result = await saveEnabledModelsPi(['cpam/*', 'openai/gpt-6-astra']);
+      assert.equal(calledCmd, 'save_enabled_models');
+      assert.deepEqual(result, ['cpam/*', 'openai/gpt-6-astra']);
+      assert.deepEqual(calledArgs, { models: ['cpam/*', 'openai/gpt-6-astra'] });
+    } finally {
+      if (origWindow === undefined) delete (globalThis as any).window;
+      else (globalThis as any).window = origWindow;
+      if (origIsTauri === undefined) delete (globalThis as any).isTauri;
+      else (globalThis as any).isTauri = origIsTauri;
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
 
 

@@ -10,6 +10,7 @@ export interface BuiltinOAuthAccountsProps {
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   isBusy?: boolean;
   onOpenEditModels?: (provider: BuiltinOAuthProviderStatus) => void;
+  loadingCatalogProviderId?: string | null;
 }
 
 export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
@@ -17,6 +18,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
   t,
   isBusy = false,
   onOpenEditModels,
+  loadingCatalogProviderId,
 }) => {
   const {
     accounts,
@@ -82,7 +84,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
         <div className="builtin-oauth-header-actions">
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-secondary btn-sm builtin-oauth-refresh-btn"
             onClick={refreshAccounts}
             disabled={isLoading || Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
             title={t('providers.oauth.reload')}
@@ -226,6 +228,7 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
           {accounts.map((provider) => {
             const isActive = activeProviderId === provider.id;
             const isConnected = provider.oauthReady || provider.hasStoredOAuth;
+            const isCatalogLoading = loadingCatalogProviderId === provider.id;
             const typeLabel = provider.isSubscription
               ? t('providers.oauth.status_subscription')
               : 'OAuth';
@@ -248,32 +251,51 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
                     <>
                       <button
                         type="button"
-                        className="btn-icon-subtle builtin-oauth-edit-models-btn"
+                        className={`btn-icon-subtle builtin-oauth-edit-models-btn ${isCatalogLoading ? 'is-loading' : ''}`}
                         onClick={() => onOpenEditModels?.(provider)}
-                        disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
-                        title={t('providers.oauth.btn_edit_models')}
-                        aria-label={t('providers.oauth.btn_edit_models')}
+                        disabled={
+                          Boolean(activeProviderId) ||
+                          Boolean(confirmLogoutId) ||
+                          isCancelling ||
+                          isLoggingOut ||
+                          isBusy ||
+                          isCatalogLoading ||
+                          Boolean(loadingCatalogProviderId)
+                        }
+                        title={isCatalogLoading ? t('providers.oauth.loading_catalog') : t('providers.oauth.btn_edit_models')}
+                        aria-label={isCatalogLoading ? t('providers.oauth.loading_catalog') : t('providers.oauth.btn_edit_models')}
                       >
-                        <svg
-                          width="14"
-                          height="14"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
-                          <path d="M9.17 4.14 9.6 2h4.8l.43 2.14 1.43.83 2.07-.7 2.4 4.16-1.64 1.44v1.66l1.64 1.44-2.4 4.16-2.07-.7-1.43.83-.43 2.14H9.6l-.43-2.14-1.43-.83-2.07.7-2.4-4.16 1.64-1.44V9.97L3.27 8.53l2.4-4.16 2.07.7z" transform="translate(0 1)" />
-                          <circle cx="12" cy="12" r="3" />
-                        </svg>
+                        {isCatalogLoading ? (
+                          <span className="spinner-sm" aria-hidden="true" />
+                        ) : (
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M9.17 4.14 9.6 2h4.8l.43 2.14 1.43.83 2.07-.7 2.4 4.16-1.64 1.44v1.66l1.64 1.44-2.4 4.16-2.07-.7-1.43.83-.43 2.14H9.6l-.43-2.14-1.43-.83-2.07.7-2.4-4.16 1.64-1.44V9.97L3.27 8.53l2.4-4.16 2.07.7z" transform="translate(0 1)" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
                       </button>
                       <button
                         type="button"
                         className="btn btn-secondary btn-sm builtin-oauth-action-btn builtin-oauth-disconnect-btn"
                         onClick={() => confirmLogout(provider.id)}
-                        disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isCancelling || isLoggingOut || isBusy}
+                        disabled={
+                          Boolean(activeProviderId) ||
+                          Boolean(confirmLogoutId) ||
+                          isCancelling ||
+                          isLoggingOut ||
+                          isBusy ||
+                          Boolean(loadingCatalogProviderId)
+                        }
                       >
                         {t('providers.oauth.btn_disconnect')}
                       </button>
@@ -283,7 +305,14 @@ export const BuiltinOAuthAccounts: React.FC<BuiltinOAuthAccountsProps> = ({
                       type="button"
                       className="btn btn-primary btn-sm builtin-oauth-action-btn builtin-oauth-connect-btn"
                       onClick={() => startLogin(provider.id)}
-                      disabled={Boolean(activeProviderId) || Boolean(confirmLogoutId) || isStarting || isCancelling || isBusy}
+                      disabled={
+                        Boolean(activeProviderId) ||
+                        Boolean(confirmLogoutId) ||
+                        isStarting ||
+                        isCancelling ||
+                        isBusy ||
+                        Boolean(loadingCatalogProviderId)
+                      }
                     >
                       {t('providers.oauth.btn_connect')}
                     </button>

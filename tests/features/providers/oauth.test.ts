@@ -538,6 +538,60 @@ test('oauth bridge fallback: bridge methods handle browser preview environment f
   assert.equal(called, false);
 });
 
+test('oauth bridge web shim: bridge methods route through invoke in web shim mode without preview short-circuit', async () => {
+  const originalWindow = globalThis.window;
+  const invocations: Array<{ cmd: string; args?: any }> = [];
+  const fakeInvoke = async (cmd: string, args?: any) => {
+    invocations.push({ cmd, args });
+    if (cmd === 'get_builtin_oauth_providers') {
+      return [{ id: 'openai', name: 'OpenAI', configured: true }];
+    }
+    if (cmd === 'start_oauth_login') {
+      return { started: true, providerId: args?.payload?.providerId };
+    }
+    if (cmd === 'cancel_oauth_login') {
+      return { cancelled: true };
+    }
+    if (cmd === 'send_oauth_prompt_response') {
+      return { sent: true };
+    }
+    if (cmd === 'logout_oauth_provider') {
+      return { success: true, providerId: args?.payload?.providerId };
+    }
+    return null;
+  };
+
+  const fakeWindow = {
+    __IS_WEB_IPC__: true,
+    __TAURI_INTERNALS__: {
+      invoke: fakeInvoke,
+      transformCallback: (_fn: any) => 1,
+      unregisterCallback: () => {},
+    },
+  };
+  (globalThis as any).window = fakeWindow;
+
+  try {
+    const providers = await getBuiltinOAuthProvidersPi(fakeInvoke as any);
+    assert.equal(providers.length, 1);
+    assert.equal(providers[0].id, 'openai');
+
+    const startRes = await startOAuthLoginPi({ providerId: 'openai' }, fakeInvoke as any);
+    assert.equal(startRes.started, true);
+
+    const cancelRes = await cancelOAuthLoginPi({ providerId: 'openai' }, fakeInvoke as any);
+    assert.equal(cancelRes.cancelled, true);
+
+    const promptRes = await sendOAuthPromptResponsePi({ promptId: 'prompt-1', response: 'code' }, fakeInvoke as any);
+    assert.equal(promptRes.sent, true);
+
+    const logoutRes = await logoutOAuthProviderPi({ providerId: 'openai' }, fakeInvoke as any);
+    assert.equal(logoutRes.success, true);
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
 // ============================================================================
 // Functional Behavior & Edge Cases Tests (Confirmed T2 Requirements)
 // ============================================================================

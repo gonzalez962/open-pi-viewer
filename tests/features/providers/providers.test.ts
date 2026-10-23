@@ -1,6 +1,11 @@
 import assert from 'node:assert';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { invoke } from '@tauri-apps/api/core';
+import { ProvidersHeader } from '@features/providers/components/ProvidersHeader';
 
 import {
   arrayToProvidersMap,
@@ -2142,6 +2147,196 @@ test('bridge: upsertCustomProviderPi and deleteCustomProviderPi operate targeted
   assert.strictEqual(afterDelete.providers?.['prov-one'], undefined);
   assert.strictEqual(afterDelete.providers?.['prov-two']?.baseUrl, 'https://api.two.com/v1');
 });
+
+test('ProviderCard preview: renders provider info and model count heading but does NOT list individual model chips', async () => {
+  const React = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ProviderCard } = await import('@features/providers/components/ProviderCard');
+  const { translate } = await import('@shared/i18n');
+
+  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate('en', key, params);
+
+  const mockProvider: CustomProviderConfig = {
+    id: 'test-custom-provider',
+    name: 'My Custom Provider',
+    baseUrl: 'https://api.custom.com/v1',
+    api: 'openai',
+    models: [
+      { id: 'custom-model-alpha', name: 'Alpha Model' },
+      { id: 'custom-model-beta', name: 'Beta Model' },
+    ],
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(ProviderCard, {
+      provider: mockProvider,
+      deletingId: null,
+      isSaving: false,
+      isBusy: false,
+      onOpenEditModal: () => {},
+      onSetDeletingId: () => {},
+      onDeleteProvider: () => {},
+      t,
+    })
+  );
+
+  assert.ok(html.includes('My Custom Provider'));
+  assert.ok(html.includes('Models (2)'));
+  assert.ok(!html.includes('provider-models-chips'), 'should not contain model chips container');
+  assert.ok(!html.includes('custom-model-alpha'), 'should not list individual model alpha');
+  assert.ok(!html.includes('custom-model-beta'), 'should not list individual model beta');
+  assert.ok(html.includes('btn-edit-provider'), 'should have edit button');
+  assert.ok(html.includes('btn-delete-provider'), 'should have delete button');
+  assert.ok(!html.includes('provider-card-meta'), 'should not render base_url or api_key meta box');
+  assert.ok(!html.includes('provider-id-badge'), 'should not render id badge');
+  assert.ok(!html.includes('provider-protocol-badge'), 'should not render protocol badge');
+});
+
+test('providers: isPiBuiltinProvider identifies Pi built-in providers and retains real custom providers', async () => {
+  const { isPiBuiltinProvider } = await import('@features/providers/providers');
+
+  // Real custom providers with baseUrl and api protocol
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'my-ollama', baseUrl: 'http://localhost:11434', api: 'openai' }),
+    false
+  );
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'custom-proxy', baseUrl: 'https://proxy.local', api: 'anthropic' }),
+    false
+  );
+
+  // Marked explicitly as isBuiltin
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'any-provider', isBuiltin: true }),
+    true
+  );
+
+  // Known Pi built-in provider IDs
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'openai', baseUrl: 'https://api.openai.com/v1', api: 'openai' }),
+    true
+  );
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'anthropic', baseUrl: 'https://api.anthropic.com', api: 'anthropic' }),
+    true
+  );
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'deepseek', baseUrl: 'https://api.deepseek.com', api: 'openai' }),
+    true
+  );
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'google', baseUrl: 'https://generativelanguage.googleapis.com', api: 'google' }),
+    true
+  );
+
+  // Built-in override without baseUrl and api protocol
+  assert.strictEqual(
+    isPiBuiltinProvider({ id: 'some-override-id' }),
+    true
+  );
+});
+
+test('ProvidersView: does NOT render Pi built-in providers in the Custom Providers section', async () => {
+  const React = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ProvidersView } = await import('@features/providers/ProvidersView');
+  const { translate } = await import('@shared/i18n');
+
+  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
+    translate('en', key, params);
+
+  const mockCustomProvider: CustomProviderConfig = {
+    id: 'local-ollama',
+    name: 'Ollama Local',
+    baseUrl: 'http://localhost:11434',
+    api: 'openai',
+    models: [{ id: 'llama3:8b', name: 'Llama 3 8B' }],
+  };
+
+  const mockBuiltinProvider1: CustomProviderConfig = {
+    id: 'openai',
+    name: 'OpenAI Override',
+    models: [{ id: 'gpt-4o', name: 'GPT-4o' }],
+    isBuiltin: true,
+  };
+
+  const mockBuiltinProvider2: CustomProviderConfig = {
+    id: 'anthropic',
+    name: 'Anthropic Override',
+    models: [{ id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet' }],
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(ProvidersView, {
+      t,
+      language: 'en',
+      providersDataOverride: {
+        isLoading: false,
+        providers: [mockCustomProvider, mockBuiltinProvider1, mockBuiltinProvider2],
+        modelThinkingLevels: {},
+      },
+      oauthOverride: {
+        accounts: [],
+        isLoading: false,
+        accountsError: null,
+        activeProviderId: null,
+        isStarting: false,
+        isCancelling: false,
+        statusMessage: null,
+        authUrl: null,
+        deviceCodeInfo: null,
+        pendingPrompt: null,
+        activeError: null,
+        successNotice: null,
+        confirmLogoutId: null,
+        isLoggingOut: false,
+        refreshAccounts: () => {},
+        startLogin: () => {},
+        cancelLogin: () => {},
+        respondToPrompt: () => {},
+        confirmLogout: () => {},
+        cancelConfirmLogout: () => {},
+        logoutProvider: () => {},
+        setSuccessNotice: () => {},
+        setActiveError: () => {},
+        setAccountsError: () => {},
+        dismissAccountsError: () => {},
+      } as any,
+    })
+  );
+
+  // Custom provider section exists and renders only the real custom provider
+  assert.ok(html.includes('Ollama Local'), 'should render custom provider Ollama Local');
+  assert.ok(html.includes('local-ollama'), 'should contain custom provider ID local-ollama');
+
+  // Built-in providers MUST NOT be rendered in Custom Providers section
+  assert.ok(!html.includes('OpenAI Override'), 'should NOT render OpenAI built-in provider in custom section');
+  assert.ok(!html.includes('Anthropic Override'), 'should NOT render Anthropic built-in provider in custom section');
+
+  // Badge count should be 1 (only Ollama Local), not 3
+  assert.ok(html.includes('<span class="badge badge-subtle">1</span>'), 'custom providers count badge should be 1');
+});
+
+test('ProvidersHeader: toggle raw JSON button has btn-toggle-raw-json class and gap styling', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(ProvidersHeader, {
+      t: ((k: string) => k) as any,
+      showRawJson: false,
+      onToggleRawJson: () => {},
+      onOpenAddModal: () => {},
+      isSaving: false,
+      isBusy: false,
+    })
+  );
+  assert.match(html, /class="[^"]*btn-toggle-raw-json[^"]*"/);
+
+  const cssPath = path.resolve(process.cwd(), 'src/features/providers/providers.css');
+  const css = fs.readFileSync(cssPath, 'utf8');
+  assert.match(css, /\.btn-toggle-raw-json\s*\{[^}]*gap:\s*6px/);
+});
+
+
 
 
 
