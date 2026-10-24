@@ -27,7 +27,18 @@ if (!rootElement) {
 }
 
 // Initialize storage synchronization between localStorage and server's open-pi-viewer.json
-void initStorageSynchronization();
+const isWeb = typeof window !== 'undefined' && Boolean((window as any).__IS_WEB_IPC__);
+if (isWeb) {
+  window.addEventListener(
+    'pi:web-auth-ready',
+    () => {
+      void initStorageSynchronization();
+    },
+    { once: true }
+  );
+} else {
+  void initStorageSynchronization();
+}
 
 // Register PWA service worker in web browser mode
 registerPwaServiceWorker();
