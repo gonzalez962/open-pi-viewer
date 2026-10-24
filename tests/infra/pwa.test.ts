@@ -40,6 +40,7 @@ test('index.html: links manifest and mobile PWA meta tags', () => {
 
   assert.match(html, /<link rel="manifest" href="\/manifest\.json"/);
   assert.match(html, /<meta name="theme-color" content="#0d1117"/);
+  assert.match(html, /<meta name="mobile-web-app-capable" content="yes"/);
   assert.match(html, /<meta name="apple-mobile-web-app-capable" content="yes"/);
   assert.match(html, /<link rel="apple-touch-icon"/);
   assert.match(html, /<link rel="icon" type="image\/x-icon" href="\/favicon\.ico"/);
