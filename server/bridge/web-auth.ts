@@ -9,6 +9,7 @@ import { verifyTurnstile } from './turnstile';
 
 export const DEFAULT_WEB_AUTH_COOKIE_NAME = 'pi_viewer_auth_session';
 export const DEFAULT_WEB_AUTH_SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+export const MAX_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1, Node.js signed 32-bit limit (~24.85 days)
 export const MAX_LOGIN_BODY_BYTES = 8192;
 
 export interface WebAuthConfig {
@@ -33,6 +34,7 @@ export interface WebAuthOptions {
   turnstileSiteKey?: string;
   turnstileSecretKey?: string;
   turnstileFetch?: typeof fetch;
+  maxTimeoutMs?: number;
 }
 
 export interface WebAuthSession {
@@ -251,6 +253,7 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
   const configuredKey = options.key ?? '';
   const cookieName = options.cookieName || DEFAULT_WEB_AUTH_COOKIE_NAME;
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_WEB_AUTH_SESSION_TTL_MS;
+  const maxTimeoutMs = options.maxTimeoutMs ?? MAX_TIMEOUT_MS;
   const nowFn = options.now || (() => Date.now());
   const turnstileSiteKey = isEnabled ? options.turnstileSiteKey?.trim() || undefined : undefined;
   const turnstileSecretKey = isEnabled ? options.turnstileSecretKey?.trim() || undefined : undefined;
@@ -342,7 +345,6 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
 
     const now = nowFn();
     const expiresAt = ownerExpiresAt.get(owner) ?? now + sessionTtlMs;
-    const delay = Math.max(0, expiresAt - now);
 
     const record: SseClientRecord = {
       res,
@@ -350,10 +352,34 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
       timer: null,
     };
 
-    record.timer = setTimeout(() => {
-      terminateStreamRecord(record, owner);
-      oauthAccess.pruneExpired(nowFn());
-    }, delay);
+    const scheduleWatchdog = (isInitial = false): void => {
+      if (disposed) return;
+      const currentSet = activeSseClients.get(owner);
+      if (!currentSet || !currentSet.has(record)) return;
+
+      const currentNow = nowFn();
+      const currentExpiresAt = ownerExpiresAt.get(owner) ?? expiresAt;
+      const remaining = currentExpiresAt - currentNow;
+
+      if (remaining <= 0) {
+        if (isInitial) {
+          record.timer = setTimeout(() => {
+            record.timer = null;
+            scheduleWatchdog(false);
+          }, 0);
+          return;
+        }
+        terminateStreamRecord(record, owner);
+        oauthAccess.pruneExpired(nowFn());
+        return;
+      }
+
+      const delay = Math.min(remaining, maxTimeoutMs);
+      record.timer = setTimeout(() => {
+        record.timer = null;
+        scheduleWatchdog(false);
+      }, delay);
+    };
 
     req.on('close', () => {
       if (record.timer) {
@@ -367,6 +393,7 @@ export function createWebAuth(options: WebAuthOptions = {}): WebAuthInstance {
     });
 
     set.add(record);
+    scheduleWatchdog(true);
   };
 
   const terminateSseForOwner = (owner: string): number => {

@@ -926,6 +926,104 @@ test('streaming leases: active SSE streams terminate on session expiration and c
   assert.equal(webAuth.getActiveSseCount(), 0);
 });
 
+test('streaming leases: 30-day session does not trigger 32-bit integer overflow warning or terminate immediately', async () => {
+  const warnings: any[] = [];
+  const onWarning = (warning: any) => warnings.push(warning);
+  process.on('warning', onWarning);
+
+  try {
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const webAuth = createWebAuth({
+      enabled: true,
+      key: 'sse-overflow-key',
+      sessionTtlMs: thirtyDaysMs,
+    });
+
+    // Login
+    const reqLogin = new MockRequest({
+      url: '/api/auth/login',
+      method: 'POST',
+      headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'application/json' },
+    });
+    const resLogin = new MockResponse();
+    simulateStreamingBody(reqLogin, JSON.stringify({ key: 'sse-overflow-key' }));
+    await webAuth.middleware(reqLogin as unknown as IncomingMessage, resLogin as unknown as ServerResponse, () => {});
+    const token = extractCookie(resLogin)!;
+
+    // Connect to SSE
+    const reqSse = new MockRequest({
+      url: '/api/events',
+      method: 'GET',
+      headers: {
+        host: 'localhost:5173',
+        'sec-fetch-site': 'same-origin',
+        cookie: `${DEFAULT_WEB_AUTH_COOKIE_NAME}=${token}`,
+      },
+    });
+    const resSse = new MockResponse();
+    await webAuth.middleware(reqSse as unknown as IncomingMessage, resSse as unknown as ServerResponse, () => {});
+
+    // Wait 50ms to verify it did not fire on 1ms overflow timeout
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(resSse.ended, false, 'SSE stream must not be terminated prematurely by 1ms overflow timeout');
+    assert.equal(webAuth.getActiveSseCount(), 1);
+
+    const overflowWarnings = warnings.filter((w) => w.name === 'TimeoutOverflowWarning');
+    assert.equal(overflowWarnings.length, 0, 'Must not produce TimeoutOverflowWarning');
+
+    webAuth.dispose();
+  } finally {
+    process.removeListener('warning', onWarning);
+  }
+});
+
+test('streaming leases: chunked watchdog timer survives intermediate steps and terminates on final expiration', async () => {
+  // sessionTtlMs = 60ms, chunked at maxTimeoutMs = 25ms
+  const webAuth = createWebAuth({
+    enabled: true,
+    key: 'sse-chunked-key',
+    sessionTtlMs: 60,
+    maxTimeoutMs: 25,
+  });
+
+  // Login
+  const reqLogin = new MockRequest({
+    url: '/api/auth/login',
+    method: 'POST',
+    headers: { host: 'localhost:5173', origin: 'http://localhost:5173', 'content-type': 'application/json' },
+  });
+  const resLogin = new MockResponse();
+  simulateStreamingBody(reqLogin, JSON.stringify({ key: 'sse-chunked-key' }));
+  await webAuth.middleware(reqLogin as unknown as IncomingMessage, resLogin as unknown as ServerResponse, () => {});
+  const token = extractCookie(resLogin)!;
+
+  // Connect to SSE
+  const reqSse = new MockRequest({
+    url: '/api/events',
+    method: 'GET',
+    headers: {
+      host: 'localhost:5173',
+      'sec-fetch-site': 'same-origin',
+      cookie: `${DEFAULT_WEB_AUTH_COOKIE_NAME}=${token}`,
+    },
+  });
+  const resSse = new MockResponse();
+  await webAuth.middleware(reqSse as unknown as IncomingMessage, resSse as unknown as ServerResponse, () => {});
+
+  // At 35ms, the first 25ms chunk has fired and rescheduled, but stream is still within 60ms lease
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(resSse.ended, false, 'SSE stream must still be alive after first chunk fires');
+  assert.equal(webAuth.getActiveSseCount(), 1);
+
+  // At 80ms total, the lease (60ms) has expired and the watchdog terminates the stream
+  await new Promise((resolve) => setTimeout(resolve, 45));
+  assert.equal(resSse.ended, true, 'SSE stream must terminate once lease expires');
+  assert.equal(webAuth.getActiveSseCount(), 0);
+
+  webAuth.dispose();
+});
+
 test('streaming leases: client disconnect cleans up timer and SSE tracking without leaks', async () => {
   const webAuth = createWebAuth({ enabled: true, key: 'sse-disconnect-key' });
 
