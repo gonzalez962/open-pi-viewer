@@ -75,9 +75,13 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
     setStatusError(null);
     try {
       const res = await checkAuthStatus();
-      if (seq !== activeCheckSeq.current || isAuthRequiredRef.current) return;
+      if (seq !== activeCheckSeq.current) return;
       setAuthRequired(res.required);
       setTurnstileSiteKey(res.turnstileSiteKey ?? null);
+      if (isAuthRequiredRef.current) {
+        setStatus('unauthenticated');
+        return;
+      }
       if (!res.required || res.authenticated) {
         emitWebAuthReady();
         setStatus('authenticated');
@@ -85,7 +89,11 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
         setStatus('unauthenticated');
       }
     } catch (err: unknown) {
-      if (seq !== activeCheckSeq.current || isAuthRequiredRef.current) return;
+      if (seq !== activeCheckSeq.current) return;
+      if (isAuthRequiredRef.current) {
+        setStatus('unauthenticated');
+        return;
+      }
       setStatus('error');
       setStatusError(err instanceof Error ? err.message : String(err));
     }
@@ -96,8 +104,6 @@ export function WebAuthGate({ children }: WebAuthGateProps): React.ReactElement 
     void checkStatus();
 
     const handleWebAuthRequired = () => {
-      // Invalidate any in-flight checkStatus or login responses
-      activeCheckSeq.current++;
       isAuthRequiredRef.current = true;
       setKey('');
       setTurnstileToken(null);
