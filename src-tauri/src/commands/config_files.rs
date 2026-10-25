@@ -11112,13 +11112,118 @@ Local daemon: not running
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_get_viewer_storage_github_pat() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_pat_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let config_file = temp_dir.join("open-pi-viewer.json");
+
+        // 1. Missing file -> None
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 2. Malformed JSON -> None
+        std::fs::write(&config_file, "{ invalid json").unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 3. Root is not an object -> None
+        std::fs::write(&config_file, r#"["item1", "item2"]"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 4. Missing githubPat key -> None
+        std::fs::write(&config_file, r#"{"version": 1}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 5. githubPat is null -> None
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": null}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 6. githubPat is non-string -> None
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": 12345}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 7. githubPat is empty string -> None
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": ""}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 8. githubPat is whitespace only -> None
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": "   \t\r\n  "}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat_from_path(&config_file), None);
+
+        // 9. githubPat is valid token with leading/trailing whitespace -> Some(trimmed)
+        std::fs::write(
+            &config_file,
+            r#"{"version": 1, "githubPat": "  ghp_validToken123 \n"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            get_viewer_storage_github_pat_from_path(&config_file),
+            Some("ghp_validToken123".to_string())
+        );
+
+        // 10. Integration with resolve_viewer_storage_path() via in-memory override
+        let _test_guard = VIEWER_STORAGE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        set_viewer_storage_path_override_for_test(Some(config_file.clone()));
+        assert_eq!(
+            get_viewer_storage_github_pat(),
+            Some("ghp_validToken123".to_string())
+        );
+
+        // 11. When storage file is updated to empty PAT, get_viewer_storage_github_pat returns None
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": "   "}"#).unwrap();
+        assert_eq!(get_viewer_storage_github_pat(), None);
+
+        set_viewer_storage_path_override_for_test(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_resolve_viewer_storage_path_override() {
+        let _test_guard = VIEWER_STORAGE_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dummy = PathBuf::from("test-override-open-pi-viewer.json");
+        set_viewer_storage_path_override_for_test(Some(dummy.clone()));
+        assert_eq!(resolve_viewer_storage_path(), dummy);
+        set_viewer_storage_path_override_for_test(None);
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Open Pi Viewer storage commands for desktop (Tauri) and web parity
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+static VIEWER_STORAGE_PATH_OVERRIDE: std::sync::RwLock<Option<PathBuf>> =
+    std::sync::RwLock::new(None);
+
+#[cfg(test)]
+pub static VIEWER_STORAGE_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub fn set_viewer_storage_path_override_for_test(path: Option<PathBuf>) {
+    let mut guard = VIEWER_STORAGE_PATH_OVERRIDE
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    *guard = path;
+}
+
 pub fn resolve_viewer_storage_path() -> PathBuf {
+    #[cfg(test)]
+    {
+        let guard = VIEWER_STORAGE_PATH_OVERRIDE
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(ref p) = *guard {
+            return p.clone();
+        }
+    }
+
     if let Ok(path_str) = std::env::var("PI_VIEWER_CONFIG_PATH") {
         if !path_str.trim().is_empty() {
             return PathBuf::from(path_str.trim());
@@ -11165,6 +11270,28 @@ pub fn resolve_viewer_storage_path() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("open-pi-viewer.json")
+}
+
+/// Reads viewer storage synchronously and extracts trimmed githubPat if present and non-empty.
+pub fn get_viewer_storage_github_pat() -> Option<String> {
+    let path = resolve_viewer_storage_path();
+    get_viewer_storage_github_pat_from_path(&path)
+}
+
+/// Reads viewer storage synchronously from a specified path and extracts trimmed githubPat if present and non-empty.
+pub fn get_viewer_storage_github_pat_from_path(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed: Value = serde_json::from_str(&content).ok()?;
+    let pat_str = parsed.get("githubPat")?.as_str()?;
+    let trimmed = pat_str.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 #[tauri::command]

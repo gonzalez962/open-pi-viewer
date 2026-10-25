@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { getBridgeConfig, getAgnosticExecEnv } from '../config';
+import { loadViewerStorage } from '../storage';
 import { broadcastSse } from './sse';
 import { resolveCrossPlatformCwd } from './paths';
 import {
@@ -118,9 +119,13 @@ export class PiRpcSession {
     const startupArgs = await computeRpcStartupArgs(this.cwd);
 
     let childProc: ChildProcess | null = null;
-    const env = {
+    const viewerStorage = loadViewerStorage();
+    const pat = typeof viewerStorage.githubPat === 'string' ? viewerStorage.githubPat.trim() : '';
+
+    const env: Record<string, string | undefined> = {
       ...getAgnosticExecEnv(),
       GENTLE_SHELL_INTERACTIVE_HOST: '1',
+      ...(pat ? { GH_TOKEN: pat, GITHUB_TOKEN: pat } : {}),
     };
     const customSpawner = getSubprocessSpawner();
 

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { loadViewerStorage } from '../storage';
 import type { TerminalSessionDto } from '../../src/core/terminal';
 import { BoundedBuffer } from './bounded-buffer';
 import { DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_MAX_REPLAY_BYTES, resolveDefaultShell } from './types';
@@ -16,6 +17,14 @@ export interface TerminalSessionOptions {
   shell?: string;
   maxReplayBytes?: number;
   owner?: string;
+  env?: Record<string, string | undefined>;
+}
+
+export type PtySpawner = (file: string, args: string[] | string, options: any) => any;
+let customPtySpawner: PtySpawner | null = null;
+
+export function setPtySpawnerForTest(spawner: PtySpawner | null): void {
+  customPtySpawner = spawner;
 }
 
 export class TerminalSession {
@@ -56,7 +65,16 @@ export class TerminalSession {
 
     const shell = options.shell || resolveDefaultShell();
 
-    const ptySpawn = pty.spawn || pty.default?.spawn;
+    const viewerStorage = loadViewerStorage();
+    const pat = typeof viewerStorage.githubPat === 'string' ? viewerStorage.githubPat.trim() : '';
+
+    const ptyEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...(options.env || {}),
+      ...(pat ? { GH_TOKEN: pat, GITHUB_TOKEN: pat } : {}),
+    };
+
+    const ptySpawn = customPtySpawner || pty.spawn || pty.default?.spawn;
     if (typeof ptySpawn !== 'function') {
       throw new Error('node-pty spawn function not found');
     }
@@ -66,7 +84,7 @@ export class TerminalSession {
       cols: this.cols,
       rows: this.rows,
       cwd: this.canonicalCwd,
-      env: process.env,
+      env: ptyEnv,
     });
 
     this.pid = this.ptyProcess.pid || 0;
