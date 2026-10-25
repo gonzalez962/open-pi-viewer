@@ -1,0 +1,57 @@
+import React, { useState } from 'react';
+import { useSpeech } from '@features/settings/hooks/useSpeech';
+import type { SpeechPreferences } from '@core/types/speech';
+
+export interface MessageSpeechButtonProps {
+  text: string;
+  preferences?: SpeechPreferences;
+}
+
+export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
+  text,
+  preferences,
+}) => {
+  const { synthesize, isSynthesizing } = useSpeech();
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  if (!preferences?.ttsEnabled) {
+    return null;
+  }
+
+  const handlePlay = async () => {
+    if (isPlaying || isSynthesizing) return;
+    try {
+      const audioBase64 = await synthesize(text, preferences);
+      if (audioBase64) {
+        setIsPlaying(true);
+        const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
+        audio.onended = () => setIsPlaying(false);
+        audio.onerror = () => setIsPlaying(false);
+        await audio.play();
+      }
+    } catch {
+      setIsPlaying(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="message-speech-play-btn"
+      onClick={handlePlay}
+      disabled={isSynthesizing || isPlaying}
+      title={isPlaying ? 'Reproduciendo audio...' : 'Escuchar mensaje (TTS Local)'}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        cursor: 'pointer',
+        opacity: isPlaying ? 1 : 0.6,
+        padding: '2px 6px',
+        fontSize: '0.85rem',
+        borderRadius: '4px',
+      }}
+    >
+      {isSynthesizing ? '⏳' : isPlaying ? '🔊' : '🔈'}
+    </button>
+  );
+};

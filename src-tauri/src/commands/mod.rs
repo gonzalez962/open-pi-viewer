@@ -87,8 +87,18 @@ pub mod github;
 pub mod models;
 pub mod oauth;
 pub mod sessions;
+pub mod speech;
 pub mod terminal;
 pub mod workspace;
+
+pub use speech::{
+    get_speech_pack_status,
+    __cmd__get_speech_pack_status,
+    __tauri_command_name_get_speech_pack_status,
+    inspect_custom_speech_model,
+    __cmd__inspect_custom_speech_model,
+    __tauri_command_name_inspect_custom_speech_model,
+};
 
 pub use github::{
     get_github_auth_status,

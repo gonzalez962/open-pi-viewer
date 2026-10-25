@@ -179,6 +179,18 @@ import {
   saveViewerStorage,
   updateViewerStorageKey,
 } from './storage';
+import {
+  inspectOfficialPack,
+  downloadOfficialPack,
+  inspectCustomModel,
+} from './bridge/speech';
+import {
+  synthesizeTts,
+  transcribeStt,
+} from './bridge/speech-runner';
+import {
+  OFFICIAL_SPEECH_PACKS,
+} from '../src/core/types/speech';
 
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
@@ -349,6 +361,37 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
       return updateViewerStorageKey(payload.key, payload.value);
+    }
+    case 'get_speech_pack_status': {
+      const payload = args.payload || args;
+      const packId = payload?.packId;
+      const pack = OFFICIAL_SPEECH_PACKS[packId];
+      if (!pack) throw new Error(`Unknown pack ID: ${packId}`);
+      return await inspectOfficialPack(pack);
+    }
+    case 'download_speech_pack': {
+      const payload = args.payload || args;
+      const packId = payload?.packId;
+      return await downloadOfficialPack(packId);
+    }
+    case 'inspect_custom_speech_model': {
+      const payload = args.payload || args;
+      return await inspectCustomModel(payload);
+    }
+    case 'synthesize_speech_tts': {
+      const payload = args.payload || args;
+      return await synthesizeTts(payload);
+    }
+    case 'transcribe_speech_stt': {
+      const payload = args.payload || args;
+      const audioBuffer = payload.audioBase64
+        ? Buffer.from(payload.audioBase64, 'base64')
+        : Buffer.from(payload.audioBuffer || '');
+      return await transcribeStt({
+        audioBuffer,
+        mimeType: payload.mimeType,
+        preferences: payload.preferences,
+      });
     }
     default:
       return null;

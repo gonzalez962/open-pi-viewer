@@ -178,6 +178,10 @@ export function usePreferences(): UsePreferencesResult {
     preferencesControllerRef.current?.setDefaultProjectsDirectory(directory);
   }, []);
 
+  const setSpeechPreferences = useCallback((speech: Partial<any>) => {
+    preferencesControllerRef.current?.setSpeechPreferences(speech);
+  }, []);
+
   const commitAppearance = useCallback((candidate: AppearanceInput): PreferencesSaveResult => {
     return (
       preferencesControllerRef.current?.commitAppearance(candidate) ?? {
@@ -217,6 +221,7 @@ export function usePreferences(): UsePreferencesResult {
     setCustomCommands,
     setHiddenCommandIds,
     setDefaultProjectsDirectory,
+    setSpeechPreferences,
     commitAppearance,
     resetAppearance,
     appearanceController: appearanceControllerRef.current,

@@ -24,6 +24,8 @@ import {
 import { getTransferFiles, prepareAttachments } from './file-attachments';
 import { bindFileDropZone } from './file-drop-zone';
 import { PopoverSearchBar } from './components/PopoverSearchBar';
+import { PromptMicButton } from './components/PromptMicButton';
+import type { SpeechPreferences } from '@core/types/speech';
 
 export { modelSupportsFiles, modelSupportsInputModality };
 
@@ -68,6 +70,8 @@ export interface PromptControlsProps {
   defaultExtPopoverOpen?: boolean;
   defaultModelPopoverOpen?: boolean;
   attachedFiles?: AttachedFile[];
+  speechPreferences?: SpeechPreferences;
+  onTranscription?: (text: string) => void;
   onAttachFiles?: (files: AttachedFile[]) => void;
   supportsFiles?: boolean;
   defaultFileAttachOpen?: boolean;
@@ -115,6 +119,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   defaultExtPopoverOpen = false,
   defaultModelPopoverOpen = false,
   attachedFiles: _attachedFiles,
+  speechPreferences,
+  onTranscription,
   onAttachFiles,
   supportsFiles: supportsFilesProp,
   defaultFileAttachOpen = false,
@@ -464,6 +470,14 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
         >
           {t('action.send')}
         </button>
+      )}
+
+      {speechPreferences?.sttEnabled && onTranscription && (
+        <PromptMicButton
+          preferences={speechPreferences}
+          onTranscription={onTranscription}
+          disabled={isBusy}
+        />
       )}
 
       {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}

@@ -22,6 +22,7 @@ import {
   type AppearancePreferences,
 } from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
+import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
 import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import {
@@ -364,6 +365,7 @@ export const App: React.FC = () => {
     setCustomCommands,
     setHiddenCommandIds,
     setDefaultProjectsDirectory,
+    setSpeechPreferences,
     appearanceController,
     t,
   } = usePreferences();
@@ -1633,6 +1635,7 @@ export const App: React.FC = () => {
                 onCustomCommandsChange={setCustomCommands}
                 onHiddenCommandIdsChange={setHiddenCommandIds}
                 onDefaultProjectsDirectoryChange={setDefaultProjectsDirectory}
+                onSpeechPreferencesChange={setSpeechPreferences}
                 appearanceController={appearanceController}
                 settingsError={settingsError}
                 settingsStorageNotice={settingsStorageNotice}
@@ -1959,19 +1962,32 @@ export const App: React.FC = () => {
                           const block = item.block;
                           if (block.type === 'text') {
                             return (
-                              <MarkdownContent
-                                key={`text-${iIndex}`}
-                                content={block.text}
-                                t={t}
-                                onInsertCode={insertCodeIntoPrompt}
-                              />
+                              <div key={`text-${iIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                                <MarkdownContent
+                                  content={block.text}
+                                  t={t}
+                                  onInsertCode={insertCodeIntoPrompt}
+                                />
+                                {preferences.speech?.ttsEnabled && (
+                                  <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} />
+                                  </div>
+                                )}
+                              </div>
                             );
                           }
                           return null;
                         })}
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
-                      <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                        {preferences.speech?.ttsEnabled && msg.role !== 'user' && (
+                          <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                            <MessageSpeechButton text={msg.content} preferences={preferences.speech} />
+                          </div>
+                        )}
+                      </div>
                     ) : msg.role === 'user' ? (
                       <>
                         {msg.images && msg.images.length > 0 && (
@@ -2172,6 +2188,10 @@ export const App: React.FC = () => {
 
             <PromptControls
               modelInfo={effectiveModelInfo}
+              speechPreferences={preferences.speech}
+              onTranscription={(transcribedText) => {
+                setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+              }}
               availableModels={state.availableModels}
               isChangingModel={state.isChangingModel}
               thinkingLevel={state.thinkingLevel}

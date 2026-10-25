@@ -3236,3 +3236,90 @@ export async function listGitHubRepositoriesPi(
   }
   return await invokeFn<ListGitHubRepositoriesResult>('list_github_repositories', { payload });
 }
+
+export interface GetSpeechPackStatusPayload {
+  packId: string;
+}
+
+export interface DownloadSpeechPackPayload {
+  packId: string;
+}
+
+export interface InspectCustomSpeechModelPayload {
+  isCustom: boolean;
+  modelPath: string;
+  configPath?: string;
+  tokensPath?: string;
+}
+
+export interface SynthesizeSpeechTtsPayload {
+  text: string;
+  preferences: any;
+  rate?: number;
+}
+
+export interface SynthesizeSpeechTtsResult {
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface TranscribeSpeechSttPayload {
+  audioBase64: string;
+  mimeType?: string;
+  preferences: any;
+}
+
+export interface TranscribeSpeechSttResult {
+  text: string;
+  confidence?: number;
+}
+
+export async function getSpeechPackStatusPi(
+  payload: GetSpeechPackStatusPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<any> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { status: 'missing', files: [] };
+  }
+  return await invokeFn('get_speech_pack_status', { payload });
+}
+
+export async function downloadSpeechPackPi(
+  payload: DownloadSpeechPackPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<any> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn('download_speech_pack', { payload });
+}
+
+export async function inspectCustomSpeechModelPi(
+  payload: InspectCustomSpeechModelPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<any> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { valid: false, error: 'Runtime bridge unavailable' };
+  }
+  return await invokeFn('inspect_custom_speech_model', { payload });
+}
+
+export async function synthesizeSpeechTtsPi(
+  payload: SynthesizeSpeechTtsPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<SynthesizeSpeechTtsResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<SynthesizeSpeechTtsResult>('synthesize_speech_tts', { payload });
+}
+
+export async function transcribeSpeechSttPi(
+  payload: TranscribeSpeechSttPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<TranscribeSpeechSttResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<TranscribeSpeechSttResult>('transcribe_speech_stt', { payload });
+}
