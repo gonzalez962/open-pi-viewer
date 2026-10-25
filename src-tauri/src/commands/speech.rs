@@ -100,6 +100,33 @@ pub async fn get_speech_pack_status(
     })
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteSpeechPackPayload {
+    #[serde(rename = "packId")]
+    pub pack_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DeleteSpeechPackResult {
+    pub success: bool,
+    #[serde(rename = "packId")]
+    pub pack_id: String,
+}
+
+#[command]
+pub async fn delete_speech_pack(
+    payload: DeleteSpeechPackPayload,
+) -> Result<DeleteSpeechPackResult, String> {
+    let pack_dir = get_speech_models_dir().join(&payload.pack_id);
+    if pack_dir.exists() {
+        let _ = fs::remove_dir_all(&pack_dir);
+    }
+    Ok(DeleteSpeechPackResult {
+        success: true,
+        pack_id: payload.pack_id,
+    })
+}
+
 #[command]
 pub async fn inspect_custom_speech_model(
     payload: InspectCustomSpeechModelPayload,

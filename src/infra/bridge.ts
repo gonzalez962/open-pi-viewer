@@ -3245,6 +3245,10 @@ export interface DownloadSpeechPackPayload {
   packId: string;
 }
 
+export interface DeleteSpeechPackPayload {
+  packId: string;
+}
+
 export interface InspectCustomSpeechModelPayload {
   isCustom: boolean;
   modelPath: string;
@@ -3294,6 +3298,16 @@ export async function downloadSpeechPackPi(
   return await invokeFn('download_speech_pack', { payload });
 }
 
+export async function deleteSpeechPackPi(
+  payload: DeleteSpeechPackPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<any> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn('delete_speech_pack', { payload });
+}
+
 export async function inspectCustomSpeechModelPi(
   payload: InspectCustomSpeechModelPayload,
   invokeFn: InvokeFn = defaultInvoke
@@ -3322,4 +3336,27 @@ export async function transcribeSpeechSttPi(
     throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
   }
   return await invokeFn<TranscribeSpeechSttResult>('transcribe_speech_stt', { payload });
+}
+
+export interface SpeechDownloadProgressPayload {
+  packId: string;
+  fileIndex: number;
+  totalFiles: number;
+  currentFile: string;
+  fileDownloadedBytes: number;
+  fileTotalBytes?: number;
+}
+
+export async function listenSpeechDownloadProgressPi(
+  onProgress: (progress: SpeechDownloadProgressPayload) => void,
+  listenFn: typeof listen = listen
+): Promise<UnlistenFn> {
+  if (!isTauri() && !isWebShim() && listenFn === listen) {
+    return () => {};
+  }
+  return await listenFn<SpeechDownloadProgressPayload>('speech://download_progress', (event) => {
+    if (event?.payload) {
+      onProgress(event.payload);
+    }
+  });
 }

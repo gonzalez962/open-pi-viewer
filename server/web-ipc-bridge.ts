@@ -182,6 +182,7 @@ import {
 import {
   inspectOfficialPack,
   downloadOfficialPack,
+  deleteOfficialPack,
   inspectCustomModel,
 } from './bridge/speech';
 import {
@@ -372,7 +373,14 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'download_speech_pack': {
       const payload = args.payload || args;
       const packId = payload?.packId;
-      return await downloadOfficialPack(packId);
+      return await downloadOfficialPack(packId, (progress) => {
+        broadcastSse('speech://download_progress', progress);
+      });
+    }
+    case 'delete_speech_pack': {
+      const payload = args.payload || args;
+      const packId = payload?.packId;
+      return await deleteOfficialPack(packId);
     }
     case 'inspect_custom_speech_model': {
       const payload = args.payload || args;

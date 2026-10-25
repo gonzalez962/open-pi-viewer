@@ -82,6 +82,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
   onDefaultProjectsDirectoryChange,
+  onSpeechPreferencesChange,
   settingsError,
   settingsStorageNotice,
   isBusy,

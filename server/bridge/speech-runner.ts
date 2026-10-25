@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { getHomeDir } from '../config';
 import {
   inspectOfficialPack,
   getPackDir,
@@ -139,6 +141,62 @@ export function setTtsRunnerForTest(runner: TtsBinaryRunner | null): void {
   ttsRunnerOverride = runner;
 }
 
+/**
+ * Resolves the path to the Piper executable.
+ * Checks PIPER_PATH, ~/.open-pi-viewer/bin/piper, and ambient PATH.
+ */
+export function resolvePiperExecutable(): string {
+  if (process.env.PIPER_PATH && fs.existsSync(process.env.PIPER_PATH)) {
+    return process.env.PIPER_PATH;
+  }
+  const home = getHomeDir();
+  const isWindows = process.platform === 'win32';
+  const exeName = isWindows ? 'piper.exe' : 'piper';
+
+  const candidatePaths = [
+    path.join(home, '.open-pi-viewer', 'bin', 'piper', exeName),
+    path.join(home, '.open-pi-viewer', 'bin', exeName),
+    path.join(process.cwd(), 'bin', 'piper', exeName),
+    path.join(process.cwd(), 'bin', exeName),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return 'piper';
+}
+
+/**
+ * Resolves the path to the Sherpa-ONNX executable.
+ * Checks SHERPA_STT_PATH, ~/.open-pi-viewer/bin/sherpa-onnx, and ambient PATH.
+ */
+export function resolveSherpaExecutable(): string {
+  if (process.env.SHERPA_STT_PATH && fs.existsSync(process.env.SHERPA_STT_PATH)) {
+    return process.env.SHERPA_STT_PATH;
+  }
+  const home = getHomeDir();
+  const isWindows = process.platform === 'win32';
+  const exeName = isWindows ? 'sherpa-onnx-offline.exe' : 'sherpa-onnx-offline';
+
+  const candidatePaths = [
+    path.join(home, '.open-pi-viewer', 'bin', 'sherpa-onnx', exeName),
+    path.join(home, '.open-pi-viewer', 'bin', exeName),
+    path.join(process.cwd(), 'bin', 'sherpa-onnx', exeName),
+    path.join(process.cwd(), 'bin', exeName),
+  ];
+
+  for (const candidate of candidatePaths) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return 'sherpa-onnx-offline';
+}
+
 export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<SynthesizeTtsResult> {
   const { text, preferences } = options;
   if (!preferences.ttsEnabled) {
@@ -160,14 +218,18 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
     };
   }
 
-  // Attempt to invoke piper binary if available on path
+  // Output to a secure atomic temp file to avoid Windows stdout CRLF/text-mode binary corruption
+  const tempWavPath = path.join(
+    os.tmpdir(),
+    `piper-synth-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
+  );
+
   return new Promise((resolve, reject) => {
     const rate = options.rate || preferences.ttsRate || 1.0;
-    // piper CLI accepts text on stdin and writes wav to stdout with --output_file -
     const args = [
       '--model', modelPath,
       '--config', configPath,
-      '--output_file', '-',
+      '--output_file', tempWavPath,
     ];
 
     if (rate !== 1.0) {
@@ -176,31 +238,67 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
       args.push('--length_scale', lengthScale);
     }
 
-    const child = spawn('piper', args, {
+    const piperBin = resolvePiperExecutable();
+    const piperDir = path.dirname(piperBin);
+
+    // espeak-ng phonetic data directory is required for correct pronunciation and clean acoustics
+    const espeakDataCandidates = [
+      path.join(piperDir, 'espeak-ng-data'),
+      path.join(piperDir, '..', 'espeak-ng-data'),
+      path.join(getHomeDir(), '.open-pi-viewer', 'bin', 'piper', 'espeak-ng-data'),
+    ];
+    for (const espeakCandidate of espeakDataCandidates) {
+      if (fs.existsSync(espeakCandidate)) {
+        args.push('--espeak_data', espeakCandidate);
+        break;
+      }
+    }
+
+    const child = spawn(piperBin, args, {
+      cwd: fs.existsSync(piperDir) ? piperDir : undefined,
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const chunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-
-    child.stdout.on('data', (d) => chunks.push(Buffer.from(d)));
     child.stderr.on('data', (d) => stderrChunks.push(Buffer.from(d)));
 
-    child.on('error', (err) => {
-      reject(new Error(`Failed to start piper TTS process: ${err.message}`));
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      try { if (fs.existsSync(tempWavPath)) fs.unlinkSync(tempWavPath); } catch {}
+      if (err.code === 'ENOENT') {
+        reject(
+          new Error(
+            `El ejecutable de Piper TTS no se encontró en el sistema ni en ~/.open-pi-viewer/bin/piper/ (buscado: ${piperBin}). Asegúrate de tener Piper instalado.`
+          )
+        );
+      } else {
+        reject(new Error(`Failed to start piper TTS process: ${err.message}`));
+      }
     });
 
-    child.on('close', (code) => {
-      if (code !== 0) {
-        const errDetails = Buffer.concat(stderrChunks).toString('utf8');
-        return reject(new Error(`Piper exited with code ${code}: ${errDetails}`));
+    child.on('close', async (code) => {
+      try {
+        if (code !== 0) {
+          const errDetails = Buffer.concat(stderrChunks).toString('utf8');
+          try { if (fs.existsSync(tempWavPath)) await fs.promises.unlink(tempWavPath); } catch {}
+          return reject(new Error(`Piper exited with code ${code}: ${errDetails}`));
+        }
+
+        if (!fs.existsSync(tempWavPath)) {
+          return reject(new Error('Piper finished but output WAV file was not found.'));
+        }
+
+        const wavBuffer = await fs.promises.readFile(tempWavPath);
+        try { await fs.promises.unlink(tempWavPath); } catch {}
+
+        resolve({
+          audioBase64: wavBuffer.toString('base64'),
+          mimeType: 'audio/wav',
+        });
+      } catch (readErr) {
+        try { if (fs.existsSync(tempWavPath)) await fs.promises.unlink(tempWavPath); } catch {}
+        reject(readErr);
       }
-      const wavBuffer = Buffer.concat(chunks);
-      resolve({
-        audioBase64: wavBuffer.toString('base64'),
-        mimeType: 'audio/wav',
-      });
     });
 
     child.stdin.write(trimmed);
@@ -251,7 +349,8 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
       `--tokens=${tokensPath}`,
     ];
 
-    const child = spawn('sherpa-onnx-offline', args, {
+    const sherpaBin = resolveSherpaExecutable();
+    const child = spawn(sherpaBin, args, {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -262,8 +361,16 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
     child.stdout.on('data', (d) => chunks.push(Buffer.from(d)));
     child.stderr.on('data', (d) => stderrChunks.push(Buffer.from(d)));
 
-    child.on('error', (err) => {
-      reject(new Error(`Failed to start sherpa-onnx STT process: ${err.message}`));
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'ENOENT') {
+        reject(
+          new Error(
+            `El ejecutable de Sherpa-ONNX no se encontró en el sistema ni en ~/.open-pi-viewer/bin/sherpa-onnx/ (buscado: ${sherpaBin}). Asegúrate de tener Sherpa-ONNX instalado.`
+          )
+        );
+      } else {
+        reject(new Error(`Failed to start sherpa-onnx STT process: ${err.message}`));
+      }
     });
 
     child.on('close', (code) => {

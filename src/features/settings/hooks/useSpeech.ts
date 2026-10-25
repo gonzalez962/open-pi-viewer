@@ -1,10 +1,13 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   getSpeechPackStatusPi,
   downloadSpeechPackPi,
+  deleteSpeechPackPi,
   inspectCustomSpeechModelPi,
   synthesizeSpeechTtsPi,
   transcribeSpeechSttPi,
+  listenSpeechDownloadProgressPi,
+  type SpeechDownloadProgressPayload,
 } from '@infra/bridge';
 import type {
   SpeechPreferences,
@@ -14,11 +17,14 @@ import type {
 export interface UseSpeechReturn {
   isChecking: boolean;
   isDownloading: boolean;
+  downloadProgress: Record<string, SpeechDownloadProgressPayload>;
+  isDeleting: boolean;
   isSynthesizing: boolean;
   isTranscribing: boolean;
   error: string | null;
   checkPackStatus: (packId: string) => Promise<any>;
   downloadPack: (packId: string) => Promise<any>;
+  deletePack: (packId: string) => Promise<any>;
   validateCustomModel: (config: CustomModelConfig) => Promise<any>;
   synthesize: (text: string, preferences: SpeechPreferences, rate?: number) => Promise<string | null>;
   transcribe: (audioBase64: string, preferences: SpeechPreferences) => Promise<string | null>;
@@ -27,9 +33,27 @@ export interface UseSpeechReturn {
 export function useSpeech(): UseSpeechReturn {
   const [isChecking, setIsChecking] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, SpeechDownloadProgressPayload>>({});
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void listenSpeechDownloadProgressPi((prog) => {
+      setDownloadProgress((prev) => ({
+        ...prev,
+        [prog.packId]: prog,
+      }));
+    }).then((un) => {
+      unlisten = un;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const checkPackStatus = useCallback(async (packId: string) => {
     setIsChecking(true);
@@ -51,6 +75,11 @@ export function useSpeech(): UseSpeechReturn {
     setError(null);
     try {
       const res = await downloadSpeechPackPi({ packId });
+      setDownloadProgress((prev) => {
+        const next = { ...prev };
+        delete next[packId];
+        return next;
+      });
       return res;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -58,6 +87,21 @@ export function useSpeech(): UseSpeechReturn {
       throw err;
     } finally {
       setIsDownloading(false);
+    }
+  }, []);
+
+  const deletePack = useCallback(async (packId: string) => {
+    setIsDeleting(true);
+    setError(null);
+    try {
+      const res = await deleteSpeechPackPi({ packId });
+      return res;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      throw err;
+    } finally {
+      setIsDeleting(false);
     }
   }, []);
 
@@ -88,7 +132,7 @@ export function useSpeech(): UseSpeechReturn {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
-        return null;
+        throw err;
       } finally {
         setIsSynthesizing(false);
       }
@@ -117,11 +161,14 @@ export function useSpeech(): UseSpeechReturn {
   return {
     isChecking,
     isDownloading,
+    downloadProgress,
+    isDeleting,
     isSynthesizing,
     isTranscribing,
     error,
     checkPackStatus,
     downloadPack,
+    deletePack,
     validateCustomModel,
     synthesize,
     transcribe,

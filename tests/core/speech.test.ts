@@ -1,3 +1,7 @@
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { SpeechSettingsSection } from '../../src/features/settings/components/SpeechSettingsSection';
+import { SpeechModelCard } from '../../src/features/settings/components/SpeechModelCard';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -95,5 +99,16 @@ describe('Speech types and preferences validation', () => {
     assert.equal(currentPrefs.speech?.ttsEnabled, true);
     assert.equal(currentPrefs.speech?.sttEnabled, false);
     assert.equal(currentPrefs.speech?.ttsRate, 1.5);
+  });
+
+  it('SpeechSettingsSection and SpeechModelCard render without crashing', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(SpeechSettingsSection, {
+        preferences: { ...DEFAULT_SPEECH_PREFERENCES, ttsEnabled: true, sttEnabled: true },
+        onSpeechPreferencesChange: () => {},
+      })
+    );
+    assert.ok(html.includes('speech-settings-section'));
+    assert.ok(html.includes('Claude High'));
   });
 });

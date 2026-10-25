@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
 import type { SpeechPreferences } from '@core/types/speech';
+import { playWavBase64 } from '@infra/audio-player';
 
 export interface MessageSpeechButtonProps {
   text: string;
@@ -24,12 +25,11 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
       const audioBase64 = await synthesize(text, preferences);
       if (audioBase64) {
         setIsPlaying(true);
-        const audio = new Audio(`data:audio/wav;base64,${audioBase64}`);
-        audio.onended = () => setIsPlaying(false);
-        audio.onerror = () => setIsPlaying(false);
-        await audio.play();
+        await playWavBase64(audioBase64);
       }
     } catch {
+      // ignore
+    } finally {
       setIsPlaying(false);
     }
   };

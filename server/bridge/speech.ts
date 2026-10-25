@@ -304,6 +304,17 @@ export async function downloadOfficialPack(
 }
 
 /**
+ * Deletes a downloaded official speech pack from disk.
+ */
+export async function deleteOfficialPack(packId: string): Promise<{ success: boolean; packId: string }> {
+  const packDir = getPackDir(packId);
+  if (fs.existsSync(packDir)) {
+    fs.rmSync(packDir, { recursive: true, force: true });
+  }
+  return { success: true, packId };
+}
+
+/**
  * Validates a custom model file on disk and computes its SHA-256 digest.
  */
 export async function inspectCustomModel(config: CustomModelConfig): Promise<{

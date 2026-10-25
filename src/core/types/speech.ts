@@ -52,9 +52,12 @@ export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
   autoSpeakResponses: false,
 };
 
+export const PIPER_VOICES_COMMIT = '5041a7a49ae5b3a0f30e6837769eb03fdbb231bd';
+export const SHERPA_STT_COMMIT = 'fe61e648310e068a5558c3d4e4d02c25742820a4';
+
 /**
  * Manifest of official models downloadable on-demand.
- * Includes exact URLs, expected file sizes, and official SHA-256 digests.
+ * Includes exact immutable commit URLs, expected file sizes, and official SHA-256 digests.
  */
 export const OFFICIAL_SPEECH_PACKS: Record<string, OfficialSpeechPack> = {
   'es_MX-claude-high': {
@@ -68,16 +71,15 @@ export const OFFICIAL_SPEECH_PACKS: Record<string, OfficialSpeechPack> = {
     files: [
       {
         filename: 'es_MX-claude-high.onnx',
-        url: 'https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx',
+        url: `https://huggingface.co/rhasspy/piper-voices/resolve/${PIPER_VOICES_COMMIT}/es/es_MX/claude/high/es_MX-claude-high.onnx`,
         sizeBytes: 63122309,
-        // Verified LFS sha256 from HuggingFace
         expectedSha256: '3ef40a71ea63852cd8ab7e6fa7d2ecdcfa67a0b47c9c48e3f10e02ee02083ea0',
       },
       {
         filename: 'es_MX-claude-high.onnx.json',
-        url: 'https://huggingface.co/rhasspy/piper-voices/resolve/main/es/es_MX/claude/high/es_MX-claude-high.onnx.json',
+        url: `https://huggingface.co/rhasspy/piper-voices/resolve/${PIPER_VOICES_COMMIT}/es/es_MX/claude/high/es_MX-claude-high.onnx.json`,
         sizeBytes: 4963,
-        expectedSha256: '4bd5e8cb155e797369e2c53ac9297543b9a7119138300b3b27e868e85aa62495',
+        expectedSha256: '1afc81f703c0e4cb3b4d7c0dca096b8b54a98806807f0170cf5eb5557723c12d',
       },
     ],
   },
@@ -92,27 +94,27 @@ export const OFFICIAL_SPEECH_PACKS: Record<string, OfficialSpeechPack> = {
     files: [
       {
         filename: 'encoder.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_64l/encoder.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_64l/encoder.int8.onnx`,
         sizeBytes: 153185997,
         expectedSha256: 'e6bb47f5425983960cf70c33f460e4a277ca1ec7f3c59e3747974ad3f431f056',
       },
       {
         filename: 'decoder.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_64l/decoder.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_64l/decoder.int8.onnx`,
         sizeBytes: 606495,
         expectedSha256: '624e8ae2886d5b1957e26ac77df54a00c3b55fdfe2153d7dbf2d687ca943e58b',
       },
       {
         filename: 'joiner.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_64l/joiner.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_64l/joiner.int8.onnx`,
         sizeBytes: 337105,
         expectedSha256: 'f027a07c54ff3565419f95e9c43112196ae188450a796411784917740a9bf9d0',
       },
       {
         filename: 'tokens.txt',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_64l/tokens.txt',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_64l/tokens.txt`,
         sizeBytes: 7037,
-        expectedSha256: '3e7d1ce620f04c66053a47b9a613411b7e793ec79a2ece0857212d2ab437390a',
+        expectedSha256: '783ab50c895a41884ced1a46cd57e7a5de27240500b9beacdf91bd94ed1b9d8b',
       },
     ],
   },
@@ -127,27 +129,27 @@ export const OFFICIAL_SPEECH_PACKS: Record<string, OfficialSpeechPack> = {
     files: [
       {
         filename: 'encoder.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_128l/encoder.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_128l/encoder.int8.onnx`,
         sizeBytes: 153182955,
         expectedSha256: '28c0ab872d407a5896ba53ff17d12f35d68b797144e28ca00be4b752b9590e71',
       },
       {
         filename: 'decoder.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_128l/decoder.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_128l/decoder.int8.onnx`,
         sizeBytes: 606495,
         expectedSha256: 'c36e02e86a3c3bfff1483750eea22f16e5c43c57a5c34d22ecf4ca3eb341ddf9',
       },
       {
         filename: 'joiner.int8.onnx',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_128l/joiner.int8.onnx',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_128l/joiner.int8.onnx`,
         sizeBytes: 337105,
         expectedSha256: 'd876cff6dc6d065a824a1e8e6b915832ec0a1c7b867f8c7e592f8f3877ce2924',
       },
       {
         filename: 'tokens.txt',
-        url: 'https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/es/kroko_128l/tokens.txt',
+        url: `https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/${SHERPA_STT_COMMIT}/es/kroko_128l/tokens.txt`,
         sizeBytes: 7037,
-        expectedSha256: '88609333aa899deaefb1b4bcb5bacbea7fad6af06cbd475dc83a3a997d8a1327',
+        expectedSha256: '783ab50c895a41884ced1a46cd57e7a5de27240500b9beacdf91bd94ed1b9d8b',
       },
     ],
   },

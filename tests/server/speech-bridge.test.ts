@@ -11,6 +11,7 @@ import {
   computeFileSha256,
   inspectOfficialPack,
   inspectCustomModel,
+  deleteOfficialPack,
 } from '../../server/bridge/speech';
 import { OFFICIAL_SPEECH_PACKS } from '../../src/core/types/speech';
 
@@ -97,5 +98,17 @@ describe('Speech Bridge Model Manager and Checksums', () => {
     assert.equal(res.valid, true);
     assert.equal(res.computedSha256, expectedHash);
     assert.equal(res.sizeBytes, content.length);
+  });
+
+  it('deleteOfficialPack removes pack directory and files', async () => {
+    const pack = OFFICIAL_SPEECH_PACKS['es_MX-claude-high'];
+    const packDir = getPackDir(pack.id);
+    fs.mkdirSync(packDir, { recursive: true });
+    fs.writeFileSync(path.join(packDir, 'test.onnx'), 'data');
+
+    assert.equal(fs.existsSync(packDir), true);
+    const delRes = await deleteOfficialPack(pack.id);
+    assert.equal(delRes.success, true);
+    assert.equal(fs.existsSync(packDir), false);
   });
 });

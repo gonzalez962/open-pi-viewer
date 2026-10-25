@@ -130,6 +130,7 @@ pub fn run() {
             commands::create_github_repository,
             commands::list_github_repositories,
             commands::get_speech_pack_status,
+            commands::delete_speech_pack,
             commands::inspect_custom_speech_model,
             commands::get_viewer_storage,
             commands::save_viewer_storage,
