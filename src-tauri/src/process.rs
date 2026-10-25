@@ -350,6 +350,11 @@ impl ActiveSession {
             cmd.env_remove("GENTLE_SHELL_INTERACTIVE_HOST");
         }
 
+        if let Some(ref pat) = crate::commands::config_files::get_viewer_storage_github_pat() {
+            cmd.env("GH_TOKEN", pat);
+            cmd.env("GITHUB_TOKEN", pat);
+        }
+
         cmd.current_dir(cwd)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -1405,5 +1410,63 @@ mod tests {
         // Matching generation removal deletes
         remove_session_paths(&cwd, 42);
         assert!(get_session_paths(&cwd, 42).is_none());
+    }
+
+    #[test]
+    fn test_active_session_env_pat_propagation() {
+        let _guard = crate::commands::config_files::VIEWER_STORAGE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let temp_dir = std::env::temp_dir().join(format!(
+            "test_proc_pat_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let config_file = temp_dir.join("open-pi-viewer.json");
+        crate::commands::config_files::set_viewer_storage_path_override_for_test(Some(
+            config_file.clone(),
+        ));
+
+        // Case 1: When githubPat is set, inject GH_TOKEN and GITHUB_TOKEN
+        std::fs::write(
+            &config_file,
+            r#"{"version": 1, "githubPat": "ghp_procToken123"}"#,
+        )
+        .unwrap();
+
+        let mut cmd = tokio::process::Command::new("node");
+        if let Some(ref pat) = crate::commands::config_files::get_viewer_storage_github_pat() {
+            cmd.env("GH_TOKEN", pat);
+            cmd.env("GITHUB_TOKEN", pat);
+        }
+        let std_cmd = cmd.as_std();
+        let envs: std::collections::HashMap<_, _> = std_cmd.get_envs().collect();
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("GH_TOKEN")),
+            Some(&Some(std::ffi::OsStr::new("ghp_procToken123")))
+        );
+        assert_eq!(
+            envs.get(std::ffi::OsStr::new("GITHUB_TOKEN")),
+            Some(&Some(std::ffi::OsStr::new("ghp_procToken123")))
+        );
+
+        // Case 2: When githubPat is missing or empty, neither variable is injected
+        std::fs::write(&config_file, r#"{"version": 1, "githubPat": "   "}"#).unwrap();
+        let mut cmd2 = tokio::process::Command::new("node");
+        if let Some(ref pat) = crate::commands::config_files::get_viewer_storage_github_pat() {
+            cmd2.env("GH_TOKEN", pat);
+            cmd2.env("GITHUB_TOKEN", pat);
+        }
+        let std_cmd2 = cmd2.as_std();
+        let envs2: std::collections::HashMap<_, _> = std_cmd2.get_envs().collect();
+        assert_eq!(envs2.get(std::ffi::OsStr::new("GH_TOKEN")), None);
+        assert_eq!(envs2.get(std::ffi::OsStr::new("GITHUB_TOKEN")), None);
+
+        crate::commands::config_files::set_viewer_storage_path_override_for_test(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

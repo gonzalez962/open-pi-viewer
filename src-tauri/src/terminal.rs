@@ -263,6 +263,11 @@ impl TerminalSession {
         let mut cmd = CommandBuilder::new(&shell);
         cmd.cwd(canonical_cwd);
 
+        if let Some(ref pat) = crate::commands::config_files::get_viewer_storage_github_pat() {
+            cmd.env("GH_TOKEN", pat);
+            cmd.env("GITHUB_TOKEN", pat);
+        }
+
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -1132,6 +1137,103 @@ setInterval(()=>{}, 1000);"#,
 
         assert!(alive.is_empty(), "All descendants must be terminated. Still alive: {:?}", alive);
         assert!(!is_process_alive_quick(root_pid), "Root PID must be terminated");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_terminal_session_pat_propagation() {
+        let _guard = crate::commands::config_files::VIEWER_STORAGE_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = temp_test_dir("pat-prop");
+        let config_file = dir.join("open-pi-viewer.json");
+
+        crate::commands::config_files::set_viewer_storage_path_override_for_test(Some(
+            config_file.clone(),
+        ));
+
+        // S2.2: When githubPat is set in storage, terminal session gets GH_TOKEN and GITHUB_TOKEN
+        fs::write(
+            &config_file,
+            r#"{"version": 1, "githubPat": "ghp_termToken456"}"#,
+        )
+        .expect("Failed to write config");
+
+        let manager = TerminalManager::new();
+        let session = manager
+            .open_session(&dir.to_string_lossy(), None, None)
+            .await
+            .expect("Open failed");
+
+        let probe_script = dir.join("probe.js");
+        fs::write(
+            &probe_script,
+            "const fs = require('fs'); fs.writeFileSync('env_out.txt', (process.env.GH_TOKEN||'') + '|' + (process.env.GITHUB_TOKEN||''));\n",
+        )
+        .expect("Failed to write probe script");
+
+        // Small sleep to ensure shell prompt is ready to receive input
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        manager
+            .write_session(&session.id, "node probe.js\r\n")
+            .await
+            .expect("Write failed");
+
+        let out_file = dir.join("env_out.txt");
+        let start = Instant::now();
+        let mut content = String::new();
+        while start.elapsed() < Duration::from_secs(5) {
+            if let Ok(c) = fs::read_to_string(&out_file) {
+                if !c.is_empty() {
+                    content = c;
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        manager.close_session(&session.id).await.ok();
+
+        assert_eq!(
+            content,
+            "ghp_termToken456|ghp_termToken456",
+            "Terminal session process should inherit GH_TOKEN and GITHUB_TOKEN"
+        );
+
+        // Negative check: when githubPat is empty whitespace, terminal does not inject synthetic tokens
+        let _ = fs::remove_file(&out_file);
+        fs::write(&config_file, r#"{"version": 1, "githubPat": "   "}"#)
+            .expect("Failed to write empty config");
+
+        let session2 = manager
+            .open_session(&dir.to_string_lossy(), None, None)
+            .await
+            .expect("Open session 2 failed");
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        manager
+            .write_session(&session2.id, "node probe.js\r\n")
+            .await
+            .expect("Write 2 failed");
+
+        let start2 = Instant::now();
+        let mut content2 = String::new();
+        while start2.elapsed() < Duration::from_secs(5) {
+            if let Ok(c) = fs::read_to_string(&out_file) {
+                content2 = c;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        manager.close_session(&session2.id).await.ok();
+        crate::commands::config_files::set_viewer_storage_path_override_for_test(None);
+
+        assert_eq!(
+            content2, "|",
+            "Terminal session must not inject GH_TOKEN or GITHUB_TOKEN when githubPat is whitespace"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
