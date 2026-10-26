@@ -42,7 +42,12 @@ export interface SpeechPreferences {
   ttsRate?: number; // Speed multiplier (e.g. 1.0)
   autoSpeakResponses?: boolean;
   wyomingTtsUrl?: string; // e.g. "tcp://127.0.0.1:10200"
+  wyomingTtsVoice?: string; // e.g. "es_MX-claude-high"
   wyomingSttUrl?: string; // e.g. "tcp://127.0.0.1:10300"
+  wyomingSttModel?: string; // e.g. "tiny" | "base" | "small" | "medium"
+  wyomingSttLanguage?: string; // e.g. "es" | "en"
+  customDockerCommandTts?: string;
+  customDockerCommandStt?: string;
 }
 
 export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
@@ -53,7 +58,10 @@ export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
   ttsRate: 1.0,
   autoSpeakResponses: false,
   wyomingTtsUrl: 'tcp://127.0.0.1:10200',
+  wyomingTtsVoice: 'es_MX-claude-high',
   wyomingSttUrl: 'tcp://127.0.0.1:10300',
+  wyomingSttModel: 'tiny',
+  wyomingSttLanguage: 'es',
 };
 
 export const PIPER_VOICES_COMMIT = '5041a7a49ae5b3a0f30e6837769eb03fdbb231bd';
@@ -218,10 +226,35 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
       ? rec.wyomingTtsUrl.trim()
       : DEFAULT_SPEECH_PREFERENCES.wyomingTtsUrl;
 
+  const wyomingTtsVoice =
+    typeof rec.wyomingTtsVoice === 'string' && rec.wyomingTtsVoice.trim()
+      ? rec.wyomingTtsVoice.trim()
+      : DEFAULT_SPEECH_PREFERENCES.wyomingTtsVoice;
+
   const wyomingSttUrl =
     typeof rec.wyomingSttUrl === 'string' && rec.wyomingSttUrl.trim()
       ? rec.wyomingSttUrl.trim()
       : DEFAULT_SPEECH_PREFERENCES.wyomingSttUrl;
+
+  const wyomingSttModel =
+    typeof rec.wyomingSttModel === 'string' && rec.wyomingSttModel.trim()
+      ? rec.wyomingSttModel.trim()
+      : DEFAULT_SPEECH_PREFERENCES.wyomingSttModel;
+
+  const wyomingSttLanguage =
+    typeof rec.wyomingSttLanguage === 'string' && rec.wyomingSttLanguage.trim()
+      ? rec.wyomingSttLanguage.trim()
+      : DEFAULT_SPEECH_PREFERENCES.wyomingSttLanguage;
+
+  const customDockerCommandTts =
+    typeof rec.customDockerCommandTts === 'string' && rec.customDockerCommandTts.trim()
+      ? rec.customDockerCommandTts.trim()
+      : undefined;
+
+  const customDockerCommandStt =
+    typeof rec.customDockerCommandStt === 'string' && rec.customDockerCommandStt.trim()
+      ? rec.customDockerCommandStt.trim()
+      : undefined;
 
   return {
     ttsEnabled,
@@ -233,6 +266,11 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
     ttsRate,
     autoSpeakResponses,
     wyomingTtsUrl,
+    wyomingTtsVoice,
     wyomingSttUrl,
+    wyomingSttModel,
+    wyomingSttLanguage,
+    ...(customDockerCommandTts ? { customDockerCommandTts } : {}),
+    ...(customDockerCommandStt ? { customDockerCommandStt } : {}),
   };
 }

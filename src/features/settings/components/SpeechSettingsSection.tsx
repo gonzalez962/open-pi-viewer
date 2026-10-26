@@ -1,67 +1,150 @@
-import React, { useState, useEffect } from 'react';
-import type { SpeechPreferences, CustomModelConfig } from '../../../core/types/speech';
-import { OFFICIAL_SPEECH_PACKS } from '../../../core/types/speech';
+import React, { useState, useEffect, useRef } from 'react';
+import type { SpeechPreferences } from '../../../core/types/speech';
 import { useSpeech } from '../hooks/useSpeech';
-import { SpeechModelCard } from './SpeechModelCard';
 import { playWavBase64 } from '../../../infra/audio-player';
 import { convertBlobToWav16kMono } from '../../../infra/wav-recorder';
 
 export interface SpeechSettingsSectionProps {
   preferences: SpeechPreferences;
   onSpeechPreferencesChange: (partial: Partial<SpeechPreferences>) => void;
-  pickFileFn?: (filterName?: string, extensions?: string[]) => Promise<string | null>;
 }
+
+const COMMON_PIPER_VOICES = [
+  { id: 'es_MX-claude-high', label: 'Español (México) - Claude (High)' },
+  { id: 'es_ES-davefx-medium', label: 'Español (España) - Davefx (Medium)' },
+  { id: 'es_ES-sharvard-medium', label: 'Español (España) - Sharvard (Medium)' },
+  { id: 'en_US-lessac-medium', label: 'English (US) - Lessac (Medium)' },
+  { id: 'en_US-amy-medium', label: 'English (US) - Amy (Medium)' },
+  { id: 'en_GB-alan-medium', label: 'English (UK) - Alan (Medium)' },
+];
+
+const WHISPER_MODELS = [
+  { id: 'tiny', label: 'Tiny (~75 MB - Ultra rápido)' },
+  { id: 'base', label: 'Base (~140 MB - Balanceado)' },
+  { id: 'small', label: 'Small (~460 MB - Alta precisión)' },
+  { id: 'medium', label: 'Medium (~1.5 GB - Precisión profesional)' },
+];
+
+const WHISPER_LANGUAGES = [
+  { id: 'es', label: 'Español (es)' },
+  { id: 'en', label: 'English (en)' },
+  { id: 'auto', label: 'Detección automática' },
+  { id: 'fr', label: 'Français (fr)' },
+  { id: 'de', label: 'Deutsch (de)' },
+  { id: 'pt', label: 'Português (pt)' },
+];
 
 export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
   preferences,
   onSpeechPreferencesChange,
 }) => {
   const {
-    checkPackStatus,
-    downloadPack,
-    deletePack,
-    validateCustomModel,
     synthesize,
     transcribe,
     checkWyomingStatus,
-    downloadProgress,
     isSynthesizing,
     isTranscribing,
   } = useSpeech();
 
-  const [statuses, setStatuses] = useState<Record<string, any>>({});
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [activePackDownloading, setActivePackDownloading] = useState<string | null>(null);
-  const [activePackDeleting, setActivePackDeleting] = useState<string | null>(null);
-
-  const [customTtsValidation, setCustomTtsValidation] = useState<any>(null);
-  const [customSttValidation, setCustomSttValidation] = useState<any>(null);
   const [testSynthesizeSuccess, setTestSynthesizeSuccess] = useState(false);
   const [testSynthesizeError, setTestSynthesizeError] = useState<string | null>(null);
 
   const [testSttRecording, setTestSttRecording] = useState(false);
   const [testSttResult, setTestSttResult] = useState<string | null>(null);
   const [testSttError, setTestSttError] = useState<string | null>(null);
-  const testSttRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const testSttChunksRef = React.useRef<Blob[]>([]);
+  const testSttRecorderRef = useRef<MediaRecorder | null>(null);
+  const testSttChunksRef = useRef<Blob[]>([]);
 
   const [wyomingTtsHealth, setWyomingTtsHealth] = useState<{ ok: boolean; info?: any; error?: string } | null>(null);
   const [wyomingSttHealth, setWyomingSttHealth] = useState<{ ok: boolean; info?: any; error?: string } | null>(null);
   const [isCheckingWyoming, setIsCheckingWyoming] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  const ttsPacks = Object.values(OFFICIAL_SPEECH_PACKS).filter((p) => p.kind === 'tts');
-  const sttPacks = Object.values(OFFICIAL_SPEECH_PACKS).filter((p) => p.kind === 'stt');
+  const ttsUrl = preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200';
+  const ttsVoice = preferences.wyomingTtsVoice || 'es_MX-claude-high';
+  const sttUrl = preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300';
+  const sttModel = preferences.wyomingSttModel || 'tiny';
+  const sttLang = preferences.wyomingSttLanguage || 'es';
+
+  const parsePort = (url: string, defaultPort: number) => {
+    const parts = url.replace(/^tcp:\/\//, '').split(':');
+    return parts[1] || String(defaultPort);
+  };
+
+  const ttsPort = parsePort(ttsUrl, 10200);
+  const sttPort = parsePort(sttUrl, 10300);
+
+  const generatedDockerRunTts = `docker run -d --name wyoming-piper \\
+  --restart unless-stopped \\
+  -p ${ttsPort}:10200 \\
+  -v wyoming_piper_data:/data \\
+  rhasspy/wyoming-piper:latest \\
+  --voice ${ttsVoice} \\
+  --data-dir /data`;
+
+  const generatedDockerRunStt = `docker run -d --name wyoming-whisper \\
+  --restart unless-stopped \\
+  -p ${sttPort}:10300 \\
+  -v wyoming_whisper_data:/data \\
+  rhasspy/wyoming-whisper:latest \\
+  --model ${sttModel} \\
+  --language ${sttLang} \\
+  --data-dir /data`;
+
+  const generatedDockerCompose = `services:
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: wyoming-piper
+    restart: unless-stopped
+    ports:
+      - "${ttsPort}:10200"
+    volumes:
+      - piper-data:/data
+    command:
+      - --voice
+      - ${ttsVoice}
+      - --data-dir
+      - /data
+
+  wyoming-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: wyoming-whisper
+    restart: unless-stopped
+    ports:
+      - "${sttPort}:10300"
+    volumes:
+      - whisper-data:/data
+    command:
+      - --model
+      - ${sttModel}
+      - --language
+      - ${sttLang}
+      - --data-dir
+      - /data
+
+volumes:
+  piper-data:
+    name: wyoming_piper_data
+  whisper-data:
+    name: wyoming_whisper_data`;
+
+  const handleCopy = (key: string, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey(null), 2500);
+    });
+  };
 
   const refreshWyomingHealth = async () => {
     setIsCheckingWyoming(true);
     try {
-      const ttsRes = await checkWyomingStatus(preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200');
+      const ttsRes = await checkWyomingStatus(ttsUrl);
       setWyomingTtsHealth(ttsRes);
     } catch (err: any) {
       setWyomingTtsHealth({ ok: false, error: err.message });
     }
     try {
-      const sttRes = await checkWyomingStatus(preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300');
+      const sttRes = await checkWyomingStatus(sttUrl);
       setWyomingSttHealth(sttRes);
     } catch (err: any) {
       setWyomingSttHealth({ ok: false, error: err.message });
@@ -70,85 +153,25 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     }
   };
 
-  const refreshAllStatuses = async () => {
-    await refreshWyomingHealth();
-    const nextStatuses: Record<string, any> = {};
-    for (const pack of Object.values(OFFICIAL_SPEECH_PACKS)) {
-      try {
-        const res = await checkPackStatus(pack.id);
-        nextStatuses[pack.id] = res;
-      } catch {}
-    }
-    setStatuses(nextStatuses);
-  };
-
   useEffect(() => {
-    refreshAllStatuses();
-  }, []);
+    refreshWyomingHealth();
+  }, [ttsUrl, sttUrl]);
 
-  const handleDownload = async (packId: string) => {
-    setDownloadError(null);
-    setActivePackDownloading(packId);
+  const handleTestTts = async () => {
+    setTestSynthesizeError(null);
+    setTestSynthesizeSuccess(false);
     try {
-      await downloadPack(packId);
-      const res = await checkPackStatus(packId);
-      setStatuses((prev) => ({ ...prev, [packId]: res }));
-    } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActivePackDownloading(null);
-    }
-  };
-
-  const handleDelete = async (packId: string) => {
-    setDownloadError(null);
-    setActivePackDeleting(packId);
-    try {
-      await deletePack(packId);
-      const res = await checkPackStatus(packId);
-      setStatuses((prev) => ({ ...prev, [packId]: res }));
-    } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setActivePackDeleting(null);
-    }
-  };
-
-  const handleCustomTtsPathChange = async (path: string) => {
-    const config: CustomModelConfig = {
-      isCustom: true,
-      modelPath: path,
-    };
-    onSpeechPreferencesChange({ ttsCustom: config });
-    if (path.trim()) {
-      const res = await validateCustomModel(config);
-      setCustomTtsValidation(res);
-      if (res.valid && res.computedSha256) {
-        onSpeechPreferencesChange({
-          ttsCustom: { ...config, computedSha256: res.computedSha256 },
-        });
+      const audioBase64 = await synthesize('Hola, este es un mensaje de prueba de voz con Piper en Docker.', preferences);
+      if (audioBase64) {
+        setTestSynthesizeSuccess(true);
+        await playWavBase64(audioBase64);
+      } else {
+        setTestSynthesizeError('No se pudo generar el audio.');
       }
-    } else {
-      setCustomTtsValidation(null);
-    }
-  };
-
-  const handleCustomSttPathChange = async (path: string) => {
-    const config: CustomModelConfig = {
-      isCustom: true,
-      modelPath: path,
-    };
-    onSpeechPreferencesChange({ sttCustom: config });
-    if (path.trim()) {
-      const res = await validateCustomModel(config);
-      setCustomSttValidation(res);
-      if (res.valid && res.computedSha256) {
-        onSpeechPreferencesChange({
-          sttCustom: { ...config, computedSha256: res.computedSha256 },
-        });
-      }
-    } else {
-      setCustomSttValidation(null);
+    } catch (err) {
+      setTestSynthesizeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTestSynthesizeSuccess(false);
     }
   };
 
@@ -200,46 +223,61 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     }
   };
 
-  const handleTestTts = async () => {
-    setTestSynthesizeError(null);
-    setTestSynthesizeSuccess(false);
-    try {
-      const audioBase64 = await synthesize('Hola, este es un mensaje de prueba de voz local.', preferences);
-      if (audioBase64) {
-        setTestSynthesizeSuccess(true);
-        await playWavBase64(audioBase64);
-      } else {
-        setTestSynthesizeError('No se pudo generar el audio.');
-      }
-    } catch (err) {
-      setTestSynthesizeError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTestSynthesizeSuccess(false);
-    }
-  };
-
   return (
     <div className="speech-settings-section" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
       <div className="settings-field-group">
-        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem' }}>Modelos Locales de Voz (TTS & STT)</h3>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem' }}>Servicios de Voz Containerizados (TTS & STT)</h3>
         <p style={{ margin: 0, opacity: 0.75, fontSize: '0.9rem', lineHeight: '1.4' }}>
-          Configura y descarga modelos acústicos ONNX locales para síntesis de voz (Text-to-Speech) y reconocimiento de voz (Speech-to-Text).
-          Toda la inferencia se ejecuta 100% en tu máquina sin enviar datos a la nube.
+          La inferencia de voz se ejecuta 100% local a través de contenedores Docker compatibles con el estándar Wyoming Protocol (Piper para síntesis y Faster-Whisper para transcripción).
+          No requiere descargas manuales de modelos ni binarios externos en el sistema operativo.
         </p>
       </div>
 
-      {downloadError && (
-        <div style={{ padding: '12px 16px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.4)', borderRadius: '6px', color: '#f87171' }}>
-          <strong>Error:</strong> {downloadError}
+      {/* Global Docker Compose Quick Box */}
+      <div style={{ padding: '16px 20px', borderRadius: '8px', border: '1px solid var(--border-color, #374151)', background: 'var(--card-bg, rgba(255,255,255,0.03))' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <strong style={{ fontSize: '0.95rem' }}>Levantar ambos servicios con Docker Compose</strong>
+          <button
+            type="button"
+            onClick={() => handleCopy('compose', generatedDockerCompose)}
+            style={{
+              padding: '4px 12px',
+              fontSize: '0.78rem',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              background: copiedKey === 'compose' ? '#16a34a' : 'transparent',
+              border: '1px solid var(--border-color, #4b5563)',
+              color: 'inherit',
+            }}
+          >
+            {copiedKey === 'compose' ? '✓ Copiado' : 'Copiar docker-compose.speech.yml'}
+          </button>
         </div>
-      )}
+        <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: '0 0 10px 0' }}>
+          Crea el archivo <code>docker-compose.speech.yml</code> o copia este contenido y ejecuta <code>docker compose -f docker-compose.speech.yml up -d</code>.
+        </p>
+        <pre
+          style={{
+            margin: 0,
+            padding: '10px 14px',
+            borderRadius: '6px',
+            background: 'rgba(0,0,0,0.3)',
+            fontSize: '0.78rem',
+            overflowX: 'auto',
+            maxHeight: '140px',
+            border: '1px solid rgba(255,255,255,0.05)',
+          }}
+        >
+          {generatedDockerCompose}
+        </pre>
+      </div>
 
       {/* TTS Section */}
       <div style={{ padding: '20px', border: '1px solid var(--border-color, #374151)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
           <div>
-            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Text-To-Speech (TTS) - Piper (Docker / Wyoming)</h4>
-            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Síntesis de voz neural de baja latencia mediante Wyoming Piper</span>
+            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Text-To-Speech (TTS) - Piper (Wyoming)</h4>
+            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Síntesis neural de voz ultra rápida en contenedor Docker</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <input
@@ -254,12 +292,12 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
           </div>
         </div>
 
-        {/* Docker Wyoming Service Banner */}
+        {/* TTS Status Banner */}
         <div
           style={{
             padding: '12px 16px',
             borderRadius: '6px',
-            marginBottom: '14px',
+            marginBottom: '16px',
             background: wyomingTtsHealth?.ok ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
             border: `1px solid ${wyomingTtsHealth?.ok ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
             display: 'flex',
@@ -281,13 +319,13 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
             <div>
               <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>
                 {wyomingTtsHealth?.ok
-                  ? `Servicio Docker Conectado (${wyomingTtsHealth.info?.name || 'wyoming-piper'})`
-                  : 'Servicio Docker No Conectado'}
+                  ? `Servicio Piper Conectado (${wyomingTtsHealth.info?.name || 'wyoming-piper'})`
+                  : 'Servicio Piper No Conectado'}
               </div>
               <div style={{ fontSize: '0.78rem', opacity: 0.8 }}>
                 {wyomingTtsHealth?.ok
-                  ? `Puerto TCP: ${preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200'} • Modelo en caché de Docker`
-                  : `Inicia el contenedor: docker compose -f docker-compose.speech.yml up -d`}
+                  ? `Conectado a ${ttsUrl} • Motor: Piper Neural`
+                  : `Inicia el contenedor Docker para habilitar síntesis de voz`}
               </div>
             </div>
           </div>
@@ -310,113 +348,128 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
           </button>
         </div>
 
-        {/* Always visible catalog of models so user can install/manage them even before activating */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="tts-mode"
-                checked={!preferences.ttsCustom?.isCustom}
-                onChange={() => onSpeechPreferencesChange({ ttsCustom: { isCustom: false, modelPath: '' } })}
-              />
-              <span>Catálogo oficial</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="tts-mode"
-                checked={Boolean(preferences.ttsCustom?.isCustom)}
-                onChange={() => onSpeechPreferencesChange({ ttsCustom: { isCustom: true, modelPath: preferences.ttsCustom?.modelPath || '' } })}
-              />
-              <span>Modelo personalizado (.onnx)</span>
-            </label>
+        {/* TTS Configuration Fields */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Endpoint TCP de Wyoming:</label>
+            <input
+              type="text"
+              value={ttsUrl}
+              onChange={(e) => onSpeechPreferencesChange({ wyomingTtsUrl: e.target.value })}
+              placeholder="tcp://127.0.0.1:10200"
+              style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+            />
           </div>
 
-          {!preferences.ttsCustom?.isCustom ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
-                {ttsPacks.map((pack) => (
-                  <SpeechModelCard
-                    key={pack.id}
-                    pack={pack}
-                    statusResult={statuses[pack.id]}
-                    downloadProgress={downloadProgress[pack.id]}
-                    isSelected={preferences.selectedTtsPackId === pack.id}
-                    onSelect={() => onSpeechPreferencesChange({ selectedTtsPackId: pack.id })}
-                    onDownload={() => handleDownload(pack.id)}
-                    onDelete={() => handleDelete(pack.id)}
-                    isDownloading={activePackDownloading === pack.id}
-                    isDeleting={activePackDeleting === pack.id}
-                  />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Voz del Modelo Piper:</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <select
+                value={COMMON_PIPER_VOICES.some((v) => v.id === ttsVoice) ? ttsVoice : 'custom'}
+                onChange={(e) => {
+                  if (e.target.value !== 'custom') {
+                    onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value });
+                  }
+                }}
+                style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)', flex: 1 }}
+              >
+                {COMMON_PIPER_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>{v.label}</option>
                 ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '0.85rem' }}>Ruta al archivo .onnx de la voz:</label>
+                <option value="custom">Otra voz personalizada...</option>
+              </select>
               <input
                 type="text"
-                placeholder="C:/rutas/mi-voz.onnx"
-                value={preferences.ttsCustom?.modelPath || ''}
-                onChange={(e) => handleCustomTtsPathChange(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+                value={ttsVoice}
+                onChange={(e) => onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value })}
+                placeholder="es_MX-claude-high"
+                title="Nombre de la voz en Piper (ej: es_MX-claude-high)"
+                style={{ width: '150px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
               />
-              {customTtsValidation && (
-                <div style={{ fontSize: '0.82rem' }}>
-                  {customTtsValidation.valid ? (
-                    <span style={{ color: '#4ade80' }}>
-                      ✓ Modelo ONNX válido (SHA-256: {customTtsValidation.computedSha256?.slice(0, 16)}...)
-                    </span>
-                  ) : (
-                    <span style={{ color: '#f87171' }}>✗ {customTtsValidation.error}</span>
-                  )}
-                </div>
-              )}
             </div>
-          )}
-
-          {preferences.ttsEnabled && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <button
-                  type="button"
-                  onClick={handleTestTts}
-                  disabled={isSynthesizing}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '4px',
-                    cursor: isSynthesizing ? 'not-allowed' : 'pointer',
-                    backgroundColor: 'var(--card-bg, #262626)',
-                    border: '1px solid var(--border-color, #404040)',
-                    color: 'inherit',
-                    opacity: isSynthesizing ? 0.6 : 1,
-                  }}
-                >
-                  {isSynthesizing ? 'Sintetizando audio...' : 'Probar audio de voz'}
-                </button>
-                {testSynthesizeSuccess && (
-                  <span style={{ color: '#4ade80', fontSize: '0.85rem' }}>
-                    Reproduciendo prueba...
-                  </span>
-                )}
-              </div>
-              {testSynthesizeError && (
-                <div style={{ color: '#f87171', fontSize: '0.82rem' }}>
-                  ✗ {testSynthesizeError}
-                </div>
-              )}
-            </div>
-          )}
+          </div>
         </div>
+
+        {/* Speed Slider */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '18px' }}>
+          <label style={{ fontSize: '0.85rem' }}>Velocidad de habla ({preferences.ttsRate || 1.0}x):</label>
+          <input
+            type="range"
+            min="0.5"
+            max="2.0"
+            step="0.05"
+            value={preferences.ttsRate || 1.0}
+            onChange={(e) => onSpeechPreferencesChange({ ttsRate: parseFloat(e.target.value) })}
+            style={{ width: '160px' }}
+          />
+        </div>
+
+        {/* Docker run command copy box */}
+        <div style={{ background: 'rgba(0,0,0,0.25)', padding: '12px', borderRadius: '6px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span style={{ fontSize: '0.78rem', opacity: 0.8 }}>Comando de instalación / arranque individual (Docker CLI):</span>
+            <button
+              type="button"
+              onClick={() => handleCopy('docker-tts', generatedDockerRunTts)}
+              style={{
+                padding: '2px 8px',
+                fontSize: '0.75rem',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                background: copiedKey === 'docker-tts' ? '#16a34a' : 'transparent',
+                border: '1px solid var(--border-color, #4b5563)',
+                color: 'inherit',
+              }}
+            >
+              {copiedKey === 'docker-tts' ? '✓ Copiado' : 'Copiar comando'}
+            </button>
+          </div>
+          <pre style={{ margin: 0, fontSize: '0.75rem', opacity: 0.9, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+            {generatedDockerRunTts}
+          </pre>
+        </div>
+
+        {/* Test audio synthesis button */}
+        {preferences.ttsEnabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button
+                type="button"
+                onClick={handleTestTts}
+                disabled={isSynthesizing}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  cursor: isSynthesizing ? 'not-allowed' : 'pointer',
+                  backgroundColor: 'var(--card-bg, #262626)',
+                  border: '1px solid var(--border-color, #404040)',
+                  color: 'inherit',
+                  opacity: isSynthesizing ? 0.6 : 1,
+                }}
+              >
+                {isSynthesizing ? 'Sintetizando audio...' : 'Probar audio de voz'}
+              </button>
+              {testSynthesizeSuccess && (
+                <span style={{ color: '#4ade80', fontSize: '0.85rem' }}>
+                  Reproduciendo prueba...
+                </span>
+              )}
+            </div>
+            {testSynthesizeError && (
+              <div style={{ color: '#f87171', fontSize: '0.82rem' }}>
+                ✗ {testSynthesizeError}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* STT Section */}
       <div style={{ padding: '20px', border: '1px solid var(--border-color, #374151)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
           <div>
-            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Speech-To-Text (STT) - Faster Whisper (Docker / Wyoming)</h4>
-            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Reconocimiento y transcripción de voz local mediante Wyoming Whisper</span>
+            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Speech-To-Text (STT) - Faster Whisper (Wyoming)</h4>
+            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Transcripción y reconocimiento de voz mediante Whisper en Docker</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <input
@@ -431,12 +484,12 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
           </div>
         </div>
 
-        {/* Docker Wyoming STT Service Banner */}
+        {/* STT Status Banner */}
         <div
           style={{
             padding: '12px 16px',
             borderRadius: '6px',
-            marginBottom: '14px',
+            marginBottom: '16px',
             background: wyomingSttHealth?.ok ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
             border: `1px solid ${wyomingSttHealth?.ok ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
             display: 'flex',
@@ -458,13 +511,13 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
             <div>
               <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>
                 {wyomingSttHealth?.ok
-                  ? `Servicio Docker Conectado (${wyomingSttHealth.info?.name || 'wyoming-whisper'})`
-                  : 'Servicio Docker No Conectado'}
+                  ? `Servicio Whisper Conectado (${wyomingSttHealth.info?.name || 'wyoming-whisper'})`
+                  : 'Servicio Whisper No Conectado'}
               </div>
               <div style={{ fontSize: '0.78rem', opacity: 0.8 }}>
                 {wyomingSttHealth?.ok
-                  ? `Puerto TCP: ${preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300'} • Modelo en caché de Docker`
-                  : `Inicia el contenedor: docker compose -f docker-compose.speech.yml up -d`}
+                  ? `Conectado a ${sttUrl} • Motor: Faster-Whisper CTranslate2`
+                  : `Inicia el contenedor Docker para habilitar reconocimiento de voz`}
               </div>
             </div>
           </div>
@@ -487,109 +540,108 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
           </button>
         </div>
 
-        {/* Always visible catalog of models so user can install/manage them even before activating */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '12px' }}>
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="stt-mode"
-                checked={!preferences.sttCustom?.isCustom}
-                onChange={() => onSpeechPreferencesChange({ sttCustom: { isCustom: false, modelPath: '' } })}
-              />
-              <span>Catálogo oficial</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="stt-mode"
-                checked={Boolean(preferences.sttCustom?.isCustom)}
-                onChange={() => onSpeechPreferencesChange({ sttCustom: { isCustom: true, modelPath: preferences.sttCustom?.modelPath || '' } })}
-              />
-              <span>Modelo personalizado (.onnx)</span>
-            </label>
+        {/* STT Configuration Fields */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Endpoint TCP de Wyoming:</label>
+            <input
+              type="text"
+              value={sttUrl}
+              onChange={(e) => onSpeechPreferencesChange({ wyomingSttUrl: e.target.value })}
+              placeholder="tcp://127.0.0.1:10300"
+              style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+            />
           </div>
 
-          {!preferences.sttCustom?.isCustom ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '12px' }}>
-                {sttPacks.map((pack) => (
-                  <SpeechModelCard
-                    key={pack.id}
-                    pack={pack}
-                    statusResult={statuses[pack.id]}
-                    downloadProgress={downloadProgress[pack.id]}
-                    isSelected={preferences.selectedSttPackId === pack.id}
-                    onSelect={() => onSpeechPreferencesChange({ selectedSttPackId: pack.id })}
-                    onDownload={() => handleDownload(pack.id)}
-                    onDelete={() => handleDelete(pack.id)}
-                    isDownloading={activePackDownloading === pack.id}
-                    isDeleting={activePackDeleting === pack.id}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '0.85rem' }}>Ruta al encoder .onnx del modelo STT:</label>
-              <input
-                type="text"
-                placeholder="C:/rutas/encoder.int8.onnx"
-                value={preferences.sttCustom?.modelPath || ''}
-                onChange={(e) => handleCustomSttPathChange(e.target.value)}
-                style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
-              />
-              {customSttValidation && (
-                <div style={{ fontSize: '0.82rem' }}>
-                  {customSttValidation.valid ? (
-                    <span style={{ color: '#4ade80' }}>
-                      ✓ Modelo ONNX válido (SHA-256: {customSttValidation.computedSha256?.slice(0, 16)}...)
-                    </span>
-                  ) : (
-                    <span style={{ color: '#f87171' }}>✗ {customSttValidation.error}</span>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Tamaño del Modelo Whisper:</label>
+            <select
+              value={sttModel}
+              onChange={(e) => onSpeechPreferencesChange({ wyomingSttModel: e.target.value })}
+              style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+            >
+              {WHISPER_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </div>
 
-          {preferences.sttEnabled && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                <button
-                  type="button"
-                  onClick={handleToggleTestStt}
-                  disabled={isTranscribing}
-                  style={{
-                    padding: '6px 14px',
-                    borderRadius: '4px',
-                    cursor: isTranscribing ? 'not-allowed' : 'pointer',
-                    backgroundColor: testSttRecording ? '#dc2626' : 'var(--card-bg, #262626)',
-                    border: '1px solid var(--border-color, #404040)',
-                    color: testSttRecording ? '#ffffff' : 'inherit',
-                    opacity: isTranscribing ? 0.6 : 1,
-                  }}
-                >
-                  {isTranscribing
-                    ? 'Transcribiendo con Whisper...'
-                    : testSttRecording
-                      ? '🛑 Detener grabación y probar'
-                      : '🎤 Grabar audio de prueba'}
-                </button>
-                {testSttResult && (
-                  <span style={{ fontSize: '0.88rem', color: '#60a5fa' }}>
-                    Transcripción: <strong>"{testSttResult}"</strong>
-                  </span>
-                )}
-              </div>
-              {testSttError && (
-                <div style={{ color: '#f87171', fontSize: '0.82rem' }}>
-                  ✗ {testSttError}
-                </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Idioma de Transcripción:</label>
+            <select
+              value={sttLang}
+              onChange={(e) => onSpeechPreferencesChange({ wyomingSttLanguage: e.target.value })}
+              style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+            >
+              {WHISPER_LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Docker run command copy box for Whisper */}
+        <div style={{ background: 'rgba(0,0,0,0.25)', padding: '12px', borderRadius: '6px', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+            <span style={{ fontSize: '0.78rem', opacity: 0.8 }}>Comando de instalación / arranque individual (Docker CLI):</span>
+            <button
+              type="button"
+              onClick={() => handleCopy('docker-stt', generatedDockerRunStt)}
+              style={{
+                padding: '2px 8px',
+                fontSize: '0.75rem',
+                borderRadius: '3px',
+                cursor: 'pointer',
+                background: copiedKey === 'docker-stt' ? '#16a34a' : 'transparent',
+                border: '1px solid var(--border-color, #4b5563)',
+                color: 'inherit',
+              }}
+            >
+              {copiedKey === 'docker-stt' ? '✓ Copiado' : 'Copiar comando'}
+            </button>
+          </div>
+          <pre style={{ margin: 0, fontSize: '0.75rem', opacity: 0.9, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+            {generatedDockerRunStt}
+          </pre>
+        </div>
+
+        {/* Test STT recording button */}
+        {preferences.sttEnabled && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <button
+                type="button"
+                onClick={handleToggleTestStt}
+                disabled={isTranscribing}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '4px',
+                  cursor: isTranscribing ? 'not-allowed' : 'pointer',
+                  backgroundColor: testSttRecording ? '#dc2626' : 'var(--card-bg, #262626)',
+                  border: '1px solid var(--border-color, #404040)',
+                  color: testSttRecording ? '#ffffff' : 'inherit',
+                  opacity: isTranscribing ? 0.6 : 1,
+                }}
+              >
+                {isTranscribing
+                  ? 'Transcribiendo con Whisper...'
+                  : testSttRecording
+                    ? '🛑 Detener grabación y probar'
+                    : '🎤 Grabar audio de prueba'}
+              </button>
+              {testSttResult && (
+                <span style={{ fontSize: '0.88rem', color: '#60a5fa' }}>
+                  Transcripción: <strong>"{testSttResult}"</strong>
+                </span>
               )}
             </div>
-          )}
-        </div>
+            {testSttError && (
+              <div style={{ color: '#f87171', fontSize: '0.82rem' }}>
+                ✗ {testSttError}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -214,13 +214,14 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
 
   // 1. If Wyoming Docker URL is configured and available (default), use it directly
   const wyomingUrl = preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200';
+  const voice = preferences.wyomingTtsVoice || preferences.selectedTtsPackId || 'es_MX-claude-high';
   if (wyomingUrl && !preferences.ttsCustom?.isCustom) {
     try {
       const { wavBuffer, durationSeconds } = await synthesizeWyomingTts(
         trimmed,
         wyomingUrl,
         options.rate || preferences.ttsRate || 1.0,
-        preferences.selectedTtsPackId || 'es_MX-claude-high'
+        voice
       );
       return {
         audioBase64: wavBuffer.toString('base64'),
@@ -364,13 +365,14 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
 
   // 1. If Wyoming Docker Whisper URL is configured and available (default), use it directly
   const wyomingSttUrl = preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300';
+  const language = preferences.wyomingSttLanguage || 'es';
   if (wyomingSttUrl && !preferences.sttCustom?.isCustom) {
     try {
       const text = await transcribeWyomingStt(
         audioBuffer,
         16000,
         wyomingSttUrl,
-        'es'
+        language
       );
       return { text, confidence: 1.0 };
     } catch (wyomingErr: any) {

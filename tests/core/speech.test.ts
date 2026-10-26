@@ -101,14 +101,22 @@ describe('Speech types and preferences validation', () => {
     assert.equal(currentPrefs.speech?.ttsRate, 1.5);
   });
 
-  it('SpeechSettingsSection and SpeechModelCard render without crashing', () => {
+  it('SpeechSettingsSection renders container config and docker compose without crashing', () => {
     const html = renderToStaticMarkup(
       React.createElement(SpeechSettingsSection, {
-        preferences: { ...DEFAULT_SPEECH_PREFERENCES, ttsEnabled: true, sttEnabled: true },
+        preferences: {
+          ...DEFAULT_SPEECH_PREFERENCES,
+          ttsEnabled: true,
+          sttEnabled: true,
+          wyomingTtsVoice: 'es_MX-claude-high',
+          wyomingSttModel: 'tiny',
+        },
         onSpeechPreferencesChange: () => {},
       })
     );
     assert.ok(html.includes('speech-settings-section'));
-    assert.ok(html.includes('Claude High'));
+    assert.ok(html.includes('docker-compose.speech.yml'));
+    assert.ok(html.includes('wyoming-piper'));
+    assert.ok(html.includes('wyoming-whisper'));
   });
 });
