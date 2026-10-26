@@ -1155,5 +1155,6 @@
   "terminal.retry": "Reintentar",
   "terminal.connecting": "Conectando terminal...",
   "terminal.error": "Error de conexión de terminal",
-  "terminal.process_exited": "El proceso finalizó con código {code}"
+  "terminal.process_exited": "El proceso finalizó con código {code}",
+  "terminal.scroll_to_bottom": "Ir al final"
 }
