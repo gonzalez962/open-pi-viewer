@@ -1,4 +1,22 @@
 {
+  "kanban.title": "Kanban",
+  "kanban.pending": "Pending",
+  "kanban.in_progress": "In progress",
+  "kanban.done": "Done",
+  "kanban.close": "Close",
+  "kanban.loading": "Loading board…",
+  "kanban.card_title": "Card title",
+  "kanban.description": "Description",
+  "kanban.save": "Save changes",
+  "kanban.add": "Add card",
+  "kanban.cancel": "Cancel",
+  "kanban.saving": "Saving…",
+  "kanban.move": "Move to",
+  "kanban.edit": "Edit",
+  "kanban.delete": "Delete",
+  "kanban.empty": "No cards",
+  "kanban.delete_confirm": "Delete this card?",
+
   "app.title": "Pi Viewer",
   "app.version": "v0.2.0",
 

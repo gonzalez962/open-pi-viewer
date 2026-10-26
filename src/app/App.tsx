@@ -64,6 +64,9 @@ import {
   useTerminal,
 } from '@features/terminal';
 
+const KanbanModal = React.lazy(() =>
+  import('@features/kanban/KanbanModal').then((m) => ({ default: m.KanbanModal }))
+);
 const SettingsView = React.lazy(() =>
   import('@features/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
 );
@@ -193,6 +196,7 @@ export const App: React.FC = () => {
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [showSettings, setShowSettings] = useState(false);
+  const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
@@ -1350,6 +1354,7 @@ export const App: React.FC = () => {
     (p) => p.id === projectsRegistry.activeProjectId
   );
   const activeProjectName = activeProject ? getProjectDisplayName(activeProject) : undefined;
+  const kanbanCwd = activeProject?.path ?? config.workingDirectory;
 
   const terminal = useTerminal({
     activeProjectCwd: activeProject?.path ?? config.workingDirectory ?? null,
@@ -1465,6 +1470,12 @@ export const App: React.FC = () => {
               {t('action.retry')}
             </button>
           )}
+
+          <button type="button" className="btn btn-sm kanban-toggle"
+            disabled={!kanbanCwd} onClick={() => setShowKanban(true)}
+            title={t('kanban.title')} aria-label={t('kanban.title')}>
+            {t('kanban.title')}
+          </button>
 
           <button
             type="button"
@@ -2218,6 +2229,13 @@ export const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      {showKanban && kanbanCwd && (
+        <React.Suspense fallback={null}>
+          <KanbanModal key={kanbanCwd} workingDirectory={kanbanCwd}
+            locale={preferences.language} onClose={() => setShowKanban(false)} />
+        </React.Suspense>
+      )}
 
       {viewingFile && (
         <React.Suspense fallback={null}>

@@ -597,3 +597,20 @@ test('server bridge S3.1: reads do not initialize .pi directory or kanban.json o
     assert.strictEqual(fs.readFileSync(file, 'utf8'), corrupt);
   } finally { fs.rmSync(project, { recursive: true, force: true }); }
 });
+
+test('server bridge S1.2: repeated saves preserve a non-Git project ignore file byte-for-byte', async () => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-kanban-ignore-'));
+  try {
+    const ignore = path.join(project, '.gitignore');
+    const eol = String.fromCharCode(13, 10);
+    const original = '# Keep existing rules' + eol + 'node_modules/';
+    fs.writeFileSync(ignore, original);
+    const payload = { workingDirectory: project, board: { cards: [] } };
+    await handleIpcCommand('save_project_kanban', { payload });
+    const first = fs.readFileSync(ignore, 'utf8');
+    assert.ok(first.startsWith(original + eol));
+    assert.equal(first.split(eol).filter((line) => line === '/.pi/kanban.json').length, 1);
+    await handleIpcCommand('save_project_kanban', { payload });
+    assert.equal(fs.readFileSync(ignore, 'utf8'), first);
+  } finally { fs.rmSync(project, { recursive: true, force: true }); }
+});
