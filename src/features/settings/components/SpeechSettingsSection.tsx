@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import type { SpeechPreferences, CustomModelConfig, OfficialSpeechPack } from '@core/types/speech';
-import { OFFICIAL_SPEECH_PACKS, DEFAULT_SPEECH_PREFERENCES } from '@core/types/speech';
+import type { SpeechPreferences, CustomModelConfig } from '../../../core/types/speech';
+import { OFFICIAL_SPEECH_PACKS } from '../../../core/types/speech';
 import { useSpeech } from '../hooks/useSpeech';
 import { SpeechModelCard } from './SpeechModelCard';
-import { playWavBase64 } from '@infra/audio-player';
+import { playWavBase64 } from '../../../infra/audio-player';
+import { convertBlobToWav16kMono } from '../../../infra/wav-recorder';
 
 export interface SpeechSettingsSectionProps {
   preferences: SpeechPreferences;
@@ -21,11 +22,11 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     deletePack,
     validateCustomModel,
     synthesize,
-    isDownloading,
+    transcribe,
+    checkWyomingStatus,
     downloadProgress,
-    isDeleting,
-    isChecking,
     isSynthesizing,
+    isTranscribing,
   } = useSpeech();
 
   const [statuses, setStatuses] = useState<Record<string, any>>({});
@@ -38,10 +39,39 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
   const [testSynthesizeSuccess, setTestSynthesizeSuccess] = useState(false);
   const [testSynthesizeError, setTestSynthesizeError] = useState<string | null>(null);
 
+  const [testSttRecording, setTestSttRecording] = useState(false);
+  const [testSttResult, setTestSttResult] = useState<string | null>(null);
+  const [testSttError, setTestSttError] = useState<string | null>(null);
+  const testSttRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const testSttChunksRef = React.useRef<Blob[]>([]);
+
+  const [wyomingTtsHealth, setWyomingTtsHealth] = useState<{ ok: boolean; info?: any; error?: string } | null>(null);
+  const [wyomingSttHealth, setWyomingSttHealth] = useState<{ ok: boolean; info?: any; error?: string } | null>(null);
+  const [isCheckingWyoming, setIsCheckingWyoming] = useState(false);
+
   const ttsPacks = Object.values(OFFICIAL_SPEECH_PACKS).filter((p) => p.kind === 'tts');
   const sttPacks = Object.values(OFFICIAL_SPEECH_PACKS).filter((p) => p.kind === 'stt');
 
+  const refreshWyomingHealth = async () => {
+    setIsCheckingWyoming(true);
+    try {
+      const ttsRes = await checkWyomingStatus(preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200');
+      setWyomingTtsHealth(ttsRes);
+    } catch (err: any) {
+      setWyomingTtsHealth({ ok: false, error: err.message });
+    }
+    try {
+      const sttRes = await checkWyomingStatus(preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300');
+      setWyomingSttHealth(sttRes);
+    } catch (err: any) {
+      setWyomingSttHealth({ ok: false, error: err.message });
+    } finally {
+      setIsCheckingWyoming(false);
+    }
+  };
+
   const refreshAllStatuses = async () => {
+    await refreshWyomingHealth();
     const nextStatuses: Record<string, any> = {};
     for (const pack of Object.values(OFFICIAL_SPEECH_PACKS)) {
       try {
@@ -122,6 +152,54 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     }
   };
 
+  const handleToggleTestStt = async () => {
+    if (testSttRecording) {
+      if (testSttRecorderRef.current) {
+        testSttRecorderRef.current.stop();
+        setTestSttRecording(false);
+      }
+      return;
+    }
+
+    setTestSttError(null);
+    setTestSttResult(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      testSttChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      testSttRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) testSttChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        try {
+          const rawBlob = new Blob(testSttChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
+          const wavBlob = await convertBlobToWav16kMono(rawBlob);
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Data = (reader.result as string)?.split(',')[1];
+            if (base64Data) {
+              const text = await transcribe(base64Data, preferences);
+              setTestSttResult(text ? text.trim() : '(silencio o no detectado)');
+            }
+          };
+          reader.readAsDataURL(wavBlob);
+        } catch (err: any) {
+          setTestSttError(err.message || String(err));
+        } finally {
+          stream.getTracks().forEach((t) => t.stop());
+        }
+      };
+
+      mediaRecorder.start();
+      setTestSttRecording(true);
+    } catch (err: any) {
+      setTestSttError(`Error de micrófono: ${err.message}`);
+    }
+  };
+
   const handleTestTts = async () => {
     setTestSynthesizeError(null);
     setTestSynthesizeSuccess(false);
@@ -160,8 +238,8 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
       <div style={{ padding: '20px', border: '1px solid var(--border-color, #374151)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
           <div>
-            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Text-To-Speech (TTS) - Piper</h4>
-            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Síntesis de voz neural local mediante Piper ONNX</span>
+            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Text-To-Speech (TTS) - Piper (Docker / Wyoming)</h4>
+            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Síntesis de voz neural de baja latencia mediante Wyoming Piper</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <input
@@ -174,6 +252,62 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
               aria-label="Toggle TTS"
             />
           </div>
+        </div>
+
+        {/* Docker Wyoming Service Banner */}
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '6px',
+            marginBottom: '14px',
+            background: wyomingTtsHealth?.ok ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${wyomingTtsHealth?.ok ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: wyomingTtsHealth?.ok ? '#22c55e' : '#ef4444',
+              }}
+            />
+            <div>
+              <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>
+                {wyomingTtsHealth?.ok
+                  ? `Servicio Docker Conectado (${wyomingTtsHealth.info?.name || 'wyoming-piper'})`
+                  : 'Servicio Docker No Conectado'}
+              </div>
+              <div style={{ fontSize: '0.78rem', opacity: 0.8 }}>
+                {wyomingTtsHealth?.ok
+                  ? `Puerto TCP: ${preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200'} • Modelo en caché de Docker`
+                  : `Inicia el contenedor: docker compose -f docker-compose.speech.yml up -d`}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={refreshWyomingHealth}
+            disabled={isCheckingWyoming}
+            style={{
+              padding: '4px 10px',
+              fontSize: '0.78rem',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              background: 'transparent',
+              border: '1px solid currentColor',
+              color: 'inherit',
+              opacity: isCheckingWyoming ? 0.5 : 0.9,
+            }}
+          >
+            {isCheckingWyoming ? 'Verificando...' : 'Reconectar'}
+          </button>
         </div>
 
         {/* Always visible catalog of models so user can install/manage them even before activating */}
@@ -281,8 +415,8 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
       <div style={{ padding: '20px', border: '1px solid var(--border-color, #374151)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
           <div>
-            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Speech-To-Text (STT) - Sherpa-ONNX</h4>
-            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Reconocimiento de voz local mediante modelos Zipformer INT8</span>
+            <h4 style={{ margin: 0, fontSize: '1.05rem' }}>Speech-To-Text (STT) - Faster Whisper (Docker / Wyoming)</h4>
+            <span style={{ fontSize: '0.82rem', opacity: 0.7 }}>Reconocimiento y transcripción de voz local mediante Wyoming Whisper</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center' }}>
             <input
@@ -295,6 +429,62 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
               aria-label="Toggle STT"
             />
           </div>
+        </div>
+
+        {/* Docker Wyoming STT Service Banner */}
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '6px',
+            marginBottom: '14px',
+            background: wyomingSttHealth?.ok ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${wyomingSttHealth?.ok ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span
+              style={{
+                display: 'inline-block',
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: wyomingSttHealth?.ok ? '#22c55e' : '#ef4444',
+              }}
+            />
+            <div>
+              <div style={{ fontSize: '0.88rem', fontWeight: 600 }}>
+                {wyomingSttHealth?.ok
+                  ? `Servicio Docker Conectado (${wyomingSttHealth.info?.name || 'wyoming-whisper'})`
+                  : 'Servicio Docker No Conectado'}
+              </div>
+              <div style={{ fontSize: '0.78rem', opacity: 0.8 }}>
+                {wyomingSttHealth?.ok
+                  ? `Puerto TCP: ${preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300'} • Modelo en caché de Docker`
+                  : `Inicia el contenedor: docker compose -f docker-compose.speech.yml up -d`}
+              </div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={refreshWyomingHealth}
+            disabled={isCheckingWyoming}
+            style={{
+              padding: '4px 10px',
+              fontSize: '0.78rem',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              background: 'transparent',
+              border: '1px solid currentColor',
+              color: 'inherit',
+              opacity: isCheckingWyoming ? 0.5 : 0.9,
+            }}
+          >
+            {isCheckingWyoming ? 'Verificando...' : 'Reconectar'}
+          </button>
         </div>
 
         {/* Always visible catalog of models so user can install/manage them even before activating */}
@@ -358,6 +548,43 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
                   ) : (
                     <span style={{ color: '#f87171' }}>✗ {customSttValidation.error}</span>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {preferences.sttEnabled && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                <button
+                  type="button"
+                  onClick={handleToggleTestStt}
+                  disabled={isTranscribing}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '4px',
+                    cursor: isTranscribing ? 'not-allowed' : 'pointer',
+                    backgroundColor: testSttRecording ? '#dc2626' : 'var(--card-bg, #262626)',
+                    border: '1px solid var(--border-color, #404040)',
+                    color: testSttRecording ? '#ffffff' : 'inherit',
+                    opacity: isTranscribing ? 0.6 : 1,
+                  }}
+                >
+                  {isTranscribing
+                    ? 'Transcribiendo con Whisper...'
+                    : testSttRecording
+                      ? '🛑 Detener grabación y probar'
+                      : '🎤 Grabar audio de prueba'}
+                </button>
+                {testSttResult && (
+                  <span style={{ fontSize: '0.88rem', color: '#60a5fa' }}>
+                    Transcripción: <strong>"{testSttResult}"</strong>
+                  </span>
+                )}
+              </div>
+              {testSttError && (
+                <div style={{ color: '#f87171', fontSize: '0.82rem' }}>
+                  ✗ {testSttError}
                 </div>
               )}
             </div>

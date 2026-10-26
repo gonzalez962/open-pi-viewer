@@ -38,6 +38,7 @@ export interface UsePreferencesResult {
   commitAppearance: (candidate: AppearanceInput) => PreferencesSaveResult;
   /** Atomically resets appearance customizations back to defaults. */
   resetAppearance: () => PreferencesSaveResult;
+  setSpeechPreferences: (speech: Partial<any>) => void;
   /** Production lifecycle controller managing DOM appearance, system listeners, and draft preview. */
   appearanceController: AppearanceLifecycleController;
   appearanceControllerRef: React.MutableRefObject<AppearanceLifecycleController | null>;

@@ -1,0 +1,36 @@
+services:
+  wyoming-piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: wyoming-piper
+    restart: unless-stopped
+    ports:
+      - "10200:10200"
+    volumes:
+      - piper-data:/data
+    command:
+      - --voice
+      - es_MX-claude-high
+      - --data-dir
+      - /data
+
+  wyoming-whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: wyoming-whisper
+    restart: unless-stopped
+    ports:
+      - "10300:10300"
+    volumes:
+      - whisper-data:/data
+    command:
+      - --model
+      - tiny
+      - --language
+      - es
+      - --data-dir
+      - /data
+
+volumes:
+  piper-data:
+    name: wyoming_piper_data
+  whisper-data:
+    name: wyoming_whisper_data

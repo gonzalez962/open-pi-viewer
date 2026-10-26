@@ -12,6 +12,10 @@ import {
   OFFICIAL_SPEECH_PACKS,
   type SpeechPreferences,
 } from '../../src/core/types/speech';
+import {
+  synthesizeWyomingTts,
+  transcribeWyomingStt,
+} from './wyoming-client';
 
 export interface SynthesizeTtsOptions {
   text: string;
@@ -208,6 +212,31 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
     throw new Error('Cannot synthesize empty text.');
   }
 
+  // 1. If Wyoming Docker URL is configured and available (default), use it directly
+  const wyomingUrl = preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200';
+  if (wyomingUrl && !preferences.ttsCustom?.isCustom) {
+    try {
+      const { wavBuffer, durationSeconds } = await synthesizeWyomingTts(
+        trimmed,
+        wyomingUrl,
+        options.rate || preferences.ttsRate || 1.0,
+        preferences.selectedTtsPackId || 'es_MX-claude-high'
+      );
+      return {
+        audioBase64: wavBuffer.toString('base64'),
+        mimeType: 'audio/wav',
+        durationSeconds,
+      };
+    } catch (wyomingErr: any) {
+      // If runner override is present (tests) or custom model is set, fallback below
+      if (!ttsRunnerOverride && !process.env.PI_VIEWER_TTS_FALLBACK_CLI) {
+        throw new Error(
+          `Error al sintetizar voz con Wyoming Piper (${wyomingUrl}): ${wyomingErr.message}. Asegúrate de que el contenedor de Docker esté iniciado.`
+        );
+      }
+    }
+  }
+
   const { modelPath, configPath } = await resolveTtsModelPaths(preferences);
 
   if (ttsRunnerOverride) {
@@ -331,6 +360,26 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
 
   if (!audioBuffer || audioBuffer.length === 0) {
     throw new Error('Cannot transcribe empty audio buffer.');
+  }
+
+  // 1. If Wyoming Docker Whisper URL is configured and available (default), use it directly
+  const wyomingSttUrl = preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300';
+  if (wyomingSttUrl && !preferences.sttCustom?.isCustom) {
+    try {
+      const text = await transcribeWyomingStt(
+        audioBuffer,
+        16000,
+        wyomingSttUrl,
+        'es'
+      );
+      return { text, confidence: 1.0 };
+    } catch (wyomingErr: any) {
+      if (!sttRunnerOverride && !process.env.PI_VIEWER_STT_FALLBACK_CLI) {
+        throw new Error(
+          `Error al transcribir voz con Wyoming Whisper (${wyomingSttUrl}): ${wyomingErr.message}. Asegúrate de que el contenedor de Docker esté iniciado.`
+        );
+      }
+    }
   }
 
   const { encoderPath, decoderPath, joinerPath, tokensPath } = await resolveSttModelPaths(preferences);

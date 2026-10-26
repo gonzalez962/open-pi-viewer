@@ -190,6 +190,10 @@ import {
   transcribeStt,
 } from './bridge/speech-runner';
 import {
+  checkWyomingHealth,
+} from './bridge/wyoming-client';
+import { broadcastSse } from './bridge/sse';
+import {
   OFFICIAL_SPEECH_PACKS,
 } from '../src/core/types/speech';
 
@@ -385,6 +389,11 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'inspect_custom_speech_model': {
       const payload = args.payload || args;
       return await inspectCustomModel(payload);
+    }
+    case 'check_wyoming_service': {
+      const payload = args.payload || args;
+      const url = payload?.url || 'tcp://127.0.0.1:10200';
+      return await checkWyomingHealth(url);
     }
     case 'synthesize_speech_tts': {
       const payload = args.payload || args;

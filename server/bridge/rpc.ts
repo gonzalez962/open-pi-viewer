@@ -183,6 +183,17 @@ export class PiRpcSession {
     }
     this.child = childProc;
 
+    this.child.on('error', (err) => {
+      console.warn('[Pi RPC subprocess error]:', err);
+      broadcastSse('pi://status-change', {
+        state: 'error',
+        label: 'Process Error',
+        detail: `Failed to spawn Pi RPC: ${err.message}`,
+        cwd: this.cwd,
+        sessionId: this.sessionId,
+      });
+    });
+
     this.child.stdout?.on('data', (chunk) => {
       this.stdoutBuffer += chunk.toString();
       const lines = this.stdoutBuffer.split('\n');

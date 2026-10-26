@@ -2,7 +2,7 @@
  * Speech (TTS / STT) types and official model manifest.
  */
 
-export type SpeechEngine = 'piper' | 'sherpa-onnx';
+export type SpeechEngine = 'piper' | 'sherpa-onnx' | 'wyoming';
 
 export type ModelIntegrityStatus = 'verified' | 'mismatch' | 'custom' | 'missing' | 'checking';
 
@@ -41,6 +41,8 @@ export interface SpeechPreferences {
   sttCustom?: CustomModelConfig;
   ttsRate?: number; // Speed multiplier (e.g. 1.0)
   autoSpeakResponses?: boolean;
+  wyomingTtsUrl?: string; // e.g. "tcp://127.0.0.1:10200"
+  wyomingSttUrl?: string; // e.g. "tcp://127.0.0.1:10300"
 }
 
 export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
@@ -50,6 +52,8 @@ export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
   selectedSttPackId: 'es-kroko-64l',
   ttsRate: 1.0,
   autoSpeakResponses: false,
+  wyomingTtsUrl: 'tcp://127.0.0.1:10200',
+  wyomingSttUrl: 'tcp://127.0.0.1:10300',
 };
 
 export const PIPER_VOICES_COMMIT = '5041a7a49ae5b3a0f30e6837769eb03fdbb231bd';
@@ -209,6 +213,16 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
       ? rec.autoSpeakResponses
       : DEFAULT_SPEECH_PREFERENCES.autoSpeakResponses;
 
+  const wyomingTtsUrl =
+    typeof rec.wyomingTtsUrl === 'string' && rec.wyomingTtsUrl.trim()
+      ? rec.wyomingTtsUrl.trim()
+      : DEFAULT_SPEECH_PREFERENCES.wyomingTtsUrl;
+
+  const wyomingSttUrl =
+    typeof rec.wyomingSttUrl === 'string' && rec.wyomingSttUrl.trim()
+      ? rec.wyomingSttUrl.trim()
+      : DEFAULT_SPEECH_PREFERENCES.wyomingSttUrl;
+
   return {
     ttsEnabled,
     sttEnabled,
@@ -218,5 +232,7 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
     ...(sttCustom ? { sttCustom } : {}),
     ttsRate,
     autoSpeakResponses,
+    wyomingTtsUrl,
+    wyomingSttUrl,
   };
 }

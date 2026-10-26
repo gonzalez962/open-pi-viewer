@@ -6,13 +6,14 @@ import {
   inspectCustomSpeechModelPi,
   synthesizeSpeechTtsPi,
   transcribeSpeechSttPi,
+  checkWyomingServicePi,
   listenSpeechDownloadProgressPi,
   type SpeechDownloadProgressPayload,
-} from '@infra/bridge';
+} from '../../../infra/bridge';
 import type {
   SpeechPreferences,
   CustomModelConfig,
-} from '@core/types/speech';
+} from '../../../core/types/speech';
 
 export interface UseSpeechReturn {
   isChecking: boolean;
@@ -28,6 +29,7 @@ export interface UseSpeechReturn {
   validateCustomModel: (config: CustomModelConfig) => Promise<any>;
   synthesize: (text: string, preferences: SpeechPreferences, rate?: number) => Promise<string | null>;
   transcribe: (audioBase64: string, preferences: SpeechPreferences) => Promise<string | null>;
+  checkWyomingStatus: (url: string) => Promise<{ ok: boolean; info?: any; error?: string }>;
 }
 
 export function useSpeech(): UseSpeechReturn {
@@ -158,6 +160,14 @@ export function useSpeech(): UseSpeechReturn {
     []
   );
 
+  const checkWyomingStatus = useCallback(async (url: string) => {
+    try {
+      return await checkWyomingServicePi({ url });
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  }, []);
+
   return {
     isChecking,
     isDownloading,
@@ -172,5 +182,6 @@ export function useSpeech(): UseSpeechReturn {
     validateCustomModel,
     synthesize,
     transcribe,
+    checkWyomingStatus,
   };
 }

@@ -3338,6 +3338,16 @@ export async function transcribeSpeechSttPi(
   return await invokeFn<TranscribeSpeechSttResult>('transcribe_speech_stt', { payload });
 }
 
+export async function checkWyomingServicePi(
+  payload: { url: string },
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<{ ok: boolean; info?: any; error?: string }> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { ok: false, error: 'Bridge unavailable' };
+  }
+  return await invokeFn<{ ok: boolean; info?: any; error?: string }>('check_wyoming_service', { payload });
+}
+
 export interface SpeechDownloadProgressPayload {
   packId: string;
   fileIndex: number;

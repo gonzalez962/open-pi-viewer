@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
 import type { SpeechPreferences } from '@core/types/speech';
+import { convertBlobToWav16kMono } from '@infra/wav-recorder';
 
 export interface PromptMicButtonProps {
   preferences?: SpeechPreferences;
@@ -36,19 +37,40 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          const base64Data = (reader.result as string)?.split(',')[1];
-          if (base64Data) {
-            const text = await transcribe(base64Data, preferences);
-            if (text && text.trim()) {
-              onTranscription(text.trim());
+        try {
+          const rawBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
+          const wavBlob = await convertBlobToWav16kMono(rawBlob);
+
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64Data = (reader.result as string)?.split(',')[1];
+            if (base64Data) {
+              const text = await transcribe(base64Data, preferences);
+              if (text && text.trim()) {
+                onTranscription(text.trim());
+              }
             }
-          }
-        };
-        reader.readAsDataURL(audioBlob);
-        stream.getTracks().forEach((track) => track.stop());
+          };
+          reader.readAsDataURL(wavBlob);
+        } catch (convErr) {
+          // If Web Audio decoding fails in older browser context, fallback to raw blob
+          try {
+            const rawBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+              const base64Data = (reader.result as string)?.split(',')[1];
+              if (base64Data) {
+                const text = await transcribe(base64Data, preferences);
+                if (text && text.trim()) {
+                  onTranscription(text.trim());
+                }
+              }
+            };
+            reader.readAsDataURL(rawBlob);
+          } catch {}
+        } finally {
+          stream.getTracks().forEach((track) => track.stop());
+        }
       };
 
       mediaRecorder.start();
