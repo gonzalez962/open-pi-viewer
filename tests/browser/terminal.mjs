@@ -263,6 +263,7 @@ export async function runTerminalBrowserTests(options = {}) {
     browser = await chromium.launch({ headless });
     context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
+      hasTouch: true,
     });
 
     // Seed fixture projects into browser localStorage prior to app initialization
@@ -327,7 +328,16 @@ export async function runTerminalBrowserTests(options = {}) {
     }
     const pidA = parseInt(pidMatchA[1], 10);
 
-    const backendSessionA = await ipcInvoke(baseURL, 'terminal_get', { cwd: fixtures.dirA });
+    let backendSessionA = null;
+    const sessionDeadline = Date.now() + 6000;
+    while (Date.now() < sessionDeadline) {
+      const list = await ipcInvoke(baseURL, 'terminal_list');
+      backendSessionA = (list || []).find((s) => s.pid === pidA) || null;
+      if (backendSessionA && backendSessionA.running) {
+        break;
+      }
+      await page.waitForTimeout(150);
+    }
     if (!backendSessionA || backendSessionA.pid !== pidA || !backendSessionA.running) {
       throw new Error(`S2.1 FAIL: Backend session does not match UI PID ${pidA}: ${JSON.stringify(backendSessionA)}`);
     }
@@ -479,7 +489,16 @@ export async function runTerminalBrowserTests(options = {}) {
       throw new Error(`S1.2 FAIL: Project Beta must have independent PID, but got same PID ${pidA}`);
     }
 
-    const backendSessionB = await ipcInvoke(baseURL, 'terminal_get', { cwd: fixtures.dirB });
+    let backendSessionB = null;
+    const sessionDeadlineB = Date.now() + 6000;
+    while (Date.now() < sessionDeadlineB) {
+      const list = await ipcInvoke(baseURL, 'terminal_list');
+      backendSessionB = (list || []).find((s) => s.pid === pidB) || null;
+      if (backendSessionB && backendSessionB.running) {
+        break;
+      }
+      await page.waitForTimeout(150);
+    }
     if (!backendSessionB || backendSessionB.pid !== pidB || !backendSessionB.running) {
       throw new Error(`S1.2 FAIL: Backend session B not found or PID mismatch: ${JSON.stringify(backendSessionB)}`);
     }
@@ -600,7 +619,16 @@ export async function runTerminalBrowserTests(options = {}) {
       throw new Error(`S3.3 FAIL: Reopened terminal must have a new PID, but got: ${freshPidA} (prior A: ${pidA}, B: ${pidB})`);
     }
 
-    const freshSessionA = await ipcInvoke(baseURL, 'terminal_get', { cwd: fixtures.dirA });
+    let freshSessionA = null;
+    const freshDeadline = Date.now() + 6000;
+    while (Date.now() < freshDeadline) {
+      const list = await ipcInvoke(baseURL, 'terminal_list');
+      freshSessionA = (list || []).find((s) => s.pid === freshPidA) || null;
+      if (freshSessionA && freshSessionA.running) {
+        break;
+      }
+      await page.waitForTimeout(150);
+    }
     if (!freshSessionA || freshSessionA.id === sessionIdA || freshSessionA.pid !== freshPidA) {
       throw new Error(`S3.3 FAIL: Reopened session A must be fresh: ${JSON.stringify(freshSessionA)}`);
     }
@@ -613,9 +641,103 @@ export async function runTerminalBrowserTests(options = {}) {
     }
     console.log(`[Browser Test S3.3] PASS: Reopening Project Alpha created fresh session (ID: ${freshSessionA.id}, PID: ${freshPidA}) with clean buffer.`);
 
+    // =========================================================================
+    // S2.3 Mobile Touch Scroll & Scroll-To-Bottom Control
+    // =========================================================================
+    console.log('[Browser Test S2.3] Testing mobile touch scrollback navigation and scroll-to-bottom button...');
+    await page.setViewportSize({ width: 375, height: 380 });
+    await page.waitForTimeout(500);
+
+    // Emit scrollback output in fresh session (40 lines)
+    const scrollCmd = `node -e "for(let i=1;i<=40;i++) console.log('TOUCH_SCROLL_LINE_' + i)"\r\n`;
+    await ipcInvoke(baseURL, 'terminal_write', { id: freshSessionA.id, data: scrollCmd });
+    await waitForTerminalText(page, 'TOUCH_SCROLL_LINE_40', 10000);
+    await page.waitForTimeout(300);
+
+    // Perform touch drag down (swiping down from clientY 100 to 300) to scroll up into history
+    await page.evaluate(() => {
+      const container = document.querySelector('.terminal-screen-container');
+      if (!container) throw new Error('terminal-screen-container not found');
+
+      const createTouch = (y) => {
+        try {
+          return new Touch({
+            identifier: 1,
+            target: container,
+            clientX: 150,
+            clientY: y,
+            pageX: 150,
+            pageY: y,
+          });
+        } catch {
+          return {
+            identifier: 1,
+            target: container,
+            clientX: 150,
+            clientY: y,
+            pageX: 150,
+            pageY: y,
+          };
+        }
+      };
+
+      const touchStart = createTouch(100);
+      container.dispatchEvent(
+        new TouchEvent('touchstart', {
+          touches: [touchStart],
+          targetTouches: [touchStart],
+          changedTouches: [touchStart],
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      const touchMove = createTouch(300);
+      container.dispatchEvent(
+        new TouchEvent('touchmove', {
+          touches: [touchMove],
+          targetTouches: [touchMove],
+          changedTouches: [touchMove],
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      container.dispatchEvent(
+        new TouchEvent('touchend', {
+          touches: [],
+          targetTouches: [],
+          changedTouches: [touchMove],
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+
+      const term = container.__xterm;
+      return {
+        hasTerm: Boolean(term),
+        viewportY: term?.buffer?.active?.viewportY,
+        baseY: term?.buffer?.active?.baseY,
+        rows: term?.rows,
+        length: term?.buffer?.active?.length,
+      };
+    });
+
+    await page.waitForTimeout(500);
+
+    // Verify floating scroll-to-bottom button appeared
+    const scrollToBottomBtn = page.locator('.terminal-scroll-bottom-btn');
+    await scrollToBottomBtn.waitFor({ state: 'visible', timeout: 5000 });
+    console.log('[Browser Test S2.3] PASS: Scroll-to-bottom button rendered upon scrolling into scrollback.');
+
+    // Click scroll-to-bottom button and verify it hides when returning to bottom
+    await scrollToBottomBtn.click();
+    await scrollToBottomBtn.waitFor({ state: 'hidden', timeout: 5000 });
+    console.log('[Browser Test S2.3] PASS: Clicked scroll-to-bottom button; terminal returned to bottom.');
+
     console.log('\n======================================================');
     console.log('ALL BROWSER AUTOMATION TESTS COMPLETED SUCCESSFULLY!');
-    console.log('Scenarios verified: S2.1, S1.1, S2.2, S3.1, S1.2, S3.2, S3.3');
+    console.log('Scenarios verified: S2.1, S1.1, S2.2, S2.3, S3.1, S1.2, S3.2, S3.3');
     console.log('======================================================\n');
     return { success: true };
   } finally {

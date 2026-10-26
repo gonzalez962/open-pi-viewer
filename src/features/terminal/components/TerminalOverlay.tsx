@@ -1,10 +1,11 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import * as xtermModule from '@xterm/xterm';
 import type { Terminal as XTermInstance } from '@xterm/xterm';
 import * as fitModule from '@xterm/addon-fit';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import type { TerminalSessionDto } from '@core/terminal';
 import type { TerminalStatus } from '../types';
+import { setupTerminalTouchScroll } from '../terminal-touch';
 
 // Resolve CJS/ESM interop safely for Node tests and browser bundling
 const XTermConstructor =
@@ -49,10 +50,32 @@ export function TerminalOverlay({
 }: TerminalOverlayProps): React.ReactElement | null {
   const containerRef = useRef<HTMLDivElement>(null);
   const screenRef = useRef<HTMLDivElement>(null);
+  const activeTermRef = useRef<XTermInstance | null>(null);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
   const titleId = useId();
 
   const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) =>
     translate(locale, key, params);
+
+  // Dynamic visualViewport tracking for mobile virtual keyboard bounds
+  useEffect(() => {
+    if (!isOpen || !containerRef.current) return;
+    const updateViewportHeight = () => {
+      if (typeof window !== 'undefined' && window.visualViewport && containerRef.current) {
+        containerRef.current.style.height = `${window.visualViewport.height}px`;
+      }
+    };
+    updateViewportHeight();
+    window.visualViewport?.addEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+      if (containerRef.current) {
+        containerRef.current.style.height = '';
+      }
+    };
+  }, [isOpen]);
 
   // Focus isolation & keyboard containment
   useEffect(() => {
@@ -122,9 +145,19 @@ export function TerminalOverlay({
     term.loadAddon(fitAddon);
     term.open(screenEl);
 
+    (screenEl as any).__xterm = term;
+    activeTermRef.current = term;
     if (terminalInstanceRef) {
       terminalInstanceRef.current = term;
     }
+
+    // Attach touch gestures for mobile/touch vertical scrollback navigation
+    const touchScrollHandle = setupTerminalTouchScroll(term, screenEl, {
+      isMobile,
+      onScrollStateChange: (scrolledUp) => {
+        setIsScrolledUp(scrolledUp);
+      },
+    });
 
     // Write scrollback history if session has replay buffer
     if (session?.replay) {
@@ -167,9 +200,12 @@ export function TerminalOverlay({
 
     return () => {
       clearTimeout(fitTimer);
+      touchScrollHandle.dispose();
       resizeObserver.disconnect();
       dataDisposable.dispose();
       term.dispose();
+      delete (screenEl as any).__xterm;
+      activeTermRef.current = null;
       if (terminalInstanceRef) {
         terminalInstanceRef.current = null;
       }
@@ -300,6 +336,35 @@ export function TerminalOverlay({
 
       <main className="terminal-body">
         <div ref={screenRef} className="terminal-screen-container" />
+        {isScrolledUp && (
+          <button
+            type="button"
+            className="terminal-scroll-bottom-btn"
+            onClick={() => {
+              const active = terminalInstanceRef?.current || activeTermRef.current;
+              if (active) {
+                active.scrollToBottom();
+                active.focus();
+              }
+            }}
+            title={t('terminal.scroll_to_bottom')}
+            aria-label={t('terminal.scroll_to_bottom')}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        )}
       </main>
     </div>
   );

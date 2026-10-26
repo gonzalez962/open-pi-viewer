@@ -1155,5 +1155,6 @@
   "terminal.retry": "Retry",
   "terminal.connecting": "Connecting terminal...",
   "terminal.error": "Terminal connection error",
-  "terminal.process_exited": "Process exited with code {code}"
+  "terminal.process_exited": "Process exited with code {code}",
+  "terminal.scroll_to_bottom": "Scroll to bottom"
 }
