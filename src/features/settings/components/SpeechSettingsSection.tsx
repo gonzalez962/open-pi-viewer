@@ -559,51 +559,69 @@ volumes:
                 )}
               </div>
               <div style={{ display: 'flex', gap: '6px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('piper', 'create')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
-                  title="Recrea el contenedor aplicando los parámetros actuales de los desplegables (voz y puerto)"
-                >
-                  {dockerActionBusy === 'piper:create' ? 'Aplicando...' : '⚡ Recrear con ajustes'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('piper', 'start')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
-                  title="Inicia el contenedor existente o lo crea si no existe"
-                >
-                  {dockerActionBusy === 'piper:start' ? 'Iniciando...' : '▶ Iniciar'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('piper', 'stop')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
-                  title="Detiene el contenedor de Piper"
-                >
-                  {dockerActionBusy === 'piper:stop' ? 'Deteniendo...' : '⏹ Detener'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('piper', 'restart')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
-                  title="Reinicia el contenedor de Piper"
-                >
-                  {dockerActionBusy === 'piper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('piper', 'remove')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
-                  title="Detiene y elimina el contenedor de Piper (rm -f)"
-                >
-                  {dockerActionBusy === 'piper:remove' ? 'Borrando...' : '🗑 Borrar'}
-                </button>
+                {dockerPiperStatus?.state === 'running' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('piper', 'stop')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
+                      title="Detiene el contenedor de Piper"
+                    >
+                      {dockerActionBusy === 'piper:stop' ? 'Deteniendo...' : '⏹ Detener'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('piper', 'restart')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
+                      title="Reinicia el contenedor de Piper"
+                    >
+                      {dockerActionBusy === 'piper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('piper', 'create')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
+                      title="Recrea el contenedor aplicando los parámetros actuales de los desplegables (voz y puerto)"
+                    >
+                      {dockerActionBusy === 'piper:create' ? 'Aplicando...' : '⚡ Recrear con ajustes'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('piper', 'start')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
+                      title="Inicia el contenedor de Piper"
+                    >
+                      {dockerActionBusy === 'piper:start' ? 'Iniciando...' : '▶ Iniciar'}
+                    </button>
+                    {dockerPiperStatus?.exists && (
+                      <button
+                        type="button"
+                        onClick={() => handleDockerAction('piper', 'remove')}
+                        disabled={Boolean(dockerActionBusy)}
+                        style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
+                        title="Elimina el contenedor de Piper (rm -f)"
+                      >
+                        {dockerActionBusy === 'piper:remove' ? 'Borrando...' : '🗑 Borrar'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('piper', 'create')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
+                      title="Crea o recrea el contenedor aplicando los parámetros actuales de los desplegables"
+                    >
+                      {dockerActionBusy === 'piper:create' ? 'Creando...' : '⚡ Crear con ajustes'}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -850,51 +868,69 @@ volumes:
                 )}
               </div>
               <div style={{ display: 'flex', gap: '6px' }}>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('whisper', 'create')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
-                  title="Recrea el contenedor aplicando los parámetros actuales de los desplegables (modelo, idioma y puerto)"
-                >
-                  {dockerActionBusy === 'whisper:create' ? 'Aplicando...' : '⚡ Recrear con ajustes'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('whisper', 'start')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
-                  title="Inicia el contenedor existente o lo crea si no existe"
-                >
-                  {dockerActionBusy === 'whisper:start' ? 'Iniciando...' : '▶ Iniciar'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('whisper', 'stop')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
-                  title="Detiene el contenedor de Whisper"
-                >
-                  {dockerActionBusy === 'whisper:stop' ? 'Deteniendo...' : '⏹ Detener'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('whisper', 'restart')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
-                  title="Reinicia el contenedor de Whisper"
-                >
-                  {dockerActionBusy === 'whisper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDockerAction('whisper', 'remove')}
-                  disabled={Boolean(dockerActionBusy)}
-                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
-                  title="Detiene y elimina el contenedor de Whisper (rm -f)"
-                >
-                  {dockerActionBusy === 'whisper:remove' ? 'Borrando...' : '🗑 Borrar'}
-                </button>
+                {dockerWhisperStatus?.state === 'running' ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('whisper', 'stop')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
+                      title="Detiene el contenedor de Whisper"
+                    >
+                      {dockerActionBusy === 'whisper:stop' ? 'Deteniendo...' : '⏹ Detener'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('whisper', 'restart')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
+                      title="Reinicia el contenedor de Whisper"
+                    >
+                      {dockerActionBusy === 'whisper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('whisper', 'create')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
+                      title="Recrea el contenedor aplicando los parámetros actuales de los desplegables (modelo, idioma y puerto)"
+                    >
+                      {dockerActionBusy === 'whisper:create' ? 'Aplicando...' : '⚡ Recrear con ajustes'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('whisper', 'start')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
+                      title="Inicia el contenedor de Whisper"
+                    >
+                      {dockerActionBusy === 'whisper:start' ? 'Iniciando...' : '▶ Iniciar'}
+                    </button>
+                    {dockerWhisperStatus?.exists && (
+                      <button
+                        type="button"
+                        onClick={() => handleDockerAction('whisper', 'remove')}
+                        disabled={Boolean(dockerActionBusy)}
+                        style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
+                        title="Elimina el contenedor de Whisper (rm -f)"
+                      >
+                        {dockerActionBusy === 'whisper:remove' ? 'Borrando...' : '🗑 Borrar'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDockerAction('whisper', 'create')}
+                      disabled={Boolean(dockerActionBusy)}
+                      style={{ padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#0284c7', border: 'none', color: '#fff' }}
+                      title="Crea o recrea el contenedor aplicando los parámetros actuales de los desplegables"
+                    >
+                      {dockerActionBusy === 'whisper:create' ? 'Creando...' : '⚡ Crear con ajustes'}
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
