@@ -76,7 +76,7 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
 
   const generatedDockerRunTts = `docker run -d --name wyoming-piper \\
   --restart unless-stopped \\
-  -p ${ttsPort}:10200 \\
+  -p 127.0.0.1:${ttsPort}:10200 \\
   -v wyoming_piper_data:/data \\
   rhasspy/wyoming-piper:latest \\
   --voice ${ttsVoice} \\
@@ -84,7 +84,7 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
 
   const generatedDockerRunStt = `docker run -d --name wyoming-whisper \\
   --restart unless-stopped \\
-  -p ${sttPort}:10300 \\
+  -p 127.0.0.1:${sttPort}:10300 \\
   -v wyoming_whisper_data:/data \\
   rhasspy/wyoming-whisper:latest \\
   --model ${sttModel} \\
@@ -97,7 +97,7 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     container_name: wyoming-piper
     restart: unless-stopped
     ports:
-      - "${ttsPort}:10200"
+      - "127.0.0.1:${ttsPort}:10200"
     volumes:
       - piper-data:/data
     command:
@@ -111,7 +111,7 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     container_name: wyoming-whisper
     restart: unless-stopped
     ports:
-      - "${sttPort}:10300"
+      - "127.0.0.1:${sttPort}:10300"
     volumes:
       - whisper-data:/data
     command:
@@ -382,9 +382,9 @@ volumes:
                 type="text"
                 value={ttsVoice}
                 onChange={(e) => onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value })}
-                placeholder="es_MX-claude-high"
-                title="Nombre de la voz en Piper (ej: es_MX-claude-high)"
-                style={{ width: '150px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+                placeholder="Nombre de la voz (ej: es_ES-davefx-medium)"
+                title="Nombre de la voz en Piper (ej: es_ES-davefx-medium)"
+                style={{ width: '180px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
               />
             </div>
           </div>
