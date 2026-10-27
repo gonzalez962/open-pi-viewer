@@ -106,8 +106,16 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '0 8px',
+        width: '30px',
+        height: '30px',
+        borderRadius: '50%',
+        border: isRecording ? '1px solid #ef4444' : '1px solid var(--border-color, #404040)',
+        background: isRecording ? 'rgba(239, 68, 68, 0.2)' : 'var(--card-bg, #262626)',
         color: isRecording ? '#ef4444' : 'inherit',
+        cursor: disabled || isTranscribing ? 'not-allowed' : 'pointer',
+        boxShadow: isRecording ? '0 0 8px rgba(239, 68, 68, 0.4)' : '0 1px 3px rgba(0,0,0,0.2)',
+        transition: 'all 0.15s ease',
+        fontSize: '0.9rem',
       }}
     >
       {isTranscribing ? '⏳' : isRecording ? '🛑' : '🎤'}

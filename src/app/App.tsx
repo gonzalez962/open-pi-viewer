@@ -23,6 +23,7 @@ import {
 } from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
+import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
 import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import {
@@ -2139,41 +2140,63 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            <textarea
-              id="prompt-input"
-              name="prompt"
-              aria-label={t('prompt.label')}
-              className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (commandPalette.handleKeyDown(e)) return;
-                handleKeyDown(e);
-              }}
-              role="combobox"
-              aria-expanded={commandPalette.isOpen}
-              aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
-              aria-autocomplete="list"
-              placeholder={
-                isConnecting
-                  ? t('prompt.placeholder_connecting')
-                  : state.isResetting
-                    ? t('prompt.placeholder_resetting')
-                    : !state.isHydrated && isConnected
-                      ? t('prompt.placeholder_hydrating')
-                      : state.connectionStatus === 'error'
-                        ? t('prompt.placeholder_error')
-                        : !isConnected
-                          ? t('prompt.placeholder_offline')
-                          : isBusy
-                            ? t('prompt.placeholder_busy')
-                            : t('prompt.placeholder_ready')
-              }
-              disabled={!isReadyToSend && !canQueue}
-              aria-disabled={!isReadyToSend && !canQueue}
-              aria-describedby="prompt-status-hint"
-              rows={3}
-            />
+            <div style={{ position: 'relative' }}>
+              <textarea
+                id="prompt-input"
+                name="prompt"
+                aria-label={t('prompt.label')}
+                className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (commandPalette.handleKeyDown(e)) return;
+                  handleKeyDown(e);
+                }}
+                role="combobox"
+                aria-expanded={commandPalette.isOpen}
+                aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
+                aria-autocomplete="list"
+                placeholder={
+                  isConnecting
+                    ? t('prompt.placeholder_connecting')
+                    : state.isResetting
+                      ? t('prompt.placeholder_resetting')
+                      : !state.isHydrated && isConnected
+                        ? t('prompt.placeholder_hydrating')
+                        : state.connectionStatus === 'error'
+                          ? t('prompt.placeholder_error')
+                          : !isConnected
+                            ? t('prompt.placeholder_offline')
+                            : isBusy
+                              ? t('prompt.placeholder_busy')
+                              : t('prompt.placeholder_ready')
+                }
+                disabled={!isReadyToSend && !canQueue}
+                aria-disabled={!isReadyToSend && !canQueue}
+                aria-describedby="prompt-status-hint"
+                rows={3}
+                style={{ paddingRight: preferences.speech?.sttEnabled ? '42px' : undefined }}
+              />
+
+              {preferences.speech?.sttEnabled && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    bottom: '12px',
+                    zIndex: 5,
+                  }}
+                >
+                  <PromptMicButton
+                    preferences={preferences.speech}
+                    onTranscription={(transcribedText) => {
+                      setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+                    }}
+                    disabled={isBusy}
+                  />
+                </div>
+              )}
+            </div>
 
             {commandPalette.isOpen && (
               <CommandPalettePopover

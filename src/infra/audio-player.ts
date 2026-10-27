@@ -1,4 +1,7 @@
 let sharedSpeechContext: AudioContext | null = null;
+let currentSourceNode: AudioBufferSourceNode | null = null;
+let currentAudioElement: HTMLAudioElement | null = null;
+let activePlaybackListeners: Array<() => void> = [];
 
 function getSpeechAudioContext(): AudioContext | null {
   try {
@@ -17,11 +20,45 @@ function getSpeechAudioContext(): AudioContext | null {
 }
 
 /**
+ * Stops any actively playing TTS audio immediately across both Web Audio and HTML5 element.
+ */
+export function stopSpeechAudio(): void {
+  if (currentSourceNode) {
+    try {
+      currentSourceNode.stop();
+    } catch {}
+    currentSourceNode = null;
+  }
+  if (currentAudioElement) {
+    try {
+      currentAudioElement.pause();
+      currentAudioElement.currentTime = 0;
+    } catch {}
+    currentAudioElement = null;
+  }
+  const listeners = [...activePlaybackListeners];
+  activePlaybackListeners = [];
+  for (const fn of listeners) {
+    try { fn(); } catch {}
+  }
+}
+
+/**
+ * Returns true if speech audio is currently playing.
+ */
+export function isSpeechAudioPlaying(): boolean {
+  return currentSourceNode !== null || currentAudioElement !== null;
+}
+
+/**
  * Plays a base64-encoded WAV audio buffer with high-fidelity anti-aliasing resampling
  * via Web Audio API, with soft gain headroom to prevent inter-sample DAC clipping,
  * falling back gracefully to HTML5 Audio Element if needed.
  */
 export async function playWavBase64(base64: string, volume = 0.9): Promise<void> {
+  // Stop any previously playing audio before starting new playback
+  stopSpeechAudio();
+
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -35,21 +72,31 @@ export async function playWavBase64(base64: string, volume = 0.9): Promise<void>
       if (ctx.state === 'suspended') {
         await ctx.resume();
       }
-      // decodeAudioData detaches the buffer, so pass an isolated copy
       const copy = bytes.buffer.slice(0);
       const audioBuffer = await ctx.decodeAudioData(copy);
 
       const source = ctx.createBufferSource();
       const gainNode = ctx.createGain();
-      // Leave slight headroom to prevent inter-sample digital clipping on peaking models
       gainNode.gain.setValueAtTime(Math.max(0.05, Math.min(1.0, volume)), ctx.currentTime);
 
       source.buffer = audioBuffer;
       source.connect(gainNode);
       gainNode.connect(ctx.destination);
 
+      currentSourceNode = source;
+
       return new Promise<void>((resolve) => {
-        source.onended = () => resolve();
+        const cleanup = () => {
+          if (currentSourceNode === source) {
+            currentSourceNode = null;
+          }
+          const idx = activePlaybackListeners.indexOf(cleanup);
+          if (idx !== -1) activePlaybackListeners.splice(idx, 1);
+          resolve();
+        };
+
+        activePlaybackListeners.push(cleanup);
+        source.onended = cleanup;
         source.start(0);
       });
     } catch {
@@ -62,17 +109,28 @@ export async function playWavBase64(base64: string, volume = 0.9): Promise<void>
     const blob = new Blob([bytes], { type: 'audio/wav' });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    currentAudioElement = audio;
     audio.volume = Math.max(0.05, Math.min(1.0, volume));
-    audio.onended = () => {
+
+    const cleanup = () => {
+      if (currentAudioElement === audio) {
+        currentAudioElement = null;
+      }
+      const idx = activePlaybackListeners.indexOf(cleanup);
+      if (idx !== -1) activePlaybackListeners.splice(idx, 1);
       URL.revokeObjectURL(url);
       resolve();
     };
+
+    activePlaybackListeners.push(cleanup);
+
+    audio.onended = cleanup;
     audio.onerror = (e) => {
-      URL.revokeObjectURL(url);
+      cleanup();
       reject(e);
     };
     audio.play().catch((err) => {
-      URL.revokeObjectURL(url);
+      cleanup();
       reject(err);
     });
   });

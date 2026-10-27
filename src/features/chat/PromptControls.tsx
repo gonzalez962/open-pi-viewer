@@ -472,14 +472,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
         </button>
       )}
 
-      {speechPreferences?.sttEnabled && onTranscription && (
-        <PromptMicButton
-          preferences={speechPreferences}
-          onTranscription={onTranscription}
-          disabled={isBusy}
-        />
-      )}
-
       {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}
 
       {/* File Attachment Selector */}
