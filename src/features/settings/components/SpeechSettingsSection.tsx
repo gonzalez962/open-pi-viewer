@@ -305,9 +305,6 @@ volumes:
               placeholder="sk-..."
               style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
             />
-            <span style={{ fontSize: '0.75rem', opacity: 0.65 }}>
-              También se detecta la variable de entorno <code>OPENAI_API_KEY</code>.
-            </span>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>

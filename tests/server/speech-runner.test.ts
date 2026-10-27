@@ -118,9 +118,9 @@ describe('Speech Inference Runners', () => {
     assert.equal(res.confidence, 1.0);
   });
 
-  it('synthesizeTts throws clear error when ttsProvider is openai but apiKey is missing', async () => {
+  it('synthesizeTts throws clear error when ttsProvider is openai but apiKey is missing even if OPENAI_API_KEY is in env', async () => {
     const origKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-env-key-that-must-be-ignored';
     try {
       const prefs: SpeechPreferences = {
         ttsEnabled: true,
@@ -132,16 +132,17 @@ describe('Speech Inference Runners', () => {
 
       await assert.rejects(
         async () => synthesizeTts({ text: 'Hola mundo', preferences: prefs }),
-        /OpenAI Speech \(TTS\) requiere una API key/
+        /OpenAI Speech \(TTS\) requiere una API key configurada en Ajustes/
       );
     } finally {
       if (origKey !== undefined) process.env.OPENAI_API_KEY = origKey;
+      else delete process.env.OPENAI_API_KEY;
     }
   });
 
-  it('transcribeStt throws clear error when sttProvider is openai but apiKey is missing', async () => {
+  it('transcribeStt throws clear error when sttProvider is openai but apiKey is missing even if OPENAI_API_KEY is in env', async () => {
     const origKey = process.env.OPENAI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-env-key-that-must-be-ignored';
     try {
       const prefs: SpeechPreferences = {
         ttsEnabled: false,
@@ -157,10 +158,11 @@ describe('Speech Inference Runners', () => {
             audioBuffer: Buffer.from('AUDIO-DATA'),
             preferences: prefs,
           }),
-        /OpenAI Speech \(STT\) requiere una API key/
+        /OpenAI Speech \(STT\) requiere una API key configurada en Ajustes/
       );
     } finally {
       if (origKey !== undefined) process.env.OPENAI_API_KEY = origKey;
+      else delete process.env.OPENAI_API_KEY;
     }
   });
 });

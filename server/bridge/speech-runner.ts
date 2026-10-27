@@ -218,10 +218,10 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
 
   // 1. If OpenAI TTS provider is selected, dispatch to OpenAI /v1/audio/speech
   if (preferences.ttsProvider === 'openai') {
-    const apiKey = preferences.openAiApiKey || process.env.OPENAI_API_KEY || '';
+    const apiKey = (preferences.openAiApiKey || '').trim();
     if (!apiKey) {
       throw new Error(
-        'OpenAI Speech (TTS) requiere una API key. Configúrala en Ajustes > Voz > OpenAI API Key o mediante la variable de entorno OPENAI_API_KEY.'
+        'OpenAI Speech (TTS) requiere una API key configurada en Ajustes > Voz > OpenAI API Key.'
       );
     }
 
@@ -394,10 +394,10 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
 
   // 1. If OpenAI STT provider is selected, dispatch to OpenAI /v1/audio/transcriptions
   if (preferences.sttProvider === 'openai') {
-    const apiKey = preferences.openAiApiKey || process.env.OPENAI_API_KEY || '';
+    const apiKey = (preferences.openAiApiKey || '').trim();
     if (!apiKey) {
       throw new Error(
-        'OpenAI Speech (STT) requiere una API key. Configúrala en Ajustes > Voz > OpenAI API Key o mediante la variable de entorno OPENAI_API_KEY.'
+        'OpenAI Speech (STT) requiere una API key configurada en Ajustes > Voz > OpenAI API Key.'
       );
     }
 
