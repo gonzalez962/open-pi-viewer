@@ -148,6 +148,7 @@ import { useConversationExport } from '@features/chat/hooks/useConversationExpor
 import { ExportToast } from '@features/chat/components/ExportToast';
 import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
+import { useAutoSpeech } from '@features/chat/hooks/useAutoSpeech';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
 import { getAgentWorkingStatus } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
@@ -854,6 +855,16 @@ export const App: React.FC = () => {
     prompt,
     setPrompt,
     commands: visibleCommandCatalog,
+  });
+
+  // Automatic text-to-speech for assistant responses upon completion.
+  // Bound strictly to the React view lifecycle: if the web view is closed/unloaded,
+  // no TTS synthesis is dispatched, saving Wyoming voice processing.
+  useAutoSpeech({
+    messages: state.messages,
+    agentActivity: state.agentActivity,
+    sessionId: state.sessionId,
+    preferences: preferences.speech,
   });
 
   // Dynamic application status and window title / favicon updater
@@ -1971,7 +1982,7 @@ export const App: React.FC = () => {
                                 />
                                 {preferences.speech?.ttsEnabled && (
                                   <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
-                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} />
+                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} messageId={msg.id} />
                                   </div>
                                 )}
                               </div>
@@ -1985,7 +1996,7 @@ export const App: React.FC = () => {
                         <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
                         {preferences.speech?.ttsEnabled && msg.role !== 'user' && (
                           <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
-                            <MessageSpeechButton text={msg.content} preferences={preferences.speech} />
+                            <MessageSpeechButton text={msg.content} preferences={preferences.speech} messageId={msg.id} />
                           </div>
                         )}
                       </div>
