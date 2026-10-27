@@ -104,22 +104,29 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
       title={isRecording ? 'Detener grabación de voz' : 'Hablar (STT Local)'}
       style={{
         position: 'absolute',
-        left: '10px',
+        left: '8px',
         bottom: '8px',
         zIndex: 5,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        width: '28px',
-        height: '28px',
-        borderRadius: '50%',
-        border: isRecording ? '1px solid #ef4444' : '1px solid var(--border-muted, #404040)',
-        background: isRecording ? 'rgba(239, 68, 68, 0.25)' : 'var(--custom-bg-prompt, var(--bg-surface, #262626))',
+        width: '26px',
+        height: '26px',
+        borderRadius: '6px',
+        border: isRecording ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.1)',
+        background: isRecording
+          ? 'rgba(239, 68, 68, 0.3)'
+          : 'rgba(30, 30, 30, 0.65)',
+        backdropFilter: 'blur(6px)',
+        WebkitBackdropFilter: 'blur(6px)',
         color: isRecording ? '#ef4444' : 'inherit',
         cursor: disabled || isTranscribing ? 'not-allowed' : 'pointer',
-        boxShadow: isRecording ? '0 0 8px rgba(239, 68, 68, 0.5)' : '0 1px 3px rgba(0,0,0,0.3)',
+        boxShadow: isRecording
+          ? '0 0 10px rgba(239, 68, 68, 0.6)'
+          : '0 2px 5px rgba(0, 0, 0, 0.25)',
         transition: 'all 0.15s ease',
-        fontSize: '0.85rem',
+        fontSize: '0.82rem',
+        opacity: isRecording ? 1 : 0.85,
       }}
     >
       {isTranscribing ? '⏳' : isRecording ? '🛑' : '🎤'}
