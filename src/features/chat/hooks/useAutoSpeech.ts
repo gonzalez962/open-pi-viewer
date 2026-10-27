@@ -1,15 +1,18 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage, AgentActivity, TextBlock } from '@core/types/messages';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
+import { cleanMarkdownForSpeech } from '@core/markdown';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
 import { playWavBase64, stopSpeechAudio } from '@infra/audio-player';
 
 /**
  * Extracts readable assistant speech text from a ChatMessage.
  * Prefers text blocks over raw content when structured activity blocks are present,
- * avoiding speaking raw tool call payloads, thinking tokens, or error envelopes.
+ * avoiding speaking raw tool call payloads, thinking tokens, or error envelopes,
+ * and strips Markdown syntax so TTS articulates natural spoken prose.
  */
 export function extractAssistantSpeechText(msg: ChatMessage): string {
+  let raw = '';
   if (msg.blocks && msg.blocks.length > 0) {
     const textBlocks = msg.blocks.filter(
       (b): b is TextBlock => b.type === 'text' && typeof (b as TextBlock).text === 'string'
@@ -20,11 +23,14 @@ export function extractAssistantSpeechText(msg: ChatMessage): string {
         .filter((t) => t.length > 0)
         .join('\n\n');
       if (combined.length > 0) {
-        return combined;
+        raw = combined;
       }
     }
   }
-  return (msg.content || '').trim();
+  if (!raw) {
+    raw = msg.content || '';
+  }
+  return cleanMarkdownForSpeech(raw);
 }
 
 export interface ShouldTriggerAutoSpeechParams {

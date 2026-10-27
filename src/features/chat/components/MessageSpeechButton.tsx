@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
+import { cleanMarkdownForSpeech } from '@core/markdown';
 import {
   playWavBase64,
   pauseSpeechAudio,
@@ -69,7 +70,9 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
         ...preferences,
         ttsEnabled: true,
       };
-      const audioBase64 = await synthesize(text, activePrefs, activePrefs.ttsRate);
+      const speechText = cleanMarkdownForSpeech(text);
+      if (!speechText) return;
+      const audioBase64 = await synthesize(speechText, activePrefs, activePrefs.ttsRate);
       if (audioBase64) {
         await playWavBase64(audioBase64, 0.9, trackKey);
       }
