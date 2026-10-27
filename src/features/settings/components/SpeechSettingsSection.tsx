@@ -312,7 +312,7 @@ volumes:
       <div className="settings-field-group">
         <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem' }}>Servicios de Voz Containerizados (TTS & STT)</h3>
         <p style={{ margin: 0, opacity: 0.75, fontSize: '0.9rem', lineHeight: '1.4' }}>
-          La inferencia de voz se ejecuta 100% local a través de contenedores Docker compatibles con el estándar Wyoming Protocol (Piper para síntesis y Faster-Whisper para transcripción).
+          Wyoming permite inferencia local mediante contenedores Docker (Piper para síntesis y Faster-Whisper para transcripción); los proveedores de API envían audio o texto a su servidor configurado.
           No requiere descargas manuales de modelos ni binarios externos en el sistema operativo.
         </p>
       </div>
@@ -735,43 +735,47 @@ volumes:
         </div>
 
         {/* STT Provider Selector */}
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '16px' }}>
-          <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Proveedor de STT:</label>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              type="button"
-              onClick={() => onSpeechPreferencesChange({ sttProvider: 'wyoming' })}
-              style={{
-                padding: '6px 14px',
-                fontSize: '0.82rem',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                background: (preferences.sttProvider || 'wyoming') === 'wyoming' ? '#3b82f6' : 'rgba(255,255,255,0.06)',
-                border: '1px solid var(--border-color, #4b5563)',
-                color: (preferences.sttProvider || 'wyoming') === 'wyoming' ? '#fff' : 'inherit',
-              }}
-            >
-              Wyoming / Whisper (Docker Local)
-            </button>
-            <button
-              type="button"
-              onClick={() => onSpeechPreferencesChange({ sttProvider: 'openai' })}
-              style={{
-                padding: '6px 14px',
-                fontSize: '0.82rem',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                background: preferences.sttProvider === 'openai' ? '#3b82f6' : 'rgba(255,255,255,0.06)',
-                border: '1px solid var(--border-color, #4b5563)',
-                color: preferences.sttProvider === 'openai' ? '#fff' : 'inherit',
-              }}
-            >
-              OpenAI API (/v1/audio/transcriptions)
-            </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px', minWidth: 0 }}>
+          <span id="stt-provider-label" style={{ fontSize: '0.85rem', fontWeight: 600 }}>Proveedor de STT</span>
+          <div role="group" aria-labelledby="stt-provider-label" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {([
+              { id: 'wyoming', label: 'Whisper local', title: 'Wyoming / Whisper (Docker local)' },
+              { id: 'openai', label: 'OpenAI Audio', title: 'OpenAI Audio API' },
+              { id: 'openai-compatible', label: 'API compatible', title: 'OpenAI-compatible audio chat (solo web)' },
+            ] as const).map(({ id, label, title }) => {
+              const selected = (preferences.sttProvider || 'wyoming') === id;
+              return (
+                <button key={id} type="button" title={title} aria-pressed={selected}
+                  onClick={() => onSpeechPreferencesChange({ sttProvider: id })}
+                  style={{
+                    padding: '8px 14px', fontSize: '0.82rem', fontWeight: 600, borderRadius: '6px',
+                    cursor: 'pointer', background: selected ? '#2563eb' : 'rgba(255,255,255,0.06)',
+                    border: selected ? '1px solid #3b82f6' : '1px solid var(--border-color, #4b5563)',
+                    color: selected ? '#fff' : 'inherit', whiteSpace: 'normal',
+                  }}>
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {preferences.sttProvider === 'openai' ? (
+        {preferences.sttProvider === 'openai-compatible' ? (
+          <div style={{ display: 'grid', gap: '14px', marginBottom: '20px', minWidth: 0 }}>
+            <div style={{ padding: '12px 14px', borderRadius: '6px', background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)', fontSize: '0.8rem', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+              <strong>Solo web.</strong> El audio se envía al proveedor configurado. La clave se guarda sin cifrar en las preferencias del navegador y del servidor; usa HTTPS y un servidor de confianza.
+            </div>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>URL base de API
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="text" value={preferences.compatibleSttBaseUrl || ''} onChange={(e) => onSpeechPreferencesChange({ compatibleSttBaseUrl: e.target.value })} placeholder="https://api.example.com/v1" />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>API key
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="password" value={preferences.compatibleSttApiKey || ''} onChange={(e) => onSpeechPreferencesChange({ compatibleSttApiKey: e.target.value })} autoComplete="off" />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>ID del modelo con entrada de audio
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="text" value={preferences.compatibleSttModel || ''} onChange={(e) => onSpeechPreferencesChange({ compatibleSttModel: e.target.value })} placeholder="model-id" />
+            </label>
+          </div>
+        ) : preferences.sttProvider === 'openai' ? (
           /* OpenAI STT Configuration */
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1020,7 +1024,7 @@ volumes:
                 }}
               >
                 {isTranscribing
-                  ? 'Transcribiendo con Whisper...'
+                  ? 'Transcribiendo audio...'
                   : testSttRecording
                     ? '🛑 Detener grabación y probar'
                     : '🎤 Grabar audio de prueba'}

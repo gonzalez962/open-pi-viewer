@@ -50,6 +50,30 @@ describe('Compatible audio STT', () => {
     });
   });
 
+  it('does not expose credentials from upstream errors', async () => {
+    const original = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = (async () => { called = true; return new Response(JSON.stringify({ error: { message: 'test-key' } }), { status: 401 }); }) as typeof fetch;
+    try {
+      await assert.rejects(transcribeStt({ audioBuffer, mimeType: 'audio/wav', preferences }), (error: Error) => {
+        assert.ok(!error.message.includes('test-key'));
+        assert.equal(called, true);
+        return true;
+      });
+    } finally { globalThis.fetch = original; }
+  });
+
+  it('rejects transport failures without exposing credentials', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new Error('test-key'); }) as typeof fetch;
+    try {
+      await assert.rejects(transcribeStt({ audioBuffer, mimeType: 'audio/wav', preferences }), (error: Error) => {
+        assert.ok(!error.message.includes('test-key'));
+        return true;
+      });
+    } finally { globalThis.fetch = original; }
+  });
+
   it('S2.3 rejects a response without the transcription tag', async () => {
     await withResponse('This is not tagged', async (calls) => {
       await assert.rejects(transcribeStt({ audioBuffer, mimeType: 'audio/wav', preferences }), /transcription/i);

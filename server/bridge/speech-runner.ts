@@ -1,4 +1,5 @@
 import type { SpeechPreferences } from '../../src/core/types/speech';
+import { transcribeCompatibleAudio } from './openai-compatible-audio-stt';
 import {
   synthesizeWyomingTts,
   transcribeWyomingStt,
@@ -133,6 +134,14 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
 
   if (sttRunnerOverride) {
     const text = await sttRunnerOverride(audioBuffer, preferences);
+    return { text, confidence: 1.0 };
+  }
+
+  if (preferences.sttProvider === 'openai-compatible') {
+    const text = await transcribeCompatibleAudio({
+      audioBuffer, mimeType: options.mimeType, baseUrl: preferences.compatibleSttBaseUrl,
+      apiKey: preferences.compatibleSttApiKey, model: preferences.compatibleSttModel,
+    });
     return { text, confidence: 1.0 };
   }
 

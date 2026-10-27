@@ -18,7 +18,10 @@ export interface SpeechPreferences {
   selectedTtsPackId?: string;
   selectedSttPackId?: string;
   ttsProvider?: SpeechProvider; // 'wyoming' (default) | 'openai'
-  sttProvider?: SpeechProvider; // 'wyoming' (default) | 'openai'
+  sttProvider?: SpeechProvider | 'openai-compatible';
+  compatibleSttBaseUrl?: string;
+  compatibleSttApiKey?: string;
+  compatibleSttModel?: string;
   openAiApiKey?: string;
   openAiBaseUrl?: string; // defaults to "https://api.openai.com/v1"
   openAiTtsModel?: string; // "tts-1" | "tts-1-hd"
@@ -151,8 +154,12 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
   const ttsProvider: SpeechProvider =
     rec.ttsProvider === 'openai' ? 'openai' : 'wyoming';
 
-  const sttProvider: SpeechProvider =
-    rec.sttProvider === 'openai' ? 'openai' : 'wyoming';
+  const sttProvider: SpeechPreferences['sttProvider'] =
+    rec.sttProvider === 'openai' || rec.sttProvider === 'openai-compatible' ? rec.sttProvider : 'wyoming';
+
+  const compatibleSttBaseUrl = typeof rec.compatibleSttBaseUrl === 'string' ? rec.compatibleSttBaseUrl.trim() : '';
+  const compatibleSttApiKey = typeof rec.compatibleSttApiKey === 'string' ? rec.compatibleSttApiKey.trim() : '';
+  const compatibleSttModel = typeof rec.compatibleSttModel === 'string' ? rec.compatibleSttModel.trim() : '';
 
   const openAiApiKey =
     typeof rec.openAiApiKey === 'string' && rec.openAiApiKey.trim()
@@ -191,6 +198,9 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
     selectedSttPackId,
     ttsProvider,
     sttProvider,
+    ...(compatibleSttBaseUrl ? { compatibleSttBaseUrl } : {}),
+    ...(compatibleSttApiKey ? { compatibleSttApiKey } : {}),
+    ...(compatibleSttModel ? { compatibleSttModel } : {}),
     ...(openAiApiKey ? { openAiApiKey } : {}),
     openAiBaseUrl,
     openAiTtsModel,
