@@ -8,7 +8,7 @@ import {
   validateSpeechPreferences,
   validateCustomModelConfig,
 } from '@core/types/speech';
-import { PreferencesController, type UiPreferences } from '@infra/preferences';
+import { PreferencesController, loadUiPreferences, type UiPreferences } from '@infra/preferences';
 
 function createMockStorage(initialData: Record<string, string> = {}): Storage {
   const store = new Map<string, string>(Object.entries(initialData));
@@ -23,6 +23,27 @@ function createMockStorage(initialData: Record<string, string> = {}): Storage {
 }
 
 describe('Speech types and preferences validation', () => {
+  it('S1.1 persists and reloads independent compatible audio STT settings', () => {
+    const storage = createMockStorage();
+    let current: UiPreferences = { language: 'en', theme: 'dark' };
+    const controller = new PreferencesController({ storage, getPreferences: () => current,
+      setPreferences: (value) => { current = value; }, setWarning: () => {} });
+    controller.setSpeechPreferences({
+      sttProvider: 'openai-compatible' as any,
+      compatibleSttBaseUrl: 'https://audio.example/v1',
+      compatibleSttApiKey: 'test-key',
+      compatibleSttModel: 'audio-model',
+      openAiApiKey: 'existing-key',
+      wyomingSttUrl: 'tcp://localhost:1234',
+    } as any);
+    const speech = loadUiPreferences(storage).preferences.speech as any;
+    assert.equal(speech.sttProvider, 'openai-compatible');
+    assert.equal(speech.compatibleSttBaseUrl, 'https://audio.example/v1');
+    assert.equal(speech.compatibleSttApiKey, 'test-key');
+    assert.equal(speech.compatibleSttModel, 'audio-model');
+    assert.equal(speech.openAiApiKey, 'existing-key');
+    assert.equal(speech.wyomingSttUrl, 'tcp://localhost:1234');
+  });
   it('default speech preferences configure Wyoming docker containers and OpenAI API defaults', () => {
     assert.equal(DEFAULT_SPEECH_PREFERENCES.ttsEnabled, false);
     assert.equal(DEFAULT_SPEECH_PREFERENCES.sttEnabled, false);
