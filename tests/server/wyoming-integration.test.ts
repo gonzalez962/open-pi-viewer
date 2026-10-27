@@ -40,6 +40,13 @@ describe('Wyoming Client & Speech Runner Integration', () => {
     assert.equal(wavHeader, 'RIFF');
   });
 
+  it('synthesizes multi-paragraph text with punctuation and code omission without dropping connection', async () => {
+    const text = 'Párrafo uno con puntos suspensivos... Y segundo párrafo con [bloque de código omitido]. ¿Todo bien?';
+    const res = await synthesizeWyomingTts(text, 'tcp://127.0.0.1:10200');
+    assert.ok(res.wavBuffer.length > 1000);
+    assert.ok(res.durationSeconds && res.durationSeconds > 1);
+  });
+
   it('transcribes speech using Wyoming Whisper', async () => {
     // 1. Generate audio
     const tts = await synthesizeWyomingTts('buenos días', 'tcp://127.0.0.1:10200');
