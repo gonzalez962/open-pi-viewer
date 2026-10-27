@@ -2175,14 +2175,14 @@ export const App: React.FC = () => {
                 aria-disabled={!isReadyToSend && !canQueue}
                 aria-describedby="prompt-status-hint"
                 rows={3}
-                style={{ paddingRight: preferences.speech?.sttEnabled ? '42px' : undefined }}
+                style={{ paddingLeft: preferences.speech?.sttEnabled ? '44px' : undefined }}
               />
 
               {preferences.speech?.sttEnabled && (
                 <div
                   style={{
                     position: 'absolute',
-                    right: '10px',
+                    left: '10px',
                     bottom: '12px',
                     zIndex: 5,
                   }}
