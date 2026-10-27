@@ -85,6 +85,8 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
     synthesize,
     transcribe,
     checkWyomingStatus,
+    manageDockerService,
+    getDockerStatus,
     isSynthesizing,
     isTranscribing,
   } = useSpeech();
@@ -102,6 +104,11 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
   const [wyomingSttHealth, setWyomingSttHealth] = useState<{ ok: boolean; info?: any; error?: string } | null>(null);
   const [isCheckingWyoming, setIsCheckingWyoming] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const [dockerPiperStatus, setDockerPiperStatus] = useState<{ exists: boolean; state: string; statusText?: string } | null>(null);
+  const [dockerWhisperStatus, setDockerWhisperStatus] = useState<{ exists: boolean; state: string; statusText?: string } | null>(null);
+  const [dockerActionBusy, setDockerActionBusy] = useState<string | null>(null);
+  const [dockerActionError, setDockerActionError] = useState<string | null>(null);
 
   const ttsUrl = preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200';
   const ttsVoice = preferences.wyomingTtsVoice || 'es_MX-claude-high';
@@ -191,8 +198,37 @@ volumes:
       setWyomingSttHealth(sttRes);
     } catch (err: any) {
       setWyomingSttHealth({ ok: false, error: err.message });
+    }
+    try {
+      const pStatus = await getDockerStatus('piper');
+      setDockerPiperStatus(pStatus);
+    } catch {}
+    try {
+      const wStatus = await getDockerStatus('whisper');
+      setDockerWhisperStatus(wStatus);
+    } catch {}
+    setIsCheckingWyoming(false);
+  };
+
+  const handleDockerAction = async (service: 'piper' | 'whisper', action: 'start' | 'stop' | 'restart' | 'remove') => {
+    const key = `${service}:${action}`;
+    setDockerActionBusy(key);
+    setDockerActionError(null);
+    try {
+      const res = await manageDockerService(service, action, preferences);
+      if (!res.success) {
+        setDockerActionError(`Error ejecutando ${action} en ${service}: ${res.error}`);
+      }
+      if (service === 'piper') {
+        setDockerPiperStatus(res.containerInfo);
+      } else {
+        setDockerWhisperStatus(res.containerInfo);
+      }
+      await refreshWyomingHealth();
+    } catch (err: any) {
+      setDockerActionError(err.message || String(err));
     } finally {
-      setIsCheckingWyoming(false);
+      setDockerActionBusy(null);
     }
   };
 
@@ -268,6 +304,11 @@ volumes:
 
   return (
     <div className="speech-settings-section" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+      {dockerActionError && (
+        <div style={{ padding: '10px 14px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '0.85rem' }}>
+          ✕ {dockerActionError}
+        </div>
+      )}
       <div className="settings-field-group">
         <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem' }}>Servicios de Voz Containerizados (TTS & STT)</h3>
         <p style={{ margin: 0, opacity: 0.75, fontSize: '0.9rem', lineHeight: '1.4' }}>
@@ -506,6 +547,57 @@ volumes:
               </button>
             </div>
 
+            {/* Docker Container Control Panel for Piper */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: '6px', background: 'rgba(0,0,0,0.2)', marginBottom: '16px', border: '1px solid var(--border-color, #374151)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Contenedor Docker (wyoming-piper):</span>
+                <span style={{ fontSize: '0.78rem', opacity: 0.85, padding: '2px 6px', borderRadius: '3px', background: dockerPiperStatus?.state === 'running' ? '#15803d' : '#4b5563', color: '#fff' }}>
+                  {dockerPiperStatus?.state || 'desconocido'}
+                </span>
+                {dockerPiperStatus?.statusText && (
+                  <span style={{ fontSize: '0.75rem', opacity: 0.65 }}>({dockerPiperStatus.statusText})</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('piper', 'start')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
+                  title="Inicia o crea el contenedor de Piper"
+                >
+                  {dockerActionBusy === 'piper:start' ? 'Iniciando...' : '▶ Iniciar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('piper', 'stop')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
+                  title="Detiene el contenedor de Piper"
+                >
+                  {dockerActionBusy === 'piper:stop' ? 'Deteniendo...' : '⏹ Detener'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('piper', 'restart')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
+                  title="Reinicia el contenedor de Piper"
+                >
+                  {dockerActionBusy === 'piper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('piper', 'remove')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
+                  title="Detiene y elimina el contenedor de Piper (rm -f)"
+                >
+                  {dockerActionBusy === 'piper:remove' ? 'Borrando...' : '🗑 Borrar'}
+                </button>
+              </div>
+            </div>
+
             {/* TTS Configuration Fields */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px', marginBottom: '16px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -735,6 +827,57 @@ volumes:
               >
                 {isCheckingWyoming ? 'Verificando...' : 'Reconectar'}
               </button>
+            </div>
+
+            {/* Docker Container Control Panel for Whisper */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: '6px', background: 'rgba(0,0,0,0.2)', marginBottom: '16px', border: '1px solid var(--border-color, #374151)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>Contenedor Docker (wyoming-whisper):</span>
+                <span style={{ fontSize: '0.78rem', opacity: 0.85, padding: '2px 6px', borderRadius: '3px', background: dockerWhisperStatus?.state === 'running' ? '#15803d' : '#4b5563', color: '#fff' }}>
+                  {dockerWhisperStatus?.state || 'desconocido'}
+                </span>
+                {dockerWhisperStatus?.statusText && (
+                  <span style={{ fontSize: '0.75rem', opacity: 0.65 }}>({dockerWhisperStatus.statusText})</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('whisper', 'start')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#16a34a', border: 'none', color: '#fff' }}
+                  title="Inicia o crea el contenedor de Whisper"
+                >
+                  {dockerActionBusy === 'whisper:start' ? 'Iniciando...' : '▶ Iniciar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('whisper', 'stop')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#ea580c', border: 'none', color: '#fff' }}
+                  title="Detiene el contenedor de Whisper"
+                >
+                  {dockerActionBusy === 'whisper:stop' ? 'Deteniendo...' : '⏹ Detener'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('whisper', 'restart')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#2563eb', border: 'none', color: '#fff' }}
+                  title="Reinicia el contenedor de Whisper"
+                >
+                  {dockerActionBusy === 'whisper:restart' ? 'Reiniciando...' : '🔄 Reiniciar'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDockerAction('whisper', 'remove')}
+                  disabled={Boolean(dockerActionBusy)}
+                  style={{ padding: '3px 9px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer', background: '#dc2626', border: 'none', color: '#fff' }}
+                  title="Detiene y elimina el contenedor de Whisper (rm -f)"
+                >
+                  {dockerActionBusy === 'whisper:remove' ? 'Borrando...' : '🗑 Borrar'}
+                </button>
+              </div>
             </div>
 
             {/* STT Configuration Fields */}

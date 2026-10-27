@@ -8,7 +8,10 @@ import {
   transcribeSpeechSttPi,
   checkWyomingServicePi,
   listenSpeechDownloadProgressPi,
+  manageDockerSpeechServicePi,
+  getDockerSpeechStatusPi,
   type SpeechDownloadProgressPayload,
+  type DockerSpeechActionResult,
 } from '../../../infra/bridge';
 import type {
   SpeechPreferences,
@@ -30,6 +33,12 @@ export interface UseSpeechReturn {
   synthesize: (text: string, preferences: SpeechPreferences, rate?: number) => Promise<string | null>;
   transcribe: (audioBase64: string, preferences: SpeechPreferences) => Promise<string | null>;
   checkWyomingStatus: (url: string) => Promise<{ ok: boolean; info?: any; error?: string }>;
+  manageDockerService: (
+    service: 'piper' | 'whisper',
+    action: 'status' | 'start' | 'stop' | 'restart' | 'remove' | 'create',
+    preferences: SpeechPreferences
+  ) => Promise<DockerSpeechActionResult>;
+  getDockerStatus: (service: 'piper' | 'whisper') => Promise<{ exists: boolean; state: string; statusText?: string }>;
 }
 
 export function useSpeech(): UseSpeechReturn {
@@ -168,6 +177,21 @@ export function useSpeech(): UseSpeechReturn {
     }
   }, []);
 
+  const manageDockerService = useCallback(
+    async (
+      service: 'piper' | 'whisper',
+      action: 'status' | 'start' | 'stop' | 'restart' | 'remove' | 'create',
+      preferences: SpeechPreferences
+    ) => {
+      return await manageDockerSpeechServicePi({ service, action, preferences });
+    },
+    []
+  );
+
+  const getDockerStatus = useCallback(async (service: 'piper' | 'whisper') => {
+    return await getDockerSpeechStatusPi({ service });
+  }, []);
+
   return {
     isChecking,
     isDownloading,
@@ -183,5 +207,7 @@ export function useSpeech(): UseSpeechReturn {
     synthesize,
     transcribe,
     checkWyomingStatus,
+    manageDockerService,
+    getDockerStatus,
   };
 }

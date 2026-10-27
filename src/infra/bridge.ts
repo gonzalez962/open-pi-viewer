@@ -3348,6 +3348,50 @@ export async function checkWyomingServicePi(
   return await invokeFn<{ ok: boolean; info?: any; error?: string }>('check_wyoming_service', { payload });
 }
 
+export interface DockerSpeechActionPayload {
+  service: 'piper' | 'whisper';
+  action: 'status' | 'start' | 'stop' | 'restart' | 'remove' | 'create';
+  preferences: SpeechPreferences;
+}
+
+export interface DockerContainerStatusPayload {
+  service: 'piper' | 'whisper';
+}
+
+export interface DockerSpeechActionResult {
+  success: boolean;
+  service: 'piper' | 'whisper';
+  action: string;
+  containerInfo: {
+    exists: boolean;
+    state: 'running' | 'exited' | 'paused' | 'restarting' | 'dead' | 'not_found';
+    statusText?: string;
+    containerId?: string;
+  };
+  output?: string;
+  error?: string;
+}
+
+export async function manageDockerSpeechServicePi(
+  payload: DockerSpeechActionPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<DockerSpeechActionResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Bridge unavailable');
+  }
+  return await invokeFn<DockerSpeechActionResult>('manage_docker_speech_service', { payload });
+}
+
+export async function getDockerSpeechStatusPi(
+  payload: DockerContainerStatusPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<{ exists: boolean; state: string; statusText?: string; containerId?: string }> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { exists: false, state: 'not_found' };
+  }
+  return await invokeFn<{ exists: boolean; state: string; statusText?: string; containerId?: string }>('get_docker_speech_status', { payload });
+}
+
 export interface SpeechDownloadProgressPayload {
   packId: string;
   fileIndex: number;
