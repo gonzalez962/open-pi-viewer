@@ -103,19 +103,23 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
       disabled={disabled || isTranscribing}
       title={isRecording ? 'Detener grabación de voz' : 'Hablar (STT Local)'}
       style={{
+        position: 'absolute',
+        left: '10px',
+        bottom: '8px',
+        zIndex: 5,
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
+        width: '28px',
         height: '28px',
-        padding: '0 8px',
-        borderRadius: 'var(--radius-sm, 4px)',
-        border: isRecording ? '1px solid #ef4444' : '1px solid var(--border-color, #404040)',
-        background: isRecording ? 'rgba(239, 68, 68, 0.2)' : 'var(--card-bg, #262626)',
+        borderRadius: '50%',
+        border: isRecording ? '1px solid #ef4444' : '1px solid var(--border-muted, #404040)',
+        background: isRecording ? 'rgba(239, 68, 68, 0.25)' : 'var(--custom-bg-prompt, var(--bg-surface, #262626))',
         color: isRecording ? '#ef4444' : 'inherit',
         cursor: disabled || isTranscribing ? 'not-allowed' : 'pointer',
-        boxShadow: isRecording ? '0 0 8px rgba(239, 68, 68, 0.4)' : undefined,
+        boxShadow: isRecording ? '0 0 8px rgba(239, 68, 68, 0.5)' : '0 1px 3px rgba(0,0,0,0.3)',
         transition: 'all 0.15s ease',
-        fontSize: '0.9rem',
+        fontSize: '0.85rem',
       }}
     >
       {isTranscribing ? '⏳' : isRecording ? '🛑' : '🎤'}

@@ -435,52 +435,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
 
   return (
     <div ref={toolbarRef} className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
-      {/* Mic button for STT when enabled, positioned first on the left toolbar */}
-      {speechPreferences?.sttEnabled && onTranscription && (
-        <PromptMicButton
-          preferences={speechPreferences}
-          onTranscription={onTranscription}
-          disabled={isBusy}
-        />
-      )}
-
-      {/* 0. Unified Action Button (Send / Cancel / Confirm). While busy, the abort button
-          stays available; a queue-send button joins it only when there is draft text ready
-          to queue as a followUp, so the idle layout is unaffected. */}
-      {isBusy ? (
-        <>
-          <button
-            type="button"
-            className={`prompt-action-btn btn-cancel${isConfirmingCancel ? ' btn-confirming' : ''}`}
-            onClick={handleCancelClick}
-            title={isConfirmingCancel ? t('prompt.confirm_cancel_title') : t('prompt.stop_title')}
-          >
-            {isConfirmingCancel ? t('prompt.confirm_cancel') : t('action.stop')}
-          </button>
-          {canSend && (
-            <button
-              type="submit"
-              className="prompt-action-btn btn-send"
-              title={t('prompt.queue_title')}
-              onClick={onSend ? (e) => { e.preventDefault(); onSend(); } : undefined}
-            >
-              {t('action.queue')}
-            </button>
-          )}
-        </>
-      ) : (
-        <button
-          type="submit"
-          className="prompt-action-btn btn-send"
-          disabled={!canSend}
-          aria-disabled={!canSend}
-          title={t('prompt.send_title')}
-          onClick={onSend ? (e) => { e.preventDefault(); onSend(); } : undefined}
-        >
-          {t('action.send')}
-        </button>
-      )}
-
       {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}
 
       {/* File Attachment Selector */}

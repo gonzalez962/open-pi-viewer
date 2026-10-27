@@ -2140,43 +2140,51 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            <div style={{ position: 'relative', width: '100%' }}>
-              <textarea
-                id="prompt-input"
-                name="prompt"
-                aria-label={t('prompt.label')}
-                className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (commandPalette.handleKeyDown(e)) return;
-                  handleKeyDown(e);
+            <textarea
+              id="prompt-input"
+              name="prompt"
+              aria-label={t('prompt.label')}
+              className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (commandPalette.handleKeyDown(e)) return;
+                handleKeyDown(e);
+              }}
+              role="combobox"
+              aria-expanded={commandPalette.isOpen}
+              aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
+              aria-autocomplete="list"
+              placeholder={
+                isConnecting
+                  ? t('prompt.placeholder_connecting')
+                  : state.isResetting
+                    ? t('prompt.placeholder_resetting')
+                    : !state.isHydrated && isConnected
+                      ? t('prompt.placeholder_hydrating')
+                      : state.connectionStatus === 'error'
+                        ? t('prompt.placeholder_error')
+                        : !isConnected
+                          ? t('prompt.placeholder_offline')
+                          : isBusy
+                            ? t('prompt.placeholder_busy')
+                            : t('prompt.placeholder_ready')
+              }
+              disabled={!isReadyToSend && !canQueue}
+              aria-disabled={!isReadyToSend && !canQueue}
+              aria-describedby="prompt-status-hint"
+              rows={3}
+            />
+
+            {preferences.speech?.sttEnabled && (
+              <PromptMicButton
+                preferences={preferences.speech}
+                onTranscription={(transcribedText) => {
+                  setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
                 }}
-                role="combobox"
-                aria-expanded={commandPalette.isOpen}
-                aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
-                aria-autocomplete="list"
-                placeholder={
-                  isConnecting
-                    ? t('prompt.placeholder_connecting')
-                    : state.isResetting
-                      ? t('prompt.placeholder_resetting')
-                      : !state.isHydrated && isConnected
-                        ? t('prompt.placeholder_hydrating')
-                        : state.connectionStatus === 'error'
-                          ? t('prompt.placeholder_error')
-                          : !isConnected
-                            ? t('prompt.placeholder_offline')
-                            : isBusy
-                              ? t('prompt.placeholder_busy')
-                              : t('prompt.placeholder_ready')
-                }
-                disabled={!isReadyToSend && !canQueue}
-                aria-disabled={!isReadyToSend && !canQueue}
-                aria-describedby="prompt-status-hint"
-                rows={3}
+                disabled={isBusy}
               />
-            </div>
+            )}
 
             {commandPalette.isOpen && (
               <CommandPalettePopover
