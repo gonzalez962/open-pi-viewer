@@ -23,7 +23,7 @@ function createMockStorage(initialData: Record<string, string> = {}): Storage {
 }
 
 describe('Speech types and preferences validation', () => {
-  it('S1.1 persists and reloads independent compatible audio STT settings', () => {
+  it('S1.1 keeps non-secret audio settings while excluding voice keys from browser persistence', () => {
     const storage = createMockStorage();
     let current: UiPreferences = { language: 'en', theme: 'dark' };
     const controller = new PreferencesController({ storage, getPreferences: () => current,
@@ -39,9 +39,11 @@ describe('Speech types and preferences validation', () => {
     const speech = loadUiPreferences(storage).preferences.speech as any;
     assert.equal(speech.sttProvider, 'openai-compatible');
     assert.equal(speech.compatibleSttBaseUrl, 'https://audio.example/v1');
-    assert.equal(speech.compatibleSttApiKey, 'test-key');
+    assert.equal(JSON.stringify(speech).includes('test-key'), false);
+    assert.equal(JSON.stringify(storage.getItem('pi_viewer_ui_preferences')).includes('test-key'), false);
     assert.equal(speech.compatibleSttModel, 'audio-model');
-    assert.equal(speech.openAiApiKey, 'existing-key');
+    assert.equal(JSON.stringify(speech).includes('existing-key'), false);
+    assert.equal(JSON.stringify(storage.getItem('pi_viewer_ui_preferences')).includes('existing-key'), false);
     assert.equal(speech.wyomingSttUrl, 'tcp://localhost:1234');
   });
   it('default speech preferences configure Wyoming docker containers and OpenAI API defaults', () => {
@@ -86,7 +88,7 @@ describe('Speech types and preferences validation', () => {
     assert.equal(validated.sttEnabled, true);
     assert.equal(validated.ttsProvider, 'openai');
     assert.equal(validated.sttProvider, 'openai');
-    assert.equal(validated.openAiApiKey, 'sk-test-key');
+    assert.equal(JSON.stringify(validated).includes('sk-test-key'), false);
     assert.equal(validated.openAiTtsModel, 'tts-1-hd');
     assert.equal(validated.openAiTtsVoice, 'nova');
     assert.equal(validated.openAiSttModel, 'whisper-1');
@@ -131,6 +133,23 @@ describe('Speech types and preferences validation', () => {
     assert.equal(currentPrefs.speech?.ttsEnabled, true);
     assert.equal(currentPrefs.speech?.sttEnabled, false);
     assert.equal(currentPrefs.speech?.ttsRate, 1.5);
+  });
+
+  it('S2.1 exposes separate explicit save actions for STT and TTS', () => {
+    const html = renderToStaticMarkup(React.createElement(SpeechSettingsSection, {
+      preferences: DEFAULT_SPEECH_PREFERENCES, onSpeechPreferencesChange: () => {},
+    }));
+    assert.match(html, /<button\b[^>]*>[^<]*guardar[^<]*tts[^<]*<\/button>/i);
+    assert.match(html, /<button\b[^>]*>[^<]*guardar[^<]*stt[^<]*<\/button>/i);
+  });
+
+  it('S1.1 never reloads a legacy voice secret into the settings form', () => {
+    const html = renderToStaticMarkup(React.createElement(SpeechSettingsSection, {
+      preferences: { ...DEFAULT_SPEECH_PREFERENCES, openAiApiKey: 'legacy-secret', compatibleSttApiKey: 'legacy-compatible', sttProvider: 'openai-compatible' },
+      onSpeechPreferencesChange: () => {},
+    }));
+    assert.equal(html.includes('legacy-secret'), false);
+    assert.equal(html.includes('legacy-compatible'), false);
   });
 
   it('SpeechSettingsSection renders container config and docker compose without crashing', () => {
