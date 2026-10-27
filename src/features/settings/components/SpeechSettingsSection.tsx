@@ -13,6 +13,8 @@ const COMMON_PIPER_VOICES = [
   { id: 'es_MX-claude-high', label: 'Español (México) - Claude (High)' },
   { id: 'es_ES-davefx-medium', label: 'Español (España) - Davefx (Medium)' },
   { id: 'es_ES-sharvard-medium', label: 'Español (España) - Sharvard (Medium)' },
+  { id: 'es_ES-carlfm-x_low', label: 'Español (España) - Carlfm (X-Low)' },
+  { id: 'es_AR-daniela-high', label: 'Español (Argentina) - Daniela (High)' },
   { id: 'en_US-lessac-medium', label: 'English (US) - Lessac (Medium)' },
   { id: 'en_US-amy-medium', label: 'English (US) - Amy (Medium)' },
   { id: 'en_GB-alan-medium', label: 'English (UK) - Alan (Medium)' },
@@ -363,30 +365,15 @@ volumes:
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
             <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Voz del Modelo Piper:</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <select
-                value={COMMON_PIPER_VOICES.some((v) => v.id === ttsVoice) ? ttsVoice : 'custom'}
-                onChange={(e) => {
-                  if (e.target.value !== 'custom') {
-                    onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value });
-                  }
-                }}
-                style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)', flex: 1 }}
-              >
-                {COMMON_PIPER_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-                <option value="custom">Otra voz personalizada...</option>
-              </select>
-              <input
-                type="text"
-                value={ttsVoice}
-                onChange={(e) => onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value })}
-                placeholder="Nombre de la voz (ej: es_ES-davefx-medium)"
-                title="Nombre de la voz en Piper (ej: es_ES-davefx-medium)"
-                style={{ width: '180px', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
-              />
-            </div>
+            <select
+              value={ttsVoice}
+              onChange={(e) => onSpeechPreferencesChange({ wyomingTtsVoice: e.target.value })}
+              style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+            >
+              {COMMON_PIPER_VOICES.map((v) => (
+                <option key={v.id} value={v.id}>{v.label}</option>
+              ))}
+            </select>
           </div>
         </div>
 
