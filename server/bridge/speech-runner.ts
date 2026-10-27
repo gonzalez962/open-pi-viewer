@@ -16,6 +16,10 @@ import {
   synthesizeWyomingTts,
   transcribeWyomingStt,
 } from './wyoming-client';
+import {
+  synthesizeOpenAiTts,
+  transcribeOpenAiStt,
+} from './openai-speech-client';
 
 export interface SynthesizeTtsOptions {
   text: string;
@@ -212,7 +216,32 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
     throw new Error('Cannot synthesize empty text.');
   }
 
-  // 1. If Wyoming Docker URL is configured and available (default), use it directly
+  // 1. If OpenAI TTS provider is selected, dispatch to OpenAI /v1/audio/speech
+  if (preferences.ttsProvider === 'openai') {
+    const apiKey = preferences.openAiApiKey || process.env.OPENAI_API_KEY || '';
+    if (!apiKey) {
+      throw new Error(
+        'OpenAI Speech (TTS) requiere una API key. Configúrala en Ajustes > Voz > OpenAI API Key o mediante la variable de entorno OPENAI_API_KEY.'
+      );
+    }
+
+    const { audioBase64 } = await synthesizeOpenAiTts({
+      text: trimmed,
+      apiKey,
+      baseUrl: preferences.openAiBaseUrl || 'https://api.openai.com/v1',
+      model: preferences.openAiTtsModel || 'tts-1',
+      voice: preferences.openAiTtsVoice || 'alloy',
+      speed: options.rate || preferences.ttsRate || 1.0,
+      responseFormat: 'wav',
+    });
+
+    return {
+      audioBase64,
+      mimeType: 'audio/wav',
+    };
+  }
+
+  // 2. If Wyoming Docker URL is configured and available (default), use it directly
   const wyomingUrl = preferences.wyomingTtsUrl || 'tcp://127.0.0.1:10200';
   const voice = preferences.wyomingTtsVoice || preferences.selectedTtsPackId || 'es_MX-claude-high';
   if (wyomingUrl && !preferences.ttsCustom?.isCustom) {
@@ -363,7 +392,27 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
     throw new Error('Cannot transcribe empty audio buffer.');
   }
 
-  // 1. If Wyoming Docker Whisper URL is configured and available (default), use it directly
+  // 1. If OpenAI STT provider is selected, dispatch to OpenAI /v1/audio/transcriptions
+  if (preferences.sttProvider === 'openai') {
+    const apiKey = preferences.openAiApiKey || process.env.OPENAI_API_KEY || '';
+    if (!apiKey) {
+      throw new Error(
+        'OpenAI Speech (STT) requiere una API key. Configúrala en Ajustes > Voz > OpenAI API Key o mediante la variable de entorno OPENAI_API_KEY.'
+      );
+    }
+
+    const { text } = await transcribeOpenAiStt({
+      audioBuffer,
+      apiKey,
+      baseUrl: preferences.openAiBaseUrl || 'https://api.openai.com/v1',
+      model: preferences.openAiSttModel || 'whisper-1',
+      language: preferences.openAiSttLanguage || 'es',
+    });
+
+    return { text, confidence: 1.0 };
+  }
+
+  // 2. If Wyoming Docker Whisper URL is configured and available (default), use it directly
   const wyomingSttUrl = preferences.wyomingSttUrl || 'tcp://127.0.0.1:10300';
   const language = preferences.wyomingSttLanguage || 'es';
   if (wyomingSttUrl && !preferences.sttCustom?.isCustom) {

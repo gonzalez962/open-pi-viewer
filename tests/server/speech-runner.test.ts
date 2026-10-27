@@ -117,4 +117,50 @@ describe('Speech Inference Runners', () => {
     assert.equal(res.text, 'transcripción exitosa');
     assert.equal(res.confidence, 1.0);
   });
+
+  it('synthesizeTts throws clear error when ttsProvider is openai but apiKey is missing', async () => {
+    const origKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const prefs: SpeechPreferences = {
+        ttsEnabled: true,
+        sttEnabled: false,
+        selectedTtsPackId: 'es_MX-claude-high',
+        selectedSttPackId: 'es-kroko-64l',
+        ttsProvider: 'openai',
+      };
+
+      await assert.rejects(
+        async () => synthesizeTts({ text: 'Hola mundo', preferences: prefs }),
+        /OpenAI Speech \(TTS\) requiere una API key/
+      );
+    } finally {
+      if (origKey !== undefined) process.env.OPENAI_API_KEY = origKey;
+    }
+  });
+
+  it('transcribeStt throws clear error when sttProvider is openai but apiKey is missing', async () => {
+    const origKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    try {
+      const prefs: SpeechPreferences = {
+        ttsEnabled: false,
+        sttEnabled: true,
+        selectedTtsPackId: 'es_MX-claude-high',
+        selectedSttPackId: 'es-kroko-64l',
+        sttProvider: 'openai',
+      };
+
+      await assert.rejects(
+        async () =>
+          transcribeStt({
+            audioBuffer: Buffer.from('AUDIO-DATA'),
+            preferences: prefs,
+          }),
+        /OpenAI Speech \(STT\) requiere una API key/
+      );
+    } finally {
+      if (origKey !== undefined) process.env.OPENAI_API_KEY = origKey;
+    }
+  });
 });

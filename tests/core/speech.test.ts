@@ -54,12 +54,27 @@ describe('Speech types and preferences validation', () => {
       sttEnabled: true,
       selectedTtsPackId: 'es_MX-claude-high',
       selectedSttPackId: 'es-kroko-64l',
+      ttsProvider: 'openai',
+      sttProvider: 'openai',
+      openAiApiKey: 'sk-test-key',
+      openAiBaseUrl: 'https://api.openai.com/v1',
+      openAiTtsModel: 'tts-1-hd',
+      openAiTtsVoice: 'nova',
+      openAiSttModel: 'whisper-1',
+      openAiSttLanguage: 'en',
       ttsRate: 1.25,
       autoSpeakResponses: true,
     };
     const validated = validateSpeechPreferences(input);
     assert.equal(validated.ttsEnabled, true);
     assert.equal(validated.sttEnabled, true);
+    assert.equal(validated.ttsProvider, 'openai');
+    assert.equal(validated.sttProvider, 'openai');
+    assert.equal(validated.openAiApiKey, 'sk-test-key');
+    assert.equal(validated.openAiTtsModel, 'tts-1-hd');
+    assert.equal(validated.openAiTtsVoice, 'nova');
+    assert.equal(validated.openAiSttModel, 'whisper-1');
+    assert.equal(validated.openAiSttLanguage, 'en');
     assert.equal(validated.ttsRate, 1.25);
     assert.equal(validated.autoSpeakResponses, true);
   });
@@ -118,5 +133,8 @@ describe('Speech types and preferences validation', () => {
     assert.ok(html.includes('docker-compose.speech.yml'));
     assert.ok(html.includes('wyoming-piper'));
     assert.ok(html.includes('wyoming-whisper'));
+    assert.ok(html.includes('OpenAI Audio API'));
+    assert.ok(html.includes('/v1/audio/speech'));
+    assert.ok(html.includes('/v1/audio/transcriptions'));
   });
 });

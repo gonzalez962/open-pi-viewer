@@ -3,6 +3,7 @@
  */
 
 export type SpeechEngine = 'piper' | 'sherpa-onnx' | 'wyoming';
+export type SpeechProvider = 'wyoming' | 'openai';
 
 export type ModelIntegrityStatus = 'verified' | 'mismatch' | 'custom' | 'missing' | 'checking';
 
@@ -37,6 +38,14 @@ export interface SpeechPreferences {
   sttEnabled: boolean;
   selectedTtsPackId: string;
   selectedSttPackId: string;
+  ttsProvider?: SpeechProvider; // 'wyoming' (default) | 'openai'
+  sttProvider?: SpeechProvider; // 'wyoming' (default) | 'openai'
+  openAiApiKey?: string;
+  openAiBaseUrl?: string; // defaults to "https://api.openai.com/v1"
+  openAiTtsModel?: string; // "tts-1" | "tts-1-hd"
+  openAiTtsVoice?: string; // "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
+  openAiSttModel?: string; // "whisper-1"
+  openAiSttLanguage?: string; // e.g. "es" | "en" | "auto"
   ttsCustom?: CustomModelConfig;
   sttCustom?: CustomModelConfig;
   ttsRate?: number; // Speed multiplier (e.g. 1.0)
@@ -55,6 +64,13 @@ export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
   sttEnabled: false,
   selectedTtsPackId: 'es_MX-claude-high',
   selectedSttPackId: 'es-kroko-64l',
+  ttsProvider: 'wyoming',
+  sttProvider: 'wyoming',
+  openAiBaseUrl: 'https://api.openai.com/v1',
+  openAiTtsModel: 'tts-1',
+  openAiTtsVoice: 'alloy',
+  openAiSttModel: 'whisper-1',
+  openAiSttLanguage: 'es',
   ttsRate: 1.0,
   autoSpeakResponses: false,
   wyomingTtsUrl: 'tcp://127.0.0.1:10200',
@@ -256,11 +272,55 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
       ? rec.customDockerCommandStt.trim()
       : undefined;
 
+  const ttsProvider: SpeechProvider =
+    rec.ttsProvider === 'openai' ? 'openai' : 'wyoming';
+
+  const sttProvider: SpeechProvider =
+    rec.sttProvider === 'openai' ? 'openai' : 'wyoming';
+
+  const openAiApiKey =
+    typeof rec.openAiApiKey === 'string' && rec.openAiApiKey.trim()
+      ? rec.openAiApiKey.trim()
+      : undefined;
+
+  const openAiBaseUrl =
+    typeof rec.openAiBaseUrl === 'string' && rec.openAiBaseUrl.trim()
+      ? rec.openAiBaseUrl.trim()
+      : DEFAULT_SPEECH_PREFERENCES.openAiBaseUrl;
+
+  const openAiTtsModel =
+    typeof rec.openAiTtsModel === 'string' && rec.openAiTtsModel.trim()
+      ? rec.openAiTtsModel.trim()
+      : DEFAULT_SPEECH_PREFERENCES.openAiTtsModel;
+
+  const openAiTtsVoice =
+    typeof rec.openAiTtsVoice === 'string' && rec.openAiTtsVoice.trim()
+      ? rec.openAiTtsVoice.trim()
+      : DEFAULT_SPEECH_PREFERENCES.openAiTtsVoice;
+
+  const openAiSttModel =
+    typeof rec.openAiSttModel === 'string' && rec.openAiSttModel.trim()
+      ? rec.openAiSttModel.trim()
+      : DEFAULT_SPEECH_PREFERENCES.openAiSttModel;
+
+  const openAiSttLanguage =
+    typeof rec.openAiSttLanguage === 'string' && rec.openAiSttLanguage.trim()
+      ? rec.openAiSttLanguage.trim()
+      : DEFAULT_SPEECH_PREFERENCES.openAiSttLanguage;
+
   return {
     ttsEnabled,
     sttEnabled,
     selectedTtsPackId,
     selectedSttPackId,
+    ttsProvider,
+    sttProvider,
+    ...(openAiApiKey ? { openAiApiKey } : {}),
+    openAiBaseUrl,
+    openAiTtsModel,
+    openAiTtsVoice,
+    openAiSttModel,
+    openAiSttLanguage,
     ...(ttsCustom ? { ttsCustom } : {}),
     ...(sttCustom ? { sttCustom } : {}),
     ttsRate,
