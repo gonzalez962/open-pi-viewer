@@ -20,6 +20,7 @@ import { SettingsSelect } from './components/SettingsSelect';
 import { WebPushEnrollmentModal } from './components/WebPushEnrollmentModal';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
 import { ThemeCustomizer } from './components/ThemeCustomizer';
+import { SpeechSettingsSection } from './components/SpeechSettingsSection';
 import { COMMANDS, type CustomCommand } from '@core/commands';
 import { discoverBaseBinaryPaths } from './reset-binary-paths';
 import type { NotificationPermissionStatus } from '@infra/notification-delivery';
@@ -45,6 +46,8 @@ export interface SettingsViewProps {
   onCustomCommandsChange?: (commands: CustomCommand[]) => void;
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
   onHiddenCommandIdsChange?: (ids: string[]) => void;
+  /** Persists speech preferences. */
+  onSpeechPreferencesChange?: (speech: Partial<any>) => void;
   /** Persists the default projects directory for browsing and cloning. */
   onDefaultProjectsDirectoryChange?: (directory: string | null) => void;
   settingsError: string | null;
@@ -52,7 +55,7 @@ export interface SettingsViewProps {
   isBusy: boolean;
   onSaveAndApply: (e: React.FormEvent) => Promise<void> | void;
   onClose: () => void;
-  initialTab?: 'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions';
+  initialTab?: 'general' | 'theme' | 'speech' | 'profiles' | 'providers' | 'mcp' | 'extensions';
   appearanceController?: AppearanceLifecycleController;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   loadCustomProviders: () => Promise<CustomProviderConfig[]>;
@@ -79,6 +82,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
   onDefaultProjectsDirectoryChange,
+  onSpeechPreferencesChange,
   settingsError,
   settingsStorageNotice,
   isBusy,
@@ -94,7 +98,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   pickDirectoryFn,
   detectGentleShellFn,
 }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'speech' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
   const [isDetectingShell, setIsDetectingShell] = useState(false);
   const [gentleShellNotice, setGentleShellNotice] = useState<{
     type: 'success' | 'error';
@@ -365,6 +369,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             onClick={() => setActiveTab('theme')}
           >
             {t('settings.tab_theme')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'speech'}
+            className={activeTab === 'speech' ? 'settings-tab-btn active' : 'settings-tab-btn'}
+            onClick={() => setActiveTab('speech')}
+          >
+            Voz (TTS/STT)
           </button>
           <button
             type="button"
@@ -1230,6 +1243,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               customLabelColor={preferences.customLabelColor}
               customBackground={preferences.customBackground}
               t={t}
+            />
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'speech' && (
+        <div className="settings-tab-pane" role="tabpanel" aria-label="Speech">
+          <div className="settings-view-body">
+            <SpeechSettingsSection
+              preferences={preferences.speech || {
+                ttsEnabled: false,
+                sttEnabled: false,
+                selectedTtsPackId: 'es_MX-claude-high',
+                selectedSttPackId: 'es-kroko-64l',
+              }}
+              onSpeechPreferencesChange={(partial) => {
+                onSpeechPreferencesChange?.(partial);
+              }}
             />
           </div>
         </div>

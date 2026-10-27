@@ -11,6 +11,11 @@ import {
   sanitizeHiddenCommandIds,
   type CustomCommand,
 } from '@core/commands';
+import {
+  DEFAULT_SPEECH_PREFERENCES,
+  validateSpeechPreferences,
+  type SpeechPreferences,
+} from '@core/types/speech';
 
 export type WorkAnimationMode = 'multicolor' | 'single' | 'dual';
 
@@ -330,6 +335,10 @@ export interface UiPreferences {
    * Default directory configured by the user for opening the folder explorer and cloning repositories.
    */
   defaultProjectsDirectory?: string;
+  /**
+   * Local speech (TTS and STT) preferences.
+   */
+  speech?: SpeechPreferences;
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -606,6 +615,11 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
     }
   }
 
+  let speech: SpeechPreferences | undefined = undefined;
+  if ('speech' in record && record.speech !== undefined) {
+    speech = validateSpeechPreferences(record.speech);
+  }
+
   const valid = warnings.length === 0;
   return {
     valid,
@@ -621,6 +635,7 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
       ...(customCommands !== undefined ? { customCommands } : {}),
       ...(hiddenCommandIds !== undefined ? { hiddenCommandIds } : {}),
       ...(defaultProjectsDirectory !== undefined ? { defaultProjectsDirectory } : {}),
+      ...(speech !== undefined ? { speech } : {}),
     },
     ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
   };
@@ -922,6 +937,28 @@ export class PreferencesController {
     } else {
       delete updated.defaultProjectsDirectory;
     }
+    const saveRes = saveUiPreferences(updated, storage);
+    if (!saveRes.success) {
+      this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');
+    } else {
+      this.options.setWarning(null);
+    }
+    this.options.setPreferences(updated);
+    return updated;
+  }
+
+  setSpeechPreferences(partial: Partial<SpeechPreferences>): UiPreferences {
+    const storage = this.resolveStorage();
+    const current = this.options.getPreferences();
+    const currentSpeech = current.speech || { ...DEFAULT_SPEECH_PREFERENCES };
+    const mergedSpeech = validateSpeechPreferences({
+      ...currentSpeech,
+      ...partial,
+    });
+    const updated: UiPreferences = {
+      ...current,
+      speech: mergedSpeech,
+    };
     const saveRes = saveUiPreferences(updated, storage);
     if (!saveRes.success) {
       this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');

@@ -1079,3 +1079,105 @@ export function buildCopyAllCodeText(blocks: ReadonlyArray<ExtractedCodeBlock>):
   if (executable.length === 0) return null;
   return executable.map((b) => b.code).join('\n\n');
 }
+
+/**
+ * Strips and normalizes Markdown markup for natural spoken text-to-speech output.
+ * - Replaces fenced code blocks with "[bloque de código omitido]"
+ * - Extracts link labels and discards URLs
+ * - Discards images
+ * - Strips inline code delimiters (`...`), headings (#), bold/italic (**, *, _), strikethrough (~~)
+ * - Converts list bullets and table pipes into clean speech pauses
+ * - Normalizes consecutive whitespace and line breaks
+ */
+export function cleanMarkdownForSpeech(markdown: string): string {
+  if (!markdown || typeof markdown !== 'string') return '';
+
+  const cleaned = markdown
+    // 1. Replace fenced code blocks
+    .replace(/```[\s\S]*?```/g, ' [bloque de código omitido] ')
+    .replace(/~~~[\s\S]*?~~~/g, ' [bloque de código omitido] ')
+    // 2. Images: strip completely
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    // 3. Links: retain label only, strip URL
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // 4. Inline code: retain text without backticks
+    .replace(/`([^`]+)`/g, '$1')
+    // 5. Headings: strip leading #
+    .replace(/^#{1,6}\s+/gm, '')
+    // 6. Strong, emphasis, and strikethrough
+    .replace(/(\*\*|__)(.*?)\1/g, '$2')
+    .replace(/(\*|_)(.*?)\1/g, '$2')
+    .replace(/~~(.*?)~~/g, '$1')
+    // 7. Blockquotes: remove leading >
+    .replace(/^\s*>\s+/gm, '')
+    // 8. List markers
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/^\s*\d+[\.\)]\s+/gm, '')
+    // 9. Tables: remove borders and separator lines
+    .replace(/^\s*\|?[-: ]+\|[-: |]*$/gm, '')
+    .replace(/\|/g, ', ')
+    // 10. Normalize whitespace and periods for speech cadence
+    .replace(/\.{2,}/g, '.')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*,\s*,+/g, ',')
+    .replace(/\s*\.\s*\.+/g, '.')
+    .replace(/\s*([.,!?:;])\s*/g, '$1 ')
+    .replace(/\.{2,}/g, '.')
+    .trim();
+
+  if (!/[\p{L}\p{N}]/u.test(cleaned)) {
+    return '';
+  }
+
+  return cleaned;
+}
+
+/**
+ * Splits markdown/text into speakable idea chunks based strictly on line breaks (paragraphs)
+ * and sentence-ending punctuation (. ! ?), avoiding cutting words in half.
+ * Each chunk represents a complete grammatical thought or paragraph.
+ */
+export function splitMarkdownIntoSpeechChunks(markdown: string): string[] {
+  if (!markdown || typeof markdown !== 'string') return [];
+
+  // 1. Initial split by explicit line breaks (paragraphs, list items, headers)
+  const rawParagraphs = markdown
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+
+  for (const rawParagraph of rawParagraphs) {
+    const cleaned = cleanMarkdownForSpeech(rawParagraph);
+    if (!/[\p{L}\p{N}]/u.test(cleaned)) continue;
+
+    // 2. Split on sentence boundaries (. ! ?) identifying the end of an idea without cutting words
+    const sentences = cleaned
+      .split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑa-záéíóúñ0-9¿¡])/u)
+      .map((s) => s.trim())
+      .filter((s) => /[\p{L}\p{N}]/u.test(s));
+
+    if (sentences.length > 0) {
+      for (const sentence of sentences) {
+        chunks.push(sentence);
+      }
+    } else {
+      chunks.push(cleaned);
+    }
+  }
+
+  if (chunks.length === 0) {
+    const whole = cleanMarkdownForSpeech(markdown);
+    if (/[\p{L}\p{N}]/u.test(whole)) {
+      return [whole];
+    }
+    return [];
+  }
+
+  return chunks;
+}
+
+

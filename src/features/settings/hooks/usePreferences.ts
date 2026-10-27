@@ -38,6 +38,7 @@ export interface UsePreferencesResult {
   commitAppearance: (candidate: AppearanceInput) => PreferencesSaveResult;
   /** Atomically resets appearance customizations back to defaults. */
   resetAppearance: () => PreferencesSaveResult;
+  setSpeechPreferences: (speech: Partial<any>) => void;
   /** Production lifecycle controller managing DOM appearance, system listeners, and draft preview. */
   appearanceController: AppearanceLifecycleController;
   appearanceControllerRef: React.MutableRefObject<AppearanceLifecycleController | null>;
@@ -178,6 +179,10 @@ export function usePreferences(): UsePreferencesResult {
     preferencesControllerRef.current?.setDefaultProjectsDirectory(directory);
   }, []);
 
+  const setSpeechPreferences = useCallback((speech: Partial<any>) => {
+    preferencesControllerRef.current?.setSpeechPreferences(speech);
+  }, []);
+
   const commitAppearance = useCallback((candidate: AppearanceInput): PreferencesSaveResult => {
     return (
       preferencesControllerRef.current?.commitAppearance(candidate) ?? {
@@ -217,6 +222,7 @@ export function usePreferences(): UsePreferencesResult {
     setCustomCommands,
     setHiddenCommandIds,
     setDefaultProjectsDirectory,
+    setSpeechPreferences,
     commitAppearance,
     resetAppearance,
     appearanceController: appearanceControllerRef.current,

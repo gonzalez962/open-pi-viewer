@@ -179,6 +179,22 @@ import {
   saveViewerStorage,
   updateViewerStorageKey,
 } from './storage';
+import {
+  inspectCustomModel,
+} from './bridge/speech';
+import {
+  synthesizeTts,
+  transcribeStt,
+} from './bridge/speech-runner';
+import {
+  checkWyomingHealth,
+} from './bridge/wyoming-client';
+import {
+  manageDockerSpeechService,
+  getDockerContainerInfo,
+  type DockerSpeechService,
+  type DockerSpeechAction,
+} from './bridge/docker-speech';
 
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
@@ -349,6 +365,42 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
       return updateViewerStorageKey(payload.key, payload.value);
+    }
+    case 'inspect_custom_speech_model': {
+      const payload = args.payload || args;
+      return await inspectCustomModel(payload);
+    }
+    case 'check_wyoming_service': {
+      const payload = args.payload || args;
+      const url = payload?.url || 'tcp://127.0.0.1:10200';
+      return await checkWyomingHealth(url);
+    }
+    case 'synthesize_speech_tts': {
+      const payload = args.payload || args;
+      return await synthesizeTts(payload);
+    }
+    case 'transcribe_speech_stt': {
+      const payload = args.payload || args;
+      const audioBuffer = payload.audioBase64
+        ? Buffer.from(payload.audioBase64, 'base64')
+        : Buffer.from(payload.audioBuffer || '');
+      return await transcribeStt({
+        audioBuffer,
+        mimeType: payload.mimeType,
+        preferences: payload.preferences,
+      });
+    }
+    case 'manage_docker_speech_service': {
+      const payload = args.payload || args;
+      const service = payload.service as DockerSpeechService;
+      const action = payload.action as DockerSpeechAction;
+      const preferences = payload.preferences;
+      return await manageDockerSpeechService(service, action, preferences);
+    }
+    case 'get_docker_speech_status': {
+      const payload = args.payload || args;
+      const service = payload.service as DockerSpeechService;
+      return await getDockerContainerInfo(service);
     }
     default:
       return null;

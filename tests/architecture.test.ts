@@ -297,6 +297,7 @@ test('architecture: backend commands monolith eliminated into modular domain tre
     'models.rs',
     'oauth.rs',
     'sessions.rs',
+    'speech.rs',
     'terminal.rs',
     'workspace.rs',
   ];
