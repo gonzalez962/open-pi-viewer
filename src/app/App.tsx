@@ -2140,7 +2140,7 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative', width: '100%' }}>
               <textarea
                 id="prompt-input"
                 name="prompt"
@@ -2175,7 +2175,7 @@ export const App: React.FC = () => {
                 aria-disabled={!isReadyToSend && !canQueue}
                 aria-describedby="prompt-status-hint"
                 rows={3}
-                style={{ paddingLeft: preferences.speech?.sttEnabled ? '44px' : undefined }}
+                style={{ paddingLeft: preferences.speech?.sttEnabled ? '46px' : undefined }}
               />
 
               {preferences.speech?.sttEnabled && (
@@ -2184,7 +2184,11 @@ export const App: React.FC = () => {
                     position: 'absolute',
                     left: '10px',
                     bottom: '12px',
-                    zIndex: 5,
+                    zIndex: 10,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: 'auto',
                   }}
                 >
                   <PromptMicButton
