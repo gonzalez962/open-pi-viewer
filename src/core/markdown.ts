@@ -1134,3 +1134,50 @@ export function cleanMarkdownForSpeech(markdown: string): string {
   return cleaned;
 }
 
+/**
+ * Splits markdown/text into speakable idea chunks based strictly on line breaks (paragraphs)
+ * and sentence-ending punctuation (. ! ?), avoiding cutting words in half.
+ * Each chunk represents a complete grammatical thought or paragraph.
+ */
+export function splitMarkdownIntoSpeechChunks(markdown: string): string[] {
+  if (!markdown || typeof markdown !== 'string') return [];
+
+  // 1. Initial split by explicit line breaks (paragraphs, list items, headers)
+  const rawParagraphs = markdown
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+
+  for (const rawParagraph of rawParagraphs) {
+    const cleaned = cleanMarkdownForSpeech(rawParagraph);
+    if (!/[\p{L}\p{N}]/u.test(cleaned)) continue;
+
+    // 2. Split on sentence boundaries (. ! ?) identifying the end of an idea without cutting words
+    const sentences = cleaned
+      .split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑa-záéíóúñ0-9¿¡])/u)
+      .map((s) => s.trim())
+      .filter((s) => /[\p{L}\p{N}]/u.test(s));
+
+    if (sentences.length > 0) {
+      for (const sentence of sentences) {
+        chunks.push(sentence);
+      }
+    } else {
+      chunks.push(cleaned);
+    }
+  }
+
+  if (chunks.length === 0) {
+    const whole = cleanMarkdownForSpeech(markdown);
+    if (/[\p{L}\p{N}]/u.test(whole)) {
+      return [whole];
+    }
+    return [];
+  }
+
+  return chunks;
+}
+
+

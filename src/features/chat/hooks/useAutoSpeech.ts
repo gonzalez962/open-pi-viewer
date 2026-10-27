@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import type { ChatMessage, AgentActivity, TextBlock } from '@core/types/messages';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
-import { cleanMarkdownForSpeech } from '@core/markdown';
+import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '@core/markdown';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
-import { playWavBase64, stopSpeechAudio } from '@infra/audio-player';
+import { playWavBase64, startSpeechQueue, stopSpeechAudio } from '@infra/audio-player';
 
 /**
  * Extracts readable assistant speech text from a ChatMessage.
@@ -161,11 +161,25 @@ export function useAutoSpeech({
 
     void (async () => {
       try {
-        const audioBase64 = await synthesize(speechText, activePrefs, activePrefs.ttsRate);
-        if (!isMountedRef.current) return;
-        if (audioBase64) {
-          await playWavBase64(audioBase64, 0.9, lastMsg.id);
+        const rawContent = lastMsg.content || speechText;
+        const chunks = splitMarkdownIntoSpeechChunks(rawContent);
+        if (chunks.length === 0) return;
+
+        const session = startSpeechQueue(lastMsg.id);
+
+        for (let i = 0; i < chunks.length; i++) {
+          if (!isMountedRef.current || session.isAborted()) break;
+
+          const chunkText = chunks[i];
+          const audioBase64 = await synthesize(chunkText, activePrefs, activePrefs.ttsRate);
+
+          if (!isMountedRef.current || session.isAborted()) break;
+          if (audioBase64) {
+            await session.enqueue(audioBase64);
+          }
         }
+
+        session.finish();
       } catch (err) {
         // Prevent unhandled rejection when speech service is unavailable
         console.warn('[AutoSpeech] Synthesis failed:', err);

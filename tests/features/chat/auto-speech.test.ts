@@ -4,8 +4,49 @@ import {
   extractAssistantSpeechText,
   shouldTriggerAutoSpeech,
 } from '../../../src/features/chat/hooks/useAutoSpeech';
-import { cleanMarkdownForSpeech } from '../../../src/core/markdown';
+import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '../../../src/core/markdown';
 import type { ChatMessage } from '../../../src/core/types/messages';
+
+test('splitMarkdownIntoSpeechChunks: splits by line breaks and complete thoughts', async (t) => {
+  await t.test('splits paragraphs separated by double newlines', () => {
+    const raw = 'Primer párrafo con una idea.\n\nSegundo párrafo con otra idea.\n\nTercer párrafo final.';
+    const chunks = splitMarkdownIntoSpeechChunks(raw);
+    assert.equal(chunks.length, 3);
+    assert.equal(chunks[0], 'Primer párrafo con una idea.');
+    assert.equal(chunks[1], 'Segundo párrafo con otra idea.');
+    assert.equal(chunks[2], 'Tercer párrafo final.');
+  });
+
+  await t.test('splits list items by line breaks', () => {
+    const raw = 'Aquí están las tareas:\n- Tarea A completada\n- Tarea B en curso\n- Tarea C pendiente';
+    const chunks = splitMarkdownIntoSpeechChunks(raw);
+    assert.ok(chunks.length >= 3);
+    assert.ok(chunks[0].includes('Aquí están las tareas'));
+  });
+
+  await t.test('splits long paragraphs by sentence-ending punctuation without cutting words', () => {
+    const sentence1 = 'Esta es la primera oración completa de la idea.';
+    const sentence2 = 'Esta es la segunda oración que complementa el concepto de manera clara.';
+    const sentence3 = 'Y aquí cerramos con la tercera oración final del mensaje.';
+    const raw = `${sentence1} ${sentence2} ${sentence3}`;
+    const chunks = splitMarkdownIntoSpeechChunks(raw);
+    assert.ok(chunks.length >= 2);
+    // Ensure all words remain intact and no mid-word slicing occurs
+    for (const chunk of chunks) {
+      assert.ok(!chunk.endsWith(' '));
+      assert.ok(!chunk.startsWith(' '));
+    }
+    const combined = chunks.join(' ');
+    assert.ok(combined.includes('primera oración'));
+    assert.ok(combined.includes('segunda oración'));
+    assert.ok(combined.includes('tercera oración'));
+  });
+
+  await t.test('returns empty array when text has no alphanumeric characters', () => {
+    assert.deepEqual(splitMarkdownIntoSpeechChunks(''), []);
+    assert.deepEqual(splitMarkdownIntoSpeechChunks('   \n\n  ---  \n  '), []);
+  });
+});
 
 test('cleanMarkdownForSpeech: transforms markdown to natural spoken prose', async (t) => {
   await t.test('strips heading symbols', () => {

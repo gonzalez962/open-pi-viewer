@@ -8,6 +8,7 @@ import {
   toggleSpeechAudioPause,
   stopSpeechAudio,
   isSpeechAudioPlaying,
+  startSpeechQueue,
 } from '../../src/infra/audio-player';
 
 test('Audio Player Pause & Resume State Management', async (t) => {
@@ -52,5 +53,19 @@ test('Audio Player Pause & Resume State Management', async (t) => {
     stopSpeechAudio();
     // After unsubscribe, count shouldn't increase
     assert.equal(callCount, 2);
+  });
+
+  await t.test('startSpeechQueue creates session, sets currentTrackId, and aborts cleanly', () => {
+    stopSpeechAudio();
+    const session = startSpeechQueue('msg-test-123');
+    assert.equal(session.trackId, 'msg-test-123');
+    assert.equal(session.isAborted(), false);
+
+    const state = getSpeechPlaybackState();
+    assert.equal(state.currentTrackId, 'msg-test-123');
+
+    session.abort();
+    assert.equal(session.isAborted(), true);
+    assert.equal(getSpeechPlaybackState().currentTrackId, null);
   });
 });

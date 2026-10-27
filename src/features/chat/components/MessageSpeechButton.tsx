@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useSpeech } from '@features/settings/hooks/useSpeech';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
-import { cleanMarkdownForSpeech } from '@core/markdown';
+import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '@core/markdown';
 import {
   playWavBase64,
+  startSpeechQueue,
   pauseSpeechAudio,
   resumeSpeechAudio,
   stopSpeechAudio,
@@ -61,7 +62,7 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
       return;
     }
 
-    // 3. Otherwise, synthesize and play
+    // 3. Otherwise, synthesize and stream-play paragraph by paragraph
     if (isSynthesizing) return;
 
     try {
@@ -70,12 +71,25 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
         ...preferences,
         ttsEnabled: true,
       };
-      const speechText = cleanMarkdownForSpeech(text);
-      if (!speechText) return;
-      const audioBase64 = await synthesize(speechText, activePrefs, activePrefs.ttsRate);
-      if (audioBase64) {
-        await playWavBase64(audioBase64, 0.9, trackKey);
+
+      const chunks = splitMarkdownIntoSpeechChunks(text);
+      if (chunks.length === 0) return;
+
+      const session = startSpeechQueue(trackKey);
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (session.isAborted()) break;
+
+        const chunkText = chunks[i];
+        const audioBase64 = await synthesize(chunkText, activePrefs, activePrefs.ttsRate);
+
+        if (session.isAborted()) break;
+        if (audioBase64) {
+          await session.enqueue(audioBase64);
+        }
       }
+
+      session.finish();
     } catch {
       // ignore
     }

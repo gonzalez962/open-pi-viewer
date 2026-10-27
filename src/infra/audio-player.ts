@@ -12,6 +12,27 @@ export interface SpeechPlaybackState {
   currentTrackId: string | null;
 }
 
+export interface SpeechQueueSession {
+  trackId: string;
+  isAborted: () => boolean;
+  enqueue: (base64Wav: string) => Promise<void>;
+  finish: () => void;
+  abort: () => void;
+}
+
+interface ActiveQueueState {
+  trackId: string;
+  aborted: boolean;
+  finished: boolean;
+  audioBuffers: AudioBuffer[];
+  html5Blobs: string[];
+  isPlayingChunk: boolean;
+  ctx: AudioContext | null;
+  gainNode: GainNode | null;
+}
+
+let activeQueue: ActiveQueueState | null = null;
+
 function getSpeechAudioContext(): AudioContext | null {
   try {
     if (typeof window === 'undefined') return null;
@@ -34,7 +55,8 @@ function getSpeechAudioContext(): AudioContext | null {
 export function getSpeechPlaybackState(): SpeechPlaybackState {
   const isWebAudio = currentSourceNode !== null;
   const isHtml5 = currentAudioElement !== null;
-  const isActive = isWebAudio || isHtml5;
+  const isQueueActive = activeQueue !== null && !activeQueue.aborted;
+  const isActive = isWebAudio || isHtml5 || isQueueActive;
 
   let isPaused = false;
   if (isWebAudio && sharedSpeechContext) {
@@ -138,6 +160,15 @@ export async function toggleSpeechAudioPause(): Promise<'paused' | 'resumed' | '
  * Stops any actively playing TTS audio immediately across both Web Audio and HTML5 element.
  */
 export function stopSpeechAudio(): void {
+  if (activeQueue) {
+    activeQueue.aborted = true;
+    for (const url of activeQueue.html5Blobs) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    }
+    activeQueue = null;
+  }
   if (currentSourceNode) {
     try {
       currentSourceNode.stop();
@@ -164,7 +195,172 @@ export function stopSpeechAudio(): void {
  * Returns true if speech audio is currently active (playing or paused).
  */
 export function isSpeechAudioPlaying(): boolean {
-  return currentSourceNode !== null || currentAudioElement !== null;
+  return currentSourceNode !== null || currentAudioElement !== null || (activeQueue !== null && activeQueue.isPlayingChunk);
+}
+
+/**
+ * Starts a chunked/pipelined speech audio playback queue.
+ * Allows enqueuing audio segments incrementally as they are synthesized paragraph-by-paragraph,
+ * starting playback immediately on the first segment and smoothly chaining subsequent segments.
+ */
+export function startSpeechQueue(trackId: string, volume = 0.9): SpeechQueueSession {
+  stopSpeechAudio();
+  currentTrackId = trackId;
+  notifyStateChange();
+
+  const ctx = getSpeechAudioContext();
+  let gainNode: GainNode | null = null;
+  if (ctx) {
+    try {
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+      gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(Math.max(0.05, Math.min(1.0, volume)), ctx.currentTime);
+      gainNode.connect(ctx.destination);
+    } catch {}
+  }
+
+  const queue: ActiveQueueState = {
+    trackId,
+    aborted: false,
+    finished: false,
+    audioBuffers: [],
+    html5Blobs: [],
+    isPlayingChunk: false,
+    ctx,
+    gainNode,
+  };
+  activeQueue = queue;
+
+  function playNextChunk() {
+    if (queue.aborted || activeQueue !== queue) {
+      return;
+    }
+
+    // 1. Web Audio mode
+    if (queue.ctx && queue.gainNode) {
+      if (queue.audioBuffers.length === 0) {
+        queue.isPlayingChunk = false;
+        currentSourceNode = null;
+        notifyStateChange();
+        if (queue.finished) {
+          stopSpeechAudio();
+        }
+        return;
+      }
+
+      queue.isPlayingChunk = true;
+      const buffer = queue.audioBuffers.shift()!;
+      const source = queue.ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(queue.gainNode);
+
+      currentSourceNode = source;
+      notifyStateChange();
+
+      source.onended = () => {
+        if (currentSourceNode === source) {
+          currentSourceNode = null;
+        }
+        playNextChunk();
+      };
+
+      try {
+        source.start(0);
+      } catch {
+        playNextChunk();
+      }
+      return;
+    }
+
+    // 2. HTML5 audio element fallback
+    if (queue.html5Blobs.length === 0) {
+      queue.isPlayingChunk = false;
+      currentAudioElement = null;
+      notifyStateChange();
+      if (queue.finished) {
+        stopSpeechAudio();
+      }
+      return;
+    }
+
+    queue.isPlayingChunk = true;
+    const blobUrl = queue.html5Blobs.shift()!;
+    const audio = new Audio(blobUrl);
+    audio.volume = Math.max(0.05, Math.min(1.0, volume));
+    currentAudioElement = audio;
+    notifyStateChange();
+
+    const cleanupChunk = () => {
+      try {
+        URL.revokeObjectURL(blobUrl);
+      } catch {}
+      if (currentAudioElement === audio) {
+        currentAudioElement = null;
+      }
+      playNextChunk();
+    };
+
+    audio.onended = cleanupChunk;
+    audio.onerror = cleanupChunk;
+    audio.play().catch(cleanupChunk);
+  }
+
+  return {
+    trackId,
+    isAborted: () => queue.aborted || activeQueue !== queue,
+    enqueue: async (base64Wav: string) => {
+      if (queue.aborted || activeQueue !== queue) return;
+
+      const binary = atob(base64Wav);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      if (queue.ctx) {
+        try {
+          const copy = bytes.buffer.slice(0);
+          const audioBuffer = await queue.ctx.decodeAudioData(copy);
+          if (queue.aborted || activeQueue !== queue) return;
+          queue.audioBuffers.push(audioBuffer);
+          if (!queue.isPlayingChunk) {
+            playNextChunk();
+          }
+          return;
+        } catch {
+          // fall through to HTML5 blob
+        }
+      }
+
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const blobUrl = URL.createObjectURL(blob);
+      if (queue.aborted || activeQueue !== queue) {
+        URL.revokeObjectURL(blobUrl);
+        return;
+      }
+
+      queue.html5Blobs.push(blobUrl);
+      if (!queue.isPlayingChunk) {
+        playNextChunk();
+      }
+    },
+    finish: () => {
+      if (queue.aborted || activeQueue !== queue) return;
+      queue.finished = true;
+      if (!queue.isPlayingChunk && queue.audioBuffers.length === 0 && queue.html5Blobs.length === 0) {
+        stopSpeechAudio();
+      }
+    },
+    abort: () => {
+      if (activeQueue === queue) {
+        stopSpeechAudio();
+      } else {
+        queue.aborted = true;
+      }
+    },
+  };
 }
 
 /**
