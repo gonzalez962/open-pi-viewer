@@ -1,36 +1,17 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import {
   setTtsRunnerForTest,
   setSttRunnerForTest,
   synthesizeTts,
   transcribeStt,
-  resolveTtsModelPaths,
-  resolveSttModelPaths,
-} from '../../server/bridge/speech-runner';
-import {
-  setSpeechModelsDirForTest,
-} from '../../server/bridge/speech';
-import type { SpeechPreferences } from '../../src/core/types/speech';
+} from '@server/bridge/speech-runner';
+import type { SpeechPreferences } from '@core/types/speech';
 
 describe('Speech Inference Runners', () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'speech-runner-test-'));
-    setSpeechModelsDirForTest(tempDir);
-  });
-
   afterEach(() => {
     setTtsRunnerForTest(null);
     setSttRunnerForTest(null);
-    setSpeechModelsDirForTest(null);
-    try {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {}
   });
 
   it('synthesizeTts rejects when TTS is disabled in preferences', async () => {
@@ -61,25 +42,17 @@ describe('Speech Inference Runners', () => {
     );
   });
 
-  it('synthesizeTts runs mock runner and returns base64 wav when enabled with custom model', async () => {
-    const customOnnx = path.join(tempDir, 'voice.onnx');
-    fs.writeFileSync(customOnnx, 'FAKE-ONNX');
-    fs.writeFileSync(path.join(tempDir, 'voice.onnx.json'), '{}');
-
+  it('synthesizeTts runs mock runner and returns base64 wav when enabled', async () => {
     const prefs: SpeechPreferences = {
       ttsEnabled: true,
       sttEnabled: false,
       selectedTtsPackId: 'es_MX-claude-high',
       selectedSttPackId: 'es-kroko-64l',
-      ttsCustom: {
-        isCustom: true,
-        modelPath: customOnnx,
-      },
+      ttsProvider: 'wyoming',
     };
 
-    setTtsRunnerForTest(async (text, modelPath, configPath) => {
+    setTtsRunnerForTest(async (text) => {
       assert.equal(text, 'Hola');
-      assert.equal(modelPath, customOnnx);
       return Buffer.from('WAV-HEADER-MOCK-DATA');
     });
 
@@ -88,24 +61,17 @@ describe('Speech Inference Runners', () => {
     assert.equal(Buffer.from(res.audioBase64, 'base64').toString(), 'WAV-HEADER-MOCK-DATA');
   });
 
-  it('transcribeStt runs mock runner and returns transcribed text with custom model', async () => {
-    const customOnnx = path.join(tempDir, 'encoder.onnx');
-    fs.writeFileSync(customOnnx, 'FAKE-ONNX');
-
+  it('transcribeStt runs mock runner and returns transcribed text when enabled', async () => {
     const prefs: SpeechPreferences = {
       ttsEnabled: false,
       sttEnabled: true,
       selectedTtsPackId: 'es_MX-claude-high',
       selectedSttPackId: 'es-kroko-64l',
-      sttCustom: {
-        isCustom: true,
-        modelPath: customOnnx,
-      },
+      sttProvider: 'wyoming',
     };
 
-    setSttRunnerForTest(async (buffer, encPath) => {
+    setSttRunnerForTest(async (buffer) => {
       assert.equal(buffer.toString(), 'INPUT-AUDIO-MOCK');
-      assert.equal(encPath, customOnnx);
       return 'transcripción exitosa';
     });
 

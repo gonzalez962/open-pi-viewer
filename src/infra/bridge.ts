@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isWebShim } from './web-oauth-access';
+import type { SpeechPreferences } from '@core/types/speech';
 import type { ConnectConfig, ConnectResult, ConnectSessionOptions } from '@core/types/connection';
 import type { ModelInfo, ModelThinkingLevelsMap, SessionStats, ThinkingLevel } from '@core/types/models';
 import type {
@@ -3237,18 +3238,6 @@ export async function listGitHubRepositoriesPi(
   return await invokeFn<ListGitHubRepositoriesResult>('list_github_repositories', { payload });
 }
 
-export interface GetSpeechPackStatusPayload {
-  packId: string;
-}
-
-export interface DownloadSpeechPackPayload {
-  packId: string;
-}
-
-export interface DeleteSpeechPackPayload {
-  packId: string;
-}
-
 export interface InspectCustomSpeechModelPayload {
   isCustom: boolean;
   modelPath: string;
@@ -3278,35 +3267,7 @@ export interface TranscribeSpeechSttResult {
   confidence?: number;
 }
 
-export async function getSpeechPackStatusPi(
-  payload: GetSpeechPackStatusPayload,
-  invokeFn: InvokeFn = defaultInvoke
-): Promise<any> {
-  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
-    return { status: 'missing', files: [] };
-  }
-  return await invokeFn('get_speech_pack_status', { payload });
-}
 
-export async function downloadSpeechPackPi(
-  payload: DownloadSpeechPackPayload,
-  invokeFn: InvokeFn = defaultInvoke
-): Promise<any> {
-  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
-    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
-  }
-  return await invokeFn('download_speech_pack', { payload });
-}
-
-export async function deleteSpeechPackPi(
-  payload: DeleteSpeechPackPayload,
-  invokeFn: InvokeFn = defaultInvoke
-): Promise<any> {
-  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
-    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
-  }
-  return await invokeFn('delete_speech_pack', { payload });
-}
 
 export async function inspectCustomSpeechModelPi(
   payload: InspectCustomSpeechModelPayload,
@@ -3392,25 +3353,4 @@ export async function getDockerSpeechStatusPi(
   return await invokeFn<{ exists: boolean; state: string; statusText?: string; containerId?: string }>('get_docker_speech_status', { payload });
 }
 
-export interface SpeechDownloadProgressPayload {
-  packId: string;
-  fileIndex: number;
-  totalFiles: number;
-  currentFile: string;
-  fileDownloadedBytes: number;
-  fileTotalBytes?: number;
-}
 
-export async function listenSpeechDownloadProgressPi(
-  onProgress: (progress: SpeechDownloadProgressPayload) => void,
-  listenFn: typeof listen = listen
-): Promise<UnlistenFn> {
-  if (!isTauri() && !isWebShim() && listenFn === listen) {
-    return () => {};
-  }
-  return await listenFn<SpeechDownloadProgressPayload>('speech://download_progress', (event) => {
-    if (event?.payload) {
-      onProgress(event.payload);
-    }
-  });
-}

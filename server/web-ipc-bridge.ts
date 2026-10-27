@@ -180,9 +180,6 @@ import {
   updateViewerStorageKey,
 } from './storage';
 import {
-  inspectOfficialPack,
-  downloadOfficialPack,
-  deleteOfficialPack,
   inspectCustomModel,
 } from './bridge/speech';
 import {
@@ -198,10 +195,6 @@ import {
   type DockerSpeechService,
   type DockerSpeechAction,
 } from './bridge/docker-speech';
-import { broadcastSse } from './bridge/sse';
-import {
-  OFFICIAL_SPEECH_PACKS,
-} from '../src/core/types/speech';
 
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
@@ -372,25 +365,6 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
       return updateViewerStorageKey(payload.key, payload.value);
-    }
-    case 'get_speech_pack_status': {
-      const payload = args.payload || args;
-      const packId = payload?.packId;
-      const pack = OFFICIAL_SPEECH_PACKS[packId];
-      if (!pack) throw new Error(`Unknown pack ID: ${packId}`);
-      return await inspectOfficialPack(pack);
-    }
-    case 'download_speech_pack': {
-      const payload = args.payload || args;
-      const packId = payload?.packId;
-      return await downloadOfficialPack(packId, (progress) => {
-        broadcastSse('speech://download_progress', progress);
-      });
-    }
-    case 'delete_speech_pack': {
-      const payload = args.payload || args;
-      const packId = payload?.packId;
-      return await deleteOfficialPack(packId);
     }
     case 'inspect_custom_speech_model': {
       const payload = args.payload || args;

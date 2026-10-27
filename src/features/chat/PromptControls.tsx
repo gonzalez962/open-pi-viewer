@@ -24,7 +24,6 @@ import {
 import { getTransferFiles, prepareAttachments } from './file-attachments';
 import { bindFileDropZone } from './file-drop-zone';
 import { PopoverSearchBar } from './components/PopoverSearchBar';
-import { PromptMicButton } from './components/PromptMicButton';
 import type { SpeechPreferences } from '@core/types/speech';
 
 export { modelSupportsFiles, modelSupportsInputModality };
@@ -119,8 +118,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   defaultExtPopoverOpen = false,
   defaultModelPopoverOpen = false,
   attachedFiles: _attachedFiles,
-  speechPreferences,
-  onTranscription,
+  speechPreferences: _speechPreferences,
+  onTranscription: _onTranscription,
   onAttachFiles,
   supportsFiles: supportsFilesProp,
   defaultFileAttachOpen = false,

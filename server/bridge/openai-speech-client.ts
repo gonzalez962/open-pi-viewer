@@ -137,7 +137,7 @@ export async function transcribeOpenAiStt(
   const url = formatOpenAiApiUrl(baseUrl, '/audio/transcriptions');
 
   const formData = new FormData();
-  const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+  const audioBlob = new Blob([new Uint8Array(audioBuffer)], { type: 'audio/wav' });
   formData.append('file', audioBlob, 'audio.wav');
   formData.append('model', model);
 

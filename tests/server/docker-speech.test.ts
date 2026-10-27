@@ -5,9 +5,8 @@ import {
   buildDockerRunArgs,
   getDockerContainerInfo,
   manageDockerSpeechService,
-  type DockerSpeechService,
-} from '../../server/bridge/docker-speech';
-import { DEFAULT_SPEECH_PREFERENCES } from '../../src/core/types/speech';
+} from '@server/bridge/docker-speech';
+import { DEFAULT_SPEECH_PREFERENCES } from '@core/types/speech';
 
 describe('Docker Speech Service Management', () => {
   it('getDockerContainerName returns correct container names', () => {
@@ -46,7 +45,7 @@ describe('Docker Speech Service Management', () => {
   });
 
   it('getDockerContainerInfo parses running state from docker ps output', async () => {
-    const mockExec = async (args: string[]) => {
+    const mockExec = async (_args: string[]) => {
       return {
         stdout: 'c12345\trunning\tUp 2 hours',
         stderr: '',

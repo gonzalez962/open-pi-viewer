@@ -1,44 +1,39 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SpeechSettingsSection } from '../../src/features/settings/components/SpeechSettingsSection';
-import { SpeechModelCard } from '../../src/features/settings/components/SpeechModelCard';
+import { SpeechSettingsSection } from '@features/settings/components/SpeechSettingsSection';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  OFFICIAL_SPEECH_PACKS,
   DEFAULT_SPEECH_PREFERENCES,
   validateSpeechPreferences,
   validateCustomModelConfig,
-} from '../../src/core/types/speech';
-import { PreferencesController, type StorageLike } from '../../src/infra/preferences';
+} from '@core/types/speech';
+import { PreferencesController, type UiPreferences } from '@infra/preferences';
 
-function createMockStorage(initialData: Record<string, string> = {}): StorageLike {
+function createMockStorage(initialData: Record<string, string> = {}): Storage {
   const store = new Map<string, string>(Object.entries(initialData));
   return {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => store.set(key, value),
     removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    length: store.size,
   };
 }
 
 describe('Speech types and preferences validation', () => {
-  it('contains expected official speech packs with expected sha256 checksums', () => {
-    assert.ok(OFFICIAL_SPEECH_PACKS['es_MX-claude-high'], 'Piper es_MX pack exists');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es_MX-claude-high'].engine, 'piper');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es_MX-claude-high'].kind, 'tts');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es_MX-claude-high'].files.length, 2);
-
-    assert.ok(OFFICIAL_SPEECH_PACKS['es-kroko-64l'], 'Sherpa kroko 64l pack exists');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es-kroko-64l'].engine, 'sherpa-onnx');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es-kroko-64l'].kind, 'stt');
-    assert.equal(OFFICIAL_SPEECH_PACKS['es-kroko-64l'].files.length, 4);
-
-    for (const pack of Object.values(OFFICIAL_SPEECH_PACKS)) {
-      for (const f of pack.files) {
-        assert.match(f.expectedSha256, /^[0-9a-fA-F]{64}$/, `${f.filename} has a 64-character SHA-256 hash`);
-        assert.ok(f.url.startsWith('https://'), `${f.filename} has a secure https URL`);
-      }
-    }
+  it('default speech preferences configure Wyoming docker containers and OpenAI API defaults', () => {
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.ttsEnabled, false);
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.sttEnabled, false);
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.ttsProvider, 'wyoming');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.sttProvider, 'wyoming');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.wyomingTtsUrl, 'tcp://127.0.0.1:10200');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.wyomingSttUrl, 'tcp://127.0.0.1:10300');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.openAiBaseUrl, 'https://api.openai.com/v1');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.openAiTtsModel, 'tts-1');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.openAiTtsVoice, 'alloy');
+    assert.equal(DEFAULT_SPEECH_PREFERENCES.openAiSttModel, 'whisper-1');
   });
 
   it('validateSpeechPreferences falls back to defaults for invalid/empty input', () => {
@@ -97,7 +92,8 @@ describe('Speech types and preferences validation', () => {
 
   it('PreferencesController persists and reloads speech preferences', () => {
     const storage = createMockStorage();
-    let currentPrefs = { language: 'es' as const, theme: 'dark' as const };
+    let currentPrefs: UiPreferences = { language: 'es', theme: 'dark' };
+
     const controller = new PreferencesController({
       storage,
       getPreferences: () => currentPrefs as any,

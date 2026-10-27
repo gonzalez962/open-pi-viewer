@@ -9,7 +9,7 @@ import {
   stopSpeechAudio,
   isSpeechAudioPlaying,
   startSpeechQueue,
-} from '../../src/infra/audio-player';
+} from '@infra/audio-player';
 
 test('Audio Player Pause & Resume State Management', async (t) => {
   await t.test('initial state is idle and inactive', () => {

@@ -3,13 +3,12 @@ import assert from 'node:assert/strict';
 import {
   checkWyomingHealth,
   synthesizeWyomingTts,
-  transcribeWyomingStt,
-} from '../../server/bridge/wyoming-client';
+} from '@server/bridge/wyoming-client';
 import {
   synthesizeTts,
   transcribeStt,
-} from '../../server/bridge/speech-runner';
-import { DEFAULT_SPEECH_PREFERENCES } from '../../src/core/types/speech';
+} from '@server/bridge/speech-runner';
+import { DEFAULT_SPEECH_PREFERENCES } from '@core/types/speech';
 
 describe('Wyoming Client & Speech Runner Integration', () => {
   it('checkWyomingHealth detects wyoming-piper at 10200', async () => {

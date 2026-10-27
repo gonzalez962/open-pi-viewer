@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react';
 import type { ChatMessage, AgentActivity, TextBlock } from '@core/types/messages';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
 import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '@core/markdown';
-import { useSpeech } from '@features/settings/hooks/useSpeech';
-import { playWavBase64, startSpeechQueue, stopSpeechAudio } from '@infra/audio-player';
+import { synthesizeSpeechTtsPi } from '@infra/bridge';
+import { startSpeechQueue, stopSpeechAudio } from '@infra/audio-player';
 
 /**
  * Extracts readable assistant speech text from a ChatMessage.
@@ -106,7 +106,6 @@ export function useAutoSpeech({
   sessionId,
   preferences,
 }: UseAutoSpeechOptions): void {
-  const { synthesize } = useSpeech();
   const isMountedRef = useRef<boolean>(true);
   const prevActivityRef = useRef<AgentActivity>(agentActivity);
   const prevSessionIdRef = useRef<string | null>(sessionId ?? null);
@@ -171,7 +170,8 @@ export function useAutoSpeech({
           if (!isMountedRef.current || session.isAborted()) break;
 
           const chunkText = chunks[i];
-          const audioBase64 = await synthesize(chunkText, activePrefs, activePrefs.ttsRate);
+          const res = await synthesizeSpeechTtsPi({ text: chunkText, preferences: activePrefs, rate: activePrefs.ttsRate });
+          const audioBase64 = res.audioBase64;
 
           if (!isMountedRef.current || session.isAborted()) break;
           if (audioBase64) {
@@ -185,5 +185,5 @@ export function useAutoSpeech({
         console.warn('[AutoSpeech] Synthesis failed:', err);
       }
     })();
-  }, [agentActivity, messages, sessionId, preferences, synthesize]);
+  }, [agentActivity, messages, sessionId, preferences]);
 }

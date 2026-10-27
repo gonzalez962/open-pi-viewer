@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {
   extractAssistantSpeechText,
   shouldTriggerAutoSpeech,
-} from '../../../src/features/chat/hooks/useAutoSpeech';
-import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '../../../src/core/markdown';
-import type { ChatMessage } from '../../../src/core/types/messages';
+} from '@features/chat/hooks/useAutoSpeech';
+import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '@core/markdown';
+import type { ChatMessage } from '@core/types/messages';
 
 test('splitMarkdownIntoSpeechChunks: splits by line breaks and complete thoughts', async (t) => {
   await t.test('splits paragraphs separated by double newlines', () => {

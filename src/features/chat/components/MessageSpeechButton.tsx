@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useSpeech } from '@features/settings/hooks/useSpeech';
 import { DEFAULT_SPEECH_PREFERENCES, type SpeechPreferences } from '@core/types/speech';
-import { cleanMarkdownForSpeech, splitMarkdownIntoSpeechChunks } from '@core/markdown';
+import { splitMarkdownIntoSpeechChunks } from '@core/markdown';
+import { synthesizeSpeechTtsPi } from '@infra/bridge';
 import {
-  playWavBase64,
   startSpeechQueue,
   pauseSpeechAudio,
   resumeSpeechAudio,
@@ -24,7 +23,7 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
   preferences,
   messageId,
 }) => {
-  const { synthesize, isSynthesizing } = useSpeech();
+  const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [playbackState, setPlaybackState] = useState<SpeechPlaybackState>(getSpeechPlaybackState);
 
   useEffect(() => {
@@ -65,6 +64,7 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
     // 3. Otherwise, synthesize and stream-play paragraph by paragraph
     if (isSynthesizing) return;
 
+    setIsSynthesizing(true);
     try {
       const activePrefs: SpeechPreferences = {
         ...DEFAULT_SPEECH_PREFERENCES,
@@ -81,7 +81,8 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
         if (session.isAborted()) break;
 
         const chunkText = chunks[i];
-        const audioBase64 = await synthesize(chunkText, activePrefs, activePrefs.ttsRate);
+        const res = await synthesizeSpeechTtsPi({ text: chunkText, preferences: activePrefs, rate: activePrefs.ttsRate });
+        const audioBase64 = res.audioBase64;
 
         if (session.isAborted()) break;
         if (audioBase64) {
@@ -92,6 +93,8 @@ export const MessageSpeechButton: React.FC<MessageSpeechButtonProps> = ({
       session.finish();
     } catch {
       // ignore
+    } finally {
+      setIsSynthesizing(false);
     }
   };
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { useSpeech } from '@features/settings/hooks/useSpeech';
 import type { SpeechPreferences } from '@core/types/speech';
+import { transcribeSpeechSttPi } from '@infra/bridge';
 import { convertBlobToWav16kMono } from '@infra/wav-recorder';
 
 export interface PromptMicButtonProps {
@@ -14,7 +14,7 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
   onTranscription,
   disabled,
 }) => {
-  const { transcribe, isTranscribing } = useSpeech();
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -45,9 +45,16 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
           reader.onloadend = async () => {
             const base64Data = (reader.result as string)?.split(',')[1];
             if (base64Data) {
-              const text = await transcribe(base64Data, preferences);
-              if (text && text.trim()) {
-                onTranscription(text.trim());
+              setIsTranscribing(true);
+              try {
+                const res = await transcribeSpeechSttPi({ audioBase64: base64Data, preferences });
+                if (res.text && res.text.trim()) {
+                  onTranscription(res.text.trim());
+                }
+              } catch {
+                // ignore
+              } finally {
+                setIsTranscribing(false);
               }
             }
           };
@@ -60,9 +67,16 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
             reader.onloadend = async () => {
               const base64Data = (reader.result as string)?.split(',')[1];
               if (base64Data) {
-                const text = await transcribe(base64Data, preferences);
-                if (text && text.trim()) {
-                  onTranscription(text.trim());
+                setIsTranscribing(true);
+                try {
+                  const res = await transcribeSpeechSttPi({ audioBase64: base64Data, preferences });
+                  if (res.text && res.text.trim()) {
+                    onTranscription(res.text.trim());
+                  }
+                } catch {
+                  // ignore
+                } finally {
+                  setIsTranscribing(false);
                 }
               }
             };

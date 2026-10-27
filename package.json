@@ -12,8 +12,6 @@
     "test:browser:terminal": "node tests/browser/terminal.mjs",
     "test:browser:create-folder": "node tests/browser/create-folder.mjs",
     "preview": "vite preview",
-    "setup:speech-models": "node scripts/setup-speech-models.mjs",
-    "verify:speech-models": "node scripts/setup-speech-models.mjs --verify-only",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -4,9 +4,7 @@ import {
   formatOpenAiApiUrl,
   synthesizeOpenAiTts,
   transcribeOpenAiStt,
-  type OpenAiTtsOptions,
-  type OpenAiSttOptions,
-} from '../../server/bridge/openai-speech-client';
+} from '@server/bridge/openai-speech-client';
 
 describe('OpenAI Speech Client', () => {
   it('formatOpenAiApiUrl normalizes base URLs and paths correctly', () => {

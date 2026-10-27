@@ -92,12 +92,6 @@ pub mod terminal;
 pub mod workspace;
 
 pub use speech::{
-    get_speech_pack_status,
-    __cmd__get_speech_pack_status,
-    __tauri_command_name_get_speech_pack_status,
-    delete_speech_pack,
-    __cmd__delete_speech_pack,
-    __tauri_command_name_delete_speech_pack,
     inspect_custom_speech_model,
     __cmd__inspect_custom_speech_model,
     __tauri_command_name_inspect_custom_speech_model,

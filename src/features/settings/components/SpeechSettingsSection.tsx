@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { SpeechPreferences } from '../../../core/types/speech';
+import type { SpeechPreferences } from '@core/types/speech';
 import { useSpeech } from '../hooks/useSpeech';
-import { playWavBase64 } from '../../../infra/audio-player';
-import { convertBlobToWav16kMono } from '../../../infra/wav-recorder';
+import { playWavBase64 } from '@infra/audio-player';
+import { convertBlobToWav16kMono } from '@infra/wav-recorder';
 
 export interface SpeechSettingsSectionProps {
   preferences: SpeechPreferences;
@@ -210,7 +210,7 @@ volumes:
     setIsCheckingWyoming(false);
   };
 
-  const handleDockerAction = async (service: 'piper' | 'whisper', action: 'start' | 'stop' | 'restart' | 'remove') => {
+  const handleDockerAction = async (service: 'piper' | 'whisper', action: 'start' | 'stop' | 'restart' | 'remove' | 'create') => {
     const key = `${service}:${action}`;
     setDockerActionBusy(key);
     setDockerActionError(null);
