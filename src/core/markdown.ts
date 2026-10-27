@@ -1092,7 +1092,7 @@ export function buildCopyAllCodeText(blocks: ReadonlyArray<ExtractedCodeBlock>):
 export function cleanMarkdownForSpeech(markdown: string): string {
   if (!markdown || typeof markdown !== 'string') return '';
 
-  return markdown
+  const cleaned = markdown
     // 1. Replace fenced code blocks
     .replace(/```[\s\S]*?```/g, ' [bloque de código omitido] ')
     .replace(/~~~[\s\S]*?~~~/g, ' [bloque de código omitido] ')
@@ -1117,11 +1117,20 @@ export function cleanMarkdownForSpeech(markdown: string): string {
     .replace(/^\s*\|?[-: ]+\|[-: |]*$/gm, '')
     .replace(/\|/g, ', ')
     // 10. Normalize whitespace and periods for speech cadence
+    .replace(/\.{2,}/g, '.')
     .replace(/\n{2,}/g, '. ')
     .replace(/\n/g, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s*,\s*,+/g, ',')
     .replace(/\s*\.\s*\.+/g, '.')
+    .replace(/\s*([.,!?:;])\s*/g, '$1 ')
+    .replace(/\.{2,}/g, '.')
     .trim();
+
+  if (!/[\p{L}\p{N}]/u.test(cleaned)) {
+    return '';
+  }
+
+  return cleaned;
 }
 

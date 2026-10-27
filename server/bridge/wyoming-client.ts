@@ -153,6 +153,22 @@ export async function synthesizeWyomingTts(
   _rate = 1.0,
   voice?: string
 ): Promise<{ wavBuffer: Buffer; durationSeconds?: number }> {
+  const trimmed = text.trim();
+  if (!trimmed || !/[\p{L}\p{N}]/u.test(trimmed)) {
+    return Promise.reject(new Error('Cannot synthesize text without speakable words or numbers.'));
+  }
+
+  // Sanitize text to avoid orphan periods or symbols that produce zero audio in Piper
+  const sanitizedText = trimmed
+    .replace(/\.{2,}/g, '.')
+    .replace(/\s+/g, ' ')
+    .replace(/[^\p{L}\p{N}.?!,;:—\-\s]/gu, '')
+    .trim();
+
+  if (!/[\p{L}\p{N}]/u.test(sanitizedText)) {
+    return Promise.reject(new Error('Cannot synthesize text without speakable words or numbers.'));
+  }
+
   return new Promise((resolve, reject) => {
     const { host, port } = parseWyomingUrl(endpointUrl, 10200);
     const socket = new net.Socket();
@@ -163,7 +179,7 @@ export async function synthesizeWyomingTts(
     }, 15000);
 
     socket.connect(port, host, () => {
-      const payloadObj: Record<string, any> = { text };
+      const payloadObj: Record<string, any> = { text: sanitizedText };
       if (voice) {
         payloadObj.voice = { name: voice };
       }
@@ -220,7 +236,11 @@ export async function synthesizeWyomingTts(
             audioChunks.push(payloadBuf);
           }
         } else if (header.type === 'audio-stop') {
-          socket.end();
+          setImmediate(() => {
+            try {
+              socket.end();
+            } catch {}
+          });
         }
       }
     });
