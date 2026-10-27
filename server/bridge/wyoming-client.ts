@@ -89,8 +89,12 @@ export async function checkWyomingHealth(
             if (!resolved) {
               resolved = true;
               clearTimeout(timer);
-              socket.end();
               resolve({ ok: true, info });
+              setImmediate(() => {
+                try {
+                  socket.end();
+                } catch {}
+              });
             }
           }
         } catch (parseErr: any) {
@@ -176,7 +180,7 @@ export async function synthesizeWyomingTts(
     const timer = setTimeout(() => {
       socket.destroy();
       reject(new Error(`Wyoming TTS request to ${host}:${port} timed out.`));
-    }, 15000);
+    }, 60000);
 
     socket.connect(port, host, () => {
       const payloadObj: Record<string, any> = { text: sanitizedText };
@@ -236,6 +240,16 @@ export async function synthesizeWyomingTts(
             audioChunks.push(payloadBuf);
           }
         } else if (header.type === 'audio-stop') {
+          clearTimeout(timer);
+          const pcmData = Buffer.concat(audioChunks);
+          if (pcmData.length === 0) {
+            reject(new Error('Wyoming TTS produced no audio samples.'));
+          } else {
+            const bitsPerSample = audioWidth * 8;
+            const wavBuffer = pcmToWav(pcmData, audioRate, audioChannels, bitsPerSample);
+            const durationSeconds = pcmData.length / (audioRate * audioChannels * audioWidth);
+            resolve({ wavBuffer, durationSeconds });
+          }
           setImmediate(() => {
             try {
               socket.end();
