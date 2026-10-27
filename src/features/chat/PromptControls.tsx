@@ -435,6 +435,15 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
 
   return (
     <div ref={toolbarRef} className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
+      {/* Mic button for STT when enabled, positioned first on the left toolbar */}
+      {speechPreferences?.sttEnabled && onTranscription && (
+        <PromptMicButton
+          preferences={speechPreferences}
+          onTranscription={onTranscription}
+          disabled={isBusy}
+        />
+      )}
+
       {/* 0. Unified Action Button (Send / Cancel / Confirm). While busy, the abort button
           stays available; a queue-send button joins it only when there is draft text ready
           to queue as a followUp, so the idle layout is unaffected. */}

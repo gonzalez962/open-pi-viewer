@@ -2175,31 +2175,7 @@ export const App: React.FC = () => {
                 aria-disabled={!isReadyToSend && !canQueue}
                 aria-describedby="prompt-status-hint"
                 rows={3}
-                style={{ paddingLeft: preferences.speech?.sttEnabled ? '46px' : undefined }}
               />
-
-              {preferences.speech?.sttEnabled && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: '10px',
-                    bottom: '12px',
-                    zIndex: 10,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    pointerEvents: 'auto',
-                  }}
-                >
-                  <PromptMicButton
-                    preferences={preferences.speech}
-                    onTranscription={(transcribedText) => {
-                      setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
-                    }}
-                    disabled={isBusy}
-                  />
-                </div>
-              )}
             </div>
 
             {commandPalette.isOpen && (
