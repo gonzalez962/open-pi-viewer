@@ -37,12 +37,39 @@ const WHISPER_LANGUAGES = [
 ];
 
 const OPENAI_TTS_VOICES = [
-  { id: 'alloy', label: 'Alloy (Neutral, balanceada)' },
-  { id: 'echo', label: 'Echo (Masculina, cálida)' },
-  { id: 'fable', label: 'Fable (Expresiva, acento británico)' },
-  { id: 'onyx', label: 'Onyx (Masculina, profunda)' },
-  { id: 'nova', label: 'Nova (Femenina, enérgica)' },
-  { id: 'shimmer', label: 'Shimmer (Femenina, clara)' },
+  // Standard OpenAI TTS voices
+  { id: 'alloy', label: 'Alloy (OpenAI Standard - Neutral)' },
+  { id: 'echo', label: 'Echo (OpenAI Standard - Masculina)' },
+  { id: 'fable', label: 'Fable (OpenAI Standard - Expresiva)' },
+  { id: 'onyx', label: 'Onyx (OpenAI Standard - Profunda)' },
+  { id: 'nova', label: 'Nova (OpenAI Standard - Femenina)' },
+  { id: 'shimmer', label: 'Shimmer (OpenAI Standard - Clara)' },
+  // v3 / Realtime voices (compatible con proxies y endpoints v3)
+  { id: 'juniper', label: 'Juniper (v3 / Realtime)' },
+  { id: 'maple', label: 'Maple (v3 / Realtime)' },
+  { id: 'spruce', label: 'Spruce (v3 / Realtime)' },
+  { id: 'ember', label: 'Ember (v3 / Realtime)' },
+  { id: 'vale', label: 'Vale (v3 / Realtime)' },
+  { id: 'breeze', label: 'Breeze (v3 / Realtime)' },
+  { id: 'arbor', label: 'Arbor (v3 / Realtime)' },
+  { id: 'sol', label: 'Sol (v3 / Realtime)' },
+  { id: 'cove', label: 'Cove (v3 / Realtime)' },
+  { id: 'aube', label: 'Aube (v3 / Realtime)' },
+  { id: 'bubbie', label: 'Bubbie (v3 / Realtime)' },
+  { id: 'haetsal', label: 'Haetsal (v3 / Realtime)' },
+  { id: 'hanul', label: 'Hanul (v3 / Realtime)' },
+  { id: 'himari', label: 'Himari (v3 / Realtime)' },
+  { id: 'leher', label: 'Leher (v3 / Realtime)' },
+  { id: 'miko', label: 'Miko (v3 / Realtime)' },
+  { id: 'neer', label: 'Neer (v3 / Realtime)' },
+  { id: 'porto', label: 'Porto (v3 / Realtime)' },
+  { id: 'rindo', label: 'Rindo (v3 / Realtime)' },
+  { id: 'rio', label: 'Rio (v3 / Realtime)' },
+  { id: 'rivage', label: 'Rivage (v3 / Realtime)' },
+  { id: 'selva', label: 'Selva (v3 / Realtime)' },
+  { id: 'sonna', label: 'Sonna (v3 / Realtime)' },
+  { id: 'tinta', label: 'Tinta (v3 / Realtime)' },
+  { id: 'viola', label: 'Viola (v3 / Realtime)' },
 ];
 
 const OPENAI_TTS_MODELS = [
@@ -395,15 +422,30 @@ volumes:
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Voz OpenAI:</label>
-              <select
-                value={preferences.openAiTtsVoice || 'alloy'}
-                onChange={(e) => onSpeechPreferencesChange({ openAiTtsVoice: e.target.value })}
-                style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
-              >
-                {OPENAI_TTS_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>{v.label}</option>
-                ))}
-              </select>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <select
+                  value={preferences.openAiTtsVoice || 'alloy'}
+                  onChange={(e) => onSpeechPreferencesChange({ openAiTtsVoice: e.target.value })}
+                  style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+                >
+                  {OPENAI_TTS_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>{v.label}</option>
+                  ))}
+                  {preferences.openAiTtsVoice && !OPENAI_TTS_VOICES.some((v) => v.id === preferences.openAiTtsVoice) && (
+                    <option value={preferences.openAiTtsVoice}>
+                      Personalizada: {preferences.openAiTtsVoice}
+                    </option>
+                  )}
+                </select>
+                <input
+                  type="text"
+                  placeholder="o escribe id de voz..."
+                  value={preferences.openAiTtsVoice || ''}
+                  onChange={(e) => onSpeechPreferencesChange({ openAiTtsVoice: e.target.value.trim() })}
+                  style={{ width: '150px', padding: '8px 10px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
+                  title="Identificador exacto de voz (ej: juniper, alloy, etc.)"
+                />
+              </div>
             </div>
           </div>
         ) : (
