@@ -21,7 +21,6 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
   onCancel,
   onResetAppearance,
   error,
-  saveFeedback,
   t,
 }) => {
   return (
@@ -90,12 +89,6 @@ export const ConfirmationCard: React.FC<ConfirmationCardProps> = ({
           >
             <span>🗑 {t('theme.reset_button')}</span>
           </button>
-        )}
-
-        {saveFeedback && (
-          <span className="confirmation-saved-notice" role="status">
-            ✓ {t('theme.notice_saved')}
-          </span>
         )}
       </div>
     </section>
