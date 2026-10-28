@@ -3269,6 +3269,16 @@ export interface TranscribeSpeechSttResult {
 
 
 
+export async function patchSpeechPreferencesPi(patch: Partial<SpeechPreferences>): Promise<void> {
+  if (!isWebShim()) throw new Error('Speech preference sync requires the web bridge');
+  await defaultInvoke('patch_speech_preferences', { payload: { patch } });
+}
+
+export async function saveVoiceCredentialPi(provider: 'openai' | 'openai-compatible', endpoint: string, apiKey: string): Promise<{ configured: boolean }> {
+  if (!isWebShim()) throw new Error('Voice credentials are available only through the web bridge');
+  return defaultInvoke('save_voice_credential', { payload: { provider, endpoint, apiKey } });
+}
+
 export async function inspectCustomSpeechModelPi(
   payload: InspectCustomSpeechModelPayload,
   invokeFn: InvokeFn = defaultInvoke

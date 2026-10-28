@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { SpeechPreferences } from '@core/types/speech';
+import { OPENAI_REALTIME_VOICES, type SpeechPreferences } from '@core/types/speech';
 import { useSpeech } from '../hooks/useSpeech';
 import { playWavBase64 } from '@infra/audio-player';
 import { convertBlobToWav16kMono } from '@infra/wav-recorder';
+import { saveVoiceCredentialPi } from '@infra/bridge';
 
 export interface SpeechSettingsSectionProps {
   preferences: SpeechPreferences;
-  onSpeechPreferencesChange: (partial: Partial<SpeechPreferences>) => void;
+  onSpeechPreferencesChange: (partial: Partial<SpeechPreferences>) => Promise<{ success: boolean; error?: string }> | { success: boolean; error?: string } | void;
 }
 
 const COMMON_PIPER_VOICES = [
@@ -36,51 +37,74 @@ const WHISPER_LANGUAGES = [
   { id: 'pt', label: 'Português (pt)' },
 ];
 
-const OPENAI_TTS_VOICES = [
-  // Standard OpenAI TTS voices
-  { id: 'alloy', label: 'Alloy (OpenAI Standard - Neutral)' },
-  { id: 'echo', label: 'Echo (OpenAI Standard - Masculina)' },
-  { id: 'fable', label: 'Fable (OpenAI Standard - Expresiva)' },
-  { id: 'onyx', label: 'Onyx (OpenAI Standard - Profunda)' },
-  { id: 'nova', label: 'Nova (OpenAI Standard - Femenina)' },
-  { id: 'shimmer', label: 'Shimmer (OpenAI Standard - Clara)' },
-  // v3 / Realtime voices (compatible con proxies y endpoints v3)
-  { id: 'juniper', label: 'Juniper (v3 / Realtime)' },
-  { id: 'maple', label: 'Maple (v3 / Realtime)' },
-  { id: 'spruce', label: 'Spruce (v3 / Realtime)' },
-  { id: 'ember', label: 'Ember (v3 / Realtime)' },
-  { id: 'vale', label: 'Vale (v3 / Realtime)' },
-  { id: 'breeze', label: 'Breeze (v3 / Realtime)' },
-  { id: 'arbor', label: 'Arbor (v3 / Realtime)' },
-  { id: 'sol', label: 'Sol (v3 / Realtime)' },
-  { id: 'cove', label: 'Cove (v3 / Realtime)' },
-  { id: 'aube', label: 'Aube (v3 / Realtime)' },
-  { id: 'bubbie', label: 'Bubbie (v3 / Realtime)' },
-  { id: 'haetsal', label: 'Haetsal (v3 / Realtime)' },
-  { id: 'hanul', label: 'Hanul (v3 / Realtime)' },
-  { id: 'himari', label: 'Himari (v3 / Realtime)' },
-  { id: 'leher', label: 'Leher (v3 / Realtime)' },
-  { id: 'miko', label: 'Miko (v3 / Realtime)' },
-  { id: 'neer', label: 'Neer (v3 / Realtime)' },
-  { id: 'porto', label: 'Porto (v3 / Realtime)' },
-  { id: 'rindo', label: 'Rindo (v3 / Realtime)' },
-  { id: 'rio', label: 'Rio (v3 / Realtime)' },
-  { id: 'rivage', label: 'Rivage (v3 / Realtime)' },
-  { id: 'selva', label: 'Selva (v3 / Realtime)' },
-  { id: 'sonna', label: 'Sonna (v3 / Realtime)' },
-  { id: 'tinta', label: 'Tinta (v3 / Realtime)' },
-  { id: 'viola', label: 'Viola (v3 / Realtime)' },
-];
+const OPENAI_TTS_VOICES = OPENAI_REALTIME_VOICES.map((id) => ({ id, label: id }));
+
+const SAVE_BUTTON_STYLE: React.CSSProperties = { padding: '9px 18px', borderRadius: '6px', border: '1px solid #3b82f6', background: '#2563eb', color: '#fff', fontWeight: 600, cursor: 'pointer', margin: '0 0 8px' };
 
 const OPENAI_TTS_MODELS = [
-  { id: 'tts-1', label: 'tts-1 (Baja latencia, optimizado para tiempo real)' },
-  { id: 'tts-1-hd', label: 'tts-1-hd (Alta definición)' },
+  { id: 'gpt-realtime-2.1-mini', label: 'gpt-realtime-2.1-mini' },
 ];
 
 export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
-  preferences,
-  onSpeechPreferencesChange,
+  preferences: savedPreferences,
+  onSpeechPreferencesChange: savePreferences,
 }) => {
+  const [draft, setDraft] = useState<Partial<SpeechPreferences>>({});
+  const [openAiKey, setOpenAiKey] = useState('');
+  const [compatibleKey, setCompatibleKey] = useState('');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const feedbackVersion = useRef(0);
+  const clearFeedback = () => { feedbackVersion.current++; setSaveSuccess(null); setSaveError(null); };
+  const preferences = { ...savedPreferences, ...draft, openAiApiKey: '', compatibleSttApiKey: '' };
+  const onSpeechPreferencesChange = (partial: Partial<SpeechPreferences>) => { clearFeedback(); setDraft((current) => ({ ...current, ...partial })); };
+  const saveSection = async (section: 'tts' | 'stt') => {
+    clearFeedback();
+    const version = feedbackVersion.current;
+    const keys = section === 'tts'
+      ? ['ttsEnabled', 'ttsProvider', 'openAiTtsModel', 'openAiTtsVoice', 'wyomingTtsUrl', 'wyomingTtsVoice', 'ttsRate', 'autoSpeakResponses', 'selectedTtsPackId', 'ttsCustom', 'customDockerCommandTts']
+      : ['sttEnabled', 'sttProvider', 'openAiSttModel', 'openAiSttLanguage', 'wyomingSttUrl', 'wyomingSttModel', 'wyomingSttLanguage', 'compatibleSttModel', 'selectedSttPackId', 'sttCustom', 'customDockerCommandStt'];
+    const compatible = section === 'stt' && preferences.sttProvider === 'openai-compatible';
+    if (compatible) keys.push('compatibleSttBaseUrl');
+    const patch = Object.fromEntries(Object.entries(draft).filter(([key]) => keys.includes(key))) as Partial<SpeechPreferences>;
+    let keySaved = false;
+    try {
+      if (compatible && compatibleKey) {
+        await saveVoiceCredentialPi('openai-compatible', preferences.compatibleSttBaseUrl || '', compatibleKey);
+        keySaved = true;
+        setCompatibleKey('');
+      }
+      const result = await savePreferences(patch);
+      if (!result?.success) {
+        setSaveError(`${keySaved ? 'La clave compatible se guardó; ' : ''}${result?.error || 'no se pudieron guardar los ajustes de voz'}`);
+        return;
+      }
+      setDraft((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !(key in patch))));
+      if (version === feedbackVersion.current) setSaveSuccess(section === 'tts' ? 'Ajustes TTS guardados' : 'Ajustes STT guardados');
+    } catch {
+      setSaveError(keySaved ? 'La clave compatible se guardó, pero no se pudieron guardar los ajustes de voz.' : 'No se pudo guardar la clave compatible; no se guardaron los ajustes.');
+    }
+  };
+  const openAiEndpoint = preferences.openAiBaseUrl || 'https://api.openai.com/v1';
+  const compatibleEndpoint = preferences.compatibleSttBaseUrl || '';
+  const saveConnection = async (provider: 'openai' | 'openai-compatible') => {
+    clearFeedback();
+    const version = feedbackVersion.current;
+    const endpoint = provider === 'openai' ? openAiEndpoint : compatibleEndpoint;
+    const key = provider === 'openai' ? openAiKey : compatibleKey;
+    const field = provider === 'openai' ? 'openAiBaseUrl' : 'compatibleSttBaseUrl';
+    try {
+      if (key) {
+        await saveVoiceCredentialPi(provider, endpoint, key);
+        if (provider === 'openai') setOpenAiKey('');
+        else setCompatibleKey('');
+      }
+      const result = await savePreferences({ [field]: endpoint });
+      if (!result?.success) throw new Error(key ? 'La clave se guardó, pero no se guardó la URL. Reintenta guardar la conexión.' : result?.error || 'No se pudo guardar la conexión');
+      setDraft((current) => { const next = { ...current }; delete next[field]; return next; });
+      if (version === feedbackVersion.current) setSaveSuccess('Conexión OpenAI guardada');
+    } catch (error) { setSaveError(error instanceof Error ? error.message : 'Error al guardar la conexión'); }
+  };
   const {
     synthesize,
     transcribe,
@@ -304,6 +328,8 @@ volumes:
 
   return (
     <div className="speech-settings-section" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+      {saveError && <div role="alert">{saveError}</div>}
+      {saveSuccess && <div role="status" style={{ color: '#4ade80' }}>{saveSuccess}</div>}
       {dockerActionError && (
         <div style={{ padding: '10px 14px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '0.85rem' }}>
           ✕ {dockerActionError}
@@ -312,7 +338,7 @@ volumes:
       <div className="settings-field-group">
         <h3 style={{ margin: '0 0 8px 0', fontSize: '1.2rem' }}>Servicios de Voz Containerizados (TTS & STT)</h3>
         <p style={{ margin: 0, opacity: 0.75, fontSize: '0.9rem', lineHeight: '1.4' }}>
-          La inferencia de voz se ejecuta 100% local a través de contenedores Docker compatibles con el estándar Wyoming Protocol (Piper para síntesis y Faster-Whisper para transcripción).
+          Wyoming permite inferencia local mediante contenedores Docker (Piper para síntesis y Faster-Whisper para transcripción); los proveedores de API envían audio o texto a su servidor configurado.
           No requiere descargas manuales de modelos ni binarios externos en el sistema operativo.
         </p>
       </div>
@@ -360,7 +386,7 @@ volumes:
       <div style={{ padding: '20px', border: '1px solid var(--border-color, #374151)', borderRadius: '8px', background: 'rgba(0,0,0,0.1)' }}>
         <h4 style={{ margin: '0 0 4px 0', fontSize: '1.05rem' }}>Configuración de OpenAI Audio API</h4>
         <p style={{ fontSize: '0.82rem', opacity: 0.75, margin: '0 0 16px 0' }}>
-          Permite usar <code>/v1/audio/speech</code> y <code>/v1/audio/transcriptions</code> de OpenAI o proxies compatibles.
+          TTS usa OpenAI Realtime por WebSocket; STT usa <code>/v1/audio/transcriptions</code>.
         </p>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
@@ -368,8 +394,8 @@ volumes:
             <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>OpenAI API Key:</label>
             <input
               type="password"
-              value={preferences.openAiApiKey || ''}
-              onChange={(e) => onSpeechPreferencesChange({ openAiApiKey: e.target.value })}
+              value={openAiKey}
+              onChange={(e) => { clearFeedback(); setOpenAiKey(e.target.value); }}
               placeholder="sk-..."
               style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
             />
@@ -385,6 +411,9 @@ volumes:
               style={{ padding: '8px 12px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
             />
           </div>
+        </div>
+        <div style={{ marginTop: '16px' }}>
+          <button type="button" style={SAVE_BUTTON_STYLE} onClick={() => void saveConnection('openai')}>Guardar conexión OpenAI</button>
         </div>
       </div>
 
@@ -440,7 +469,7 @@ volumes:
                 color: preferences.ttsProvider === 'openai' ? '#fff' : 'inherit',
               }}
             >
-              OpenAI API (/v1/audio/speech)
+              OpenAI Realtime
             </button>
           </div>
         </div>
@@ -451,7 +480,7 @@ volumes:
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Modelo de Voz OpenAI:</label>
               <select
-                value={preferences.openAiTtsModel || 'tts-1'}
+                value={preferences.openAiTtsModel === 'gpt-realtime-2.1-mini' ? preferences.openAiTtsModel : 'gpt-realtime-2.1-mini'}
                 onChange={(e) => onSpeechPreferencesChange({ openAiTtsModel: e.target.value })}
                 style={{ padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
               >
@@ -465,27 +494,14 @@ volumes:
               <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Voz OpenAI:</label>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <select
-                  value={preferences.openAiTtsVoice || 'alloy'}
+                  value={OPENAI_REALTIME_VOICES.includes(preferences.openAiTtsVoice as typeof OPENAI_REALTIME_VOICES[number]) ? preferences.openAiTtsVoice : 'alloy'}
                   onChange={(e) => onSpeechPreferencesChange({ openAiTtsVoice: e.target.value })}
                   style={{ flex: 1, padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
                 >
                   {OPENAI_TTS_VOICES.map((v) => (
                     <option key={v.id} value={v.id}>{v.label}</option>
                   ))}
-                  {preferences.openAiTtsVoice && !OPENAI_TTS_VOICES.some((v) => v.id === preferences.openAiTtsVoice) && (
-                    <option value={preferences.openAiTtsVoice}>
-                      Personalizada: {preferences.openAiTtsVoice}
-                    </option>
-                  )}
                 </select>
-                <input
-                  type="text"
-                  placeholder="o escribe id de voz..."
-                  value={preferences.openAiTtsVoice || ''}
-                  onChange={(e) => onSpeechPreferencesChange({ openAiTtsVoice: e.target.value.trim() })}
-                  style={{ width: '150px', padding: '8px 10px', borderRadius: '4px', border: '1px solid var(--border-color, #4b5563)' }}
-                  title="Identificador exacto de voz (ej: juniper, alloy, etc.)"
-                />
               </div>
             </div>
           </div>
@@ -679,6 +695,7 @@ volumes:
           </>
         )}
 
+        <button type="button" style={SAVE_BUTTON_STYLE} onClick={() => void saveSection('tts')}>Guardar TTS</button>
         {/* Test audio synthesis button */}
         {preferences.ttsEnabled && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -735,43 +752,47 @@ volumes:
         </div>
 
         {/* STT Provider Selector */}
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '16px' }}>
-          <label style={{ fontSize: '0.85rem', fontWeight: 500 }}>Proveedor de STT:</label>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button
-              type="button"
-              onClick={() => onSpeechPreferencesChange({ sttProvider: 'wyoming' })}
-              style={{
-                padding: '6px 14px',
-                fontSize: '0.82rem',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                background: (preferences.sttProvider || 'wyoming') === 'wyoming' ? '#3b82f6' : 'rgba(255,255,255,0.06)',
-                border: '1px solid var(--border-color, #4b5563)',
-                color: (preferences.sttProvider || 'wyoming') === 'wyoming' ? '#fff' : 'inherit',
-              }}
-            >
-              Wyoming / Whisper (Docker Local)
-            </button>
-            <button
-              type="button"
-              onClick={() => onSpeechPreferencesChange({ sttProvider: 'openai' })}
-              style={{
-                padding: '6px 14px',
-                fontSize: '0.82rem',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                background: preferences.sttProvider === 'openai' ? '#3b82f6' : 'rgba(255,255,255,0.06)',
-                border: '1px solid var(--border-color, #4b5563)',
-                color: preferences.sttProvider === 'openai' ? '#fff' : 'inherit',
-              }}
-            >
-              OpenAI API (/v1/audio/transcriptions)
-            </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px', minWidth: 0 }}>
+          <span id="stt-provider-label" style={{ fontSize: '0.85rem', fontWeight: 600 }}>Proveedor de STT</span>
+          <div role="group" aria-labelledby="stt-provider-label" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {([
+              { id: 'wyoming', label: 'Whisper local', title: 'Wyoming / Whisper (Docker local)' },
+              { id: 'openai', label: 'OpenAI Audio', title: 'OpenAI Audio API' },
+              { id: 'openai-compatible', label: 'API compatible', title: 'OpenAI-compatible audio chat (solo web)' },
+            ] as const).map(({ id, label, title }) => {
+              const selected = (preferences.sttProvider || 'wyoming') === id;
+              return (
+                <button key={id} type="button" title={title} aria-pressed={selected}
+                  onClick={() => onSpeechPreferencesChange({ sttProvider: id })}
+                  style={{
+                    padding: '8px 14px', fontSize: '0.82rem', fontWeight: 600, borderRadius: '6px',
+                    cursor: 'pointer', background: selected ? '#2563eb' : 'rgba(255,255,255,0.06)',
+                    border: selected ? '1px solid #3b82f6' : '1px solid var(--border-color, #4b5563)',
+                    color: selected ? '#fff' : 'inherit', whiteSpace: 'normal',
+                  }}>
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {preferences.sttProvider === 'openai' ? (
+        {preferences.sttProvider === 'openai-compatible' ? (
+          <div style={{ display: 'grid', gap: '14px', marginBottom: '20px', minWidth: 0 }}>
+            <div style={{ padding: '12px 14px', borderRadius: '6px', background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.25)', fontSize: '0.8rem', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+              <strong>Solo web.</strong> El audio se envía al proveedor configurado. La clave se guarda en el servidor; usa HTTPS y un servidor de confianza.
+            </div>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>URL base de API
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="text" value={preferences.compatibleSttBaseUrl || ''} onChange={(e) => onSpeechPreferencesChange({ compatibleSttBaseUrl: e.target.value })} placeholder="https://api.example.com/v1" />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>API key
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="password" value={compatibleKey} onChange={(e) => { clearFeedback(); setCompatibleKey(e.target.value); }} autoComplete="off" />
+            </label>
+            <label style={{ display: 'grid', gap: '6px', fontSize: '0.85rem', fontWeight: 500, minWidth: 0 }}>ID del modelo con entrada de audio
+              <input style={{ width: '100%', boxSizing: 'border-box', minWidth: 0, padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color, #4b5563)' }} type="text" value={preferences.compatibleSttModel || ''} onChange={(e) => onSpeechPreferencesChange({ compatibleSttModel: e.target.value })} placeholder="model-id" />
+            </label>
+          </div>
+        ) : preferences.sttProvider === 'openai' ? (
           /* OpenAI STT Configuration */
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -1001,6 +1022,7 @@ volumes:
           </>
         )}
 
+        <button type="button" style={SAVE_BUTTON_STYLE} onClick={() => void saveSection('stt')}>Guardar STT</button>
         {/* Test STT recording button */}
         {preferences.sttEnabled && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1020,7 +1042,7 @@ volumes:
                 }}
               >
                 {isTranscribing
-                  ? 'Transcribiendo con Whisper...'
+                  ? 'Transcribiendo audio...'
                   : testSttRecording
                     ? '🛑 Detener grabación y probar'
                     : '🎤 Grabar audio de prueba'}

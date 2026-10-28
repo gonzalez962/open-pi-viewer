@@ -5,7 +5,7 @@ import {
   listenViewerStorageUpdatesPi,
   type ViewerStoragePayload,
 } from '@infra/viewer-storage';
-import { UI_PREFERENCES_STORAGE_KEY, loadUiPreferences } from '@infra/preferences';
+import { UI_PREFERENCES_STORAGE_KEY, loadUiPreferences, validateUiPreferences } from '@infra/preferences';
 import { CONFIG_STORAGE_KEY, loadConnectConfig } from '@features/settings/config';
 import {
   PROJECTS_STORAGE_KEY,
@@ -41,6 +41,9 @@ export async function initStorageSynchronization(callbacks: StorageSyncCallbacks
     if (!serverStorage) return;
 
     const migrationPatch: Partial<ViewerStoragePayload> = {};
+    const localLoad = loadUiPreferences(window.localStorage);
+    if (localLoad.warning) window.dispatchEvent(new CustomEvent('viewer:preferences_warning', { detail: localLoad.warning }));
+    if (serverStorage.uiPreferences) serverStorage.uiPreferences = validateUiPreferences(serverStorage.uiPreferences).preferences as unknown as Record<string, unknown>;
 
     // 1. UI Preferences
     if (serverStorage.uiPreferences) {
@@ -181,6 +184,7 @@ export async function initStorageSynchronization(callbacks: StorageSyncCallbacks
     });
   } catch (error) {
     console.warn('[StorageSync] Initialization error:', error);
+    window.dispatchEvent(new CustomEvent('viewer:preferences_warning', { detail: 'No se pudieron sincronizar o limpiar las preferencias de voz.' }));
   }
 }
 
@@ -194,11 +198,13 @@ export function handleRemoteStorageUpdate(
   if (typeof window === 'undefined' || !updated) return;
 
   if (updated.uiPreferences) {
+    const preferences = validateUiPreferences(updated.uiPreferences).preferences as unknown as Record<string, unknown>;
+    updated = { ...updated, uiPreferences: preferences };
     window.localStorage.setItem(
       UI_PREFERENCES_STORAGE_KEY,
-      JSON.stringify(updated.uiPreferences)
+      JSON.stringify(preferences)
     );
-    callbacks.onUiPreferencesUpdated?.(updated.uiPreferences);
+    callbacks.onUiPreferencesUpdated?.(preferences);
   }
 
   if (updated.connectConfig) {

@@ -1,17 +1,18 @@
 import type { SpeechPreferences } from '../../src/core/types/speech';
+import { transcribeCompatibleAudio } from './openai-compatible-audio-stt';
 import {
   synthesizeWyomingTts,
   transcribeWyomingStt,
 } from './wyoming-client';
-import {
-  synthesizeOpenAiTts,
-  transcribeOpenAiStt,
-} from './openai-speech-client';
+import { transcribeOpenAiStt } from './openai-speech-client';
+import { synthesizeRealtimeTts } from './openai-realtime-tts';
+import { DEFAULT_SPEECH_PREFERENCES, OPENAI_REALTIME_VOICES } from '../../src/core/types/speech';
 
 export interface SynthesizeTtsOptions {
   text: string;
   preferences: SpeechPreferences;
   rate?: number;
+  signal?: AbortSignal;
 }
 
 export interface SynthesizeTtsResult {
@@ -49,7 +50,7 @@ export function setSttRunnerForTest(runner: SttRunner | null): void {
 }
 
 /**
- * Synthesizes text to speech using either OpenAI Audio API or Wyoming Docker container.
+ * Synthesizes text to speech using OpenAI Realtime or Wyoming Docker container.
  */
 export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<SynthesizeTtsResult> {
   const { text, preferences } = options;
@@ -70,7 +71,7 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
     };
   }
 
-  // 1. If OpenAI TTS provider is selected, dispatch to OpenAI /v1/audio/speech
+  // 1. OpenAI Realtime session runs on the bridge, never in the browser.
   if (preferences.ttsProvider === 'openai') {
     const apiKey = (preferences.openAiApiKey || '').trim();
     if (!apiKey) {
@@ -79,20 +80,12 @@ export async function synthesizeTts(options: SynthesizeTtsOptions): Promise<Synt
       );
     }
 
-    const { audioBase64 } = await synthesizeOpenAiTts({
-      text: trimmed,
-      apiKey,
-      baseUrl: preferences.openAiBaseUrl || 'https://api.openai.com/v1',
-      model: preferences.openAiTtsModel || 'tts-1',
-      voice: preferences.openAiTtsVoice || 'alloy',
-      speed: options.rate || preferences.ttsRate || 1.0,
-      responseFormat: 'wav',
-    });
-
-    return {
-      audioBase64,
-      mimeType: 'audio/wav',
-    };
+    const model = preferences.openAiTtsModel === 'gpt-realtime-2.1-mini' ? preferences.openAiTtsModel : DEFAULT_SPEECH_PREFERENCES.openAiTtsModel!;
+    const voice = OPENAI_REALTIME_VOICES.includes(preferences.openAiTtsVoice as typeof OPENAI_REALTIME_VOICES[number]) ? preferences.openAiTtsVoice! : DEFAULT_SPEECH_PREFERENCES.openAiTtsVoice!;
+    const wav = await synthesizeRealtimeTts({ text: trimmed, apiKey,
+      baseUrl: preferences.openAiBaseUrl || 'https://api.openai.com/v1', model, voice,
+      speed: options.rate || preferences.ttsRate || 1.0, signal: options.signal });
+    return { audioBase64: wav.toString('base64'), mimeType: 'audio/wav' };
   }
 
   // 2. Wyoming Docker container (default provider)
@@ -133,6 +126,14 @@ export async function transcribeStt(options: TranscribeSttOptions): Promise<Tran
 
   if (sttRunnerOverride) {
     const text = await sttRunnerOverride(audioBuffer, preferences);
+    return { text, confidence: 1.0 };
+  }
+
+  if (preferences.sttProvider === 'openai-compatible') {
+    const text = await transcribeCompatibleAudio({
+      audioBuffer, mimeType: options.mimeType, baseUrl: preferences.compatibleSttBaseUrl,
+      apiKey: preferences.compatibleSttApiKey, model: preferences.compatibleSttModel,
+    });
     return { text, confidence: 1.0 };
   }
 

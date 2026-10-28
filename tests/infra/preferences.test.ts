@@ -91,6 +91,30 @@ function makeHarness(initial: UiPreferences, storage: Storage | null) {
   };
 }
 
+test('S1.3 loading legacy speech preferences removes both voice keys without disclosing them', () => {
+  const storage = createFakeStorage();
+  storage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify({ language: 'en', theme: 'dark', speech: {
+    ttsEnabled: true, sttEnabled: true, openAiApiKey: 'legacy-openai-secret', compatibleSttApiKey: 'legacy-compatible-secret',
+  } }));
+  const loaded = loadUiPreferences(storage);
+  assert.equal(JSON.stringify(loaded).includes('legacy-openai-secret'), false);
+  assert.equal(JSON.stringify(loaded).includes('legacy-compatible-secret'), false);
+  assert.equal(storage.getItem(UI_PREFERENCES_STORAGE_KEY)?.includes('legacy-openai-secret'), false);
+  assert.equal(storage.getItem(UI_PREFERENCES_STORAGE_KEY)?.includes('legacy-compatible-secret'), false);
+  assert.equal(loaded.preferences.speech?.ttsEnabled, true);
+});
+
+test('S1.3 cleanup failure is surfaced without disclosing the legacy secret', () => {
+  const storage = createFakeStorage();
+  const raw = JSON.stringify({ language: 'en', theme: 'dark', speech: { ttsEnabled: false, sttEnabled: true, compatibleSttApiKey: 'legacy-secret' } });
+  storage.setItem(UI_PREFERENCES_STORAGE_KEY, raw);
+  storage.setItem = () => { throw new Error('cleanup denied'); };
+  const loaded = loadUiPreferences(storage);
+  assert.ok(loaded.warning, 'cleanup failure must be visible');
+  assert.equal(JSON.stringify(loaded).includes('legacy-secret'), false);
+  assert.equal(storage.getItem(UI_PREFERENCES_STORAGE_KEY), raw);
+});
+
 test('preferences: PreferencesController setTheme and setLanguage update state, persist to storage, and clear warning', () => {
   const storage = createFakeStorage();
   let activePrefs: UiPreferences = { ...DEFAULT_UI_PREFERENCES };

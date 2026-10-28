@@ -38,7 +38,7 @@ export interface UsePreferencesResult {
   commitAppearance: (candidate: AppearanceInput) => PreferencesSaveResult;
   /** Atomically resets appearance customizations back to defaults. */
   resetAppearance: () => PreferencesSaveResult;
-  setSpeechPreferences: (speech: Partial<any>) => void;
+  setSpeechPreferences: (speech: Partial<any>) => Promise<PreferencesSaveResult>;
   /** Production lifecycle controller managing DOM appearance, system listeners, and draft preview. */
   appearanceController: AppearanceLifecycleController;
   appearanceControllerRef: React.MutableRefObject<AppearanceLifecycleController | null>;
@@ -130,10 +130,13 @@ export function usePreferences(): UsePreferencesResult {
       }
     };
 
+    const handleWarning = (event: Event) => setPreferencesWarning(String((event as CustomEvent).detail));
+    window.addEventListener('viewer:preferences_warning', handleWarning);
     window.addEventListener('viewer:storage_synced', handleSync);
     window.addEventListener('storage', handleSync);
 
     return () => {
+      window.removeEventListener('viewer:preferences_warning', handleWarning);
       window.removeEventListener('viewer:storage_synced', handleSync);
       window.removeEventListener('storage', handleSync);
     };
@@ -179,8 +182,8 @@ export function usePreferences(): UsePreferencesResult {
     preferencesControllerRef.current?.setDefaultProjectsDirectory(directory);
   }, []);
 
-  const setSpeechPreferences = useCallback((speech: Partial<any>) => {
-    preferencesControllerRef.current?.setSpeechPreferences(speech);
+  const setSpeechPreferences = useCallback(async (speech: Partial<any>) => {
+    return preferencesControllerRef.current?.setSpeechPreferences(speech) ?? { success: false, error: 'Preferences controller not initialized' };
   }, []);
 
   const commitAppearance = useCallback((candidate: AppearanceInput): PreferencesSaveResult => {

@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, isSupportedLocale, type SupportedLocale } from '@shared/i18n';
+import { isWebShim } from './web-oauth-access';
 import { DEFAULT_THEME, isAppTheme, type AppTheme } from '@shared/theme';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
@@ -12,7 +13,6 @@ import {
   type CustomCommand,
 } from '@core/commands';
 import {
-  DEFAULT_SPEECH_PREFERENCES,
   validateSpeechPreferences,
   type SpeechPreferences,
 } from '@core/types/speech';
@@ -704,6 +704,14 @@ export function loadUiPreferences(
   }
 
   const validation = validateUiPreferences(parsed);
+  const legacySpeech = (parsed as any)?.speech;
+  if (legacySpeech && (Object.prototype.hasOwnProperty.call(legacySpeech, 'openAiApiKey') || Object.prototype.hasOwnProperty.call(legacySpeech, 'compatibleSttApiKey'))) {
+    try {
+      storage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify(validation.preferences));
+    } catch {
+      return { preferences: validation.preferences, warning: 'Failed to remove legacy speech credentials from storage' };
+    }
+  }
 
   const hasManagedAccent =
     parsed !== null &&
@@ -736,7 +744,8 @@ export function loadUiPreferences(
  */
 export function saveUiPreferences(
   preferences: UiPreferences,
-  storage: Storage | null = getSafeStorage()
+  storage: Storage | null = getSafeStorage(),
+  sync = true
 ): PreferencesSaveResult {
   const validation = validateUiPreferences(preferences);
   if (!validation.valid && validation.error) {
@@ -759,7 +768,7 @@ export function saveUiPreferences(
       JSON.stringify(validation.preferences)
     );
     // Fire-and-forget sync to server viewer storage
-    if (typeof window !== 'undefined') {
+    if (sync && typeof window !== 'undefined') {
       import('./viewer-storage')
         .then(({ updateViewerStorageKeyPi }) => {
           void updateViewerStorageKeyPi('uiPreferences', validation.preferences);
@@ -947,26 +956,37 @@ export class PreferencesController {
     return updated;
   }
 
-  setSpeechPreferences(partial: Partial<SpeechPreferences>): UiPreferences {
+  async setSpeechPreferences(partial: Partial<SpeechPreferences>): Promise<PreferencesSaveResult> {
     const storage = this.resolveStorage();
-    const current = this.options.getPreferences();
-    const currentSpeech = current.speech || { ...DEFAULT_SPEECH_PREFERENCES };
-    const mergedSpeech = validateSpeechPreferences({
-      ...currentSpeech,
-      ...partial,
-    });
-    const updated: UiPreferences = {
-      ...current,
-      speech: mergedSpeech,
-    };
-    const saveRes = saveUiPreferences(updated, storage);
-    if (!saveRes.success) {
-      this.options.setWarning(saveRes.error ?? 'Failed to save UI preferences');
-    } else {
-      this.options.setWarning(null);
+    const web = isWebShim();
+    if (web) {
+      try {
+        const { patchSpeechPreferencesPi } = await import('./bridge');
+        const { openAiApiKey, compatibleSttApiKey, ...safePatch } = partial;
+        await patchSpeechPreferencesPi(safePatch);
+      } catch {
+        const error = 'Failed to synchronize speech preferences with the server';
+        this.options.setWarning(error);
+        return { success: false, error };
+      }
     }
-    this.options.setPreferences(updated);
-    return updated;
+    const latest = this.options.getPreferences();
+    const committed: UiPreferences = {
+      ...latest,
+      speech: validateSpeechPreferences({ ...latest.speech, ...partial }),
+    };
+    const saveRes = saveUiPreferences(committed, storage, false);
+    if (!saveRes.success) {
+      const error = web
+        ? `Speech preferences were saved on the server, but local storage failed: ${saveRes.error ?? 'unknown error'}`
+        : saveRes.error ?? 'Failed to save UI preferences';
+      if (web) this.options.setPreferences(committed);
+      this.options.setWarning(error);
+      return { success: false, error };
+    }
+    this.options.setWarning(null);
+    this.options.setPreferences(committed);
+    return saveRes;
   }
 
   setCustomBackground(bg: CustomBackgroundPreferences | null): UiPreferences {

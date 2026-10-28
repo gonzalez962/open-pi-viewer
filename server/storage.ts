@@ -10,6 +10,7 @@ export interface OpenPiViewerStorageData {
   sessions?: Record<string, unknown> | null;
   profileSnapshots?: Record<string, unknown> | null;
   githubPat?: string | null;
+  voiceCredentials?: Array<{ provider: string; endpoint: string; apiKey: string }> | null;
   [key: string]: unknown;
 }
 
@@ -39,6 +40,20 @@ export function resolveStorageFilePath(): string {
   return path.resolve(process.cwd(), 'open-pi-viewer.json');
 }
 
+function sanitizeVoiceKeys(data: OpenPiViewerStorageData): OpenPiViewerStorageData {
+  const prefs = data.uiPreferences;
+  if (!prefs || typeof prefs !== 'object' || !prefs.speech || typeof prefs.speech !== 'object' || Array.isArray(prefs.speech)) return data;
+  const { openAiApiKey, compatibleSttApiKey, ...speech } = prefs.speech as Record<string, unknown>;
+  if (openAiApiKey === undefined && compatibleSttApiKey === undefined) return data;
+  return { ...data, uiPreferences: { ...prefs, speech } };
+}
+
+export function sanitizeStorageForClient(data: OpenPiViewerStorageData): OpenPiViewerStorageData {
+  const sanitized = sanitizeVoiceKeys(data);
+  const { voiceCredentials, ...clientData } = sanitized;
+  return clientData as OpenPiViewerStorageData;
+}
+
 /**
  * Loads the storage data from open-pi-viewer.json.
  * If file does not exist, returns safe defaults.
@@ -55,14 +70,12 @@ export function loadViewerStorage(): OpenPiViewerStorageData {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return { ...DEFAULT_STORAGE_DATA };
     }
-    return {
-      ...DEFAULT_STORAGE_DATA,
-      ...parsed,
-      version: typeof parsed.version === 'number' ? parsed.version : 1,
-    };
+    const original = { ...DEFAULT_STORAGE_DATA, ...parsed, version: typeof parsed.version === 'number' ? parsed.version : 1 };
+    const cleaned = sanitizeVoiceKeys(original);
+    if (cleaned !== original) fs.writeFileSync(filePath, JSON.stringify(cleaned, null, 2), 'utf8');
+    return cleaned;
   } catch (error) {
-    console.warn(`[ViewerStorage] Error reading ${filePath}:`, error);
-    return { ...DEFAULT_STORAGE_DATA };
+    throw new Error('Unable to load or clean viewer storage');
   }
 }
 
@@ -71,11 +84,13 @@ export function loadViewerStorage(): OpenPiViewerStorageData {
  */
 export function saveViewerStorage(data: Partial<OpenPiViewerStorageData>): OpenPiViewerStorageData {
   const current = loadViewerStorage();
-  const updated: OpenPiViewerStorageData = {
+  const updated: OpenPiViewerStorageData = sanitizeVoiceKeys({
     ...current,
     ...data,
+    // Preserve existing voiceCredentials unless explicitly overridden by internal storage calls
+    voiceCredentials: data.voiceCredentials !== undefined ? data.voiceCredentials : current.voiceCredentials,
     version: 1,
-  };
+  });
 
   const filePath = resolveStorageFilePath();
   const dir = path.dirname(filePath);
@@ -87,14 +102,23 @@ export function saveViewerStorage(data: Partial<OpenPiViewerStorageData>): OpenP
   fs.writeFileSync(tmpPath, JSON.stringify(updated, null, 2), 'utf8');
   fs.renameSync(tmpPath, filePath);
 
-  // Broadcast update via SSE so open clients can stay synchronized
+  // Broadcast sanitized update via SSE so open clients can stay synchronized without seeing credentials
   try {
-    broadcastSse('viewer://storage_updated', updated);
+    broadcastSse('viewer://storage_updated', sanitizeStorageForClient(updated));
   } catch {
     // SSE broadcast is best-effort
   }
 
   return updated;
+}
+
+export function patchSpeechPreferences(patch: unknown): OpenPiViewerStorageData {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid speech preferences patch');
+  const { openAiApiKey, compatibleSttApiKey, ...safePatch } = patch as Record<string, unknown>;
+  const current = loadViewerStorage();
+  const prefs = current.uiPreferences && typeof current.uiPreferences === 'object' ? current.uiPreferences : {};
+  const speech = prefs.speech && typeof prefs.speech === 'object' && !Array.isArray(prefs.speech) ? prefs.speech : {};
+  return saveViewerStorage({ uiPreferences: { ...prefs, speech: { ...speech, ...safePatch } } });
 }
 
 /**
