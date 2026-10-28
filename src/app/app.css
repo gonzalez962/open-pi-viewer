@@ -305,32 +305,57 @@
   border-right: none;
 }
 
-/* Header Zen Toggle Button */
-.btn-zen-toggle {
+/* Header Toggle Controls (Kanban, Terminal, Zen) */
+.btn-zen-toggle,
+.btn-terminal-toggle,
+.btn-kanban-toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   height: 28px;
+  box-sizing: border-box;
   padding: 0 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-muted);
-  background-color: var(--bg-subtle);
-  color: var(--fg-default);
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--border-muted, #30363d);
+  background-color: var(--bg-subtle, #161b22);
+  color: var(--fg-default, #c9d1d9);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
+  line-height: 1;
   transition: all 0.15s ease;
   user-select: none;
+  white-space: nowrap;
 }
 
-.btn-zen-toggle:hover {
-  background-color: var(--bg-subtle-hover);
-  border-color: var(--border-active);
+.btn-zen-toggle:hover:not(:disabled),
+.btn-terminal-toggle:hover:not(:disabled),
+.btn-kanban-toggle:hover:not(:disabled) {
+  background-color: var(--bg-subtle-hover, #21262d);
+  border-color: var(--border-active, #484f58);
+  color: var(--fg-default, #c9d1d9);
 }
 
-.btn-zen-toggle:focus-visible {
-  outline: 2px solid var(--accent-primary);
+.btn-zen-toggle:focus-visible,
+.btn-terminal-toggle:focus-visible,
+.btn-kanban-toggle:focus-visible {
+  outline: 2px solid var(--accent-primary, #58a6ff);
   outline-offset: 1px;
+}
+
+.btn-zen-toggle:disabled,
+.btn-terminal-toggle:disabled,
+.btn-kanban-toggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-terminal-toggle.is-active,
+.btn-zen-toggle[aria-pressed="true"] {
+  background-color: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.4);
+  color: #58a6ff;
 }
 
 /* Floating Accessible Exit Control */
@@ -503,11 +528,15 @@
     display: none;
   }
 
-  .btn-zen-toggle .zen-toggle-text {
+  .btn-zen-toggle .zen-toggle-text,
+  .btn-terminal-toggle .terminal-toggle-text,
+  .btn-kanban-toggle .kanban-toggle-text {
     display: none;
   }
 
-  .btn-zen-toggle {
+  .btn-zen-toggle,
+  .btn-terminal-toggle,
+  .btn-kanban-toggle {
     padding: 0 7px;
   }
 

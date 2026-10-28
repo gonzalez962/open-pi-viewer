@@ -5,7 +5,7 @@ Use **Kanban** in the application header to open the active project's board, eve
 - Expand **Add card** to reveal the form, enter a title and optional description, then choose **Add card**.
 - Cards display only their title and description directly; expand **Actions** on a card to access card controls.
 - Choose **Edit** to update both fields (automatically expands the form); **Cancel** discards the draft.
-- Use **Move to** on a card to change its column.
+- On desktop, drag and drop cards directly between columns. On mobile viewports, expand **Actions** to use the **Move to** column selector.
 - Choose **Delete** to show inline confirmation controls, then choose **Confirm** to remove the card or **Cancel** to abort.
 - Changes are saved immediately. Closing and reopening the board or reloading the application restores saved cards.
 

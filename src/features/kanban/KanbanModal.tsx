@@ -20,6 +20,8 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
   const [description, setDescription] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [draggingCardId, setDraggingCardId] = useState<string | null>(null);
+  const [dragOverColumn, setDragOverColumn] = useState<KanbanColumnId | null>(null);
   const t = (key: TranslationKey) => translate(locale, key);
 
   useEffect(() => {
@@ -76,7 +78,16 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
       onCancel={(event) => { event.preventDefault(); if (!saving.current) onClose(); }}>
       <header className="kanban-heading">
         <div><h2 id="kanban-heading">{t('kanban.title')}</h2><small>{workingDirectory}</small></div>
-        <button type="button" className="btn" disabled={busy} onClick={onClose}>{t('kanban.close')}</button>
+        <button
+          type="button"
+          className="kanban-close-btn"
+          disabled={busy}
+          onClick={onClose}
+          title={t('kanban.close')}
+          aria-label={t('kanban.close')}
+        >
+          ✕
+        </button>
       </header>
       {error && <p role="alert" className="kanban-error">{error}</p>}
       {!ready && !error && <p role="status">{t('kanban.loading')}</p>}
@@ -99,15 +110,58 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
       </details>
       <div className="kanban-columns">
         {KANBAN_COLUMNS.map((column) => (
-          <section key={column} className="kanban-column" aria-label={columnLabel(column)} data-column={column}>
+          <section
+            key={column}
+            className={`kanban-column ${dragOverColumn === column ? 'is-drag-over' : ''}`}
+            aria-label={columnLabel(column)}
+            data-column={column}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDragEnter={(e) => {
+              e.preventDefault();
+              setDragOverColumn(column);
+            }}
+            onDragLeave={(e) => {
+              if (e.currentTarget === e.target) {
+                setDragOverColumn(null);
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOverColumn(null);
+              const cardId = e.dataTransfer.getData('text/plain') || draggingCardId;
+              if (!cardId) return;
+              const targetCard = board.cards.find((c) => c.id === cardId);
+              if (!targetCard || targetCard.columnId === column) return;
+              void persist({
+                cards: board.cards.map((item) => (item.id === cardId ? { ...item, columnId: column } : item)),
+              });
+            }}
+          >
             <h3>{columnLabel(column)} <span>({board.cards.filter((card) => card.columnId === column).length})</span></h3>
             {board.cards.filter((card) => card.columnId === column).map((card) => (
-              <article key={card.id} className="kanban-card" aria-label={card.title}>
+              <article
+                key={card.id}
+                className={`kanban-card ${draggingCardId === card.id ? 'is-dragging' : ''}`}
+                aria-label={card.title}
+                draggable={ready && !busy}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/plain', card.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                  setDraggingCardId(card.id);
+                }}
+                onDragEnd={() => {
+                  setDraggingCardId(null);
+                  setDragOverColumn(null);
+                }}
+              >
                 <h4>{card.title}</h4>
                 {card.description && <p>{card.description}</p>}
-                <details className="kanban-card-details">
+                <details className="kanban-card-details" onDragStart={(e) => e.stopPropagation()}>
                   <summary>{t('kanban.actions')}</summary>
-                  <label>{t('kanban.move')}
+                  <label className="kanban-card-move">{t('kanban.move')}
                     <select value={card.columnId} disabled={busy || !ready} aria-label={`${t('kanban.move')}: ${card.title}`}
                       onChange={(e) => void persist({ cards: board.cards.map((item) => item.id === card.id ? { ...item, columnId: e.target.value as KanbanColumnId } : item) })}>
                       {KANBAN_COLUMNS.map((id) => <option key={id} value={id}>{columnLabel(id)}</option>)}

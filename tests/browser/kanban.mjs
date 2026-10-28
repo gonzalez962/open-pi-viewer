@@ -47,9 +47,23 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'domcontentloaded' });
+  await page.locator('.btn-kanban-toggle').waitFor();
+  await page.locator('.btn-terminal-toggle').waitFor();
+  await page.locator('.btn-zen-toggle').waitFor();
+  const buttonHeights = await page.evaluate(() => {
+    const kanban = Math.round(document.querySelector('.btn-kanban-toggle')?.getBoundingClientRect().height || 0);
+    const terminal = Math.round(document.querySelector('.btn-terminal-toggle')?.getBoundingClientRect().height || 0);
+    const zen = Math.round(document.querySelector('.btn-zen-toggle')?.getBoundingClientRect().height || 0);
+    return { kanban, terminal, zen };
+  });
+  assert.equal(buttonHeights.kanban, 28);
+  assert.equal(buttonHeights.terminal, 28);
+  assert.equal(buttonHeights.zen, 28);
+  console.log('PASS header buttons uniform height');
   const open = async () => {
     await page.getByRole('button', { name: 'Kanban', exact: true }).click();
     await page.locator('.kanban-dialog').waitFor();
+    assert.match(await page.locator('.kanban-close-btn').innerText(), /✕/);
     await page.waitForFunction(() => !document.querySelector('.kanban-form fieldset')?.disabled);
   };
   const openAddForm = async () => {
@@ -87,14 +101,19 @@ try {
   assert.match(await card().innerText(), /Edited description/);
   console.log('PASS S2.2 edit and reload');
 
+  // Desktop: move selector is hidden, card moves via drag and drop
+  await card().locator('summary').click();
+  assert.equal(await card().locator('.kanban-card-move').isVisible(), false);
+  await card().locator('summary').click();
+
   for (const column of ['in_progress', 'done']) {
-    await card().locator('summary').click();
-    await card().getByRole('combobox').selectOption(column);
+    const targetColumn = page.locator(`[data-column="${column}"]`);
+    await card().dragTo(targetColumn);
     await page.locator(`[data-column="${column}"] .kanban-card`).waitFor();
     await close(); await page.reload(); await open();
     assert.equal(await page.locator(`[data-column="${column}"] .kanban-card`).count(), 1);
   }
-  console.log('PASS S2.3 move and reload');
+  console.log('PASS S2.3 drag and drop move on desktop and reload');
 
   await close();
   await page.getByRole('button', { name: 'Project B', exact: true }).click();
@@ -141,6 +160,17 @@ try {
     return Math.abs(rect.left - expectedLeft) <= 2 && Math.abs(rect.top - expectedTop) <= 2;
   });
   assert.equal(isCentered, true, 'Kanban dialog must be centered in the viewport');
+
+  await openAddForm();
+  await page.getByLabel('Card title', { exact: true }).fill('Mobile move task');
+  await page.getByRole('button', { name: 'Add card', exact: true }).click();
+  await card().locator('summary').click();
+  assert.equal(await card().locator('.kanban-card-move').isVisible(), true);
+  await card().getByRole('combobox').selectOption('in_progress');
+  await page.locator('[data-column="in_progress"] .kanban-card').waitFor();
+  assert.equal(await page.locator('[data-column="in_progress"] .kanban-card').count(), 1);
+  console.log('PASS mobile move select visible and functional');
+
   await page.keyboard.press('Escape');
   await page.locator('.kanban-dialog').waitFor({ state: 'hidden' });
   assert.deepEqual(errors, []);
