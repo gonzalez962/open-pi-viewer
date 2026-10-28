@@ -39,6 +39,22 @@ test('S1.1 generic IPC storage never returns or persists submitted voice keys', 
   }
 });
 
+test('S2.1 speech-only IPC patch preserves current unrelated and other speech settings', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-speech-patch-'));
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(path.join(dir, 'storage.json'));
+  t.after(() => { setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
+  await handleIpcCommand('save_viewer_storage', { uiPreferences: { language: 'es', theme: 'light', speech: { ttsEnabled: false, sttEnabled: true, wyomingSttModel: 'small' } } });
+  const result = await handleIpcCommand('patch_speech_preferences', { patch: { ttsEnabled: true } });
+  const loaded = await handleIpcCommand('get_viewer_storage');
+  assert.deepEqual(result, loaded);
+  assert.equal(loaded.uiPreferences.language, 'es');
+  assert.equal(loaded.uiPreferences.theme, 'light');
+  assert.equal(loaded.uiPreferences.speech.ttsEnabled, true);
+  assert.equal(loaded.uiPreferences.speech.sttEnabled, true);
+  assert.equal(loaded.uiPreferences.speech.wyomingSttModel, 'small');
+});
+
 test('server/bridge: IPC get_viewer_storage, save_viewer_storage, update_viewer_storage_key', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-storage-test-'));
   const testFile = path.join(tmpDir, 'test-open-pi-viewer.json');

@@ -9,7 +9,7 @@ import { DEFAULT_SPEECH_PREFERENCES } from '@core/types/speech';
 import { synthesizeTts } from '@server/bridge/speech-runner';
 
 // A loopback WebSocket peer exercises the public runner without a transport-specific test hook.
-async function realtimePeer(mode: 'success' | 'error' | 'incomplete') {
+async function realtimePeer(mode: 'success' | 'error' | 'incomplete' | 'failed' | 'hang') {
   const events: any[] = [];
   const requests: string[] = [];
   const sockets = new Set<net.Socket>();
@@ -27,7 +27,7 @@ async function realtimePeer(mode: 'success' | 'error' | 'incomplete') {
       socket.write(Buffer.concat([Buffer.from([0x81, body.length]), body]));
     };
     socket.on('data', (chunk) => {
-      pending = Buffer.concat([pending, chunk]);
+      pending = Buffer.concat([pending, Buffer.from(chunk)]);
       if (!upgraded) {
         const end = pending.indexOf('\r\n\r\n');
         if (end < 0) return;
@@ -61,7 +61,8 @@ async function realtimePeer(mode: 'success' | 'error' | 'incomplete') {
         if (event.type === 'session.update') send({ type: 'session.updated', session: { id: 'session-fixture' } });
         if (event.type === 'response.create') {
           if (mode === 'error') send({ type: 'error', error: { type: 'server_error', message: `failure ${key}` } });
-          else {
+          else if (mode === 'failed') send({ type: 'response.done', response: { status: 'failed' } });
+          else if (mode !== 'hang') {
             send({ type: 'response.output_audio.delta', delta: pcm.toString('base64') });
             if (mode === 'success') send({ type: 'response.done', response: { status: 'completed' } });
             else socket.end();
@@ -105,7 +106,7 @@ describe('Realtime TTS public interface', () => {
     } finally { await peer.close(); }
   });
 
-  for (const mode of ['error', 'incomplete'] as const) {
+  for (const mode of ['error', 'incomplete', 'failed'] as const) {
     it(`S1.2 rejects a Realtime ${mode} session without exposing credentials`, { timeout: 5000 }, async () => {
       const peer = await realtimePeer(mode);
       try {
@@ -119,6 +120,38 @@ describe('Realtime TTS public interface', () => {
       } finally { await peer.close(); }
     });
   }
+
+  for (const [rate, expected] of [[0.1, 0.25], [1.25, 1.25], [4, 1.5]] as const) {
+    it(`S1.1 sends rate ${rate} as Realtime speed ${expected}`, async () => {
+      const peer = await realtimePeer('success');
+      try {
+        await synthesizeTts({ text: 'Hello', preferences: { ...peer.preferences, ttsRate: rate } });
+        assert.equal(peer.events.find((event) => event.type === 'session.update')?.session.audio.output.speed, expected);
+      } finally { await peer.close(); }
+    });
+  }
+
+  it('S1.2 rejects an already cancelled request without connecting', async () => {
+    const peer = await realtimePeer('hang');
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await assert.rejects(synthesizeTts({ text: 'Hello', preferences: peer.preferences, signal: controller.signal }), /cancel/i);
+      assert.deepEqual(peer.requests, []);
+    } finally { await peer.close(); }
+  });
+
+  it('S1.2 cancels an in-flight session', { timeout: 5000 }, async () => {
+    const peer = await realtimePeer('hang');
+    const controller = new AbortController();
+    try {
+      const timer = setTimeout(() => controller.abort(), 100);
+      try {
+        await assert.rejects(synthesizeTts({ text: 'Hello fixture', preferences: peer.preferences, signal: controller.signal }), /cancel/i);
+      } finally { clearTimeout(timer); }
+      assert.ok(peer.events.some((event) => event.type === 'response.create'));
+    } finally { await peer.close(); }
+  });
 
   it('S2.1 offers a Realtime model and a selectable voice without a free-form voice identifier', () => {
     const html = renderToStaticMarkup(React.createElement(SpeechSettingsSection, {

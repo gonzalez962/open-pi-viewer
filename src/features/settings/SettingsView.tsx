@@ -47,7 +47,7 @@ export interface SettingsViewProps {
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
   onHiddenCommandIdsChange?: (ids: string[]) => void;
   /** Persists speech preferences. */
-  onSpeechPreferencesChange?: (speech: Partial<any>) => void;
+  onSpeechPreferencesChange?: (speech: Partial<any>) => Promise<{ success: boolean; error?: string }>;
   /** Persists the default projects directory for browsing and cloning. */
   onDefaultProjectsDirectoryChange?: (directory: string | null) => void;
   settingsError: string | null;
@@ -1259,7 +1259,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 selectedSttPackId: 'es-kroko-64l',
               }}
               onSpeechPreferencesChange={(partial) => {
-                onSpeechPreferencesChange?.(partial);
+                return onSpeechPreferencesChange?.(partial) ?? { success: false, error: 'Speech settings unavailable' };
               }}
             />
           </div>

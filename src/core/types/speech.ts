@@ -4,6 +4,8 @@
 
 export type SpeechProvider = 'wyoming' | 'openai';
 
+export const OPENAI_REALTIME_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'] as const;
+
 export interface CustomModelConfig {
   isCustom: boolean;
   modelPath: string;
@@ -24,8 +26,8 @@ export interface SpeechPreferences {
   compatibleSttModel?: string;
   openAiApiKey?: string;
   openAiBaseUrl?: string; // defaults to "https://api.openai.com/v1"
-  openAiTtsModel?: string; // "tts-1" | "tts-1-hd"
-  openAiTtsVoice?: string; // "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
+  openAiTtsModel?: string; // Realtime model
+  openAiTtsVoice?: string; // Realtime voice
   openAiSttModel?: string; // "whisper-1"
   openAiSttLanguage?: string; // e.g. "es" | "en" | "auto"
   ttsCustom?: CustomModelConfig;
@@ -49,7 +51,7 @@ export const DEFAULT_SPEECH_PREFERENCES: SpeechPreferences = {
   ttsProvider: 'wyoming',
   sttProvider: 'wyoming',
   openAiBaseUrl: 'https://api.openai.com/v1',
-  openAiTtsModel: 'tts-1',
+  openAiTtsModel: 'gpt-realtime-2.1-mini',
   openAiTtsVoice: 'alloy',
   openAiSttModel: 'whisper-1',
   openAiSttLanguage: 'es',
@@ -158,28 +160,18 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
     rec.sttProvider === 'openai' || rec.sttProvider === 'openai-compatible' ? rec.sttProvider : 'wyoming';
 
   const compatibleSttBaseUrl = typeof rec.compatibleSttBaseUrl === 'string' ? rec.compatibleSttBaseUrl.trim() : '';
-  const compatibleSttApiKey = typeof rec.compatibleSttApiKey === 'string' ? rec.compatibleSttApiKey.trim() : '';
   const compatibleSttModel = typeof rec.compatibleSttModel === 'string' ? rec.compatibleSttModel.trim() : '';
-
-  const openAiApiKey =
-    typeof rec.openAiApiKey === 'string' && rec.openAiApiKey.trim()
-      ? rec.openAiApiKey.trim()
-      : undefined;
 
   const openAiBaseUrl =
     typeof rec.openAiBaseUrl === 'string' && rec.openAiBaseUrl.trim()
       ? rec.openAiBaseUrl.trim()
       : DEFAULT_SPEECH_PREFERENCES.openAiBaseUrl;
 
-  const openAiTtsModel =
-    typeof rec.openAiTtsModel === 'string' && rec.openAiTtsModel.trim()
-      ? rec.openAiTtsModel.trim()
-      : DEFAULT_SPEECH_PREFERENCES.openAiTtsModel;
+  const openAiTtsModel = rec.openAiTtsModel === 'gpt-realtime-2.1-mini'
+    ? rec.openAiTtsModel : DEFAULT_SPEECH_PREFERENCES.openAiTtsModel;
 
-  const openAiTtsVoice =
-    typeof rec.openAiTtsVoice === 'string' && rec.openAiTtsVoice.trim()
-      ? rec.openAiTtsVoice.trim()
-      : DEFAULT_SPEECH_PREFERENCES.openAiTtsVoice;
+  const openAiTtsVoice = typeof rec.openAiTtsVoice === 'string' && OPENAI_REALTIME_VOICES.includes(rec.openAiTtsVoice.trim() as typeof OPENAI_REALTIME_VOICES[number])
+    ? rec.openAiTtsVoice.trim() : DEFAULT_SPEECH_PREFERENCES.openAiTtsVoice;
 
   const openAiSttModel =
     typeof rec.openAiSttModel === 'string' && rec.openAiSttModel.trim()
@@ -199,9 +191,9 @@ export function validateSpeechPreferences(input: unknown): SpeechPreferences {
     ttsProvider,
     sttProvider,
     ...(compatibleSttBaseUrl ? { compatibleSttBaseUrl } : {}),
-    ...(compatibleSttApiKey ? { compatibleSttApiKey } : {}),
+
     ...(compatibleSttModel ? { compatibleSttModel } : {}),
-    ...(openAiApiKey ? { openAiApiKey } : {}),
+
     openAiBaseUrl,
     openAiTtsModel,
     openAiTtsVoice,

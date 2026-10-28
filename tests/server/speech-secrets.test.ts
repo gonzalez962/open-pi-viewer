@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
+import { WebSocketServer } from 'ws';
 import { handleIpcCommand } from '@server/web-ipc-bridge';
 import { setStorageFilePathForTest } from '@server/storage';
 
@@ -34,6 +36,14 @@ const status = (provider: string, url: string) =>
 const clear = (provider: string, url: string) =>
   handleIpcCommand('clear_voice_credential', { provider, endpoint: url });
 
+test('S1.1 invalid endpoints never echo supplied credentials in errors', async (t) => {
+  await isolated(t);
+  await assert.rejects(save('openai', `not-a-url-${key}`, key), (error: Error) => {
+    assert.equal(error.message.includes(key), false);
+    return true;
+  });
+});
+
 test('S1.1 save, query and clear expose presence only and isolate provider and endpoint', async (t) => {
   await isolated(t);
   assert.deepEqual(await status('openai', endpoint), { configured: false });
@@ -48,26 +58,54 @@ test('S1.1 save, query and clear expose presence only and isolate provider and e
 
 test('S1.2 and S3.1 no-auth IPC uses stored OpenAI key for both synthesis and transcription', async (t) => {
   await isolated(t);
+  const server = http.createServer();
+  const ws = new WebSocketServer({ server });
+  let requestUrl = '';
+  let authorization = '';
+  const events: any[] = [];
+  ws.on('connection', (socket, request) => {
+    requestUrl = request.url || '';
+    authorization = request.headers.authorization || '';
+    socket.send(JSON.stringify({ type: 'session.created' }));
+    socket.on('message', (data) => {
+      const event = JSON.parse(data.toString());
+      events.push(event);
+      if (event.type === 'session.update') socket.send(JSON.stringify({ type: 'session.updated' }));
+      if (event.type === 'response.create') {
+        socket.send(JSON.stringify({ type: 'response.output_audio.delta', delta: Buffer.from([1, 2]).toString('base64') }));
+        socket.send(JSON.stringify({ type: 'response.done', response: { status: 'completed' } }));
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const localEndpoint = `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}/v1`;
   const originalFetch = globalThis.fetch;
   const calls: Array<{url: string; authorization: string | null}> = [];
   globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     calls.push({ url: String(url), authorization: new Headers(init?.headers).get('authorization') });
-    return String(url).endsWith('/audio/speech')
-      ? new Response(Buffer.from('wav'), { status: 200 })
-      : new Response(JSON.stringify({ text: 'recognized' }), { status: 200 });
+    return new Response(JSON.stringify({ text: 'recognized' }), { status: 200 });
   }) as typeof fetch;
-  t.after(() => { globalThis.fetch = originalFetch; });
-  assert.deepEqual(await save('openai', endpoint, key), { configured: true });
-  const preferences = { ttsEnabled: true, sttEnabled: true, ttsProvider: 'openai', sttProvider: 'openai', openAiBaseUrl: endpoint };
-  const tts = await handleIpcCommand('synthesize_speech_tts', { text: 'hello', preferences });
-  const stt = await handleIpcCommand('transcribe_speech_stt', { audioBase64: Buffer.from('audio').toString('base64'), preferences });
-  assert.equal(Buffer.from(tts.audioBase64, 'base64').toString(), 'wav');
-  assert.equal(stt.text, 'recognized');
-  assert.deepEqual(calls, [
-    { url: `${endpoint}/audio/speech`, authorization: `Bearer ${key}` },
-    { url: `${endpoint}/audio/transcriptions`, authorization: `Bearer ${key}` },
-  ]);
-  assert.equal(JSON.stringify([tts, stt]).includes(key), false);
+  try {
+    assert.deepEqual(await save('openai', localEndpoint, key), { configured: true });
+    const preferences = { ttsEnabled: true, sttEnabled: true, ttsProvider: 'openai', sttProvider: 'openai', openAiBaseUrl: localEndpoint };
+    const tts = await handleIpcCommand('synthesize_speech_tts', { text: 'hello', preferences });
+    const stt = await handleIpcCommand('transcribe_speech_stt', { audioBase64: Buffer.from('audio').toString('base64'), preferences });
+    const wav = Buffer.from(tts.audioBase64, 'base64');
+    assert.equal(tts.mimeType, 'audio/wav');
+    assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+    assert.deepEqual(wav.subarray(44), Buffer.from([1, 2]));
+    assert.match(requestUrl, /^\/v1\/realtime\?model=/);
+    assert.equal(authorization, `Bearer ${key}`);
+    assert.ok(events.some((event) => JSON.stringify(event).includes('hello')));
+    assert.equal(stt.text, 'recognized');
+    assert.deepEqual(calls, [{ url: `${localEndpoint}/audio/transcriptions`, authorization: `Bearer ${key}` }]);
+    assert.equal(JSON.stringify([tts, stt]).includes(key), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const client of ws.clients) client.terminate();
+    await new Promise<void>((resolve, reject) => ws.close((err) => err ? reject(err) : resolve()));
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+  }
 });
 
 test('S1.2 stored credential cannot be redirected to a different endpoint', async (t) => {
