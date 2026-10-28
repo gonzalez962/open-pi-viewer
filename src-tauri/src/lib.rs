@@ -131,6 +131,7 @@ pub fn run() {
             commands::clone_github_repository,
             commands::create_github_repository,
             commands::list_github_repositories,
+            commands::inspect_custom_speech_model,
             commands::get_viewer_storage,
             commands::save_viewer_storage,
             commands::update_viewer_storage_key,

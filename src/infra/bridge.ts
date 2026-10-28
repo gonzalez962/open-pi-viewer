@@ -10,6 +10,7 @@ export function saveProjectKanbanPi(workingDirectory: string, board: KanbanBoard
 }
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isWebShim } from './web-oauth-access';
+import type { SpeechPreferences } from '@core/types/speech';
 import type { ConnectConfig, ConnectResult, ConnectSessionOptions } from '@core/types/connection';
 import type { ModelInfo, ModelThinkingLevelsMap, SessionStats, ThinkingLevel } from '@core/types/models';
 import type {
@@ -3245,3 +3246,130 @@ export async function listGitHubRepositoriesPi(
   }
   return await invokeFn<ListGitHubRepositoriesResult>('list_github_repositories', { payload });
 }
+
+export interface InspectCustomSpeechModelPayload {
+  isCustom: boolean;
+  modelPath: string;
+  configPath?: string;
+  tokensPath?: string;
+}
+
+export interface SynthesizeSpeechTtsPayload {
+  text: string;
+  preferences: any;
+  rate?: number;
+}
+
+export interface SynthesizeSpeechTtsResult {
+  audioBase64: string;
+  mimeType: string;
+}
+
+export interface TranscribeSpeechSttPayload {
+  audioBase64: string;
+  mimeType?: string;
+  preferences: any;
+}
+
+export interface TranscribeSpeechSttResult {
+  text: string;
+  confidence?: number;
+}
+
+
+
+export async function patchSpeechPreferencesPi(patch: Partial<SpeechPreferences>): Promise<void> {
+  if (!isWebShim()) throw new Error('Speech preference sync requires the web bridge');
+  await defaultInvoke('patch_speech_preferences', { payload: { patch } });
+}
+
+export async function saveVoiceCredentialPi(provider: 'openai' | 'openai-compatible', endpoint: string, apiKey: string): Promise<{ configured: boolean }> {
+  if (!isWebShim()) throw new Error('Voice credentials are available only through the web bridge');
+  return defaultInvoke('save_voice_credential', { payload: { provider, endpoint, apiKey } });
+}
+
+export async function inspectCustomSpeechModelPi(
+  payload: InspectCustomSpeechModelPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<any> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { valid: false, error: 'Runtime bridge unavailable' };
+  }
+  return await invokeFn('inspect_custom_speech_model', { payload });
+}
+
+export async function synthesizeSpeechTtsPi(
+  payload: SynthesizeSpeechTtsPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<SynthesizeSpeechTtsResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<SynthesizeSpeechTtsResult>('synthesize_speech_tts', { payload });
+}
+
+export async function transcribeSpeechSttPi(
+  payload: TranscribeSpeechSttPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<TranscribeSpeechSttResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Desktop runtime unavailable: running in browser preview without Tauri bridge');
+  }
+  return await invokeFn<TranscribeSpeechSttResult>('transcribe_speech_stt', { payload });
+}
+
+export async function checkWyomingServicePi(
+  payload: { url: string },
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<{ ok: boolean; info?: any; error?: string }> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { ok: false, error: 'Bridge unavailable' };
+  }
+  return await invokeFn<{ ok: boolean; info?: any; error?: string }>('check_wyoming_service', { payload });
+}
+
+export interface DockerSpeechActionPayload {
+  service: 'piper' | 'whisper';
+  action: 'status' | 'start' | 'stop' | 'restart' | 'remove' | 'create';
+  preferences: SpeechPreferences;
+}
+
+export interface DockerContainerStatusPayload {
+  service: 'piper' | 'whisper';
+}
+
+export interface DockerSpeechActionResult {
+  success: boolean;
+  service: 'piper' | 'whisper';
+  action: string;
+  containerInfo: {
+    exists: boolean;
+    state: 'running' | 'exited' | 'paused' | 'restarting' | 'dead' | 'not_found';
+    statusText?: string;
+    containerId?: string;
+  };
+  output?: string;
+  error?: string;
+}
+
+export async function manageDockerSpeechServicePi(
+  payload: DockerSpeechActionPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<DockerSpeechActionResult> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    throw new Error('Bridge unavailable');
+  }
+  return await invokeFn<DockerSpeechActionResult>('manage_docker_speech_service', { payload });
+}
+
+export async function getDockerSpeechStatusPi(
+  payload: DockerContainerStatusPayload,
+  invokeFn: InvokeFn = defaultInvoke
+): Promise<{ exists: boolean; state: string; statusText?: string; containerId?: string }> {
+  if (!isTauri() && !isWebShim() && invokeFn === defaultInvoke) {
+    return { exists: false, state: 'not_found' };
+  }
+  return await invokeFn<{ exists: boolean; state: string; statusText?: string; containerId?: string }>('get_docker_speech_status', { payload });
+}
+
+

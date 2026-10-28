@@ -5,6 +5,56 @@ import path from 'node:path';
 import os from 'node:os';
 import { handleIpcCommand } from '@server/web-ipc-bridge';
 
+test('S1.3 legacy server voice keys are removed before generic IPC reads', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-speech-legacy-'));
+  const testFile = path.join(tmpDir, 'storage.json');
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(testFile);
+  t.after(() => { setStorageFilePathForTest(null); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  fs.writeFileSync(testFile, JSON.stringify({ version: 1, uiPreferences: { language: 'en', theme: 'dark', speech: {
+    ttsEnabled: true, sttEnabled: true, openAiApiKey: 'legacy-openai-secret', compatibleSttApiKey: 'legacy-compatible-secret',
+  } } }));
+  const result = await handleIpcCommand('get_viewer_storage');
+  assert.equal(JSON.stringify(result).includes('legacy-openai-secret'), false);
+  assert.equal(JSON.stringify(result).includes('legacy-compatible-secret'), false);
+  const persisted = fs.readFileSync(testFile, 'utf8');
+  assert.equal(persisted.includes('legacy-openai-secret'), false);
+  assert.equal(persisted.includes('legacy-compatible-secret'), false);
+  assert.equal(result.uiPreferences?.speech && (result.uiPreferences.speech as any).ttsEnabled, true);
+});
+
+test('S1.1 generic IPC storage never returns or persists submitted voice keys', async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-speech-save-'));
+  const testFile = path.join(tmpDir, 'storage.json');
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(testFile);
+  t.after(() => { setStorageFilePathForTest(null); fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  const saved = await handleIpcCommand('save_viewer_storage', { uiPreferences: { language: 'en', theme: 'dark', speech: {
+    ttsEnabled: true, sttEnabled: true, openAiApiKey: 'submitted-openai', compatibleSttApiKey: 'submitted-compatible',
+  } } });
+  const loaded = await handleIpcCommand('get_viewer_storage');
+  for (const value of [saved, loaded, fs.readFileSync(testFile, 'utf8')]) {
+    assert.equal(JSON.stringify(value).includes('submitted-openai'), false);
+    assert.equal(JSON.stringify(value).includes('submitted-compatible'), false);
+  }
+});
+
+test('S2.1 speech-only IPC patch preserves current unrelated and other speech settings', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-speech-patch-'));
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(path.join(dir, 'storage.json'));
+  t.after(() => { setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
+  await handleIpcCommand('save_viewer_storage', { uiPreferences: { language: 'es', theme: 'light', speech: { ttsEnabled: false, sttEnabled: true, wyomingSttModel: 'small' } } });
+  const result = await handleIpcCommand('patch_speech_preferences', { patch: { ttsEnabled: true } });
+  const loaded = await handleIpcCommand('get_viewer_storage');
+  assert.deepEqual(result, loaded);
+  assert.equal(loaded.uiPreferences.language, 'es');
+  assert.equal(loaded.uiPreferences.theme, 'light');
+  assert.equal(loaded.uiPreferences.speech.ttsEnabled, true);
+  assert.equal(loaded.uiPreferences.speech.sttEnabled, true);
+  assert.equal(loaded.uiPreferences.speech.wyomingSttModel, 'small');
+});
+
 test('server/bridge: IPC get_viewer_storage, save_viewer_storage, update_viewer_storage_key', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-storage-test-'));
   const testFile = path.join(tmpDir, 'test-open-pi-viewer.json');

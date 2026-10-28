@@ -20,6 +20,7 @@ import { SettingsSelect } from './components/SettingsSelect';
 import { WebPushEnrollmentModal } from './components/WebPushEnrollmentModal';
 import { CustomCommandsSection } from './components/CustomCommandsSection';
 import { ThemeCustomizer } from './components/ThemeCustomizer';
+import { SpeechSettingsSection } from './components/SpeechSettingsSection';
 import { COMMANDS, type CustomCommand } from '@core/commands';
 import { discoverBaseBinaryPaths } from './reset-binary-paths';
 import type { NotificationPermissionStatus } from '@infra/notification-delivery';
@@ -29,6 +30,11 @@ import {
   clearSavedGitHubPat,
   probeGitHubPatUser,
 } from '@features/projects/github-clone';
+import {
+  SettingsToastContext,
+  SettingsToastContainer,
+  useToastManager,
+} from './toast';
 
 export interface SettingsViewProps {
   config: ConnectConfig;
@@ -45,6 +51,8 @@ export interface SettingsViewProps {
   onCustomCommandsChange?: (commands: CustomCommand[]) => void;
   /** Persists the ids of commands hidden from the palette and "/help" (Issue #9 T8). */
   onHiddenCommandIdsChange?: (ids: string[]) => void;
+  /** Persists speech preferences. */
+  onSpeechPreferencesChange?: (speech: Partial<any>) => Promise<{ success: boolean; error?: string }>;
   /** Persists the default projects directory for browsing and cloning. */
   onDefaultProjectsDirectoryChange?: (directory: string | null) => void;
   settingsError: string | null;
@@ -52,7 +60,7 @@ export interface SettingsViewProps {
   isBusy: boolean;
   onSaveAndApply: (e: React.FormEvent) => Promise<void> | void;
   onClose: () => void;
-  initialTab?: 'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions';
+  initialTab?: 'general' | 'theme' | 'speech' | 'profiles' | 'providers' | 'mcp' | 'extensions';
   appearanceController?: AppearanceLifecycleController;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   loadCustomProviders: () => Promise<CustomProviderConfig[]>;
@@ -79,6 +87,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onCustomCommandsChange,
   onHiddenCommandIdsChange,
   onDefaultProjectsDirectoryChange,
+  onSpeechPreferencesChange,
   settingsError,
   settingsStorageNotice,
   isBusy,
@@ -94,7 +103,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   pickDirectoryFn,
   detectGentleShellFn,
 }) => {
-  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
+  const ambientToast = React.useContext(SettingsToastContext);
+  const localToast = useToastManager();
+  const toast = ambientToast ?? localToast;
+  const [activeTab, setActiveTab] = useState<'general' | 'theme' | 'speech' | 'profiles' | 'providers' | 'mcp' | 'extensions'>(initialTab);
   const [isDetectingShell, setIsDetectingShell] = useState(false);
   const [gentleShellNotice, setGentleShellNotice] = useState<{
     type: 'success' | 'error';
@@ -105,6 +117,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [binaryPathsNotice, setBinaryPathsNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const binaryDiscoveryBusy = isBusy || isDetectingShell || isResettingPaths;
 
+  // React to prop-driven diagnostics by surfacing fixed toasts
+  const prevSettingsErrorRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (settingsError && settingsError !== prevSettingsErrorRef.current) {
+      toast.error(formatLocalizedDiagnostic(settingsError, preferences.language));
+    }
+    prevSettingsErrorRef.current = settingsError;
+  }, [settingsError, preferences.language, toast]);
+
+  const prevStorageNoticeRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    if (settingsStorageNotice && settingsStorageNotice !== prevStorageNoticeRef.current) {
+      toast.warning(formatLocalizedDiagnostic(settingsStorageNotice, preferences.language));
+    }
+    prevStorageNoticeRef.current = settingsStorageNotice;
+  }, [settingsStorageNotice, preferences.language, toast]);
+
   const handleResetBinaryPaths = async () => {
     setIsResettingPaths(true);
     setBinaryPathsNotice(null);
@@ -112,11 +141,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       const paths = await discoverBaseBinaryPaths(settingsDraft.workingDirectory);
       setSettingsDraft(prev => ({ ...prev, ...paths }));
       setGentleShellNotice(null);
-      setBinaryPathsNotice({ type: 'success', message: t('settings.reset_binary_paths_success') });
+      const msg = t('settings.reset_binary_paths_success');
+      setBinaryPathsNotice({ type: 'success', message: msg });
+      toast.success(msg);
     } catch (error) {
-      setBinaryPathsNotice({ type: 'error', message: t('settings.reset_binary_paths_error', {
+      const errorMsg = t('settings.reset_binary_paths_error', {
         error: error instanceof Error ? error.message : String(error),
-      }) });
+      });
+      setBinaryPathsNotice({ type: 'error', message: errorMsg });
+      toast.error(errorMsg);
     } finally {
       setIsResettingPaths(false);
     }
@@ -132,11 +165,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [gitHubPatUser, setGitHubPatUser] = useState<string | null>(null);
   const [gitHubCliUser, setGitHubCliUser] = useState<string | null>(null);
   const [gitHubPatSaving, setGitHubPatSaving] = useState(false);
-  const [gitHubPatSuccess, setGitHubPatSuccess] = useState(false);
   const [showGitHubPat, setShowGitHubPat] = useState(false);
 
   const [defaultProjectsDirDraft, setDefaultProjectsDirDraft] = useState(() => preferences.defaultProjectsDirectory || '');
-  const [defaultProjectsDirSavedNotice, setDefaultProjectsDirSavedNotice] = useState(false);
   const [defaultProjectsDirCopied, setDefaultProjectsDirCopied] = useState(false);
 
   useEffect(() => {
@@ -161,25 +192,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSaveGitHubPat = async () => {
     setGitHubPatSaving(true);
-    setGitHubPatSuccess(false);
     const clean = gitHubPat.trim();
     saveGitHubPat(clean);
     if (clean) {
       const user = await probeGitHubPatUser(clean);
       setGitHubPatUser(user || null);
+      if (user) {
+        toast.success(t('settings.github_pat_authenticated', { user }));
+      } else {
+        toast.success(t('settings.github_pat_saved'));
+      }
     } else {
       setGitHubPatUser(null);
+      toast.info(t('settings.github_pat_clear'));
     }
     setGitHubPatSaving(false);
-    setGitHubPatSuccess(true);
-    setTimeout(() => setGitHubPatSuccess(false), 2500);
   };
 
   const handleClearGitHubPat = () => {
     clearSavedGitHubPat();
     setGitHubPat('');
     setGitHubPatUser(null);
-    setGitHubPatSuccess(false);
+    toast.info(t('settings.github_pat_clear'));
   };
   const canEnrollBrowser = Boolean(onSystemNotificationsToggle && webPushStatus &&
     webPushStatus !== 'unsupported' && webPushStatus !== 'subscribed');
@@ -202,7 +236,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (enabled) setNotificationPermission(await requestNotificationPermission());
       await onSystemNotificationsToggle?.(enabled);
     } catch (error) {
-      setNotificationNotice(error instanceof Error ? error.message : String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      setNotificationNotice(msg);
+      toast.error(msg);
     } finally { setNotificationBusy(false); }
   };
 
@@ -212,7 +248,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await onSystemNotificationsToggle?.(false);
     } catch (error) {
-      setNotificationNotice(error instanceof Error ? error.message : String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      setNotificationNotice(msg);
+      toast.error(msg);
     } finally { setNotificationBusy(false); }
   };
 
@@ -227,7 +265,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       onNotificationsChange?.({ enabled: true });
       setEnrollmentOpen(false);
     } catch (error) {
-      setEnrollmentError(error instanceof Error ? error.message : String(error));
+      const msg = error instanceof Error ? error.message : String(error);
+      setEnrollmentError(msg);
+      toast.error(msg);
     } finally { setNotificationBusy(false); }
   };
 
@@ -244,29 +284,37 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           ...prev,
           piEntrypoint: result.path!,
         }));
+        const msg = t('settings.detect_gentle_shell_success', { path: result.path });
         setGentleShellNotice({
           type: 'success',
-          message: t('settings.detect_gentle_shell_success', { path: result.path }),
+          message: msg,
         });
+        toast.success(msg);
       } else if (result.status === 'ambiguous') {
         const candidatesStr = result.candidates?.join(', ') || '';
+        const msg = t('settings.detect_gentle_shell_ambiguous', { candidates: candidatesStr });
         setGentleShellNotice({
           type: 'error',
-          message: t('settings.detect_gentle_shell_ambiguous', { candidates: candidatesStr }),
+          message: msg,
         });
+        toast.warning(msg);
       } else {
+        const msg = t('settings.detect_gentle_shell_missing');
         setGentleShellNotice({
           type: 'error',
-          message: t('settings.detect_gentle_shell_missing'),
+          message: msg,
         });
+        toast.warning(msg);
       }
     } catch (err) {
+      const msg = t('settings.detect_gentle_shell_error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
       setGentleShellNotice({
         type: 'error',
-        message: t('settings.detect_gentle_shell_error', {
-          error: err instanceof Error ? err.message : String(err),
-        }),
+        message: msg,
       });
+      toast.error(msg);
     } finally {
       setIsDetectingShell(false);
     }
@@ -278,8 +326,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (selected) {
       setDefaultProjectsDirDraft(selected);
       onDefaultProjectsDirectoryChange?.(selected);
-      setDefaultProjectsDirSavedNotice(true);
-      setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+      toast.success(t('settings.default_projects_dir_saved'));
     }
   };
 
@@ -287,15 +334,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     const clean = defaultProjectsDirDraft.trim();
     onDefaultProjectsDirectoryChange?.(clean ? clean : null);
     setDefaultProjectsDirDraft(clean);
-    setDefaultProjectsDirSavedNotice(true);
-    setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+    toast.success(t('settings.default_projects_dir_saved'));
   };
 
   const handleClearDefaultProjectsDirectory = () => {
     onDefaultProjectsDirectoryChange?.(null);
     setDefaultProjectsDirDraft('');
-    setDefaultProjectsDirSavedNotice(true);
-    setTimeout(() => setDefaultProjectsDirSavedNotice(false), 2500);
+    toast.info(t('settings.default_projects_dir_saved'));
   };
 
   const handleResetDefaultProjectsDirectory = () => {
@@ -309,6 +354,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       await navigator.clipboard.writeText(text);
       setDefaultProjectsDirCopied(true);
       setTimeout(() => setDefaultProjectsDirCopied(false), 2000);
+      toast.info(t('settings.default_projects_dir_copied'));
     } catch {
       // fallback
     }
@@ -331,12 +377,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         const { getNotificationDelivery } = await import('@infra/notification-delivery');
         if (getNotificationDelivery().platform === 'web') playNotificationSound('complete');
       }
-      setNotificationNotice(t(delivered ? 'settings.notifications_test_sent' : 'settings.notifications_test_failed'));
+      const msg = t(delivered ? 'settings.notifications_test_sent' : 'settings.notifications_test_failed');
+      setNotificationNotice(msg);
+      if (delivered) {
+        toast.success(msg);
+      } else {
+        toast.error(msg);
+      }
     } finally { setNotificationBusy(false); }
   };
 
   return (
-    <div className="settings-view" role="region" aria-label={t('settings.title')}>
+    <SettingsToastContext.Provider value={toast}>
+      <div className="settings-view" role="region" aria-label={t('settings.title')}>
       {/* Header with Navigation Tabs */}
       <header className="settings-view-header">
         <div className="settings-view-header-left">
@@ -365,6 +418,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             onClick={() => setActiveTab('theme')}
           >
             {t('settings.tab_theme')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'speech'}
+            className={activeTab === 'speech' ? 'settings-tab-btn active' : 'settings-tab-btn'}
+            onClick={() => setActiveTab('speech')}
+          >
+            Voz (TTS/STT)
           </button>
           <button
             type="button"
@@ -683,10 +745,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               disabled={binaryDiscoveryBusy}
               title={t('settings.reset_binary_paths_title')}
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-              </svg>
-              <span>{isResettingPaths ? t('settings.reset_binary_paths_detecting') : t('settings.reset_binary_paths')}</span>
+              {isResettingPaths ? t('settings.reset_binary_paths_detecting') : t('settings.reset_binary_paths')}
             </button>
           </div>
 
@@ -717,6 +776,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             className="connection-form"
             onSubmit={onSaveAndApply}
           >
+            <input type="hidden" name="workingDirectory" value={settingsDraft.workingDirectory} />
             <div className="connection-fields-grid">
               <div className="field-group connection-field-item">
                 <div className="connection-field-header">
@@ -897,7 +957,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   value={defaultProjectsDirDraft}
                   onChange={(e) => {
                     setDefaultProjectsDirDraft(e.target.value);
-                    setDefaultProjectsDirSavedNotice(false);
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
@@ -977,26 +1036,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', flexWrap: 'wrap', gap: '8px' }}>
               <span className="field-subtext">{t('projects.default_directory_hint')}</span>
-              {defaultProjectsDirSavedNotice && (
-                <span
-                  role="status"
-                  aria-live="polite"
-                  style={{
-                    color: 'var(--status-green, #4ade80)',
-                    fontSize: '12px',
-                    fontWeight: 500,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  {t('settings.default_projects_dir_saved')}
-                </span>
-              )}
-              {defaultProjectsDirDraft.trim() !== (preferences.defaultProjectsDirectory || '').trim() && !defaultProjectsDirSavedNotice && (
+              {defaultProjectsDirDraft.trim() !== (preferences.defaultProjectsDirectory || '').trim() && (
                 <span
                   style={{
                     color: 'var(--status-warning, #f59e0b)',
@@ -1086,7 +1126,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   value={gitHubPat}
                   onChange={(e) => {
                     setGitHubPat(e.target.value);
-                    setGitHubPatSuccess(false);
                   }}
                   placeholder={t('settings.github_pat_placeholder')}
                   autoComplete="off"
@@ -1153,12 +1192,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </svg>
               </a>
             </div>
-
-            {gitHubPatSuccess && (
-              <span className="field-subtext" style={{ color: 'var(--status-green, #4ade80)', fontWeight: 500, marginTop: '4px' }}>
-                ✓ {t('settings.github_pat_saved')}
-              </span>
-            )}
           </div>
         </section>
 
@@ -1235,6 +1268,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
+      {activeTab === 'speech' && (
+        <div className="settings-tab-pane" role="tabpanel" aria-label="Speech">
+          <div className="settings-view-body">
+            <SpeechSettingsSection
+              preferences={preferences.speech || {
+                ttsEnabled: false,
+                sttEnabled: false,
+                selectedTtsPackId: 'es_MX-claude-high',
+                selectedSttPackId: 'es-kroko-64l',
+              }}
+              onSpeechPreferencesChange={(partial) => {
+                return onSpeechPreferencesChange?.(partial) ?? { success: false, error: 'Speech settings unavailable' };
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {activeTab === 'profiles' && renderProfiles && (
         <div className="settings-tab-pane" role="tabpanel" aria-label={t('settings.tab_profiles')}>
           {renderProfiles(() => setActiveTab('general'))}
@@ -1261,6 +1312,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {renderExtensions(() => setActiveTab('general'))}
         </div>
       )}
+
+      <SettingsToastContainer />
     </div>
+    </SettingsToastContext.Provider>
   );
 };

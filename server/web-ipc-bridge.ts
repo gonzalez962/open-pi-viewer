@@ -178,9 +178,28 @@ import {
   loadViewerStorage,
   saveViewerStorage,
   updateViewerStorageKey,
+  patchSpeechPreferences,
+  sanitizeStorageForClient,
 } from './storage';
+import {
+  inspectCustomModel,
+} from './bridge/speech';
+import {
+  synthesizeTts,
+  transcribeStt,
+} from './bridge/speech-runner';
+import {
+  checkWyomingHealth,
+} from './bridge/wyoming-client';
+import {
+  manageDockerSpeechService,
+  getDockerContainerInfo,
+  type DockerSpeechService,
+  type DockerSpeechAction,
+} from './bridge/docker-speech';
 
 import { handleGetProjectKanban, handleSaveProjectKanban } from './bridge/kanban';
+import { getVoiceCredential, saveVoiceCredential, clearVoiceCredential, voiceCredentialStatus } from './bridge/speech-secrets';
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
 
@@ -347,13 +366,68 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return await cloneGithubRepository(args.payload || args);
     case 'create_github_repository':
       return await createGithubRepository(args.payload || args);
+    case 'patch_speech_preferences': {
+      const payload = args.payload || args;
+      return sanitizeStorageForClient(patchSpeechPreferences(payload.patch));
+    }
     case 'get_viewer_storage':
-      return loadViewerStorage();
+      return sanitizeStorageForClient(loadViewerStorage());
     case 'save_viewer_storage':
-      return saveViewerStorage(args.payload || args);
+      return sanitizeStorageForClient(saveViewerStorage(args.payload || args));
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
-      return updateViewerStorageKey(payload.key, payload.value);
+      return sanitizeStorageForClient(updateViewerStorageKey(payload.key, payload.value));
+    }
+    case 'inspect_custom_speech_model': {
+      const payload = args.payload || args;
+      return await inspectCustomModel(payload);
+    }
+    case 'check_wyoming_service': {
+      const payload = args.payload || args;
+      const url = payload?.url || 'tcp://127.0.0.1:10200';
+      return await checkWyomingHealth(url);
+    }
+    case 'save_voice_credential': {
+      const p = args.payload || args;
+      return saveVoiceCredential(p.provider, p.endpoint, p.apiKey);
+    }
+    case 'get_voice_credential_status': {
+      const p = args.payload || args;
+      return voiceCredentialStatus(p.provider, p.endpoint);
+    }
+    case 'clear_voice_credential': {
+      const p = args.payload || args;
+      return clearVoiceCredential(p.provider, p.endpoint);
+    }
+    case 'synthesize_speech_tts': {
+      const payload = args.payload || args;
+      const preferences = { ...payload.preferences, openAiApiKey: undefined, compatibleSttApiKey: undefined };
+      if (preferences.ttsProvider === 'openai') preferences.openAiApiKey = getVoiceCredential('openai', preferences.openAiBaseUrl || 'https://api.openai.com/v1');
+      try { return await synthesizeTts({ ...payload, preferences }); }
+      catch { throw new Error('Speech synthesis failed'); }
+    }
+    case 'transcribe_speech_stt': {
+      const payload = args.payload || args;
+      const audioBuffer = payload.audioBase64
+        ? Buffer.from(payload.audioBase64, 'base64')
+        : Buffer.from(payload.audioBuffer || '');
+      const preferences = { ...payload.preferences, openAiApiKey: undefined, compatibleSttApiKey: undefined };
+      if (preferences.sttProvider === 'openai') preferences.openAiApiKey = getVoiceCredential('openai', preferences.openAiBaseUrl || 'https://api.openai.com/v1');
+      if (preferences.sttProvider === 'openai-compatible') preferences.compatibleSttApiKey = getVoiceCredential('openai-compatible', preferences.compatibleSttBaseUrl);
+      try { return await transcribeStt({ audioBuffer, mimeType: payload.mimeType, preferences }); }
+      catch { throw new Error('Speech transcription failed'); }
+    }
+    case 'manage_docker_speech_service': {
+      const payload = args.payload || args;
+      const service = payload.service as DockerSpeechService;
+      const action = payload.action as DockerSpeechAction;
+      const preferences = payload.preferences;
+      return await manageDockerSpeechService(service, action, preferences);
+    }
+    case 'get_docker_speech_status': {
+      const payload = args.payload || args;
+      const service = payload.service as DockerSpeechService;
+      return await getDockerContainerInfo(service);
     }
     default:
       return null;

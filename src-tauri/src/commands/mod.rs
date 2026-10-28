@@ -88,8 +88,15 @@ pub mod models;
 pub mod kanban;
 pub mod oauth;
 pub mod sessions;
+pub mod speech;
 pub mod terminal;
 pub mod workspace;
+
+pub use speech::{
+    inspect_custom_speech_model,
+    __cmd__inspect_custom_speech_model,
+    __tauri_command_name_inspect_custom_speech_model,
+};
 
 pub use github::{
     get_github_auth_status,

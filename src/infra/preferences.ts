@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE, isSupportedLocale, type SupportedLocale } from '@shared/i18n';
+import { isWebShim } from './web-oauth-access';
 import { DEFAULT_THEME, isAppTheme, type AppTheme } from '@shared/theme';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
@@ -11,6 +12,10 @@ import {
   sanitizeHiddenCommandIds,
   type CustomCommand,
 } from '@core/commands';
+import {
+  validateSpeechPreferences,
+  type SpeechPreferences,
+} from '@core/types/speech';
 
 export type WorkAnimationMode = 'multicolor' | 'single' | 'dual';
 
@@ -330,6 +335,10 @@ export interface UiPreferences {
    * Default directory configured by the user for opening the folder explorer and cloning repositories.
    */
   defaultProjectsDirectory?: string;
+  /**
+   * Local speech (TTS and STT) preferences.
+   */
+  speech?: SpeechPreferences;
 }
 
 export const DEFAULT_UI_PREFERENCES: UiPreferences = {
@@ -606,6 +615,11 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
     }
   }
 
+  let speech: SpeechPreferences | undefined = undefined;
+  if ('speech' in record && record.speech !== undefined) {
+    speech = validateSpeechPreferences(record.speech);
+  }
+
   const valid = warnings.length === 0;
   return {
     valid,
@@ -621,6 +635,7 @@ export function validateUiPreferences(input: unknown): PreferencesValidationResu
       ...(customCommands !== undefined ? { customCommands } : {}),
       ...(hiddenCommandIds !== undefined ? { hiddenCommandIds } : {}),
       ...(defaultProjectsDirectory !== undefined ? { defaultProjectsDirectory } : {}),
+      ...(speech !== undefined ? { speech } : {}),
     },
     ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
   };
@@ -689,6 +704,14 @@ export function loadUiPreferences(
   }
 
   const validation = validateUiPreferences(parsed);
+  const legacySpeech = (parsed as any)?.speech;
+  if (legacySpeech && (Object.prototype.hasOwnProperty.call(legacySpeech, 'openAiApiKey') || Object.prototype.hasOwnProperty.call(legacySpeech, 'compatibleSttApiKey'))) {
+    try {
+      storage.setItem(UI_PREFERENCES_STORAGE_KEY, JSON.stringify(validation.preferences));
+    } catch {
+      return { preferences: validation.preferences, warning: 'Failed to remove legacy speech credentials from storage' };
+    }
+  }
 
   const hasManagedAccent =
     parsed !== null &&
@@ -721,7 +744,8 @@ export function loadUiPreferences(
  */
 export function saveUiPreferences(
   preferences: UiPreferences,
-  storage: Storage | null = getSafeStorage()
+  storage: Storage | null = getSafeStorage(),
+  sync = true
 ): PreferencesSaveResult {
   const validation = validateUiPreferences(preferences);
   if (!validation.valid && validation.error) {
@@ -744,7 +768,7 @@ export function saveUiPreferences(
       JSON.stringify(validation.preferences)
     );
     // Fire-and-forget sync to server viewer storage
-    if (typeof window !== 'undefined') {
+    if (sync && typeof window !== 'undefined') {
       import('./viewer-storage')
         .then(({ updateViewerStorageKeyPi }) => {
           void updateViewerStorageKeyPi('uiPreferences', validation.preferences);
@@ -930,6 +954,39 @@ export class PreferencesController {
     }
     this.options.setPreferences(updated);
     return updated;
+  }
+
+  async setSpeechPreferences(partial: Partial<SpeechPreferences>): Promise<PreferencesSaveResult> {
+    const storage = this.resolveStorage();
+    const web = isWebShim();
+    if (web) {
+      try {
+        const { patchSpeechPreferencesPi } = await import('./bridge');
+        const { openAiApiKey, compatibleSttApiKey, ...safePatch } = partial;
+        await patchSpeechPreferencesPi(safePatch);
+      } catch {
+        const error = 'Failed to synchronize speech preferences with the server';
+        this.options.setWarning(error);
+        return { success: false, error };
+      }
+    }
+    const latest = this.options.getPreferences();
+    const committed: UiPreferences = {
+      ...latest,
+      speech: validateSpeechPreferences({ ...latest.speech, ...partial }),
+    };
+    const saveRes = saveUiPreferences(committed, storage, false);
+    if (!saveRes.success) {
+      const error = web
+        ? `Speech preferences were saved on the server, but local storage failed: ${saveRes.error ?? 'unknown error'}`
+        : saveRes.error ?? 'Failed to save UI preferences';
+      if (web) this.options.setPreferences(committed);
+      this.options.setWarning(error);
+      return { success: false, error };
+    }
+    this.options.setWarning(null);
+    this.options.setPreferences(committed);
+    return saveRes;
   }
 
   setCustomBackground(bg: CustomBackgroundPreferences | null): UiPreferences {

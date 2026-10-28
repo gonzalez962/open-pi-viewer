@@ -200,3 +200,40 @@ test('PromptControls popover: model list truncates names longer than 20 characte
   assert.ok(html.includes('>GPT-4o<'), 'Short model name must be displayed completely');
   assert.ok(html.includes('title="GPT-4o"'), 'Short model name also has title attribute');
 });
+
+test('PromptControls action buttons: renders send button when idle', () => {
+  const htmlDisabled = renderControls({
+    isBusy: false,
+    canSend: false,
+  });
+  assert.ok(htmlDisabled.includes('prompt-action-btn btn-send'), 'Should render send button');
+  assert.match(htmlDisabled, /<button[^>]*class="prompt-action-btn btn-send"[^>]*disabled/, 'Send button should be disabled when canSend is false');
+  assert.ok(htmlDisabled.includes('action.send'), 'Should display localized send label');
+
+  const htmlEnabled = renderControls({
+    isBusy: false,
+    canSend: true,
+  });
+  assert.ok(htmlEnabled.includes('prompt-action-btn btn-send'), 'Should render send button');
+  assert.match(htmlEnabled, /<button[^>]*class="prompt-action-btn btn-send"[^>]*aria-disabled="false"/, 'Send button should have aria-disabled false when canSend is true');
+  assert.doesNotMatch(htmlEnabled, /<button[^>]*class="prompt-action-btn btn-send"[^>]*disabled=""/, 'Send button should NOT have disabled attribute when canSend is true');
+});
+
+test('PromptControls action buttons: renders cancel button when busy, and queue button when draft exists', () => {
+  const htmlBusyNoDraft = renderControls({
+    isBusy: true,
+    canSend: false,
+  });
+  assert.ok(htmlBusyNoDraft.includes('prompt-action-btn btn-cancel'), 'Should render cancel button when busy');
+  assert.ok(htmlBusyNoDraft.includes('action.stop'), 'Should display stop label');
+  assert.ok(!htmlBusyNoDraft.includes('action.queue'), 'Should not render queue button when no draft canSend');
+
+  const htmlBusyWithDraft = renderControls({
+    isBusy: true,
+    canSend: true,
+  });
+  assert.ok(htmlBusyWithDraft.includes('prompt-action-btn btn-cancel'), 'Should render cancel button');
+  assert.ok(htmlBusyWithDraft.includes('prompt-action-btn btn-send'), 'Should render queue button when draft canSend is true');
+  assert.ok(htmlBusyWithDraft.includes('action.queue'), 'Should display queue label');
+});
+

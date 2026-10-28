@@ -22,6 +22,8 @@ import {
   type AppearancePreferences,
 } from '@infra/preferences';
 import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
+import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
+import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
 import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import {
@@ -149,6 +151,7 @@ import { useConversationExport } from '@features/chat/hooks/useConversationExpor
 import { ExportToast } from '@features/chat/components/ExportToast';
 import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
+import { useAutoSpeech } from '@features/chat/hooks/useAutoSpeech';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
 import { getAgentWorkingStatus } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
@@ -368,6 +371,7 @@ export const App: React.FC = () => {
     setCustomCommands,
     setHiddenCommandIds,
     setDefaultProjectsDirectory,
+    setSpeechPreferences,
     appearanceController,
     t,
   } = usePreferences();
@@ -855,6 +859,16 @@ export const App: React.FC = () => {
     prompt,
     setPrompt,
     commands: visibleCommandCatalog,
+  });
+
+  // Automatic text-to-speech for assistant responses upon completion.
+  // Bound strictly to the React view lifecycle: if the web view is closed/unloaded,
+  // no TTS synthesis is dispatched, saving Wyoming voice processing.
+  useAutoSpeech({
+    messages: state.messages,
+    agentActivity: state.agentActivity,
+    sessionId: state.sessionId,
+    preferences: preferences.speech,
   });
 
   // Dynamic application status and window title / favicon updater
@@ -1663,6 +1677,7 @@ export const App: React.FC = () => {
                 onCustomCommandsChange={setCustomCommands}
                 onHiddenCommandIdsChange={setHiddenCommandIds}
                 onDefaultProjectsDirectoryChange={setDefaultProjectsDirectory}
+                onSpeechPreferencesChange={setSpeechPreferences}
                 appearanceController={appearanceController}
                 settingsError={settingsError}
                 settingsStorageNotice={settingsStorageNotice}
@@ -1989,19 +2004,32 @@ export const App: React.FC = () => {
                           const block = item.block;
                           if (block.type === 'text') {
                             return (
-                              <MarkdownContent
-                                key={`text-${iIndex}`}
-                                content={block.text}
-                                t={t}
-                                onInsertCode={insertCodeIntoPrompt}
-                              />
+                              <div key={`text-${iIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                                <MarkdownContent
+                                  content={block.text}
+                                  t={t}
+                                  onInsertCode={insertCodeIntoPrompt}
+                                />
+                                {preferences.speech?.ttsEnabled && (
+                                  <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} messageId={msg.id} />
+                                  </div>
+                                )}
+                              </div>
                             );
                           }
                           return null;
                         })}
                       </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
-                      <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                        {preferences.speech?.ttsEnabled && msg.role !== 'user' && (
+                          <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                            <MessageSpeechButton text={msg.content} preferences={preferences.speech} messageId={msg.id} />
+                          </div>
+                        )}
+                      </div>
                     ) : msg.role === 'user' ? (
                       <>
                         {msg.images && msg.images.length > 0 && (
@@ -2153,41 +2181,53 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            <textarea
-              id="prompt-input"
-              name="prompt"
-              aria-label={t('prompt.label')}
-              className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => {
-                if (commandPalette.handleKeyDown(e)) return;
-                handleKeyDown(e);
-              }}
-              role="combobox"
-              aria-expanded={commandPalette.isOpen}
-              aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
-              aria-autocomplete="list"
-              placeholder={
-                isConnecting
-                  ? t('prompt.placeholder_connecting')
-                  : state.isResetting
-                    ? t('prompt.placeholder_resetting')
-                    : !state.isHydrated && isConnected
-                      ? t('prompt.placeholder_hydrating')
-                      : state.connectionStatus === 'error'
-                        ? t('prompt.placeholder_error')
-                        : !isConnected
-                          ? t('prompt.placeholder_offline')
-                          : isBusy
-                            ? t('prompt.placeholder_busy')
-                            : t('prompt.placeholder_ready')
-              }
-              disabled={!isReadyToSend && !canQueue}
-              aria-disabled={!isReadyToSend && !canQueue}
-              aria-describedby="prompt-status-hint"
-              rows={3}
-            />
+            <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
+              <textarea
+                id="prompt-input"
+                name="prompt"
+                aria-label={t('prompt.label')}
+                className={`prompt-textarea ${isHighContext ? 'context-pulse-red' : ''}`}
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (commandPalette.handleKeyDown(e)) return;
+                  handleKeyDown(e);
+                }}
+                role="combobox"
+                aria-expanded={commandPalette.isOpen}
+                aria-controls={commandPalette.isOpen ? 'command-palette-listbox' : undefined}
+                aria-autocomplete="list"
+                placeholder={
+                  isConnecting
+                    ? t('prompt.placeholder_connecting')
+                    : state.isResetting
+                      ? t('prompt.placeholder_resetting')
+                      : !state.isHydrated && isConnected
+                        ? t('prompt.placeholder_hydrating')
+                        : state.connectionStatus === 'error'
+                          ? t('prompt.placeholder_error')
+                          : !isConnected
+                            ? t('prompt.placeholder_offline')
+                            : isBusy
+                              ? t('prompt.placeholder_busy')
+                              : t('prompt.placeholder_ready')
+                }
+                disabled={!isReadyToSend && !canQueue}
+                aria-disabled={!isReadyToSend && !canQueue}
+                aria-describedby="prompt-status-hint"
+                rows={3}
+              />
+
+              {preferences.speech?.sttEnabled && (
+                <PromptMicButton
+                  preferences={preferences.speech}
+                  onTranscription={(transcribedText) => {
+                    setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+                  }}
+                  disabled={isBusy}
+                />
+              )}
+            </div>
 
             {commandPalette.isOpen && (
               <CommandPalettePopover
@@ -2202,6 +2242,10 @@ export const App: React.FC = () => {
 
             <PromptControls
               modelInfo={effectiveModelInfo}
+              speechPreferences={preferences.speech}
+              onTranscription={(transcribedText) => {
+                setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+              }}
               availableModels={state.availableModels}
               isChangingModel={state.isChangingModel}
               thinkingLevel={state.thinkingLevel}
