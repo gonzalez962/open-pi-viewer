@@ -18,6 +18,8 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
   const [editing, setEditing] = useState<KanbanCard | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [formOpen, setFormOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const t = (key: TranslationKey) => translate(locale, key);
 
   useEffect(() => {
@@ -55,14 +57,17 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
     const cards = editing ? board.cards.map((item) => item.id === editing.id ? card : item) : [...board.cards, card];
     if (await persist({ cards })) resetDraft();
   }
-  function resetDraft() { setEditing(null); setTitle(''); setDescription(''); }
+  function resetDraft() { setEditing(null); setTitle(''); setDescription(''); setFormOpen(false); setDeletingId(null); }
   function edit(card: KanbanCard) {
     setEditing(card); setTitle(card.title); setDescription(card.description);
-    dialog.current?.querySelector<HTMLInputElement>('#kanban-card-title')?.focus();
+    setFormOpen(true);
+    setTimeout(() => dialog.current?.querySelector<HTMLInputElement>('#kanban-card-title')?.focus(), 0);
   }
   async function remove(card: KanbanCard) {
-    if (!window.confirm(t('kanban.delete_confirm'))) return;
-    if (await persist({ cards: board.cards.filter((item) => item.id !== card.id) }) && editing?.id === card.id) resetDraft();
+    if (await persist({ cards: board.cards.filter((item) => item.id !== card.id) })) {
+      setDeletingId(null);
+      if (editing?.id === card.id) resetDraft();
+    }
   }
   const columnLabel = (column: KanbanColumnId) => t(`kanban.${column}`);
 
@@ -75,36 +80,53 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
       </header>
       {error && <p role="alert" className="kanban-error">{error}</p>}
       {!ready && !error && <p role="status">{t('kanban.loading')}</p>}
-      <form onSubmit={submit} className="kanban-form">
-        <fieldset disabled={!ready || busy}>
-          <label htmlFor="kanban-card-title">{t('kanban.card_title')}</label>
-          <input id="kanban-card-title" required maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} />
-          <label htmlFor="kanban-card-description">{t('kanban.description')}</label>
-          <textarea id="kanban-card-description" maxLength={10000} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
-          <div className="kanban-actions">
-            <button type="submit" className="btn btn-primary" disabled={!title.trim()}>{editing ? t('kanban.save') : t('kanban.add')}</button>
-            {editing && <button type="button" className="btn" onClick={resetDraft}>{t('kanban.cancel')}</button>}
-            {busy && <span role="status">{t('kanban.saving')}</span>}
-          </div>
-        </fieldset>
-      </form>
+      <details className="kanban-form-details" open={formOpen}
+        onToggle={(e) => setFormOpen(e.currentTarget.open)}>
+        <summary>{editing ? t('kanban.edit') : t('kanban.add')}</summary>
+        <form onSubmit={submit} className="kanban-form" autoComplete="off">
+          <fieldset disabled={!ready || busy}>
+            <label htmlFor="kanban-card-title">{t('kanban.card_title')}</label>
+            <input id="kanban-card-title" required maxLength={200} value={title} onChange={(e) => setTitle(e.target.value)} autoComplete="off" spellCheck={false} />
+            <label htmlFor="kanban-card-description">{t('kanban.description')}</label>
+            <textarea id="kanban-card-description" maxLength={10000} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} autoComplete="off" />
+            <div className="kanban-actions">
+              <button type="submit" className="btn btn-primary" disabled={!title.trim()}>{editing ? t('kanban.save') : t('kanban.add')}</button>
+              {editing && <button type="button" className="btn" onClick={resetDraft}>{t('kanban.cancel')}</button>}
+              {busy && <span role="status">{t('kanban.saving')}</span>}
+            </div>
+          </fieldset>
+        </form>
+      </details>
       <div className="kanban-columns">
         {KANBAN_COLUMNS.map((column) => (
           <section key={column} className="kanban-column" aria-label={columnLabel(column)} data-column={column}>
             <h3>{columnLabel(column)} <span>({board.cards.filter((card) => card.columnId === column).length})</span></h3>
             {board.cards.filter((card) => card.columnId === column).map((card) => (
               <article key={card.id} className="kanban-card" aria-label={card.title}>
-                <h4>{card.title}</h4><p>{card.description}</p>
-                <label>{t('kanban.move')}
-                  <select value={card.columnId} disabled={busy || !ready} aria-label={`${t('kanban.move')}: ${card.title}`}
-                    onChange={(e) => void persist({ cards: board.cards.map((item) => item.id === card.id ? { ...item, columnId: e.target.value as KanbanColumnId } : item) })}>
-                    {KANBAN_COLUMNS.map((id) => <option key={id} value={id}>{columnLabel(id)}</option>)}
-                  </select>
-                </label>
-                <div className="kanban-actions">
-                  <button type="button" className="btn" disabled={busy || !ready} onClick={() => edit(card)}>{t('kanban.edit')}</button>
-                  <button type="button" className="btn" disabled={busy || !ready} onClick={() => void remove(card)}>{t('kanban.delete')}</button>
-                </div>
+                <h4>{card.title}</h4>
+                {card.description && <p>{card.description}</p>}
+                <details className="kanban-card-details">
+                  <summary>{t('kanban.actions')}</summary>
+                  <label>{t('kanban.move')}
+                    <select value={card.columnId} disabled={busy || !ready} aria-label={`${t('kanban.move')}: ${card.title}`}
+                      onChange={(e) => void persist({ cards: board.cards.map((item) => item.id === card.id ? { ...item, columnId: e.target.value as KanbanColumnId } : item) })}>
+                      {KANBAN_COLUMNS.map((id) => <option key={id} value={id}>{columnLabel(id)}</option>)}
+                    </select>
+                  </label>
+                  <div className="kanban-actions">
+                    {deletingId === card.id ? (
+                      <>
+                        <button type="button" className="btn btn-danger" disabled={busy || !ready} onClick={() => void remove(card)}>{t('kanban.confirm_delete')}</button>
+                        <button type="button" className="btn btn-secondary" disabled={busy || !ready} onClick={() => setDeletingId(null)}>{t('kanban.cancel')}</button>
+                      </>
+                    ) : (
+                      <>
+                        <button type="button" className="btn" disabled={busy || !ready} onClick={() => edit(card)}>{t('kanban.edit')}</button>
+                        <button type="button" className="btn" disabled={busy || !ready} onClick={() => setDeletingId(card.id)}>{t('kanban.delete')}</button>
+                      </>
+                    )}
+                  </div>
+                </details>
               </article>
             ))}
             {board.cards.every((card) => card.columnId !== column) && <p className="kanban-empty">{t('kanban.empty')}</p>}

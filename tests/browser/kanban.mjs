@@ -49,13 +49,23 @@ try {
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'domcontentloaded' });
   const open = async () => {
     await page.getByRole('button', { name: 'Kanban', exact: true }).click();
-    await page.locator('#kanban-card-title').waitFor();
+    await page.locator('.kanban-dialog').waitFor();
     await page.waitForFunction(() => !document.querySelector('.kanban-form fieldset')?.disabled);
+  };
+  const openAddForm = async () => {
+    const details = page.locator('.kanban-form-details');
+    if (!(await details.evaluate((el) => el.open))) {
+      await details.locator('summary').click();
+    }
+    await page.locator('#kanban-card-title').waitFor();
   };
   const close = () => page.getByRole('button', { name: 'Close', exact: true }).click();
   const card = () => page.locator('.kanban-card');
   await open();
   assert.equal(await card().count(), 0);
+  assert.equal(await page.locator('.kanban-form-details').evaluate((el) => el.open), false);
+  await openAddForm();
+  assert.equal(await page.locator('#kanban-card-title').getAttribute('autocomplete'), 'off');
   await page.getByLabel('Card title', { exact: true }).fill('Browser task');
   await page.getByLabel('Description', { exact: true }).fill('Original description');
   await page.getByRole('button', { name: 'Add card', exact: true }).click();
@@ -63,9 +73,12 @@ try {
   assert.equal(await page.locator('[data-column="pending"] .kanban-card').count(), 1);
   await close(); await page.reload(); await open();
   assert.match(await card().innerText(), /Original description/);
+  assert.equal(await card().locator('details').evaluate((el) => el.open), false);
   console.log('PASS S2.1 create and reload');
 
+  await card().locator('summary').click();
   await card().getByRole('button', { name: 'Edit', exact: true }).click();
+  assert.equal(await page.locator('.kanban-form-details').evaluate((el) => el.open), true);
   await page.getByLabel('Card title', { exact: true }).fill('Edited task');
   await page.getByLabel('Description', { exact: true }).fill('Edited description');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
@@ -75,6 +88,7 @@ try {
   console.log('PASS S2.2 edit and reload');
 
   for (const column of ['in_progress', 'done']) {
+    await card().locator('summary').click();
     await card().getByRole('combobox').selectOption(column);
     await page.locator(`[data-column="${column}"] .kanban-card`).waitFor();
     await close(); await page.reload(); await open();
@@ -86,6 +100,7 @@ try {
   await page.getByRole('button', { name: 'Project B', exact: true }).click();
   await open();
   assert.equal(await card().count(), 0);
+  await openAddForm();
   await page.getByLabel('Card title', { exact: true }).fill('Project B task');
   await page.getByRole('button', { name: 'Add card', exact: true }).click();
   await page.getByRole('heading', { name: 'Project B task', exact: true }).waitFor();
@@ -96,8 +111,17 @@ try {
   assert.match(await card().innerText(), /Edited task/);
   console.log('PASS S1.1 project switch isolation');
 
-  page.once('dialog', (dialog) => dialog.accept());
+  await card().locator('summary').click();
   await card().getByRole('button', { name: 'Delete', exact: true }).click();
+  await card().getByRole('button', { name: 'Cancel', exact: true }).waitFor();
+  await card().getByRole('button', { name: 'Confirm', exact: true }).waitFor();
+  await card().getByRole('button', { name: 'Cancel', exact: true }).click();
+  await card().getByRole('button', { name: 'Edit', exact: true }).waitFor();
+  await card().getByRole('button', { name: 'Delete', exact: true }).waitFor();
+  assert.equal(await card().count(), 1);
+
+  await card().getByRole('button', { name: 'Delete', exact: true }).click();
+  await card().getByRole('button', { name: 'Confirm', exact: true }).click();
   await page.waitForFunction(() => document.querySelectorAll('.kanban-card').length === 0);
   await close(); await page.reload(); await open();
   assert.equal(await card().count(), 0);
@@ -110,6 +134,13 @@ try {
   console.log('PASS S1.2 real Git exclusion');
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.locator('.kanban-dialog').evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+  const isCentered = await page.locator('.kanban-dialog').evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    const expectedLeft = (window.innerWidth - rect.width) / 2;
+    const expectedTop = (window.innerHeight - rect.height) / 2;
+    return Math.abs(rect.left - expectedLeft) <= 2 && Math.abs(rect.top - expectedTop) <= 2;
+  });
+  assert.equal(isCentered, true, 'Kanban dialog must be centered in the viewport');
   await page.keyboard.press('Escape');
   await page.locator('.kanban-dialog').waitFor({ state: 'hidden' });
   assert.deepEqual(errors, []);
@@ -118,5 +149,5 @@ try {
   if (browser) await browser.close();
   const exited = new Promise((resolve) => server.once('exit', resolve));
   if (server.exitCode === null) { server.kill(); await exited; }
-  fs.rmSync(fixture, { recursive: true, force: true });
+  fs.rmSync(fixture, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

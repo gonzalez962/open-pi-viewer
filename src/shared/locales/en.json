@@ -16,6 +16,8 @@
   "kanban.delete": "Delete",
   "kanban.empty": "No cards",
   "kanban.delete_confirm": "Delete this card?",
+  "kanban.confirm_delete": "Confirm",
+  "kanban.actions": "Actions",
 
   "app.title": "Pi Viewer",
   "app.version": "v0.2.0",
