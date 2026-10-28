@@ -66,6 +66,9 @@ import {
   useTerminal,
 } from '@features/terminal';
 
+const KanbanModal = React.lazy(() =>
+  import('@features/kanban/KanbanModal').then((m) => ({ default: m.KanbanModal }))
+);
 const SettingsView = React.lazy(() =>
   import('@features/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
 );
@@ -196,6 +199,7 @@ export const App: React.FC = () => {
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [showSettings, setShowSettings] = useState(false);
+  const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const mobileMenuToggleRef = useRef<HTMLButtonElement>(null);
@@ -1364,6 +1368,7 @@ export const App: React.FC = () => {
     (p) => p.id === projectsRegistry.activeProjectId
   );
   const activeProjectName = activeProject ? getProjectDisplayName(activeProject) : undefined;
+  const kanbanCwd = activeProject?.path ?? config.workingDirectory;
 
   const terminal = useTerminal({
     activeProjectCwd: activeProject?.path ?? config.workingDirectory ?? null,
@@ -1479,6 +1484,31 @@ export const App: React.FC = () => {
               {t('action.retry')}
             </button>
           )}
+
+          <button
+            type="button"
+            className="btn-kanban-toggle kanban-toggle"
+            disabled={!kanbanCwd}
+            onClick={() => setShowKanban(true)}
+            title={t('kanban.title')}
+            aria-label={t('kanban.title')}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M9 3v18M15 3v18" />
+            </svg>
+            <span className="kanban-toggle-text">{t('kanban.title')}</span>
+          </button>
 
           <button
             type="button"
@@ -2262,6 +2292,13 @@ export const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      {showKanban && kanbanCwd && (
+        <React.Suspense fallback={null}>
+          <KanbanModal key={kanbanCwd} workingDirectory={kanbanCwd}
+            locale={preferences.language} onClose={() => setShowKanban(false)} />
+        </React.Suspense>
+      )}
 
       {viewingFile && (
         <React.Suspense fallback={null}>

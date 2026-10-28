@@ -293,6 +293,7 @@ test('architecture: backend commands monolith eliminated into modular domain tre
     'discovery.rs',
     'external.rs',
     'github.rs',
+    'kanban.rs',
     'mod.rs',
     'models.rs',
     'oauth.rs',

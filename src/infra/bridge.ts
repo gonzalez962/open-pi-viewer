@@ -1,4 +1,13 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import type { KanbanBoard } from '@core/types/kanban';
+
+export function getProjectKanbanPi(workingDirectory: string): Promise<KanbanBoard> {
+  return invoke('get_project_kanban', { payload: { workingDirectory } });
+}
+
+export function saveProjectKanbanPi(workingDirectory: string, board: KanbanBoard): Promise<KanbanBoard> {
+  return invoke('save_project_kanban', { payload: { workingDirectory, board } });
+}
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isWebShim } from './web-oauth-access';
 import type { SpeechPreferences } from '@core/types/speech';

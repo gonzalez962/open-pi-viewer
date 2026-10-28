@@ -203,18 +203,9 @@
 
 /* Header Launch Button */
 .btn-terminal-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-default, #30363d);
-  background-color: var(--bg-subtle, #161b22);
-  color: var(--fg-default, #c9d1d9);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.15s ease;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 10px;
 }
 
 .btn-terminal-toggle:hover {

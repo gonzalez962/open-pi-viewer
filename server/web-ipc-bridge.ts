@@ -198,6 +198,7 @@ import {
   type DockerSpeechAction,
 } from './bridge/docker-speech';
 
+import { handleGetProjectKanban, handleSaveProjectKanban } from './bridge/kanban';
 import { getVoiceCredential, saveVoiceCredential, clearVoiceCredential, voiceCredentialStatus } from './bridge/speech-secrets';
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
@@ -317,6 +318,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleEnrollEngramProject(args);
     case 'get_engram_observations':
       return handleGetEngramObservations(args);
+    case 'get_project_kanban':
+      return handleGetProjectKanban(args);
+    case 'save_project_kanban':
+      return handleSaveProjectKanban(args);
     case 'list_workspace_dir':
       return handleListWorkspaceDir(args);
     case 'create_workspace_dir':

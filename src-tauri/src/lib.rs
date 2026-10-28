@@ -70,6 +70,8 @@ pub fn run() {
             commands::create_workspace_dir,
             commands::delete_workspace_dir,
             commands::read_workspace_file,
+            commands::kanban::get_project_kanban,
+            commands::kanban::save_project_kanban,
             commands::get_workspace_git_status,
             commands::get_workspace_file_diff,
             commands::list_workspace_branches,

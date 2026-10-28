@@ -85,6 +85,7 @@ pub mod discovery;
 pub mod external;
 pub mod github;
 pub mod models;
+pub mod kanban;
 pub mod oauth;
 pub mod sessions;
 pub mod speech;
