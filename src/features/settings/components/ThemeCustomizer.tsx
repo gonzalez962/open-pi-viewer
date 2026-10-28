@@ -25,6 +25,7 @@ import {
   WallpaperProcessCoordinator,
   type WallpaperBrowserAdapter,
 } from '@features/settings/wallpaper';
+import { useSettingsToast } from '../toast';
 
 export interface ThemeCustomizerProps {
   controller?: AppearanceLifecycleController | null;
@@ -166,6 +167,7 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
   const [saveFeedback, setSaveFeedback] = useState(false);
   const [lifecycleRevision, setLifecycleRevision] = useState(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toast = useSettingsToast();
 
   const localCoordinatorRef = useRef<WallpaperProcessCoordinator | null>(null);
   if (!localCoordinatorRef.current) {
@@ -295,14 +297,18 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       setSaveFeedback(true);
       saveTimerRef.current = setTimeout(() => setSaveFeedback(false), 3000);
+      toast.success(t('theme.notice_saved'));
+    } else if (result.error) {
+      toast.error(result.error);
     }
-  }, [actions]);
+  }, [actions, t, toast]);
 
   const handleCancel = useCallback(() => {
     actions.cancel();
     setLifecycleRevision((r) => r + 1);
     setSaveFeedback(false);
-  }, [actions]);
+    toast.info(t('theme.cancel_button'));
+  }, [actions, t, toast]);
 
   const handleResetAppearance = useCallback(() => {
     const result = actions.resetAppearance();
@@ -311,8 +317,11 @@ export const ThemeCustomizer: React.FC<ThemeCustomizerProps> = ({
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       setSaveFeedback(true);
       saveTimerRef.current = setTimeout(() => setSaveFeedback(false), 3000);
+      toast.info(t('theme.notice_saved'));
+    } else if (result.error) {
+      toast.error(result.error);
     }
-  }, [actions]);
+  }, [actions, t, toast]);
 
   return (
     <div className="theme-customizer-container">

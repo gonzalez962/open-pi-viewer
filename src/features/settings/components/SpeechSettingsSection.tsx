@@ -4,6 +4,7 @@ import { useSpeech } from '../hooks/useSpeech';
 import { playWavBase64 } from '@infra/audio-player';
 import { convertBlobToWav16kMono } from '@infra/wav-recorder';
 import { saveVoiceCredentialPi } from '@infra/bridge';
+import { useSettingsToast } from '../toast';
 
 export interface SpeechSettingsSectionProps {
   preferences: SpeechPreferences;
@@ -53,14 +54,13 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
   const [openAiKey, setOpenAiKey] = useState('');
   const [compatibleKey, setCompatibleKey] = useState('');
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const toast = useSettingsToast();
   const feedbackVersion = useRef(0);
-  const clearFeedback = () => { feedbackVersion.current++; setSaveSuccess(null); setSaveError(null); };
+  const clearFeedback = () => { feedbackVersion.current++; setSaveError(null); toast.clearAll(); };
   const preferences = { ...savedPreferences, ...draft, openAiApiKey: '', compatibleSttApiKey: '' };
   const onSpeechPreferencesChange = (partial: Partial<SpeechPreferences>) => { clearFeedback(); setDraft((current) => ({ ...current, ...partial })); };
   const saveSection = async (section: 'tts' | 'stt') => {
     clearFeedback();
-    const version = feedbackVersion.current;
     const keys = section === 'tts'
       ? ['ttsEnabled', 'ttsProvider', 'openAiTtsModel', 'openAiTtsVoice', 'wyomingTtsUrl', 'wyomingTtsVoice', 'ttsRate', 'autoSpeakResponses', 'selectedTtsPackId', 'ttsCustom', 'customDockerCommandTts']
       : ['sttEnabled', 'sttProvider', 'openAiSttModel', 'openAiSttLanguage', 'wyomingSttUrl', 'wyomingSttModel', 'wyomingSttLanguage', 'compatibleSttModel', 'selectedSttPackId', 'sttCustom', 'customDockerCommandStt'];
@@ -76,20 +76,24 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
       }
       const result = await savePreferences(patch);
       if (!result?.success) {
-        setSaveError(`${keySaved ? 'La clave compatible se guardó; ' : ''}${result?.error || 'no se pudieron guardar los ajustes de voz'}`);
+        const errorMsg = `${keySaved ? 'La clave compatible se guardó; ' : ''}${result?.error || 'no se pudieron guardar los ajustes de voz'}`;
+        setSaveError(errorMsg);
+        toast.error(errorMsg);
         return;
       }
       setDraft((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !(key in patch))));
-      if (version === feedbackVersion.current) setSaveSuccess(section === 'tts' ? 'Ajustes TTS guardados' : 'Ajustes STT guardados');
+      const successMsg = section === 'tts' ? 'Ajustes TTS guardados' : 'Ajustes STT guardados';
+      toast.success(successMsg);
     } catch {
-      setSaveError(keySaved ? 'La clave compatible se guardó, pero no se pudieron guardar los ajustes de voz.' : 'No se pudo guardar la clave compatible; no se guardaron los ajustes.');
+      const errorMsg = keySaved ? 'La clave compatible se guardó, pero no se pudieron guardar los ajustes de voz.' : 'No se pudo guardar la clave compatible; no se guardaron los ajustes.';
+      setSaveError(errorMsg);
+      toast.error(errorMsg);
     }
   };
   const openAiEndpoint = preferences.openAiBaseUrl || 'https://api.openai.com/v1';
   const compatibleEndpoint = preferences.compatibleSttBaseUrl || '';
   const saveConnection = async (provider: 'openai' | 'openai-compatible') => {
     clearFeedback();
-    const version = feedbackVersion.current;
     const endpoint = provider === 'openai' ? openAiEndpoint : compatibleEndpoint;
     const key = provider === 'openai' ? openAiKey : compatibleKey;
     const field = provider === 'openai' ? 'openAiBaseUrl' : 'compatibleSttBaseUrl';
@@ -102,8 +106,13 @@ export const SpeechSettingsSection: React.FC<SpeechSettingsSectionProps> = ({
       const result = await savePreferences({ [field]: endpoint });
       if (!result?.success) throw new Error(key ? 'La clave se guardó, pero no se guardó la URL. Reintenta guardar la conexión.' : result?.error || 'No se pudo guardar la conexión');
       setDraft((current) => { const next = { ...current }; delete next[field]; return next; });
-      if (version === feedbackVersion.current) setSaveSuccess('Conexión OpenAI guardada');
-    } catch (error) { setSaveError(error instanceof Error ? error.message : 'Error al guardar la conexión'); }
+      const successMsg = provider === 'openai' ? 'Conexión OpenAI guardada' : 'Conexión compatible guardada';
+      toast.success(successMsg);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Error al guardar la conexión';
+      setSaveError(errorMsg);
+      toast.error(errorMsg);
+    }
   };
   const {
     synthesize,
@@ -329,7 +338,6 @@ volumes:
   return (
     <div className="speech-settings-section" style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
       {saveError && <div role="alert">{saveError}</div>}
-      {saveSuccess && <div role="status" style={{ color: '#4ade80' }}>{saveSuccess}</div>}
       {dockerActionError && (
         <div style={{ padding: '10px 14px', borderRadius: '6px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid #ef4444', color: '#fca5a5', fontSize: '0.85rem' }}>
           ✕ {dockerActionError}

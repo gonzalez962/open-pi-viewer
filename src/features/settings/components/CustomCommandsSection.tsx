@@ -11,6 +11,7 @@ import {
   type CustomCommandField,
 } from '@core/commands';
 import type { SupportedLocale, TranslationKey } from '@shared/i18n';
+import { useSettingsToast } from '../toast';
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
@@ -108,6 +109,7 @@ export const CustomCommandsSection: React.FC<CustomCommandsSectionProps> = ({
   const [draft, setDraft] = useState<CustomCommandDraft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [errors, setErrors] = useState<CustomCommandError[]>([]);
+  const toast = useSettingsToast();
 
   const editing = customCommands.find((c) => c.id === editingId) ?? null;
 
@@ -131,12 +133,14 @@ export const CustomCommandsSection: React.FC<CustomCommandsSectionProps> = ({
     });
     if (!result.ok) {
       setErrors(result.errors);
+      toast.error(result.errors.map((err) => formatCustomCommandError(err, t)).join(' '));
       return;
     }
     const next = editing
       ? customCommands.map((c) => (c.id === editing.id ? result.command : c))
       : [...customCommands, result.command];
     onChange(next);
+    toast.success(editing ? `/${result.command.name} updated` : `/${result.command.name} added`);
     resetForm();
   };
 
@@ -154,6 +158,7 @@ export const CustomCommandsSection: React.FC<CustomCommandsSectionProps> = ({
     // The preferences controller prunes the deleted command's hidden id in the same write.
     onChange(customCommands.filter((c) => c.id !== command.id));
     if (editingId === command.id) resetForm();
+    toast.info(`/${command.name} removed`);
   };
 
   const isHidden = (id: string) => hiddenCommandIds.includes(id);

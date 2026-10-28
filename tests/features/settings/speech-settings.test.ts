@@ -9,11 +9,21 @@ function harness(save: (patch: any) => any) {
   const state: any[] = [];
   let cursor = 0;
   let tree: any;
+  const toasts: string[] = [];
   const internals = (React as any).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
   const dispatcher = {
     useState(initial: any) { const i = cursor++; if (!(i in state)) state[i] = typeof initial === 'function' ? initial() : initial;
       return [state[i], (value: any) => { state[i] = typeof value === 'function' ? value(state[i]) : value; }]; },
     useRef(initial: any) { const i = cursor++; if (!(i in state)) state[i] = { current: initial }; return state[i]; },
+    useContext() {
+      return {
+        success: (msg: string) => { toasts.push(msg); return 'toast-id'; },
+        error: () => '',
+        warning: () => '',
+        info: () => '',
+        clearAll: () => { toasts.length = 0; },
+      };
+    },
     useEffect() {}, useCallback(fn: any) { return fn; }, useMemo(fn: any) { return fn(); },
   };
   function render() {
@@ -30,7 +40,7 @@ function harness(save: (patch: any) => any) {
     visit(render()); return found;
   }
   function button(label: string) { const node = nodes().find((n) => n.type === 'button' && n.props.children === label); assert.ok(node, label); return node; }
-  function statuses() { return nodes().filter((n) => n.props?.role === 'status').map((n) => n.props.children); }
+  function statuses() { return [...toasts]; }
   return { nodes, button, statuses };
 }
 
