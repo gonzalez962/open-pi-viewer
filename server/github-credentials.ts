@@ -1,4 +1,24 @@
-import { loadViewerStorage } from './storage';
+import { loadViewerStorage, saveViewerStorage } from './storage';
+
+export function getSavedGithubPat(): string {
+  const value = loadViewerStorage().githubPat;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function githubCredentialStatus() { return { configured: Boolean(getSavedGithubPat()) }; }
+
+export function saveGithubCredential(token: unknown, importOnly = false) {
+  // Synchronous read/check/write has no await: concurrent IPC handlers cannot interleave in this process.
+  if (importOnly && getSavedGithubPat()) return { configured: true };
+  if (typeof token !== 'string' || !token.trim() || /[\x00-\x1f\x7f]/.test(token.trim())) throw new Error('Invalid GitHub token');
+  saveViewerStorage({ githubPat: token.trim() });
+  return githubCredentialStatus();
+}
+
+export function clearGithubCredential() {
+  saveViewerStorage({ githubPat: null });
+  return githubCredentialStatus();
+}
 
 // Git invokes this shell function for get/store/erase. The secret is only in the
 // child environment; neither the helper command nor Git configuration contains it.

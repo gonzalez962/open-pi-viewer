@@ -10,6 +10,11 @@ import {
   setProcessRunnerForTest,
 } from '@server/bridge/github';
 
+import { setStorageFilePathForTest } from '@server/storage';
+const isolatedStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-config-storage-'));
+test.beforeEach(() => setStorageFilePathForTest(path.join(isolatedStorageDir, 'empty.json')));
+test.after(() => { setStorageFilePathForTest(null); fs.rmSync(isolatedStorageDir, { recursive: true, force: true }); });
+
 const OS_NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 
 // ---------------------------------------------------------------------------

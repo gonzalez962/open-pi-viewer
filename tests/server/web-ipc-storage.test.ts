@@ -92,6 +92,21 @@ for (const [cmd, args] of [
   });
 }
 
+for (const key of ['githubPat', 'githubPatConfigured']) {
+  test(`T1 S1.3: save rejects protected ${key} without changing stored bytes`, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-protected-save-'));
+    const file = path.join(dir, 'storage.json');
+    const { setStorageFilePathForTest, saveViewerStorage } = await import('@server/storage');
+    setStorageFilePathForTest(file);
+    t.after(() => { setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
+    saveViewerStorage({ githubPat: 'fake_original_pat' });
+    const before = fs.readFileSync(file);
+    await assert.rejects(handleIpcCommand('save_viewer_storage', { payload: { [key]: 'fake_submitted_pat', projects: {} } }),
+      (error: Error) => error.message === 'Protected storage key');
+    assert.deepEqual(fs.readFileSync(file), before);
+  });
+}
+
 test('T1 S1.1: SSE storage updates expose status but not saved PAT', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-github-sse-'));
   const { setStorageFilePathForTest, saveViewerStorage } = await import('@server/storage');

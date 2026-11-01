@@ -50,8 +50,8 @@ function sanitizeVoiceKeys(data: OpenPiViewerStorageData): OpenPiViewerStorageDa
 
 export function sanitizeStorageForClient(data: OpenPiViewerStorageData): OpenPiViewerStorageData {
   const sanitized = sanitizeVoiceKeys(data);
-  const { voiceCredentials, ...clientData } = sanitized;
-  return clientData as OpenPiViewerStorageData;
+  const { voiceCredentials, githubPat, ...clientData } = sanitized;
+  return { ...clientData, githubPatConfigured: typeof githubPat === 'string' && !!githubPat.trim() } as OpenPiViewerStorageData;
 }
 
 /**

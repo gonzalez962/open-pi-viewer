@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleRemoteStorageUpdate, initStorageSynchronization } from '@app/storage-sync';
-import { GITHUB_PAT_STORAGE_KEY, saveGitHubPat } from '@features/projects/github-clone';
+import { GITHUB_PAT_STORAGE_KEY, saveGitHubPat, createGitHubCloneController } from '@features/projects/github-clone';
+import { createGitHubCreateController } from '@features/projects/github-create';
 
 function browser(initial: Record<string, string>, invoke: (cmd: string, args?: any) => Promise<any>) {
   const data = new Map(Object.entries(initial));
@@ -69,6 +70,29 @@ for (const mode of ['failure', 'uncertain'] as const) {
     } finally { b.restore(); }
   });
 }
+
+test('T1 S1.3: web controllers load status, clear transient input, and preserve status on failed deletion', async () => {
+  const b = browser({}, async (cmd) => {
+    if (cmd === 'get_github_credential_status') return { configured: true };
+    if (cmd === 'clear_github_credential') throw new Error('unavailable');
+    throw new Error('unexpected');
+  });
+  try {
+    const clone = createGitHubCloneController({ initialDestinationPath: '/fake', getAuthStatus: async () => ({ installed: false, authenticated: false }), cloneRepository: async () => ({ path: '/fake/repo' }) });
+    const create = createGitHubCreateController({ initialDestinationPath: '/fake', getAuthStatus: async () => ({ installed: false, authenticated: false }), createRepository: async () => ({ repository: {} as any }) });
+    await clone.loadAuthStatus(); await create.loadAuthStatus();
+    assert.equal(clone.getState().hasSavedToken, true);
+    assert.equal(create.getState().hasSavedToken, true);
+    clone.clearToken(); create.clearToken();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(clone.getState().hasSavedToken, true);
+    assert.equal(create.getState().hasSavedToken, true);
+    clone.setToken('fake_transient'); clone.setRepository('owner/repo'); await clone.submit();
+    create.setToken('fake_transient'); create.setName('repo'); await create.submit();
+    assert.equal(clone.getState().token, ''); assert.equal(create.getState().token, '');
+    assert.equal(b.localStorage.getItem(GITHUB_PAT_STORAGE_KEY), null);
+  } finally { b.restore(); }
+});
 
 test('T1 S1.3: fresh frontend credential save never persists browser copy even in preview', async () => {
   const b = browser({}, async () => { throw new Error('unavailable'); });

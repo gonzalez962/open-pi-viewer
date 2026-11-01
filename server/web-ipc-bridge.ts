@@ -200,6 +200,7 @@ import {
 
 import { handleGetProjectKanban, handleSaveProjectKanban } from './bridge/kanban';
 import { getVoiceCredential, saveVoiceCredential, clearVoiceCredential, voiceCredentialStatus } from './bridge/speech-secrets';
+import { githubCredentialStatus, saveGithubCredential, clearGithubCredential } from './github-credentials';
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
 
@@ -370,12 +371,24 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       const payload = args.payload || args;
       return sanitizeStorageForClient(patchSpeechPreferences(payload.patch));
     }
+    case 'get_github_credential_status':
+      return githubCredentialStatus();
+    case 'save_github_credential':
+      return saveGithubCredential((args.payload || args).token);
+    case 'import_github_credential':
+      return saveGithubCredential((args.payload || args).token, true);
+    case 'clear_github_credential':
+      return clearGithubCredential();
     case 'get_viewer_storage':
       return sanitizeStorageForClient(loadViewerStorage());
-    case 'save_viewer_storage':
-      return sanitizeStorageForClient(saveViewerStorage(args.payload || args));
+    case 'save_viewer_storage': {
+      const payload = args.payload || args;
+      if (Object.hasOwn(payload, 'githubPat') || Object.hasOwn(payload, 'githubPatConfigured')) throw new Error('Protected storage key');
+      return sanitizeStorageForClient(saveViewerStorage(payload));
+    }
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
+      if (payload.key === 'githubPat' || payload.key === 'githubPatConfigured') throw new Error('Protected storage key');
       return sanitizeStorageForClient(updateViewerStorageKey(payload.key, payload.value));
     }
     case 'inspect_custom_speech_model': {

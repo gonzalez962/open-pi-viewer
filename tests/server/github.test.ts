@@ -15,6 +15,11 @@ import {
   createGithubRepository,
 } from '@server/bridge/github';
 
+import { setStorageFilePathForTest } from '@server/storage';
+const isolatedStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-suite-storage-'));
+test.beforeEach(() => setStorageFilePathForTest(path.join(isolatedStorageDir, 'empty.json')));
+test.after(() => { setStorageFilePathForTest(null); fs.rmSync(isolatedStorageDir, { recursive: true, force: true }); });
+
 test('T1 S1.2: clone resolves a saved PAT without a client token', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-saved-clone-'));
   const { setStorageFilePathForTest, saveViewerStorage } = await import('@server/storage');

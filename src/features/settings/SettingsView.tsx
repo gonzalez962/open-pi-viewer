@@ -24,6 +24,8 @@ import { SpeechSettingsSection } from './components/SpeechSettingsSection';
 import { COMMANDS, type CustomCommand } from '@core/commands';
 import { discoverBaseBinaryPaths } from './reset-binary-paths';
 import type { NotificationPermissionStatus } from '@infra/notification-delivery';
+import { isWebShim } from '@infra/web-oauth-access';
+import { githubCredentialPi } from '@infra/viewer-storage';
 import {
   getSavedGitHubPat,
   saveGitHubPat,
@@ -163,6 +165,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   const [gitHubPat, setGitHubPat] = useState(() => getSavedGitHubPat());
   const [gitHubPatUser, setGitHubPatUser] = useState<string | null>(null);
+  const [gitHubPatConfigured, setGitHubPatConfigured] = useState(false);
   const [gitHubCliUser, setGitHubCliUser] = useState<string | null>(null);
   const [gitHubPatSaving, setGitHubPatSaving] = useState(false);
   const [showGitHubPat, setShowGitHubPat] = useState(false);
@@ -175,6 +178,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [preferences.defaultProjectsDirectory]);
 
   useEffect(() => {
+    if (isWebShim()) void githubCredentialPi('get_github_credential_status').then(s => setGitHubPatConfigured(s.configured)).catch(() => {});
     const saved = getSavedGitHubPat();
     if (saved) {
       void probeGitHubPatUser(saved).then((user) => {
@@ -193,7 +197,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleSaveGitHubPat = async () => {
     setGitHubPatSaving(true);
     const clean = gitHubPat.trim();
-    saveGitHubPat(clean);
+    if (isWebShim()) {
+      setGitHubPat('');
+      try {
+        await saveGitHubPat(clean);
+        setGitHubPatConfigured(true);
+        toast.success(t('settings.github_pat_saved'));
+      } catch { toast.error(t('settings.github_status_disconnected')); }
+      setGitHubPatSaving(false);
+      return;
+    }
+    void saveGitHubPat(clean);
     if (clean) {
       const user = await probeGitHubPatUser(clean);
       setGitHubPatUser(user || null);
@@ -209,8 +223,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setGitHubPatSaving(false);
   };
 
-  const handleClearGitHubPat = () => {
-    clearSavedGitHubPat();
+  const handleClearGitHubPat = async () => {
+    try { await clearSavedGitHubPat(); } catch { toast.error(t('settings.github_status_disconnected')); return; }
+    setGitHubPatConfigured(false);
     setGitHubPat('');
     setGitHubPatUser(null);
     toast.info(t('settings.github_pat_clear'));
@@ -1087,7 +1102,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
             </div>
 
-            {gitHubPat.trim() && gitHubPatUser ? (
+            {isWebShim() && gitHubPatConfigured ? (
+              <div className="settings-github-status-badge is-connected"><span>{t('settings.github_pat_saved')}</span></div>
+            ) : gitHubPat.trim() && gitHubPatUser ? (
               <div className="settings-github-status-badge is-connected">
                 <span className="settings-github-status-dot" aria-hidden="true" />
                 <span>{t('settings.github_pat_authenticated', { user: gitHubPatUser })}</span>
@@ -1164,7 +1181,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {gitHubPatSaving ? '...' : t('settings.github_pat_save')}
               </button>
 
-              {gitHubPat && (
+              {(gitHubPat || (isWebShim() && gitHubPatConfigured)) && (
                 <button
                   type="button"
                   className="btn btn-secondary"
