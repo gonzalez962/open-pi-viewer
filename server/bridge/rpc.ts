@@ -506,12 +506,29 @@ export async function handleSendPrompt(args: any = {}) {
   const images = payload.images;
   const streamingBehavior = payload.streamingBehavior || 'followUp';
   const targetSessionFile = payload.sessionFile || getActiveSessionFile();
+  const targetCwd = resolveCrossPlatformCwd(payload.cwd || getActiveCwd());
 
   if (!id || !message) {
     throw new Error('Prompt ID and message are required');
   }
 
-  const rpc = await getOrCreatePiRpc(getActiveCwd(), targetSessionFile);
+  if (payload.cwd && targetSessionFile) {
+    const pooled = sessionPool.get(path.resolve(targetSessionFile));
+    if (pooled) {
+      if (path.resolve(pooled.cwd) !== path.resolve(targetCwd)) throw new Error('Session does not belong to project');
+    } else {
+      try {
+        const header = JSON.parse(fs.readFileSync(targetSessionFile, 'utf8').split('\n', 1)[0]);
+        if (!header.cwd || path.resolve(resolveCrossPlatformCwd(header.cwd)) !== path.resolve(targetCwd)) {
+          throw new Error('Session does not belong to project');
+        }
+      } catch {
+        throw new Error('Session does not belong to project');
+      }
+    }
+  }
+  const rpc = await getOrCreatePiRpc(targetCwd, targetSessionFile);
+  if (payload.cwd && path.resolve(rpc.cwd) !== path.resolve(targetCwd)) throw new Error('Session does not belong to project');
   if (rpc.sessionFile) {
     setSessionStatus(rpc.sessionFile, 'working', rpc.sessionId);
   }

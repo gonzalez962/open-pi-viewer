@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -34,7 +35,7 @@ class FakePi extends EventEmitter {
 }
 
 function fixture(t: any) {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.continuity-test-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'continuity-test-'));
   const children: FakePi[] = [];
   setSessionsRootDirForTest(root);
   setSubprocessSpawnerForTest((_cmd, args, options) => {

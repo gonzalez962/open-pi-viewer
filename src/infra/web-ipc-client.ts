@@ -22,6 +22,7 @@ export function initWebIpcClient(): void {
   const callbacks = new Map<number, (payload: any) => void>();
   const eventListeners = new Map<string, Set<number>>();
   const attachedSessions = new Map<string, Record<string, unknown>>();
+  let foreground: { cwd: string; sessionFile: string } | null = null;
   const publish = (event: string, payload: any) => {
     eventListeners.get(event)?.forEach((id) => callbacks.get(id)?.({ event, id, payload }));
   };
@@ -158,6 +159,10 @@ export function initWebIpcClient(): void {
         return null;
       }
 
+      if (cmd === 'send_prompt' && foreground) {
+        args = { ...args, payload: { ...(args?.payload as object), ...foreground } };
+      }
+
       const res = await fetch('/api/ipc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -183,9 +188,14 @@ export function initWebIpcClient(): void {
         throw new Error(data.error);
       }
       if (cmd === 'connect' && !(args as any)?.__reattach && data.result?.sessionFile) {
+        foreground = { cwd: data.result.canonicalCwd, sessionFile: data.result.sessionFile };
         attachedSessions.set(data.result.canonicalCwd, {
           payload: { ...(args as any)?.payload, sessionFile: data.result.sessionFile, workingDirectory: data.result.canonicalCwd },
         });
+      }
+      if ((cmd === 'switch_session' || cmd === 'new_session') && foreground && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
+        foreground = { ...foreground, sessionFile: data.result.sessionFile };
+        attachedSessions.set(foreground.cwd, { payload: { workingDirectory: foreground.cwd, sessionFile: foreground.sessionFile } });
       }
       return data.result;
     },
