@@ -170,6 +170,10 @@ Attach files using the attachment menu, drag and drop them onto the message hist
   - **Vision / Image Modalities**: Detects vision capabilities via input modalities, API capabilities, and keyword analysis, setting `input: ['text', 'image']`.
   - **Reference / Attribution**: The model classification and characteristics enrichment logic is adapted from the [cliproxyapi-dynamic-provider extension by @j0k3r-dev-rgl](https://github.com/j0k3r-dev-rgl/j0k3r-pi/blob/main/extensions/cliproxyapi-dynamic-provider.ts).
 
+### GitHub HTTPS authentication
+
+A GitHub PAT saved in the viewer is available to new web-bridge terminal and Pi RPC sessions and workspace branch publishes for Git HTTPS on `github.com`. Existing sessions keep their original credentials until recreated; changing or removing the PAT does not stop them. GitHub CLI token variables remain available. Other hosts, HTTP, and SSH do not receive the viewer's Git credentials. Without a saved PAT, existing environment and Git configuration are unchanged. The PAT is passed in the child environment, so processes with access to that environment can read it; protect the viewer host and its storage.
+
 ### Persistent Project Terminal
 - **One Terminal Per Canonical Project Directory**: Interactive terminal sessions survive UI minimization, project switching, and client reconnection across Web and Desktop (Tauri) deployments without losing running shell processes or buffered output.
 - **Full-Window Responsive Overlay**: Built on `@xterm/xterm` and `@xterm/addon-fit`, filling the viewport on desktop and adapting dimensions to mobile viewports via `ResizeObserver`.

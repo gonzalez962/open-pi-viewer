@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
+import { withGithubCredentials } from '../github-credentials';
 import { HOME_DIR, getActiveCwd } from './state';
 import type {
   WorkspaceGitStatus,
@@ -1263,6 +1264,7 @@ export function handlePublishWorkspaceBranch(args: any = {}): BranchOperationRes
 
   const res = spawnSync('git', ['push', '-u', remote, branch], {
     cwd: targetCwd,
+    env: withGithubCredentials(process.env),
     encoding: 'utf8',
     timeout: 30000,
   });

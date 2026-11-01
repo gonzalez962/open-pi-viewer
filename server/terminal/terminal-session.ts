@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
-import { loadViewerStorage } from '../storage';
+import { withGithubCredentials } from '../github-credentials';
 import type { TerminalSessionDto } from '../../src/core/terminal';
 import { BoundedBuffer } from './bounded-buffer';
 import { DEFAULT_COLS, DEFAULT_ROWS, DEFAULT_MAX_REPLAY_BYTES, resolveDefaultShell } from './types';
@@ -65,14 +65,10 @@ export class TerminalSession {
 
     const shell = options.shell || resolveDefaultShell();
 
-    const viewerStorage = loadViewerStorage();
-    const pat = typeof viewerStorage.githubPat === 'string' ? viewerStorage.githubPat.trim() : '';
-
-    const ptyEnv: Record<string, string | undefined> = {
+    const ptyEnv = withGithubCredentials({
       ...process.env,
       ...(options.env || {}),
-      ...(pat ? { GH_TOKEN: pat, GITHUB_TOKEN: pat } : {}),
-    };
+    });
 
     const ptySpawn = customPtySpawner || pty.spawn || pty.default?.spawn;
     if (typeof ptySpawn !== 'function') {
