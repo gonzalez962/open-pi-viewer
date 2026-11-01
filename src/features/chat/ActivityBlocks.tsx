@@ -11,6 +11,10 @@ export interface ActivityBlocksProps {
 
 export interface ThinkingCardProps extends ActivityBlocksProps {
   block: ThinkingBlock;
+  /**
+   * Renders the card already expanded. Defaults to false (collapsed).
+   */
+  defaultOpen?: boolean;
 }
 
 export interface ToolCardProps extends ActivityBlocksProps {
@@ -206,17 +210,15 @@ const CodePreview: React.FC<{ code: string; language?: string }> = ({ code, lang
 
 /**
  * Collapsible Thinking Accordion component.
- * Expanded while streaming, collapsed by default when complete.
+ * Collapsed by default so user can decide whether to inspect reasoning.
  */
-export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(({ block, t }) => {
-  const [userToggled, setUserToggled] = useState<boolean | null>(null);
+export const ThinkingCard: React.FC<ThinkingCardProps> = React.memo(({ block, t, defaultOpen = false }) => {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
 
-  // If streaming and user hasn't toggled, expand by default; collapse when done
   const isStreaming = Boolean(block.isStreaming);
-  const isOpen = userToggled !== null ? userToggled : isStreaming;
 
   const handleToggle = () => {
-    setUserToggled(!isOpen);
+    setIsOpen(!isOpen);
   };
 
   const label = isStreaming

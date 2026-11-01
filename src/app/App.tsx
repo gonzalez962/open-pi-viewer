@@ -21,7 +21,7 @@ import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
 } from '@infra/preferences';
-import { ProcessGroupCard } from '@features/chat/ProcessGroupCard';
+import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
@@ -30,7 +30,7 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { groupMessageBlocks, mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import { PromptControls } from '@features/chat/PromptControls';
 import {
   isMessageEmpty,
@@ -1995,16 +1995,28 @@ export const App: React.FC = () => {
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
                       <div className="activity-blocks">
-                        {groupMessageBlocks(msg.blocks).map((item, iIndex) => {
-                          if (item.type === 'process_group') {
+                        {msg.blocks.map((block, bIndex) => {
+                          if (block.type === 'thinking') {
                             return (
-                              <ProcessGroupCard key={item.id} group={item} t={t} />
+                              <ThinkingCard
+                                key={`thinking-${bIndex}`}
+                                block={block}
+                                t={t}
+                              />
                             );
                           }
-                          const block = item.block;
+                          if (block.type === 'tool_call') {
+                            return (
+                              <ToolCard
+                                key={block.id || `tool-${bIndex}`}
+                                block={block}
+                                t={t}
+                              />
+                            );
+                          }
                           if (block.type === 'text') {
                             return (
-                              <div key={`text-${iIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                              <div key={`text-${bIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
                                 <MarkdownContent
                                   content={block.text}
                                   t={t}
