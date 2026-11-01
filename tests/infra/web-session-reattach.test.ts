@@ -51,3 +51,39 @@ test('EventSource reconnect requests an identity-pinned snapshot and delivers mi
     assert.equal(events[0].pendingExtensionPrompts[0].id, 'approval');
   } finally { Object.assign(globalThis, originals); }
 });
+
+test('foreground session changes remain pinned for ordinary prompts and reattachment', async () => {
+  const originals = { window: globalThis.window, EventSource: globalThis.EventSource, fetch: globalThis.fetch };
+  const calls: any[] = [];
+  const listeners = new Map<string, EventListener>();
+  const sources: any[] = [];
+  const win: any = {
+    addEventListener(name: string, listener: EventListener) { listeners.set(name, listener); },
+    dispatchEvent(event: Event) { listeners.get(event.type)?.(event); return true; },
+  };
+  class FakeSource {
+    onopen?: () => void;
+    constructor(_url: string) { sources.push(this); }
+    close() {}
+  }
+  Object.assign(globalThis, { window: win, EventSource: FakeSource, fetch: async (_url: string, options: any) => {
+    const call = JSON.parse(options.body);
+    calls.push(call);
+    const sessionFile = call.cmd === 'switch_session' ? '/work/b.jsonl' : call.cmd === 'new_session' ? '/work/c.jsonl' : call.args?.payload?.sessionFile || '/work/a.jsonl';
+    return { ok: true, json: async () => ({ result: { canonicalCwd: '/work', sessionFile, id: 'prompt' } }) };
+  } });
+  try {
+    initWebIpcClient();
+    win.dispatchEvent(new Event('pi:web-auth-ready'));
+    const ipc = win.__TAURI_INTERNALS__;
+    await ipc.invoke('connect', { payload: { workingDirectory: '/work' } });
+    await ipc.invoke('switch_session', { payload: { sessionPath: '/work/b.jsonl' } });
+    await ipc.invoke('send_prompt', { payload: { id: 'prompt', message: 'hello' } });
+    assert.deepEqual(calls[2].args.payload, { id: 'prompt', message: 'hello', cwd: '/work', sessionFile: '/work/b.jsonl' });
+    await ipc.invoke('new_session');
+    await ipc.invoke('send_prompt', { payload: { id: 'prompt', message: 'hello again' } });
+    assert.equal(calls[4].args.payload.sessionFile, '/work/c.jsonl');
+    sources[0].onopen();
+    assert.equal(calls[5].args.payload.sessionFile, '/work/c.jsonl');
+  } finally { Object.assign(globalThis, originals); }
+});
