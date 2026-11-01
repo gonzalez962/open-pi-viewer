@@ -5,6 +5,8 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
+import { initWebIpcClient } from '@infra/web-ipc-client';
+import { sendPromptPi } from '@infra/bridge';
 import { handleIpcCommand, setSessionsRootDirForTest, setSubprocessSpawnerForTest, resetPiRpcForTest, getOrCreatePiRpc, addSseClient, removeSseClient } from '@server/web-ipc-bridge';
 
 class FakePi extends EventEmitter {
@@ -55,6 +57,84 @@ function fixture(t: any) {
   const connect = (sessionFile: string) => handleIpcCommand('connect', { payload: { workingDirectory: root, sessionFile } });
   return { root, children, file, connect };
 }
+
+test('S1.1 web prompt stays in selected project during background reattachment', async (t) => {
+  const f = fixture(t);
+  const aCwd = path.join(f.root, 'project-a');
+  const bCwd = path.join(f.root, 'project-b');
+  fs.mkdirSync(aCwd);
+  fs.mkdirSync(bCwd);
+  const a = f.file('project-a');
+  const b = f.file('project-b');
+  await getOrCreatePiRpc(aCwd, a);
+  await getOrCreatePiRpc(bCwd, b);
+  const originals = { window: globalThis.window, EventSource: globalThis.EventSource, fetch: globalThis.fetch };
+  const sources: any[] = [];
+  const listeners = new Map<string, EventListener>();
+  const win: any = {
+    addEventListener(name: string, callback: EventListener) { listeners.set(name, callback); },
+    dispatchEvent(event: Event) { listeners.get(event.type)?.(event); return true; },
+  };
+  class FakeSource {
+    onopen?: () => void;
+    constructor(_url: string) { sources.push(this); }
+    close() {}
+  }
+  let releaseB!: () => void;
+  const bGate = new Promise<void>((resolve) => { releaseB = resolve; });
+  let restoredA!: () => void;
+  const aRestored = new Promise<void>((resolve) => { restoredA = resolve; });
+  Object.assign(globalThis, { window: win, EventSource: FakeSource, fetch: async (_url: string, options: any) => {
+    const { cmd, args } = JSON.parse(options.body);
+    if (args?.__reattach && args.payload.workingDirectory === bCwd) await bGate;
+    const result = await handleIpcCommand(cmd, args);
+    if (args?.__reattach && args.payload.workingDirectory === aCwd) restoredA();
+    return { ok: true, json: async () => ({ result }) };
+  } });
+  try {
+    initWebIpcClient();
+    win.dispatchEvent(new Event('pi:web-auth-ready'));
+    const ipc = win.__TAURI_INTERNALS__;
+    await ipc.invoke('connect', { payload: { workingDirectory: aCwd, sessionFile: a } });
+    await ipc.invoke('connect', { payload: { workingDirectory: bCwd, sessionFile: b } });
+    sources[0].onopen();
+    await aRestored;
+    await sendPromptPi('s1-1', 'project B prompt', undefined, ipc.invoke);
+    const promptsA = f.children[0].commands.filter((command) => command.type === 'prompt');
+    const promptsB = f.children[1].commands.filter((command) => command.type === 'prompt');
+    assert.deepEqual(promptsA, []);
+    assert.equal(promptsB.length, 1);
+    assert.equal(promptsB[0].message, 'project B prompt');
+    assert.equal(f.children[1].cwd, bCwd);
+  } finally {
+    releaseB();
+    Object.assign(globalThis, originals);
+  }
+});
+
+test('S1.2 mismatched project and session reject without commands or activity changes', async (t) => {
+  const f = fixture(t);
+  const aCwd = path.join(f.root, 'project-a');
+  const bCwd = path.join(f.root, 'project-b');
+  fs.mkdirSync(aCwd);
+  fs.mkdirSync(bCwd);
+  const a = f.file('project-a');
+  const b = f.file('project-b');
+  await getOrCreatePiRpc(aCwd, a);
+  await getOrCreatePiRpc(bCwd, b);
+  const events: any[] = [];
+  const stream = { write: (chunk: string) => { events.push(JSON.parse(chunk.slice(6).trim())); } } as any;
+  addSseClient(stream);
+  t.after(() => removeSseClient(stream));
+  const before = f.children.map((child) => child.commands.slice());
+  let error: unknown;
+  try {
+    await handleIpcCommand('send_prompt', { payload: { id: 's1-2', message: 'wrong project', cwd: bCwd, sessionFile: a } });
+  } catch (err) { error = err; }
+  assert.deepEqual(f.children.map((child) => child.commands), before, 'rejected prompt must not send commands');
+  assert.deepEqual(events, [], 'rejected prompt must not change session activity');
+  assert.ok(error instanceof Error, 'mismatched identity must be rejected');
+});
 
 test('web child exit reports project-scoped disconnected/error state to subscribers', async (t) => {
   const f = fixture(t);
