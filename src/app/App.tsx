@@ -21,7 +21,8 @@ import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
 } from '@infra/preferences';
-import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
+import { ThinkingCard, ToolCard, ActivityBlocksScrollContainer } from '@features/chat/ActivityBlocks';
+import type { ThinkingBlock, ToolCallBlock } from '@core/types/messages';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
@@ -2031,45 +2032,75 @@ export const App: React.FC = () => {
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
-                      <div className="activity-blocks">
-                        {msg.blocks.map((block, bIndex) => {
-                          if (block.type === 'thinking') {
+                      (() => {
+                        type BlockGroup =
+                          | { type: 'activity'; blocks: (ThinkingBlock | ToolCallBlock)[]; key: string }
+                          | { type: 'text'; text: string; key: string };
+
+                        const groups: BlockGroup[] = [];
+                        let currentActivity: (ThinkingBlock | ToolCallBlock)[] = [];
+                        let activityKey = '';
+
+                        for (let i = 0; i < msg.blocks.length; i++) {
+                          const block = msg.blocks[i];
+                          if (block.type === 'thinking' || block.type === 'tool_call') {
+                            if (currentActivity.length === 0) {
+                              activityKey = `act-${i}`;
+                            }
+                            currentActivity.push(block);
+                          } else if (block.type === 'text') {
+                            if (currentActivity.length > 0) {
+                              groups.push({ type: 'activity', blocks: currentActivity, key: activityKey });
+                              currentActivity = [];
+                            }
+                            groups.push({ type: 'text', text: block.text, key: `text-${i}` });
+                          }
+                        }
+                        if (currentActivity.length > 0) {
+                          groups.push({ type: 'activity', blocks: currentActivity, key: activityKey });
+                        }
+
+                        return groups.map((g) => {
+                          if (g.type === 'activity') {
                             return (
-                              <ThinkingCard
-                                key={`thinking-${bIndex}`}
-                                block={block}
+                              <ActivityBlocksScrollContainer key={g.key} blocksCount={g.blocks.length}>
+                                {g.blocks.map((b, idx) => {
+                                  if (b.type === 'thinking') {
+                                    return (
+                                      <ThinkingCard
+                                        key={`thinking-${g.key}-${idx}`}
+                                        block={b}
+                                        t={t}
+                                      />
+                                    );
+                                  }
+                                  return (
+                                    <ToolCard
+                                      key={b.id || `tool-${g.key}-${idx}`}
+                                      block={b}
+                                      t={t}
+                                    />
+                                  );
+                                })}
+                              </ActivityBlocksScrollContainer>
+                            );
+                          }
+                          return (
+                            <div key={g.key} style={{ display: 'flex', flexDirection: 'column' }}>
+                              <MarkdownContent
+                                content={g.text}
                                 t={t}
+                                onInsertCode={insertCodeIntoPrompt}
                               />
-                            );
-                          }
-                          if (block.type === 'tool_call') {
-                            return (
-                              <ToolCard
-                                key={block.id || `tool-${bIndex}`}
-                                block={block}
-                                t={t}
-                              />
-                            );
-                          }
-                          if (block.type === 'text') {
-                            return (
-                              <div key={`text-${bIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
-                                <MarkdownContent
-                                  content={block.text}
-                                  t={t}
-                                  onInsertCode={insertCodeIntoPrompt}
-                                />
-                                {preferences.speech?.ttsEnabled && (
-                                  <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
-                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} messageId={msg.id} />
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          }
-                          return null;
-                        })}
-                      </div>
+                              {preferences.speech?.ttsEnabled && (
+                                <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                                  <MessageSpeechButton text={g.text} preferences={preferences.speech} messageId={msg.id} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        });
+                      })()
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />

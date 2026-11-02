@@ -141,6 +141,7 @@
   "file_tree.delete_confirm_msg": "¿Estás seguro de que querés eliminar la rama '{branch}'? Esta acción no se puede deshacer.",
   "file_tree.delete_branch_action": "Eliminar",
   "file_tree.default_branch_badge": "Predeterminada",
+  "file_tree.remote_branch_badge": "Remota",
   "file_tree.publish_branch_btn": "Publicar rama en el remoto",
   "file_tree.publish_branch_action": "Publicar",
   "file_tree.publish_confirm_title": "¿Publicar la rama '{branch}'?",

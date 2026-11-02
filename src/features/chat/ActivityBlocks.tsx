@@ -530,3 +530,67 @@ export const ToolCard: React.FC<ToolCardProps> = React.memo(({ block, t, default
     </div>
   );
 });
+
+export interface ActivityBlocksScrollContainerProps {
+  children?: React.ReactNode;
+  blocksCount?: number;
+  className?: string;
+}
+
+/**
+ * Encapsulating container for activity blocks.
+ * Borderless container with vertical overflow to display up to 6 blocks.
+ * Supports friendly auto-scroll: automatically scrolls to the bottom when new blocks arrive
+ * or when the last block receives focus, but pauses auto-scroll if the user scrolled up
+ * to review previous logs.
+ */
+export const ActivityBlocksScrollContainer: React.FC<ActivityBlocksScrollContainerProps> = ({
+  children,
+  blocksCount,
+  className = '',
+}) => {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const isPinnedToBottomRef = React.useRef<boolean>(true);
+
+  const handleScroll = React.useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isPinnedToBottomRef.current = distanceFromBottom <= 40;
+  }, []);
+
+  const handleFocusCapture = React.useCallback((e: React.FocusEvent<HTMLDivElement>) => {
+    const el = containerRef.current;
+    if (!el) return;
+    const lastChild = el.lastElementChild;
+    if (lastChild && (lastChild === e.target || lastChild.contains(e.target as Node))) {
+      isPinnedToBottomRef.current = true;
+      if (typeof lastChild.scrollIntoView === 'function') {
+        lastChild.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }, []);
+
+  React.useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (isPinnedToBottomRef.current) {
+      if (typeof el.scrollTo === 'function') {
+        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      } else {
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  }, [blocksCount, children]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`activity-blocks-scroll-container activity-blocks ${className}`.trim()}
+      onScroll={handleScroll}
+      onFocusCapture={handleFocusCapture}
+    >
+      {children}
+    </div>
+  );
+};

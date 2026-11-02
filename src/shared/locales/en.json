@@ -141,6 +141,7 @@
   "file_tree.delete_confirm_msg": "Are you sure you want to delete branch '{branch}'? This cannot be undone.",
   "file_tree.delete_branch_action": "Delete",
   "file_tree.default_branch_badge": "Default",
+  "file_tree.remote_branch_badge": "Remote",
   "file_tree.publish_branch_btn": "Publish branch to remote",
   "file_tree.publish_branch_action": "Publish",
   "file_tree.publish_confirm_title": "Publish branch '{branch}'?",
