@@ -447,6 +447,10 @@
 
 /* Mobile layout (<= 768px): Dismissible off-canvas drawer, compact header */
 @media (max-width: 768px) {
+  .brand-mark {
+    display: none;
+  }
+
   .btn-sidebar-toggle {
     display: none !important;
   }
