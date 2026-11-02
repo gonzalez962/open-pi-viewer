@@ -369,13 +369,18 @@ export async function getMessagesPi(
  * Reset active Pi session to a new conversation via Tauri IPC.
  */
 export async function newSessionPi(
-  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+  workingDirectoryOrInvokeFn?: string | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
+  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<NewSessionResult> {
+  const workingDirectory = typeof workingDirectoryOrInvokeFn === 'string' ? workingDirectoryOrInvokeFn : undefined;
+  const invokeFn = typeof workingDirectoryOrInvokeFn === 'function' ? workingDirectoryOrInvokeFn : invokeFnParam ?? invoke;
   if (!isTauri() && invokeFn === invoke) {
     throw new Error('Desktop runtime unavailable: cannot reset session outside Tauri');
   }
 
-  return await invokeFn<NewSessionResult>('new_session');
+  // Native desktop retains its existing argument-free command contract.
+  const args = workingDirectory && isWebShim() ? { payload: { workingDirectory } } : undefined;
+  return await invokeFn<NewSessionResult>('new_session', args);
 }
 
 /**

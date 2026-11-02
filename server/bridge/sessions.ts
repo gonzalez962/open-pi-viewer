@@ -1,3 +1,4 @@
+import { todoFromHistory } from '../../src/core/todo';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getBridgeConfig } from '../config';
@@ -374,6 +375,7 @@ export async function handleConnect(args: any = {}) {
     hasMore = windowed.hasMore;
   }
 
+  const todo = todoFromHistory(messages ?? []);
   return {
     connected: true,
     model: piRpc.modelInfo || (getActiveCwd() === targetCwd ? getActiveModel() : null),
@@ -384,6 +386,7 @@ export async function handleConnect(args: any = {}) {
     activity: snapshot?.activity ?? 'idle',
     pendingExtensionPrompts: snapshot?.pendingExtensionPrompts ?? [],
     messages: initialMessages,
+    ...(todo ? { todo } : {}),
     hasMore,
   };
 }
@@ -512,6 +515,7 @@ export function handleSwitchSession(args: any = {}) {
   const windowed = windowMessages(allMsgs, loadAll, limit, 60);
   const messagesToSend = windowed.messages;
   const hasMore = windowed.hasMore;
+  const todo = todoFromHistory(allMsgs);
 
   return {
     cancelled: false,
@@ -519,6 +523,7 @@ export function handleSwitchSession(args: any = {}) {
     sessionFile: parsed.path,
     messageCount: totalCount,
     messages: messagesToSend,
+    ...(todo ? { todo } : {}),
     hasMore,
     status: getSessionStatus(sessionPath),
     error: null,
@@ -533,8 +538,17 @@ export function handleGetMessages() {
   return [];
 }
 
-export function handleNewSession() {
-  const activeCwd = getActiveCwd();
+export function handleNewSession(args: any = {}) {
+  const requestedCwd = args.payload?.workingDirectory;
+  if (requestedCwd !== undefined && (typeof requestedCwd !== 'string' || !requestedCwd.trim())) {
+    throw new Error('Invalid project directory');
+  }
+  const activeCwd = resolveCrossPlatformCwd(requestedCwd ?? getActiveCwd());
+  try {
+    if (!fs.statSync(activeCwd).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new Error('Invalid project directory');
+  }
   const dir = resolveSessionsDir(activeCwd);
   fs.mkdirSync(dir, { recursive: true });
   const now = new Date();
@@ -552,8 +566,10 @@ export function handleNewSession() {
   };
   fs.writeFileSync(filePath, JSON.stringify(header) + '\n', 'utf8');
 
-  piRpc.sessionId = id;
-  piRpc.sessionFile = filePath;
+  if (path.resolve(activeCwd) === path.resolve(getActiveCwd())) {
+    piRpc.sessionId = id;
+    piRpc.sessionFile = filePath;
+  }
   setSessionStatus(filePath, 'completed', id);
 
   // Calentamiento en segundo plano sin bloquear la respuesta de la UI
@@ -565,6 +581,7 @@ export function handleNewSession() {
     cancelled: false,
     sessionId: id,
     sessionFile: filePath,
+    canonicalCwd: activeCwd,
   };
 }
 

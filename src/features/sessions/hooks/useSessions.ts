@@ -7,6 +7,7 @@ import {
   renameSessionPi,
   switchSessionPi,
 } from '@infra/bridge';
+import { parseTodo, todoFromHistory } from '@core/todo';
 import { hydrateChatMessages, recordSessionSwitched, saveSessionRecord } from '@core/session';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig, ConnectionState } from '@core/types/connection';
@@ -91,9 +92,9 @@ export function useSessions({
   configWorkingDirRef.current = config.workingDirectory;
 
   const loadSessions = useCallback(
-    async (cwd?: string) => {
+    async (cwd?: string, projectId?: string | null) => {
       const targetCwd = cwd || configWorkingDirRef.current;
-      const targetPid = activeProjectIdRef.current ?? undefined;
+      const targetPid = projectId === undefined ? activeProjectIdRef.current ?? undefined : projectId ?? undefined;
       try {
         dispatch({ type: 'LOAD_SESSIONS_START', targetProjectId: targetPid });
         const list = await listSessionsPi(targetCwd);
@@ -154,20 +155,22 @@ export function useSessions({
     }
 
     setShowSettings(false);
+    const targetProjectId = activeProjectIdRef.current ?? undefined;
 
     try {
       pinAndHide();
-      dispatch({ type: 'SWITCH_SESSION_START', payload: { sessionPath: session.path } });
+      dispatch({ type: 'SWITCH_SESSION_START', targetProjectId, payload: { sessionPath: session.path } });
       const result = await switchSessionPi(session.path);
 
       if (result.cancelled) {
-        dispatch({ type: 'SWITCH_SESSION_CANCELLED' });
+        dispatch({ type: 'SWITCH_SESSION_CANCELLED', targetProjectId });
         return;
       }
 
       if (result.error || !result.sessionId || !result.sessionFile) {
         dispatch({
           type: 'SWITCH_SESSION_ERROR',
+          targetProjectId,
           payload: { error: result.error || 'Unknown error switching session' },
         });
         return;
@@ -177,10 +180,12 @@ export function useSessions({
       pinAndHide();
       dispatch({
         type: 'SWITCH_SESSION_SUCCESS',
+        targetProjectId,
         payload: {
           sessionId: result.sessionId,
           sessionFile: result.sessionFile,
           messages: hydrated,
+          todo: parseTodo((result as typeof result & { todo?: unknown }).todo) ?? todoFromHistory(result.messages || []),
           hasMore: result.hasMore,
         },
       });
@@ -209,6 +214,7 @@ export function useSessions({
       const msg = err instanceof Error ? err.message : String(err);
       dispatch({
         type: 'SWITCH_SESSION_ERROR',
+        targetProjectId,
         payload: { error: msg },
       });
     }
@@ -282,17 +288,20 @@ export function useSessions({
     pinAndHide();
 
     if (isConnected) {
-      dispatch({ type: 'NEW_CONVERSATION_START' });
+      const originProjectId = activeProjectIdRef.current ?? undefined;
+      const originCwd = configWorkingDirRef.current;
+      dispatch({ type: 'NEW_CONVERSATION_START', targetProjectId: originProjectId });
       try {
-        const res = await newSessionPi();
+        const res = await newSessionPi(originCwd);
         const outcome = decideNewConversationOutcome(res);
 
         if (outcome.kind === 'cancelled') {
-          dispatch({ type: 'NEW_CONVERSATION_CANCELLED' });
+          dispatch({ type: 'NEW_CONVERSATION_CANCELLED', targetProjectId: originProjectId });
         } else if (outcome.kind === 'partial-reset') {
           // Fail closed: Pi session was reset but state reconciliation failed
           dispatch({
             type: 'NEW_CONVERSATION_FAIL',
+            targetProjectId: originProjectId,
             payload: { error: outcome.error },
           });
         } else {
@@ -300,7 +309,7 @@ export function useSessions({
             saveSessionRecord({
               sessionId: outcome.sessionId,
               sessionFile: outcome.sessionFile,
-              cwd: config.workingDirectory,
+              cwd: originCwd,
               hasMessages: false,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
@@ -308,16 +317,20 @@ export function useSessions({
           }
           dispatch({
             type: 'NEW_CONVERSATION_SUCCESS',
+            targetProjectId: originProjectId,
             payload: { sessionId: outcome.sessionId, sessionFile: outcome.sessionFile },
           });
-          void loadSessions();
-          requestFileTreeRefresh();
+          void loadSessions(originCwd, originProjectId ?? null);
+          if (activeProjectIdRef.current === originProjectId && configWorkingDirRef.current === originCwd) {
+            requestFileTreeRefresh();
+          }
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         // Fail closed: initial RPC failed or timed out; mutation status is uncertain
         dispatch({
           type: 'NEW_CONVERSATION_FAIL',
+          targetProjectId: originProjectId,
           payload: { error: msg },
         });
       }

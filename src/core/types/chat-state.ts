@@ -1,3 +1,4 @@
+import type { TodoSnapshot } from './todo';
 import type { SubagentTask } from './agent-activity';
 import type { ConnectionState } from './connection';
 import type { AgentActivity, ChatMessage } from './messages';
@@ -34,4 +35,5 @@ export interface ChatSessionState {
   isSidebarOpen: boolean;
   pendingApprovals?: unknown[];
   subagents: SubagentTask[];
+  todo?: TodoSnapshot | null;
 }

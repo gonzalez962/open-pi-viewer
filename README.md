@@ -8,6 +8,7 @@ Desktop chat interface and session viewer for Pi built with Tauri 2, React 18, T
 
 The Pi Viewer MVP is fully functional and verified:
 - **Auto-Startup & Configuration**: Automatically connects on launch using saved connection configuration; includes an in-app **Settings** panel and explicit **Retry** on disconnect/error.
+- **Optional ToDo**: Compatible Gentle Todo tool results show a collapsible task list above the prompt, with completed/planned progress excluding dropped tasks. The latest successful snapshot is restored with the session; finished lists remain visible until a later empty snapshot, session change, or disconnect. Without compatible data the panel stays hidden.
 - **Session Continuity**: Viewer-owned real Pi session persistence across application restarts, historical message hydration on startup, and clean **New conversation** reset.
 - **Localization & Themes**: English base/fallback and Spanish UI dictionaries (`src/locales/*.json`) with key parity and safe interpolation; Dark (default), Light, and System themes with complete CSS tokens; immediate preferences persistence in Settings without bridge reconnection or prompt loss.
 - **Readable Assistant Responses**: Safe Markdown subset rendering exclusively for assistant responses (headings 1-6, paragraphs, nested lists, strong/emphasis, inline code, fenced code blocks with sanitized language labels and localized copy buttons, and safe links opening the OS default external handler with destination display and copy controls). Strict plain-text literal isolation for user and system messages; no `dangerouslySetInnerHTML`, bounded native opener wrapper (no WebView navigation), and zero raw HTML execution.
@@ -89,6 +90,8 @@ In **Settings → Voice**, enable STT, select **OpenAI-compatible audio chat**, 
 
 In **Settings → Notifications**, use the **Enable system notifications** switch to activate or pause alerts. Turning it on requests browser/system permission if needed; there is no separate permission button. **Test notification** is available whenever the switch is on (except during an in-flight notification action) and also requests missing permission before sending a test. The switch replaces the general enable checkbox; the individual notification options remain listed below it. Pausing stops automatic popups and app sounds and disables the test button without resetting those options. Task completion and requests for input identify their origin in the title using this hierarchy: custom project name, Git repository name, then working-folder name. The body contains only the localized event message; the working-directory path is not displayed. Repository lookup uses the event's directory, not the active tab; if Git lookup fails, the folder name is used. Test notifications remain generic. Alerts include localized text, never conversation contents. Existing notification preferences and focus suppression apply; alerts from different sessions are debounced independently.
 
+On mobile, in-app toasts at the top identify other known projects that complete (green), fail (red), or need input (amber). Each toast closes automatically after 15 seconds or via its close button. They work independently of system notification settings and do not switch projects.
+
 - **Web:** requires HTTPS or localhost, browser permission, and an open page. Browser popups request silent delivery; the sound preference controls the app's audio tone. Browser and operating-system policies may suppress delivery or audio.
 - **Tauri:** uses the official native notification plugin while the app is running, including when hidden in the tray. Desktop popup sound is controlled by OS notification settings, not the app's sound toggle; the app avoids adding a second audio tone. On Windows, verify notification behavior with the installed application, not only development mode.
 - **Blocked permissions:** change browser or system permissions and return to Settings to refresh status. Permission requests occur only after turning on the switch or clicking **Test notification**. A successful test means submission, not proof that the system displayed it.
@@ -156,6 +159,7 @@ Attach files using the attachment menu, drag and drop them onto the message hist
 - **Viewer-Owned Sessions**: Pi Viewer tracks session files per working directory. First use creates a viewer-owned session without implicitly adopting unmanaged CLI conversations.
 - **Startup Hydration**: On connection, previous messages are retrieved from Pi via `get_messages` and hydrated into the UI chat view before enabling prompt input.
 - **New Conversation**: The **New conversation** button initiates a clean reset via `new_session`, clearing both the active Pi session context and visible UI messages.
+- **Web project binding**: A new conversation belongs to the project where it was requested. An invalid project directory is rejected before a session is created, and switching projects while creation is pending does not redirect it.
 - **Historical Session Verification**: When resuming an existing session, the bridge verifies session file existence before spawning to prevent silent data loss or state corruption.
 
 ### Active Pi Environment & Direct Wrapper Architecture
@@ -216,6 +220,10 @@ Tauri IPC does not expose generic command execution or raw RPC pass-through. The
 - **Streaming & Token Discipline**: Only `text_delta` tokens stream into chat messages, filtering out internal `thinking_delta` and `toolcall_delta` payloads. Non-assistant `message_end` events are ignored, and streaming flags are authoritatively finalized on abort, disconnect, and process exit.
 - **Shutdown Cleanup**: The child PID is tracked and reaped upon explicit disconnect, window destruction, or application exit. Tauri's `prevent_exit()` is used on application exit to await asynchronous child process reaping. `kill_on_drop(true)` provides defense-in-depth against leaked processes.
 - **Process Termination Scope**: Direct child process termination signals and reaps the immediate Node process. In read-only or controlled mutation mode, Node reaps managed child operations. However, direct process termination does not guarantee process-tree cleanup across all platforms if descendant processes were spawned by terminal tools or extensions; full OS-level process-tree management (such as Windows Job Objects or POSIX process groups) would be required if arbitrary external tools or subagents were executed.
+
+### Subagent activity
+
+When a compatible gentle-agents activity hook publishes active tasks, **Subagent process** appears in the conversation with the active count. Select it or press **Alt+A** to inspect the received activity; select a task to follow its live updates and press **Escape** to close. Thread details may be partial or unavailable when the publisher limits its payload. Without the hook or active tasks, the entry and shortcut remain inactive.
 
 ## Checklist
 

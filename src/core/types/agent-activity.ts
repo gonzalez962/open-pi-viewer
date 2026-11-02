@@ -1,15 +1,25 @@
 export type SubagentStatus = 'running' | 'queued' | 'waiting' | 'completed' | 'failed';
 
-/**
- * Minimal whitelisted public state retained for live subagents.
- * Never stores prompts, internal instructions, transcripts, or thread items.
- */
+export type SubagentThreadItem =
+  | { kind: 'text' | 'thinking' | 'note'; text: string }
+  | { kind: 'tool'; name: string; args: string; running: boolean; isError: boolean; output: string };
+
+export interface SubagentThread {
+  version: number;
+  dropped: number;
+  items: SubagentThreadItem[];
+  viewerTruncated?: boolean;
+}
+
+/** Whitelisted live metadata and bounded publisher-provided activity. */
 export interface SubagentTask {
   id: string;
   agent: string;
   label?: string;
   status: 'running' | 'queued' | 'waiting';
   lastStep?: string;
+  thread?: SubagentThread;
+  viewerTruncated?: boolean;
 }
 
 /**

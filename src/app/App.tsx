@@ -33,6 +33,10 @@ import {
 } from '@features/chat/MarkdownContent';
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import { PromptControls } from '@features/chat/PromptControls';
+import { TodoPanel } from '@features/chat/TodoPanel';
+import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
+import { SubagentActivityEntry, createSubagentActivityController } from '@features/chat/subagent-activity-modal';
+import { parseTodo, todoFromHistory } from '@core/todo';
 import {
   isMessageEmpty,
   calculateContextMetrics,
@@ -165,6 +169,10 @@ import {
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
 import { MobileNavigation } from './MobileNavigation';
+import { ProjectAttentionToast } from './ProjectAttentionToast';
+import { useProjectAttentionTimeout } from './useProjectAttentionTimeout';
+import { enqueueAttention, pruneAttention } from './project-attention';
+import type { ProjectAttentionEvent } from '@features/chat/session-events';
 import { useWebLogoutControl } from './WebLogoutContext';
 import {
   DRAWER_ID,
@@ -199,6 +207,7 @@ export const App: React.FC = () => {
   // Separate Settings draft state for connection configuration. settingsDraft's initial
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
+  const [todoExpanded, setTodoExpanded] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
@@ -310,6 +319,7 @@ export const App: React.FC = () => {
           sessionId: res.sessionId,
           sessionFile: res.sessionFile,
           messages: hydrated,
+          todo: parseTodo((res as ConnectResult & { todo?: unknown }).todo) ?? todoFromHistory(res.messages ?? []),
           model: res.model,
           hasMore: res.hasMore,
           activity: res.activity,
@@ -474,6 +484,28 @@ export const App: React.FC = () => {
   projectsRegistryRef.current = projectsRegistry;
   const multiProjectStateRef = useRef(multiProjectState);
   multiProjectStateRef.current = multiProjectState;
+  const [attentionQueue, setAttentionQueue] = useState<ProjectAttentionEvent[]>([]);
+  const [isAttentionMobile, setIsAttentionMobile] = useState(checkIsMobileViewport);
+  const dismissAttention = useCallback(() => setAttentionQueue(queue => queue.slice(1)), []);
+  useProjectAttentionTimeout(isAttentionMobile ? attentionQueue[0] ?? null : null, dismissAttention);
+
+  useEffect(() => {
+    const onResize = () => {
+      const isMobile = checkIsMobileViewport();
+      setIsAttentionMobile(isMobile);
+      if (!isMobile) setAttentionQueue([]);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    setAttentionQueue(queue => pruneAttention(queue, {
+      projects: projectsRegistry.projects,
+      activeProjectId: projectsRegistry.activeProjectId,
+      isMobile: isAttentionMobile,
+    }));
+  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isAttentionMobile]);
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
@@ -691,6 +723,31 @@ export const App: React.FC = () => {
     handleBack,
   } = useExtensionUiDialog();
 
+  const [subagentOpen, setSubagentOpen] = useState(false);
+  const [selectedSubagent, setSelectedSubagent] = useState('');
+  const subagentContext = useRef({ tasks: state.subagents, otherDialog: false });
+  const subagentController = useRef<ReturnType<typeof createSubagentActivityController> | null>(null);
+  if (!subagentController.current) {
+    subagentController.current = createSubagentActivityController({
+      getTasks: () => subagentContext.current.tasks,
+      getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element => !element.closest('.subagent-overlay'))),
+      getActiveElement: () => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      setOpen: setSubagentOpen,
+    });
+  }
+  useEffect(() => {
+    const controller = subagentController.current!;
+    window.addEventListener('keydown', controller.onKeyDown);
+    return () => window.removeEventListener('keydown', controller.onKeyDown);
+  }, []);
+  useEffect(() => {
+    subagentController.current?.close(false);
+    setSelectedSubagent('');
+  }, [state.sessionId, projectsRegistry.activeProjectId, state.connectionStatus]);
+  useEffect(() => {
+    if (!state.subagents.length) subagentController.current?.close(false);
+  }, [state.subagents]);
+
   const handleDialogBack = useCallback(
     (
       itemKey: string,
@@ -716,6 +773,11 @@ export const App: React.FC = () => {
     projectSessionIds: Object.fromEntries(Object.entries(multiProjectState.projects).map(([id, project]) => [id, project.sessionId])),
     projects: projectsRegistry.projects,
     activeProjectId: projectsRegistry.activeProjectId,
+    onAttention: event => {
+      const registry = projectsRegistryRef.current;
+      const context = { projects: registry.projects, activeProjectId: registry.activeProjectId, isMobile: checkIsMobileViewport() };
+      setAttentionQueue(queue => enqueueAttention(queue, event, context));
+    },
     dispatch,
     onWorkspaceChanged: requestFileTreeRefresh,
     onStorageWarning: setStorageWarning,
@@ -1208,6 +1270,11 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('resize', handleResize);
   }, [isMobileNavOpen]);
 
+  subagentContext.current = {
+    tasks: state.subagents,
+    otherDialog: Boolean(activeDialog || showSettings || showKanban || viewingFile || profilesHook.isModalOpen || isFolderPickerOpen || isGitHubCloneOpen || isGitHubCreateOpen || isDefaultDirSetupOpen || commandPalette.isOpen || isMobileNavOpen),
+  };
+
   const handleToggleZenMode = useCallback(() => {
     const hasOpenModal = Boolean(
       viewingFile ||
@@ -1385,6 +1452,14 @@ export const App: React.FC = () => {
 
   return (
     <div className={`app-container ${isZenMode ? ZEN_MODE_CONTAINER_CLASS : ''}`}>
+      <ProjectAttentionToast
+        event={attentionQueue[0] ?? null}
+        projects={projectsRegistry.projects}
+        activeProjectId={projectsRegistry.activeProjectId}
+        isMobile={isAttentionMobile}
+        locale={preferences.language}
+        onDismiss={dismissAttention}
+      />
       {activeWallpaperStyles && (
         <div
           className="app-custom-background-layer"
@@ -1884,6 +1959,7 @@ export const App: React.FC = () => {
             aria-label={t('empty.history_label')}
             tabIndex={0}
           >
+          <SubagentActivityEntry tasks={state.subagents} onClick={subagentController.current!.onClick} t={t} />
           {state.messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">
@@ -2224,6 +2300,7 @@ export const App: React.FC = () => {
               </div>
             )}
 
+            <TodoPanel todo={state.todo} expanded={todoExpanded} onToggle={() => setTodoExpanded(value => !value)} t={t} />
             <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
               <textarea
                 id="prompt-input"
@@ -2335,6 +2412,10 @@ export const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      {subagentOpen && state.subagents.length > 0 && !subagentContext.current.otherDialog && (
+        <SubagentActivityModal tasks={state.subagents} selectedId={selectedSubagent} onSelect={setSelectedSubagent} onClose={() => subagentController.current?.close()} t={t} />
+      )}
 
       {showKanban && kanbanCwd && (
         <React.Suspense fallback={null}>
