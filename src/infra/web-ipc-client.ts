@@ -159,6 +159,9 @@ export function initWebIpcClient(): void {
         return null;
       }
 
+      const creationForeground = cmd === 'new_session' ? foreground : null;
+      const requestedCwd = (args as any)?.payload?.workingDirectory;
+      const creationCwd = typeof requestedCwd === 'string' && requestedCwd ? requestedCwd : creationForeground?.cwd;
       if (cmd === 'send_prompt' && foreground) {
         args = { ...args, payload: { ...(args?.payload as object), ...foreground } };
       }
@@ -193,7 +196,12 @@ export function initWebIpcClient(): void {
           payload: { ...(args as any)?.payload, sessionFile: data.result.sessionFile, workingDirectory: data.result.canonicalCwd },
         });
       }
-      if ((cmd === 'switch_session' || cmd === 'new_session') && foreground && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
+      if (cmd === 'new_session' && creationCwd && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
+        const created = { cwd: data.result.canonicalCwd || creationCwd, sessionFile: data.result.sessionFile };
+        attachedSessions.set(created.cwd, { payload: { workingDirectory: created.cwd, sessionFile: created.sessionFile } });
+        if (foreground === creationForeground && creationForeground?.cwd === created.cwd) foreground = created;
+      }
+      if (cmd === 'switch_session' && foreground && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
         foreground = { ...foreground, sessionFile: data.result.sessionFile };
         attachedSessions.set(foreground.cwd, { payload: { workingDirectory: foreground.cwd, sessionFile: foreground.sessionFile } });
       }

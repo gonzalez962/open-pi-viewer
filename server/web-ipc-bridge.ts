@@ -244,7 +244,7 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'get_messages':
       return handleGetMessages();
     case 'new_session':
-      return handleNewSession();
+      return handleNewSession(args);
     case 'delete_session':
       return handleDeleteSession(args);
     case 'rename_session':

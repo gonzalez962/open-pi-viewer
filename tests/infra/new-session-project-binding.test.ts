@@ -34,7 +34,27 @@ test('S2.1 late new-session response leaves B foreground and pins A for later us
     release({ cancelled: false, sessionId: 'a-new', sessionFile: '/a/new.jsonl' });
     assert.equal((await creation).sessionId, 'a-new');
     await ipc.invoke('send_prompt', { payload: { id: 'prompt', message: 'B' } });
-    assert.deepEqual(calls.at(-1).args.payload, { id: 'prompt', message: 'B', cwd: '/b', sessionFile: '/b/old.jsonl' });
+    assert.deepEqual(calls[calls.length - 1].args.payload, { id: 'prompt', message: 'B', cwd: '/b', sessionFile: '/b/old.jsonl' });
+  } finally { Object.assign(globalThis, originals); }
+});
+
+test('S1.1 explicit origin remains A even if B is foreground at invocation', async () => {
+  const originals = { window: globalThis.window, fetch: globalThis.fetch };
+  const win: any = { addEventListener() {} };
+  const calls: any[] = [];
+  Object.assign(globalThis, { window: win, fetch: async (_url: string, options: any) => {
+    const call = JSON.parse(options.body); calls.push(call);
+    const result = call.cmd === 'connect' ? { canonicalCwd: '/b', sessionFile: '/b/old' } : call.cmd === 'new_session' ? { sessionId: 'a', sessionFile: '/a/new' } : { id: 'prompt' };
+    return { ok: true, json: async () => ({ result }) };
+  } });
+  try {
+    initWebIpcClient();
+    const ipc = win.__TAURI_INTERNALS__;
+    await ipc.invoke('connect', { payload: { workingDirectory: '/b' } });
+    await ipc.invoke('new_session', { payload: { workingDirectory: '/a' } });
+    await ipc.invoke('send_prompt', { payload: { id: 'prompt', message: 'B' } });
+    assert.equal(calls[2].args.payload.sessionFile, '/b/old');
+    assert.equal(calls[2].args.payload.cwd, '/b');
   } finally { Object.assign(globalThis, originals); }
 });
 
