@@ -454,8 +454,17 @@ export function handleGetMessages() {
   return [];
 }
 
-export function handleNewSession() {
-  const activeCwd = getActiveCwd();
+export function handleNewSession(args: any = {}) {
+  const requestedCwd = args.payload?.workingDirectory;
+  if (requestedCwd !== undefined && (typeof requestedCwd !== 'string' || !requestedCwd.trim())) {
+    throw new Error('Invalid project directory');
+  }
+  const activeCwd = resolveCrossPlatformCwd(requestedCwd ?? getActiveCwd());
+  try {
+    if (!fs.statSync(activeCwd).isDirectory()) throw new Error('not a directory');
+  } catch {
+    throw new Error('Invalid project directory');
+  }
   const dir = resolveSessionsDir(activeCwd);
   fs.mkdirSync(dir, { recursive: true });
   const now = new Date();
@@ -473,8 +482,10 @@ export function handleNewSession() {
   };
   fs.writeFileSync(filePath, JSON.stringify(header) + '\n', 'utf8');
 
-  piRpc.sessionId = id;
-  piRpc.sessionFile = filePath;
+  if (path.resolve(activeCwd) === path.resolve(getActiveCwd())) {
+    piRpc.sessionId = id;
+    piRpc.sessionFile = filePath;
+  }
   setSessionStatus(filePath, 'completed', id);
 
   // Calentamiento en segundo plano sin bloquear la respuesta de la UI
@@ -486,6 +497,7 @@ export function handleNewSession() {
     cancelled: false,
     sessionId: id,
     sessionFile: filePath,
+    canonicalCwd: activeCwd,
   };
 }
 

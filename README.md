@@ -157,6 +157,7 @@ Attach files using the attachment menu, drag and drop them onto the message hist
 - **Viewer-Owned Sessions**: Pi Viewer tracks session files per working directory. First use creates a viewer-owned session without implicitly adopting unmanaged CLI conversations.
 - **Startup Hydration**: On connection, previous messages are retrieved from Pi via `get_messages` and hydrated into the UI chat view before enabling prompt input.
 - **New Conversation**: The **New conversation** button initiates a clean reset via `new_session`, clearing both the active Pi session context and visible UI messages.
+- **Web project binding**: A new conversation belongs to the project where it was requested. An invalid project directory is rejected before a session is created, and switching projects while creation is pending does not redirect it.
 - **Historical Session Verification**: When resuming an existing session, the bridge verifies session file existence before spawning to prevent silent data loss or state corruption.
 
 ### Active Pi Environment & Direct Wrapper Architecture
