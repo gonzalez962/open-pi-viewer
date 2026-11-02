@@ -9,6 +9,7 @@ import {
   type NotifyAppEventParams,
 } from '@infra/notifications';
 import { AgentOutcomeTracker } from '@core/agent-outcome';
+import { parseTodo, todoFromHistory } from '@core/todo';
 import { parseSubagentSnapshot } from '@core/agent-activity';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
@@ -132,12 +133,16 @@ export class SessionEventController {
     const outcome = this.outcomeTracker.observe({ ...event, cwd: notificationCwd });
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
     if (eventType === 'runtime_snapshot') {
+      const selected = targetProjectId && this.options.getProjectSessionId
+        ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
+      if (selected && event.sessionId && selected !== event.sessionId) return;
       this.options.dispatch({
         type: 'SESSION_READY', targetProjectId,
         payload: {
           sessionId: event.sessionId as string,
           sessionFile: event.sessionFile as string,
           messages: hydrateChatMessages(event.messages as unknown[] ?? []),
+          todo: parseTodo(event.todo) ?? todoFromHistory(event.messages as unknown[] ?? []),
           activity: event.activity as 'idle' | 'busy' | 'waiting',
           hasMore: Boolean(event.hasMore),
         },
@@ -263,6 +268,9 @@ export class SessionEventController {
     } else if (eventType === 'tool_execution_end') {
       const toolCallId = typeof event.toolCallId === 'string' ? event.toolCallId : '';
       if (toolCallId) {
+        const result = event.result as { details?: { gentleTodo?: unknown; error?: unknown } } | undefined;
+        const todo = event.toolName === 'todo' && !event.isError && !result?.details?.error ? parseTodo(result?.details?.gentleTodo) : null;
+        if (todo) this.options.dispatch({ type: 'UPDATE_TODO', payload: { todo }, targetProjectId });
         const output = extractToolOutput(event.result);
         this.options.dispatch({
           type: 'EVENT_TOOL_EXECUTION_END',

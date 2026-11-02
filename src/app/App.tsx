@@ -32,6 +32,8 @@ import {
 } from '@features/chat/MarkdownContent';
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import { PromptControls } from '@features/chat/PromptControls';
+import { TodoPanel } from '@features/chat/TodoPanel';
+import { parseTodo, todoFromHistory } from '@core/todo';
 import {
   isMessageEmpty,
   calculateContextMetrics,
@@ -198,6 +200,7 @@ export const App: React.FC = () => {
   // Separate Settings draft state for connection configuration. settingsDraft's initial
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
+  const [todoExpanded, setTodoExpanded] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
@@ -309,6 +312,7 @@ export const App: React.FC = () => {
           sessionId: res.sessionId,
           sessionFile: res.sessionFile,
           messages: hydrated,
+          todo: parseTodo((res as ConnectResult & { todo?: unknown }).todo) ?? todoFromHistory(res.messages ?? []),
           model: res.model,
           hasMore: res.hasMore,
           activity: res.activity,
@@ -2193,6 +2197,7 @@ export const App: React.FC = () => {
               </div>
             )}
 
+            <TodoPanel todo={state.todo} expanded={todoExpanded} onToggle={() => setTodoExpanded(value => !value)} t={t} />
             <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
               <textarea
                 id="prompt-input"

@@ -1,3 +1,11 @@
+.todo-panel { border: 1px solid var(--border-muted); border-radius: 8px; margin-bottom: 8px; }
+.todo-toggle { width: 100%; display: flex; justify-content: space-between; padding: 8px 10px; color: inherit; background: transparent; border: 0; cursor: pointer; }
+.todo-list { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 180px; overflow-y: auto; }
+.todo-task { display: flex; gap: 8px; padding: 2px 0; }
+.todo-task small { opacity: .7; }
+.todo-done, .todo-dropped { opacity: .65; }
+.todo-done > span:last-child, .todo-dropped > span:last-child { text-decoration: line-through; }
+
 /* Chat Viewport & Empty State */
 .chat-container {
   position: relative;

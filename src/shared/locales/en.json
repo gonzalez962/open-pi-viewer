@@ -1,4 +1,10 @@
 {
+  "todo.title": "Todos",
+  "todo.pending": "Pending",
+  "todo.in_progress": "In progress",
+  "todo.blocked": "Blocked",
+  "todo.done": "Done",
+  "todo.dropped": "Dropped",
   "kanban.title": "Kanban",
   "kanban.pending": "Pending",
   "kanban.in_progress": "In progress",
