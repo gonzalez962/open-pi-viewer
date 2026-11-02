@@ -75,7 +75,47 @@ pub struct SwitchSessionResult {
     pub error: Option<String>,
 }
 
-/// Helper to window a slice of messages based on limit and load_all preferences
+fn has_visible_text(content: &Value) -> bool {
+    if let Some(s) = content.as_str() {
+        return !s.trim().is_empty();
+    }
+    if let Some(arr) = content.as_array() {
+        return arr.iter().any(|item| {
+            if let Some(obj) = item.as_object() {
+                let is_text_type = obj.get("type").and_then(|t| t.as_str()) == Some("text");
+                let has_text_str = obj
+                    .get("text")
+                    .and_then(|t| t.as_str())
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+                is_text_type || has_text_str
+            } else {
+                false
+            }
+        });
+    }
+    false
+}
+
+fn is_activity_message(msg: &Value) -> bool {
+    if let Some(obj) = msg.as_object() {
+        if let Some(role) = obj.get("role").and_then(|r| r.as_str()) {
+            if role == "toolResult" {
+                return true;
+            }
+            if role == "assistant" {
+                let content = obj.get("content").unwrap_or(&Value::Null);
+                return !has_visible_text(content);
+            }
+        }
+    }
+    false
+}
+
+/// Helper to window a slice of messages based on limit and load_all preferences.
+/// Activity blocks (tool results and assistant messages with only tool calls) do not
+/// consume the conversational limit, and the slice is expanded backwards to the nearest
+/// turn boundary so user prompts are never orphaned.
 pub fn window_messages(
     mut messages: Vec<Value>,
     load_all: Option<bool>,
@@ -83,15 +123,55 @@ pub fn window_messages(
     default_limit: usize,
 ) -> (Vec<Value>, bool) {
     let load_all_val = load_all.unwrap_or(false);
-    let effective_limit = limit.or_else(|| if load_all_val { None } else { Some(default_limit) });
-    let total_len = messages.len();
-    match effective_limit {
-        Some(lim) if lim < total_len => {
-            let offset = total_len - lim;
-            (messages.split_off(offset), true)
-        }
-        _ => (messages, false),
+    if load_all_val || messages.is_empty() {
+        return (messages, false);
     }
+
+    let effective_limit = limit.unwrap_or(default_limit);
+    if effective_limit == 0 {
+        let has_more = !messages.is_empty();
+        return (Vec::new(), has_more);
+    }
+
+    let mut conversational_count = 0;
+    let mut split_index = 0;
+    let mut hit_limit = false;
+
+    for i in (0..messages.len()).rev() {
+        if !is_activity_message(&messages[i]) {
+            conversational_count += 1;
+            if conversational_count >= effective_limit {
+                split_index = i;
+                hit_limit = true;
+                break;
+            }
+        }
+    }
+
+    if !hit_limit {
+        return (messages, false);
+    }
+
+    // Turn boundary adjustment: if split_index lands on an assistant or toolResult,
+    // expand backwards to include the preceding user prompt.
+    while split_index > 0 {
+        let role = messages[split_index]
+            .get("role")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        if role == "assistant" || role == "toolResult" {
+            split_index -= 1;
+        } else {
+            break;
+        }
+    }
+
+    if split_index == 0 {
+        return (messages, false);
+    }
+
+    let remaining = messages.split_off(split_index);
+    (remaining, true)
 }
 
 
@@ -1899,6 +1979,47 @@ mod tests {
         let (w4, has_more4) = window_messages(msgs.clone(), Some(true), None, 60);
         assert_eq!(w4.len(), 100);
         assert_eq!(has_more4, false);
+
+        // 5. Activity blocks (tool calls, tool results) do not consume conversational limit
+        let mut mixed_msgs: Vec<Value> = Vec::new();
+        mixed_msgs.push(serde_json::json!({
+            "id": "turn1-user",
+            "role": "user",
+            "content": "Turn 1 prompt"
+        }));
+        mixed_msgs.push(serde_json::json!({
+            "id": "turn1-asst",
+            "role": "assistant",
+            "content": "Turn 1 reply"
+        }));
+        mixed_msgs.push(serde_json::json!({
+            "id": "turn2-user",
+            "role": "user",
+            "content": "Turn 2 prompt"
+        }));
+        for i in 0..40 {
+            mixed_msgs.push(serde_json::json!({
+                "id": format!("call-{}", i),
+                "role": "assistant",
+                "content": [{ "type": "tool_call", "id": format!("c-{}", i) }]
+            }));
+            mixed_msgs.push(serde_json::json!({
+                "id": format!("res-{}", i),
+                "role": "toolResult",
+                "content": "tool output"
+            }));
+        }
+        mixed_msgs.push(serde_json::json!({
+            "id": "turn2-asst",
+            "role": "assistant",
+            "content": "Turn 2 reply"
+        }));
+
+        // Conversational count is 4 (turn1-user, turn1-asst, turn2-user, turn2-asst) <= 60
+        let (w5, has_more5) = window_messages(mixed_msgs.clone(), None, None, 60);
+        assert_eq!(w5.len(), mixed_msgs.len());
+        assert_eq!(has_more5, false);
+        assert_eq!(w5[0]["id"], "turn1-user");
     }
 
     #[tokio::test]
