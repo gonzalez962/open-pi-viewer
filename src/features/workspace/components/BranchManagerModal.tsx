@@ -53,6 +53,8 @@ export function sortBranchesMainFirst(
     if (b.name === 'main') return 1;
     if (defaultBranch && a.name === defaultBranch) return -1;
     if (defaultBranch && b.name === defaultBranch) return 1;
+    if (!a.isRemote && b.isRemote) return -1;
+    if (a.isRemote && !b.isRemote) return 1;
     return a.name.localeCompare(b.name);
   });
 }
@@ -705,6 +707,11 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                           {t('file_tree.default_branch_badge')}
                         </span>
                       )}
+                      {b.isRemote && (
+                        <span className="badge-branch-remote">
+                          {t('file_tree.remote_branch_badge')}
+                        </span>
+                      )}
                       {b.upstream && (
                         <span
                           className="branch-item-upstream"
@@ -719,7 +726,7 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
 
                   <div className="branch-item-actions-wrapper">
                     <div className={`branch-item-actions-drawer ${isActionsOpen ? 'is-expanded' : ''}`}>
-                      {!b.upstream && (
+                      {!b.upstream && !b.isRemote && (
                         <button
                           type="button"
                           className="btn-branch-publish"
@@ -771,7 +778,7 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                         {t('file_tree.view_commits_btn')}
                       </button>
 
-                      {!isCurrent && !isDefault && (
+                      {!isCurrent && !isDefault && !b.isRemote && (
                         <button
                           type="button"
                           className="btn-branch-delete"

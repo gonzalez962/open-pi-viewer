@@ -61,6 +61,7 @@ export interface WorkspaceBranch {
   name: string;
   isCurrent: boolean;
   upstream?: string | null;
+  isRemote?: boolean;
 }
 
 export interface WorkspaceBranchList {

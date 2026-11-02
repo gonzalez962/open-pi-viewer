@@ -1085,20 +1085,27 @@ test('BranchCommitsModal: renders dedicated modal container and header with bran
   assert.ok(markup.includes('Commits en feature/new-ui'));
 });
 
-test('sortBranchesMainFirst: guarantees main is always first in the list', () => {
+test('sortBranchesMainFirst: guarantees main is always first in the list and local branches before remote branches', () => {
   const branches = [
+    { name: 'origin/feature-remote', isCurrent: false, isRemote: true },
     { name: 'feature/zebra', isCurrent: false },
     { name: 'fix/alpha', isCurrent: false },
     { name: 'main', isCurrent: false },
     { name: 'develop', isCurrent: true },
+    { name: 'origin/alpha-remote', isCurrent: false, isRemote: true },
   ];
 
   const sorted = sortBranchesMainFirst(branches, 'main');
   assert.equal(sorted[0].name, 'main');
   assert.deepEqual(
     sorted.map((b) => b.name),
-    ['main', 'develop', 'feature/zebra', 'fix/alpha']
+    ['main', 'develop', 'feature/zebra', 'fix/alpha', 'origin/alpha-remote', 'origin/feature-remote']
   );
+});
+
+test('BranchManagerModal: renders badge-branch-remote for remote branches and suppresses delete/publish', () => {
+  assert.equal((esJson as Record<string, string>)['file_tree.remote_branch_badge'], 'Remota');
+  assert.equal((enJson as Record<string, string>)['file_tree.remote_branch_badge'], 'Remote');
 });
 
 test('BranchManagerModal: renders slidable actions drawer and toggle button', () => {

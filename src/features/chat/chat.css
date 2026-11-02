@@ -2004,12 +2004,49 @@
   color: var(--border-muted);
 }
 
-/* Activity Blocks Container */
+/* Activity Blocks List */
 .activity-blocks {
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 100%;
+}
+
+/* Activity Blocks Encapsulating Scroll Container: borderless, up to 6 blocks visible */
+.activity-blocks-scroll-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  max-height: 310px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-bottom: 10px;
+  box-sizing: border-box;
+}
+
+.activity-blocks-scroll-container > .thinking-card,
+.activity-blocks-scroll-container > .tool-card {
+  flex-shrink: 0;
+}
+
+.activity-blocks-scroll-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.activity-blocks-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.activity-blocks-scroll-container::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.activity-blocks-scroll-container::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fg-muted);
 }
 
 /* Process Group Card (Issue #8): compacts a run of consecutive thinking/tool_call blocks
