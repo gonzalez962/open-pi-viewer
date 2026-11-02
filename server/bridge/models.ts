@@ -129,7 +129,7 @@ export function getMcpServersImpl(cwd?: string) {
 
   return { servers: servers.map(({ env, headers, args, url, ...rest }) => ({
     ...rest, envKeys: Object.keys(env || {}), headers: Object.fromEntries(Object.keys(headers || {}).map(key => [key, ''])),
-    headersConfigured: Boolean(headers && Object.keys(headers).length), argsConfigured: Boolean(args?.length), urlConfigured: Boolean(url), args: [], url: '',
+    headersConfigured: Boolean(headers && Object.keys(headers).length), argsConfigured: Boolean(args?.length), urlConfigured: Boolean(url), args, url: '',
   })) };
 }
 
@@ -171,7 +171,7 @@ export function handleSaveMcpServer(args: any) {
   if (server.command !== undefined) { if (typeof server.command !== 'string') throw new Error('Invalid command'); next.command = server.command; }
   if (server.enabled !== undefined) { if (typeof server.enabled !== 'boolean') throw new Error('Invalid enabled'); next.enabled = server.enabled; }
   if (server.url !== undefined) { if (typeof server.url !== 'string') throw new Error('Invalid URL'); if (server.url.trim()) next.url = server.url; }
-  if (server.args !== undefined) { if (!Array.isArray(server.args) || !server.args.every((x: unknown) => typeof x === 'string')) throw new Error('Invalid arguments'); if (server.args.length) next.args = server.args; }
+  if (server.args !== undefined) { if (!Array.isArray(server.args) || !server.args.every((x: unknown) => typeof x === 'string')) throw new Error('Invalid arguments'); next.args = server.args; }
   for (const field of ['env', 'headers']) {
     const incoming = server[field];
     if (incoming === undefined) continue;

@@ -104,13 +104,17 @@ test('MCP save preserves blanks, replaces values, deletes null keys and import d
   const file = path.join(dir, 'mcp.json');
   try {
     fs.writeFileSync(file, JSON.stringify({ mcpServers: { example: { command: 'node', args: ['old-arg'], url: 'https://old.test', env: { A: 'old-a', B: 'old-b' }, headers: { H: 'old-h', D: 'delete' } } } }));
-    await handleIpcCommand('save_mcp_server', { name: 'example', scope: 'global', server: { command: 'node', args: [], url: '', env: { A: '', B: 'new-b' }, headers: { H: '', D: null } } });
+    await handleIpcCommand('save_mcp_server', { name: 'example', scope: 'global', server: { command: 'node', url: '', env: { A: '', B: 'new-b' }, headers: { H: '', D: null } } });
     let saved = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.example;
     assert.deepEqual(saved.args, ['old-arg']); assert.equal(saved.url, 'https://old.test');
     assert.deepEqual(saved.env, { A: 'old-a', B: 'new-b' }); assert.deepEqual(saved.headers, { H: 'old-h' });
     await handleIpcCommand('save_mcp_server', { name: 'example', scope: 'global', server: { args: ['new-arg'], url: 'https://new.test', env: { A: null } } });
     saved = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.example;
     assert.deepEqual(saved.args, ['new-arg']); assert.equal(saved.url, 'https://new.test'); assert.deepEqual(saved.env, { B: 'new-b' });
+    const inventory = await handleIpcCommand('get_mcp_servers', {});
+    assert.deepEqual(inventory.servers.find((entry: any) => entry.name === 'example').args, ['new-arg']);
+    await handleIpcCommand('save_mcp_server', { name: 'example', scope: 'global', server: { args: [] } });
+    assert.deepEqual((await handleIpcCommand('get_mcp_servers', {})).servers.find((entry: any) => entry.name === 'example').args, []);
     assert.deepEqual(await handleIpcCommand('import_mcp_servers', { servers: [{ name: 'example', command: 'overwrite' }, { name: 'fresh', command: 'new' }] }), { imported: true });
     const all = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers;
     assert.equal(all.example.command, 'node'); assert.equal(all.fresh.command, 'new');

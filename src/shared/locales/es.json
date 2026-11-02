@@ -987,7 +987,7 @@
   "mcp.field_command": "Comando",
   "mcp.field_command_hint": "Ejecutable o binario (ej. npx, uvx, python, node, docker)",
   "mcp.field_args": "Argumentos",
-  "mcp.field_args_hint": "Argumentos pasados al comando (separados por espacios o saltos de línea). Use comillas para argumentos con espacios.",
+  "mcp.field_args_hint": "Los argumentos son visibles; use variables de entorno para secretos. Sepárelos con espacios o saltos de línea y use comillas para argumentos con espacios.",
   "mcp.field_env": "Variables de entorno",
   "mcp.btn_add_env": "Agregar variable",
   "mcp.env_key_placeholder": "NOMBRE_VARIABLE",

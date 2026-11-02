@@ -987,7 +987,7 @@
   "mcp.field_command": "Command",
   "mcp.field_command_hint": "Executable or binary (e.g. npx, uvx, python, node, docker)",
   "mcp.field_args": "Arguments",
-  "mcp.field_args_hint": "Arguments passed to the command (space or newline-separated). Use quotes for args containing spaces.",
+  "mcp.field_args_hint": "Arguments are visible; use environment variables for secrets. Separate arguments with spaces or newlines, and quote arguments containing spaces.",
   "mcp.field_env": "Environment Variables",
   "mcp.btn_add_env": "Add Variable",
   "mcp.env_key_placeholder": "VARIABLE_NAME",

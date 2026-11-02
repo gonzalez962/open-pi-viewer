@@ -48,28 +48,27 @@ export function parseArgsText(argsText: string): string[] {
   const trimmed = argsText.trim();
   if (!trimmed) return [];
   const args: string[] = [];
-  const regex = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+  const regex = /[^\s"']+|"(?:\\.|[^"\\])*"|'[^']*'/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(trimmed)) !== null) {
-    if (match[1] !== undefined) {
-      args.push(match[1]);
-    } else if (match[2] !== undefined) {
-      args.push(match[2]);
+    const token = match[0];
+    if (token.startsWith('"')) {
+      args.push(token.slice(1, -1).replace(/\\([\\"])/g, '$1')); 
+    } else if (token.startsWith("'")) {
+      args.push(token.slice(1, -1));
     } else {
-      args.push(match[0]);
+      args.push(token);
     }
   }
   return args;
 }
 
 /**
- * Joins argument array into a single string, quoting args containing whitespace.
+ * Quotes and escapes each argument for lossless editing.
  */
 export function formatArgsText(args?: string[]): string {
   if (!args || args.length === 0) return '';
-  return args
-    .map((arg) => (arg.includes(' ') || arg.includes('\t') ? `"${arg}"` : arg))
-    .join(' ');
+  return args.map((arg) => `"${arg.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(' ');
 }
 
 /**
@@ -149,10 +148,7 @@ export function formDataToSavePayload(
 
   if (isStdio) {
     server.command = formData.command.trim();
-    const args = parseArgsText(formData.argsText);
-    if (args.length > 0) {
-      server.args = args;
-    }
+    server.args = parseArgsText(formData.argsText);
     const env: Record<string, string | null> = keyValueEntriesToRecord(formData.envEntries);
     if (originalServer?.envKeys && originalServer.urlConfigured !== undefined) {
       for (const key of originalServer.envKeys) if (!(key in env)) env[key] = null;

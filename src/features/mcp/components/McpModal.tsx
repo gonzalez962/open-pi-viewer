@@ -215,7 +215,7 @@ export const McpModal: React.FC<McpModalProps> = ({
                       onChange={(e) =>
                         modalForm.updateFormField('argsText', e.target.value)
                       }
-                      placeholder={modalForm.originalServer?.argsConfigured ? '•••••••• (configured)' : '-y @modelcontextprotocol/server-postgres'}
+                      placeholder="-y @modelcontextprotocol/server-postgres"
                       disabled={modalForm.isSaving}
                     />
                   </McpFormField>
