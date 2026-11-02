@@ -1,5 +1,5 @@
 import { minimatch } from 'minimatch';
-import type { CustomModelDefinition, CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '@core/types/providers';
+import type { CustomModelDefinition, CustomProviderConfig, CustomProvidersMap, ModelsConfigFile } from '../../core/types/providers';
 import {
   type ModelInfo,
   type ModelThinkingLevelsMap,
@@ -9,7 +9,7 @@ import {
   getSupportedReasoningEffortsForModel as coreGetSupportedReasoningEffortsForModel,
   clampThinkingLevelToSupported,
   resolveModelDefaultThinkingLevel,
-} from '@core/types/models';
+} from '../../core/types/models';
 
 export {
   EXTENDED_THINKING_LEVELS,
