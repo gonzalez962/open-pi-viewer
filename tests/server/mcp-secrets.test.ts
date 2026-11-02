@@ -64,15 +64,16 @@ test('S1.2 persistent Windows EPERM preserves MCP destination and removes stagin
   }
 });
 
-test('MCP responses hide stored env, headers, URL and arguments', async () => {
+test('S1.1 MCP inventory exposes arguments while hiding env, headers and URL', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-secrets-'));
   setPiAgentDirForTest(dir);
   try {
     fs.writeFileSync(path.join(dir, 'mcp.json'), JSON.stringify({ mcpServers: { example: { command: 'node', args: ['secret-argument'], url: 'https://secret-url.test', env: { TOKEN: 'secret-env' }, headers: { Authorization: 'secret-header' } } } }));
     const result = await handleIpcCommand('get_mcp_servers', {});
     const output = JSON.stringify(result);
-    for (const secret of ['secret-argument', 'secret-url', 'secret-env', 'secret-header']) assert.equal(output.includes(secret), false, `${secret} leaked`);
+    for (const secret of ['secret-url', 'secret-env', 'secret-header']) assert.equal(output.includes(secret), false, `${secret} leaked`);
     assert.deepEqual(result.servers[0].envKeys, ['TOKEN']);
+    assert.deepEqual(result.servers[0].args, ['secret-argument']);
   } finally {
     setPiAgentDirForTest(null);
     fs.rmSync(dir, { recursive: true, force: true });
