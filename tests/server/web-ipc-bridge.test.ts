@@ -369,6 +369,139 @@ test('server/bridge: switch_session honors sliding window limit, loadAll, and ha
   assert.strictEqual(resLoadAll.messages[99].id, 'm-99');
 });
 
+test('server/bridge: windowing ignores activity blocks so prior conversations are not hidden', async (t) => {
+  setSubprocessSpawnerForTest(() => null);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-activity-window-test-'));
+  const filePath = path.join(tmpDir, 'sess-activity.jsonl');
+
+  t.after(() => {
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+    invalidateSessionParseCache(filePath);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const header = { type: 'session', version: 3, id: 'sess-activity-1', timestamp: new Date().toISOString() };
+  let content = JSON.stringify(header) + '\n';
+
+  // Turn 1: user prompt + assistant reply
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'turn1-user', role: 'user', content: 'Create a plan' },
+  }) + '\n';
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'turn1-asst', role: 'assistant', content: 'Here is the plan' },
+  }) + '\n';
+
+  // Turn 2: user prompt + 35 tool calls + 35 tool results + final assistant reply (72 messages in this turn)
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'turn2-user', role: 'user', content: 'Execute the plan' },
+  }) + '\n';
+  for (let i = 0; i < 35; i++) {
+    content += JSON.stringify({
+      type: 'message',
+      message: {
+        id: `turn2-toolcall-${i}`,
+        role: 'assistant',
+        content: [{ type: 'tool_call', id: `call-${i}`, name: 'bash', arguments: { command: `ls -la ${i}` } }],
+      },
+    }) + '\n';
+    content += JSON.stringify({
+      type: 'message',
+      message: {
+        id: `turn2-toolresult-${i}`,
+        role: 'toolResult',
+        toolCallId: `call-${i}`,
+        content: `Output for step ${i}`,
+      },
+    }) + '\n';
+  }
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'turn2-asst', role: 'assistant', content: 'Execution complete' },
+  }) + '\n';
+
+  fs.writeFileSync(filePath, content, 'utf8');
+
+  // Total messages: 1 (turn1 user) + 1 (turn1 asst) + 1 (turn2 user) + 70 (activity) + 1 (turn2 asst) = 74 messages.
+  // Conversational messages: 4.
+  // With default limit = 60, activity blocks should NOT push out Turn 1 or Turn 2 user prompt.
+  const res: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath },
+  });
+
+  assert.strictEqual(res.cancelled, false);
+  assert.strictEqual(res.messageCount, 74);
+  // All 74 messages must be returned because conversational count (4) <= limit (60)
+  assert.strictEqual(res.messages.length, 74);
+  assert.strictEqual(res.hasMore, false);
+  assert.strictEqual(res.messages[0].id, 'turn1-user');
+  assert.strictEqual(res.messages[res.messages.length - 1].id, 'turn2-asst');
+});
+
+test('server/bridge: windowing expands to turn boundary to preserve user prompt and tool pairings', async (t) => {
+  setSubprocessSpawnerForTest(() => null);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-boundary-window-test-'));
+  const filePath = path.join(tmpDir, 'sess-boundary.jsonl');
+
+  t.after(() => {
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+    invalidateSessionParseCache(filePath);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const header = { type: 'session', version: 3, id: 'sess-boundary-1', timestamp: new Date().toISOString() };
+  let content = JSON.stringify(header) + '\n';
+
+  // Create 15 turns, each with user + 2 tool calls + 2 tool results + assistant text
+  for (let tIdx = 0; tIdx < 15; tIdx++) {
+    content += JSON.stringify({
+      type: 'message',
+      message: { id: `user-${tIdx}`, role: 'user', content: `Prompt ${tIdx}` },
+    }) + '\n';
+    content += JSON.stringify({
+      type: 'message',
+      message: {
+        id: `toolcall-${tIdx}-0`,
+        role: 'assistant',
+        content: [{ type: 'tool_call', id: `c-${tIdx}-0`, name: 'read', args: { path: `f${tIdx}.txt` } }],
+      },
+    }) + '\n';
+    content += JSON.stringify({
+      type: 'message',
+      message: {
+        id: `toolresult-${tIdx}-0`,
+        role: 'toolResult',
+        toolCallId: `c-${tIdx}-0`,
+        content: `file content ${tIdx}`,
+      },
+    }) + '\n';
+    content += JSON.stringify({
+      type: 'message',
+      message: { id: `asst-${tIdx}`, role: 'assistant', content: `Answer ${tIdx}` },
+    }) + '\n';
+  }
+
+  fs.writeFileSync(filePath, content, 'utf8');
+
+  // Limit = 6 conversational messages -> should cover the last 3 complete turns (turns 12, 13, 14)
+  // Each turn has 4 raw messages (user + toolcall + toolresult + asst)
+  // 3 turns * 4 messages = 12 raw messages.
+  const res: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath, limit: 6 },
+  });
+
+  assert.strictEqual(res.cancelled, false);
+  assert.strictEqual(res.hasMore, true);
+  // Must start with user prompt of turn 12, never an orphaned tool or assistant response
+  assert.strictEqual(res.messages[0].id, 'user-12');
+  assert.strictEqual(res.messages[res.messages.length - 1].id, 'asst-14');
+  assert.strictEqual(res.messages.length, 12);
+});
+
 test('server/bridge: Engram project and cloud status caches avoid repetitive subshell calls', async (t) => {
   clearEngramCacheForTest();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-engram-test-'));
