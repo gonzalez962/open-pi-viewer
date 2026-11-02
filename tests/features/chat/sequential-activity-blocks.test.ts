@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { MessageBlock, ThinkingBlock, ToolCallBlock, ChatMessage } from '@core/types/messages';
-import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
+import { ThinkingCard, ToolCard, ActivityBlocksScrollContainer } from '@features/chat/ActivityBlocks';
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import type { TranslationKey } from '@shared/i18n';
 
@@ -182,4 +182,27 @@ test('mergeConsecutiveAssistantMessages: merges sequential assistant messages pr
   assert.equal((merged[0].blocks[1] as ToolCallBlock).name, 'bash');
   assert.equal((merged[0].blocks[2] as ThinkingBlock).thinking, 'Read code');
   assert.equal((merged[0].blocks[3] as ToolCallBlock).name, 'read');
+});
+
+test('ActivityBlocksScrollContainer: encapsulates blocks inside activity-blocks container preserving children', () => {
+  const block: ToolCallBlock = {
+    type: 'tool_call',
+    id: 'c1',
+    name: 'bash',
+    args: { command: 'git status' },
+    status: 'completed',
+    output: 'clean',
+  };
+
+  const html = renderToStaticMarkup(
+    React.createElement(
+      ActivityBlocksScrollContainer,
+      { blocksCount: 1 },
+      React.createElement(ToolCard, { block, t })
+    )
+  );
+
+  assert.match(html, /class="[^"]*activity-blocks[^"]*"/);
+  assert.match(html, /class="[^"]*tool-card[^"]*tool-card-collapsed[^"]*"/);
+  assert.match(html, /git status/);
 });

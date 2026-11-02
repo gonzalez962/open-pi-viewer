@@ -21,7 +21,7 @@ import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
 } from '@infra/preferences';
-import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
+import { ThinkingCard, ToolCard, ActivityBlocksScrollContainer } from '@features/chat/ActivityBlocks';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
@@ -1994,7 +1994,7 @@ export const App: React.FC = () => {
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
-                      <div className="activity-blocks">
+                      <ActivityBlocksScrollContainer blocksCount={msg.blocks.length}>
                         {msg.blocks.map((block, bIndex) => {
                           if (block.type === 'thinking') {
                             return (
@@ -2032,7 +2032,7 @@ export const App: React.FC = () => {
                           }
                           return null;
                         })}
-                      </div>
+                      </ActivityBlocksScrollContainer>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
