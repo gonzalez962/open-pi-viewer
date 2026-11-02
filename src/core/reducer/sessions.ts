@@ -1,3 +1,4 @@
+import type { TodoSnapshot } from '../types/todo';
 import type { ChatMessage } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
 import type { SessionSummary, SessionRuntimeStatus } from '../types/sessions';
@@ -25,6 +26,7 @@ export type SessionsAction =
         sessionFile: string;
         messages: ChatMessage[];
         hasMore?: boolean;
+        todo?: TodoSnapshot | null;
       };
     }
   | { type: 'SWITCH_SESSION_CANCELLED' }
@@ -76,6 +78,7 @@ export function sessionsReducer(
         sessionId: nextSessionId,
         sessionFile: nextSessionFile,
         messages: [],
+        todo: null,
         hasMoreMessages: false,
         isLoadingOlderMessages: false,
         pendingApprovals: [],
@@ -170,6 +173,7 @@ export function sessionsReducer(
         sessionId: nextSessionId,
         sessionFile: nextSessionFile,
         messages: action.payload.messages,
+        todo: action.payload.todo ?? null,
         hasMoreMessages: action.payload.hasMore ?? false,
         isLoadingOlderMessages: false,
         pendingApprovals: [],

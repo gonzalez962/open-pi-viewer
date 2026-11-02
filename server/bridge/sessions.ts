@@ -1,3 +1,4 @@
+import { todoFromHistory } from '../../src/core/todo';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getBridgeConfig } from '../config';
@@ -375,6 +376,7 @@ export async function handleConnect(args: any = {}) {
     initialMessages = loadAll || total <= 80 ? messages : messages.slice(-80);
   }
 
+  const todo = todoFromHistory(messages ?? []);
   return {
     connected: true,
     model: piRpc.modelInfo || (getActiveCwd() === targetCwd ? getActiveModel() : null),
@@ -385,6 +387,7 @@ export async function handleConnect(args: any = {}) {
     activity: snapshot?.activity ?? 'idle',
     pendingExtensionPrompts: snapshot?.pendingExtensionPrompts ?? [],
     messages: initialMessages,
+    ...(todo ? { todo } : {}),
     hasMore,
   };
 }
@@ -428,6 +431,7 @@ export function handleSwitchSession(args: any = {}) {
   const totalCount = parsed.messageCount;
   const allMsgs = parsed.messages || [];
   const messagesToSend = limit && limit < allMsgs.length ? allMsgs.slice(-limit) : allMsgs;
+  const todo = todoFromHistory(allMsgs);
 
   return {
     cancelled: false,
@@ -435,6 +439,7 @@ export function handleSwitchSession(args: any = {}) {
     sessionFile: parsed.path,
     messageCount: totalCount,
     messages: messagesToSend,
+    ...(todo ? { todo } : {}),
     hasMore: allMsgs.length > messagesToSend.length,
     status: getSessionStatus(sessionPath),
     error: null,

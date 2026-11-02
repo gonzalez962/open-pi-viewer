@@ -1,3 +1,4 @@
+import type { TodoSnapshot } from '../types/todo';
 import { getModelStatsKey } from '../prompt-controls-utils';
 import type { SubagentTask } from '../types/agent-activity';
 import type { ChatMessage } from '../types/messages';
@@ -23,8 +24,10 @@ export type ConnectionAction =
         model?: ModelInfo | null;
         hasMore?: boolean;
         detail?: string;
+        todo?: TodoSnapshot | null;
       };
     }
+  | { type: 'UPDATE_TODO'; payload: { todo: TodoSnapshot } }
   | { type: 'PROCESS_EXIT'; payload: { error?: string } }
   | { type: 'CLEAR_ERROR' }
   | { type: 'UPDATE_SUBAGENT_ACTIVITY'; payload: { tasks: SubagentTask[] } };
@@ -107,6 +110,7 @@ export function connectionReducer(
         pendingPromptId: null,
         isHydrated: false,
         isResetting: false,
+        todo: null,
         messages: finalizeStreamingMessages(state.messages),
       };
     }
@@ -128,6 +132,7 @@ export function connectionReducer(
         sessionStats: null,
         modelStats: {},
         subagents: [],
+        todo: null,
         messages: finalizeStreamingMessages(state.messages),
       };
     }
@@ -152,6 +157,7 @@ export function connectionReducer(
         statusDetail: action.payload.detail || 'Conversation ready',
         lastError: null,
         subagents: isNewSession ? [] : (state.subagents ?? []),
+        todo: action.payload.todo ?? null,
       };
     }
 
@@ -172,6 +178,7 @@ export function connectionReducer(
         availableModels: [],
         sessionStats: null,
         subagents: [],
+        todo: null,
         messages: finalizeStreamingMessages(state.messages),
       };
     }
@@ -181,6 +188,10 @@ export function connectionReducer(
         ...state,
         lastError: null,
       };
+    }
+
+    case 'UPDATE_TODO': {
+      return state.connectionStatus === 'connected' ? { ...state, todo: action.payload.todo } : state;
     }
 
     case 'UPDATE_SUBAGENT_ACTIVITY': {

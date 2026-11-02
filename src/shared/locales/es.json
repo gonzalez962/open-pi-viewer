@@ -1,4 +1,10 @@
 {
+  "todo.title": "Tareas",
+  "todo.pending": "Pendiente",
+  "todo.in_progress": "En progreso",
+  "todo.blocked": "Bloqueada",
+  "todo.done": "Completada",
+  "todo.dropped": "Descartada",
   "kanban.title": "Kanban",
   "kanban.pending": "Pendiente",
   "kanban.in_progress": "En curso",

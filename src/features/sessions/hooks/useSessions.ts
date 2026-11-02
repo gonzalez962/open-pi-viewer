@@ -7,6 +7,7 @@ import {
   renameSessionPi,
   switchSessionPi,
 } from '@infra/bridge';
+import { parseTodo, todoFromHistory } from '@core/todo';
 import { hydrateChatMessages, recordSessionSwitched, saveSessionRecord } from '@core/session';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig, ConnectionState } from '@core/types/connection';
@@ -154,20 +155,22 @@ export function useSessions({
     }
 
     setShowSettings(false);
+    const targetProjectId = activeProjectIdRef.current ?? undefined;
 
     try {
       pinAndHide();
-      dispatch({ type: 'SWITCH_SESSION_START', payload: { sessionPath: session.path } });
+      dispatch({ type: 'SWITCH_SESSION_START', targetProjectId, payload: { sessionPath: session.path } });
       const result = await switchSessionPi(session.path);
 
       if (result.cancelled) {
-        dispatch({ type: 'SWITCH_SESSION_CANCELLED' });
+        dispatch({ type: 'SWITCH_SESSION_CANCELLED', targetProjectId });
         return;
       }
 
       if (result.error || !result.sessionId || !result.sessionFile) {
         dispatch({
           type: 'SWITCH_SESSION_ERROR',
+          targetProjectId,
           payload: { error: result.error || 'Unknown error switching session' },
         });
         return;
@@ -177,10 +180,12 @@ export function useSessions({
       pinAndHide();
       dispatch({
         type: 'SWITCH_SESSION_SUCCESS',
+        targetProjectId,
         payload: {
           sessionId: result.sessionId,
           sessionFile: result.sessionFile,
           messages: hydrated,
+          todo: parseTodo((result as typeof result & { todo?: unknown }).todo) ?? todoFromHistory(result.messages || []),
           hasMore: result.hasMore,
         },
       });
@@ -209,6 +214,7 @@ export function useSessions({
       const msg = err instanceof Error ? err.message : String(err);
       dispatch({
         type: 'SWITCH_SESSION_ERROR',
+        targetProjectId,
         payload: { error: msg },
       });
     }
