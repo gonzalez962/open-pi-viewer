@@ -169,6 +169,10 @@ import {
   ZEN_MODE_CONTAINER_CLASS,
 } from './zen-mode';
 import { MobileNavigation } from './MobileNavigation';
+import { ProjectAttentionToast } from './ProjectAttentionToast';
+import { useProjectAttentionTimeout } from './useProjectAttentionTimeout';
+import { enqueueAttention, pruneAttention } from './project-attention';
+import type { ProjectAttentionEvent } from '@features/chat/session-events';
 import { useWebLogoutControl } from './WebLogoutContext';
 import {
   DRAWER_ID,
@@ -480,6 +484,28 @@ export const App: React.FC = () => {
   projectsRegistryRef.current = projectsRegistry;
   const multiProjectStateRef = useRef(multiProjectState);
   multiProjectStateRef.current = multiProjectState;
+  const [attentionQueue, setAttentionQueue] = useState<ProjectAttentionEvent[]>([]);
+  const [isAttentionMobile, setIsAttentionMobile] = useState(checkIsMobileViewport);
+  const dismissAttention = useCallback(() => setAttentionQueue(queue => queue.slice(1)), []);
+  useProjectAttentionTimeout(isAttentionMobile ? attentionQueue[0] ?? null : null, dismissAttention);
+
+  useEffect(() => {
+    const onResize = () => {
+      const isMobile = checkIsMobileViewport();
+      setIsAttentionMobile(isMobile);
+      if (!isMobile) setAttentionQueue([]);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    setAttentionQueue(queue => pruneAttention(queue, {
+      projects: projectsRegistry.projects,
+      activeProjectId: projectsRegistry.activeProjectId,
+      isMobile: isAttentionMobile,
+    }));
+  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isAttentionMobile]);
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
@@ -747,6 +773,11 @@ export const App: React.FC = () => {
     projectSessionIds: Object.fromEntries(Object.entries(multiProjectState.projects).map(([id, project]) => [id, project.sessionId])),
     projects: projectsRegistry.projects,
     activeProjectId: projectsRegistry.activeProjectId,
+    onAttention: event => {
+      const registry = projectsRegistryRef.current;
+      const context = { projects: registry.projects, activeProjectId: registry.activeProjectId, isMobile: checkIsMobileViewport() };
+      setAttentionQueue(queue => enqueueAttention(queue, event, context));
+    },
     dispatch,
     onWorkspaceChanged: requestFileTreeRefresh,
     onStorageWarning: setStorageWarning,
@@ -1421,6 +1452,14 @@ export const App: React.FC = () => {
 
   return (
     <div className={`app-container ${isZenMode ? ZEN_MODE_CONTAINER_CLASS : ''}`}>
+      <ProjectAttentionToast
+        event={attentionQueue[0] ?? null}
+        projects={projectsRegistry.projects}
+        activeProjectId={projectsRegistry.activeProjectId}
+        isMobile={isAttentionMobile}
+        locale={preferences.language}
+        onDismiss={dismissAttention}
+      />
       {activeWallpaperStyles && (
         <div
           className="app-custom-background-layer"

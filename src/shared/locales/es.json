@@ -232,6 +232,9 @@
   "settings.notifications_test_title": "Prueba de notificación de Pi",
   "settings.notifications_test_body": "¡Las notificaciones y el sonido funcionan correctamente!",
 
+  "project_attention.task_complete": "Tarea completada",
+  "project_attention.error": "Error",
+  "project_attention.waiting_input": "Esperando tu respuesta",
   "notifications.task_complete_title": "Tarea finalizada",
   "notifications.task_complete_body": "La tarea ha finalizado",
   "notifications.error_title": "No se pudo completar la tarea",
