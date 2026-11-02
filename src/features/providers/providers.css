@@ -1293,6 +1293,21 @@
   color: var(--fg-subtle);
 }
 
+.provider-api-key-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.provider-api-key-status > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-inline-start: auto;
+}
+
 /* Interactive Prompt Block */
 .builtin-oauth-prompt-block {
   display: flex;
