@@ -1,3 +1,30 @@
+.subagent-entry { margin: 8px; padding: 7px 12px; cursor: pointer; }
+.subagent-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: #0009; padding: 16px; }
+.subagent-modal { display: flex; flex-direction: column; background: var(--bg-surface); color: var(--fg-default); border: 1px solid var(--border-muted); border-radius: var(--radius-md); width: min(1200px, 100%); height: min(820px, calc(100dvh - 32px)); overflow: hidden; box-shadow: 0 16px 48px #0006; }
+.subagent-body { display: flex; flex: 1; min-height: 0; }
+.subagent-body nav { display: flex; flex-direction: column; gap: 6px; width: 240px; flex-shrink: 0; padding: 16px; overflow-y: auto; border-right: 1px solid var(--border-muted); }
+.subagent-selector { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; padding: 10px 12px; text-align: left; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--fg-default); cursor: pointer; }
+.subagent-selector:hover { background: var(--bg-subtle-hover); }
+.subagent-selector[aria-pressed="true"] { background: var(--bg-surface-elevated); border-color: var(--border-active); }
+.subagent-selector:focus-visible { outline: 2px solid var(--border-active); outline-offset: 2px; }
+.subagent-selector-name { font-weight: 600; overflow-wrap: anywhere; }
+.subagent-selector-status { font-size: 11px; color: var(--fg-muted); }
+.subagent-selector-status.status-running { color: var(--status-green); }
+.subagent-selector-status.status-waiting { color: var(--status-amber); }
+.subagent-thread { flex: 1; min-width: 0; overflow: auto; padding: 20px; overflow-wrap: anywhere; }
+.subagent-thread h3 { margin: 0 0 8px; }
+.subagent-thread > p { color: var(--fg-muted); font-size: 12px; line-height: 1.5; }
+.subagent-events { display: flex; flex-direction: column; gap: 10px; }
+.subagent-message { padding: 12px 14px; border: 1px solid var(--border-muted); border-radius: var(--radius-md); background: var(--bg-canvas); }
+.subagent-message strong { display: block; color: var(--fg-muted); font-size: 11px; text-transform: uppercase; }
+@media (max-width: 600px) {
+  .subagent-overlay { padding: 8px; }
+  .subagent-modal { height: calc(100dvh - 16px); }
+  .subagent-body { flex-direction: column; }
+  .subagent-body nav { width: 100%; flex-direction: row; overflow-x: auto; padding: 10px; border-right: 0; border-bottom: 1px solid var(--border-muted); }
+  .subagent-selector { width: auto; min-width: 140px; }
+  .subagent-thread { padding: 14px; }
+}
 .todo-panel { border: 1px solid var(--border-muted); border-radius: 8px; margin-bottom: 8px; }
 .todo-toggle { width: 100%; display: flex; justify-content: space-between; padding: 8px 10px; color: inherit; background: transparent; border: 0; cursor: pointer; }
 .todo-list { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 180px; overflow-y: auto; }

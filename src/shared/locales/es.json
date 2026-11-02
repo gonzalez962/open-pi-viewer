@@ -1,4 +1,11 @@
 {
+  "subagent.title": "Proceso de subagentes",
+  "subagent.close": "Cerrar",
+  "subagent.bounded": "Instantánea limitada en vivo; la actividad anterior puede no estar disponible.",
+  "subagent.viewer_truncated": "El visor truncó parte de la actividad o los metadatos.",
+  "subagent.tasks": "Tareas activas",
+  "subagent.partial": "La actividad anterior se truncó; este hilo es parcial.",
+  "subagent.unavailable": "Detalles de actividad no disponibles.",
   "todo.title": "Tareas",
   "todo.pending": "Pendiente",
   "todo.in_progress": "En progreso",
