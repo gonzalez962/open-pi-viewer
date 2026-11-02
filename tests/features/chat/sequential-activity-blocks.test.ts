@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { MessageBlock, ThinkingBlock, ToolCallBlock, ChatMessage } from '@core/types/messages';
-import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
+import { ThinkingCard, ToolCard, ActivityBlocksContainer } from '@features/chat/ActivityBlocks';
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import type { TranslationKey } from '@shared/i18n';
 
@@ -182,4 +182,34 @@ test('mergeConsecutiveAssistantMessages: merges sequential assistant messages pr
   assert.equal((merged[0].blocks[1] as ToolCallBlock).name, 'bash');
   assert.equal((merged[0].blocks[2] as ThinkingBlock).thinking, 'Read code');
   assert.equal((merged[0].blocks[3] as ToolCallBlock).name, 'read');
+});
+
+test('ActivityBlocksContainer: renders borderless container with activity-blocks class and region role', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      ActivityBlocksContainer,
+      { itemCount: 3 },
+      React.createElement('div', { className: 'dummy-block' }, 'Block 1'),
+      React.createElement('div', { className: 'dummy-block' }, 'Block 2'),
+      React.createElement('div', { className: 'dummy-block' }, 'Block 3')
+    )
+  );
+
+  assert.match(html, /class="[^"]*activity-blocks[^"]*"/);
+  assert.match(html, /role="region"/);
+  assert.match(html, /aria-label="Activity blocks"/);
+  assert.match(html, /Block 1/);
+  assert.match(html, /Block 3/);
+});
+
+test('ActivityBlocksContainer: applies custom maxVisibleBlocks height style when specified', () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      ActivityBlocksContainer,
+      { maxVisibleBlocks: 4 },
+      React.createElement('div', null, 'Test')
+    )
+  );
+
+  assert.match(html, /max-height:calc\(4 \* 38px \+ 3 \* 6px\)/);
 });

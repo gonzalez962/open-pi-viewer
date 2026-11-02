@@ -2004,12 +2004,36 @@
   color: var(--border-muted);
 }
 
-/* Activity Blocks Container */
+/* Activity Blocks Container (6-block max viewport, borderless, auto-scrolling when focused/pinned) */
 .activity-blocks {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   width: 100%;
+  border: none;
+  background: transparent;
+  max-height: calc(6 * 38px + 5 * 6px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 0;
+  box-sizing: border-box;
+}
+
+.activity-blocks::-webkit-scrollbar {
+  width: 6px;
+}
+
+.activity-blocks::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.activity-blocks::-webkit-scrollbar-thumb {
+  background-color: var(--border-subtle);
+  border-radius: 3px;
+}
+
+.activity-blocks::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fg-muted);
 }
 
 /* Process Group Card (Issue #8): compacts a run of consecutive thinking/tool_call blocks
