@@ -701,6 +701,8 @@ pub struct WorkspaceBranch {
     pub name: String,
     pub is_current: bool,
     pub upstream: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_remote: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1040,6 +1042,35 @@ pub async fn list_workspace_branches(
     let working_dir_opt = payload.as_ref().and_then(|p| p.working_directory.as_deref());
     let canonical_root = resolve_canonical_workspace_root(working_dir_opt, &state).await?;
 
+    // If remotes exist, attempt to fetch latest remote branch references safely
+    if let Ok(remotes_check) = tokio::process::Command::new("git")
+        .args(["remote"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if remotes_check.status.success() {
+            let stdout_remotes = String::from_utf8_lossy(&remotes_check.stdout);
+            let has_remotes = stdout_remotes.lines().any(|l| !l.trim().is_empty());
+            if has_remotes {
+                let pat = crate::commands::config_files::get_viewer_storage_github_pat();
+                let mut fetch_cmd = tokio::process::Command::new("git");
+                fetch_cmd
+                    .args(["fetch", "--prune", "--quiet"])
+                    .current_dir(&canonical_root);
+                if let Ok((envs, removes)) = crate::commands::github::build_child_git_env(pat.as_deref(), pat.is_none()) {
+                    for key in removes {
+                        fetch_cmd.env_remove(key);
+                    }
+                    for (k, v) in envs {
+                        fetch_cmd.env(k, v);
+                    }
+                }
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), fetch_cmd.output()).await;
+            }
+        }
+    }
+
     let out = tokio::process::Command::new("git")
         .args(["for-each-ref", "--format=%(refname:short)|%(upstream:short)|%(HEAD)", "refs/heads"])
         .current_dir(&canonical_root)
@@ -1077,6 +1108,7 @@ pub async fn list_workspace_branches(
                 name,
                 is_current,
                 upstream,
+                is_remote: None,
             });
         }
     }
@@ -1096,8 +1128,16 @@ pub async fn list_workspace_branches(
                 if b.is_empty() || b.ends_with("/HEAD") || !b.contains('/') {
                     continue;
                 }
-                // If local branch already covers this (e.g. 'main' covers 'origin/main'), skip
                 let branch_part = b.split_once('/').map(|(_, rest)| rest).unwrap_or("");
+                if !branch_part.is_empty() && !local_names.contains(branch_part) {
+                    branches.push(WorkspaceBranch {
+                        name: b.clone(),
+                        is_current: false,
+                        upstream: None,
+                        is_remote: Some(true),
+                    });
+                }
+                // If local branch already covers this (e.g. 'main' covers 'origin/main'), skip in all_bases
                 if !branch_part.is_empty() && local_names.contains(branch_part) {
                     continue;
                 }
@@ -1193,8 +1233,33 @@ pub async fn switch_workspace_branch(
     }
 
     // 3. Perform checkout
+    // If target branch is a remote branch (e.g. 'origin/foo') and no local branch with that exact name exists,
+    // checkout with '--track' to avoid detached HEAD.
+    let mut checkout_args = vec!["checkout", payload.branch.as_str()];
+    if payload.branch.contains('/') {
+        let is_local = tokio::process::Command::new("git")
+            .args(["show-ref", "--verify", &format!("refs/heads/{}", payload.branch)])
+            .current_dir(&canonical_root)
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !is_local {
+            let is_remote = tokio::process::Command::new("git")
+                .args(["show-ref", "--verify", &format!("refs/remotes/{}", payload.branch)])
+                .current_dir(&canonical_root)
+                .output()
+                .await
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if is_remote {
+                checkout_args = vec!["checkout", "--track", payload.branch.as_str()];
+            }
+        }
+    }
+
     let out = tokio::process::Command::new("git")
-        .args(["checkout", &payload.branch])
+        .args(&checkout_args)
         .current_dir(&canonical_root)
         .output()
         .await
@@ -1215,6 +1280,22 @@ pub async fn switch_workspace_branch(
             err.trim().to_string()
         };
         return Err(msg);
+    }
+
+    // Identify resulting branch name after checkout (e.g. tracking branch short name)
+    let mut resulting_branch = payload.branch.clone();
+    if let Ok(after_out) = tokio::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(&canonical_root)
+        .output()
+        .await
+    {
+        if after_out.status.success() {
+            let after_name = String::from_utf8_lossy(&after_out.stdout).trim().to_string();
+            if !after_name.is_empty() {
+                resulting_branch = after_name;
+            }
+        }
     }
 
     // 4. After checkout, restore any stash saved for destination branch
@@ -1240,7 +1321,7 @@ pub async fn switch_workspace_branch(
                     };
 
                     if let Some(b) = branch_match {
-                        if b == payload.branch {
+                        if b == payload.branch || b == resulting_branch {
                             target_stash_ref = Some(stash_ref.trim().to_string());
                             break;
                         }
@@ -1261,7 +1342,7 @@ pub async fn switch_workspace_branch(
     let message = String::from_utf8_lossy(&out.stderr).trim().to_string();
     Ok(BranchOperationResult {
         success: true,
-        branch: payload.branch,
+        branch: resulting_branch,
         message: if message.is_empty() { None } else { Some(message) },
     })
 }

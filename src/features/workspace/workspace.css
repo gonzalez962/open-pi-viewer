@@ -1592,6 +1592,18 @@
   font-weight: 500;
 }
 
+.badge-branch-remote {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--status-amber, #f59e0b);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .badge-branch-current {
   display: inline-flex;
   align-items: center;

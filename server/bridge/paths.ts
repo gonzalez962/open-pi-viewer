@@ -921,6 +921,30 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
       return { current: null, branches: [], allBases: [] };
     }
 
+    // If remotes exist, attempt to fetch latest remote branch references safely
+    try {
+      const remotesOut = execFileSync('git', ['remote'], {
+        cwd: targetCwd,
+        encoding: 'utf8',
+        timeout: 2000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      const remoteList = remotesOut.split('\n').map((r) => r.trim()).filter(Boolean);
+      if (remoteList.length > 0) {
+        try {
+          execFileSync('git', ['fetch', '--prune', '--quiet'], {
+            cwd: targetCwd,
+            env: withGithubCredentials(process.env),
+            encoding: 'utf8',
+            timeout: 8000,
+            stdio: ['ignore', 'ignore', 'ignore'],
+          });
+        } catch {
+          // Non-blocking: network timeout, offline, or auth failure shouldn't prevent listing local/cached branches
+        }
+      }
+    } catch {}
+
     const out = execFileSync(
       'git',
       ['for-each-ref', '--format=%(refname:short)|%(upstream:short)|%(HEAD)', 'refs/heads'],
@@ -947,6 +971,7 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
     }
 
     const localNames = branches.map((b) => b.name);
+    const localSet = new Set(localNames);
     const remoteRefs: string[] = [];
     try {
       const remotesOut = execFileSync(
@@ -961,6 +986,22 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
         }
       }
     } catch {}
+
+    // Include remote branches that don't already have a local counterpart
+    for (const r of remoteRefs) {
+      if (!r || r.endsWith('/HEAD')) continue;
+      const slashIdx = r.indexOf('/');
+      if (slashIdx === -1) continue;
+      const branchPart = r.slice(slashIdx + 1);
+      if (!localSet.has(branchPart)) {
+        branches.push({
+          name: r,
+          isCurrent: false,
+          upstream: null,
+          isRemote: true,
+        });
+      }
+    }
 
     const allBases = deduplicateBaseBranches(localNames, remoteRefs);
 
@@ -1058,7 +1099,29 @@ export function handleSwitchWorkspaceBranch(args: any = {}): BranchOperationResu
   }
 
   // 3. Perform git checkout to destination branch
-  const res = spawnSync('git', ['checkout', branch], {
+  // If target branch is a remote branch (e.g. 'origin/foo') and no local branch with that exact name exists,
+  // checkout with '--track' to avoid detached HEAD.
+  let checkoutArgs = ['checkout', branch];
+  const slashIdx = branch.indexOf('/');
+  if (slashIdx > 0) {
+    try {
+      const showRefRes = spawnSync('git', ['show-ref', '--verify', `refs/heads/${branch}`], {
+        cwd: targetCwd,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      if (showRefRes.status !== 0) {
+        const remoteRefRes = spawnSync('git', ['show-ref', '--verify', `refs/remotes/${branch}`], {
+          cwd: targetCwd,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        if (remoteRefRes.status === 0) {
+          checkoutArgs = ['checkout', '--track', branch];
+        }
+      }
+    } catch {}
+  }
+
+  const res = spawnSync('git', checkoutArgs, {
     cwd: targetCwd,
     encoding: 'utf8',
     timeout: 10000,
@@ -1075,6 +1138,19 @@ export function handleSwitchWorkspaceBranch(args: any = {}): BranchOperationResu
   }
 
   // 4. After checkout, restore any stash saved for destination branch
+  let resultingBranch = branch;
+  try {
+    const afterSwitch = execFileSync('git', ['branch', '--show-current'], {
+      cwd: targetCwd,
+      encoding: 'utf8',
+      timeout: 1500,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (afterSwitch) {
+      resultingBranch = afterSwitch;
+    }
+  } catch {}
+
   try {
     const stashListOut = execFileSync('git', ['stash', 'list'], {
       cwd: targetCwd,
@@ -1091,7 +1167,7 @@ export function handleSwitchWorkspaceBranch(args: any = {}): BranchOperationResu
       if (match) {
         const stashIndex = match[1];
         const stashBranch = match[2].trim();
-        if (stashBranch === branch) {
+        if (stashBranch === branch || stashBranch === resultingBranch) {
           targetStashRef = `stash@{${stashIndex}}`;
           break;
         }
@@ -1109,7 +1185,7 @@ export function handleSwitchWorkspaceBranch(args: any = {}): BranchOperationResu
 
   return {
     success: true,
-    branch,
+    branch: resultingBranch,
     message: (res.stderr || res.stdout || '').trim(),
   };
 }
