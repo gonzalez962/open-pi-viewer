@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import { resolveCrossPlatformCwd } from './paths';
 import { getPiAgentDir, setPiAgentDirForTest } from './state';
@@ -147,7 +148,7 @@ export function saveProjectResourceActivation(
   const tmpPath = `${filePath}.tmp.${Date.now()}.${process.pid}`;
   try {
     fs.writeFileSync(tmpPath, content, 'utf8');
-    fs.renameSync(tmpPath, filePath);
+    replaceStagedFileSync(tmpPath, filePath);
   } catch (err) {
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
@@ -207,7 +208,7 @@ export function saveResourceActivationPolicy(policy: ViewerResourceActivationPol
   const tmpPath = `${filePath}.tmp.${Date.now()}.${process.pid}`;
   try {
     fs.writeFileSync(tmpPath, content, 'utf8');
-    fs.renameSync(tmpPath, filePath);
+    replaceStagedFileSync(tmpPath, filePath);
   } catch (err) {
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
@@ -545,7 +546,7 @@ export async function materializeProjectMcpEnforcement(cwd: string): Promise<voi
   const tmpFile = path.join(piDir, `mcp.json.tmp.${Date.now()}.${process.pid}`);
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(materializedData, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpFile, targetMcpFile);
+    replaceStagedFileSync(tmpFile, targetMcpFile);
   } catch (err: any) {
     try {
       if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
@@ -808,7 +809,7 @@ export async function materializeProjectExtensionEnforcement(cwd: string): Promi
   const tmpPath = `${projectSettingsPath}.tmp.${Date.now()}.${process.pid}`;
   try {
     fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, projectSettingsPath);
+    replaceStagedFileSync(tmpPath, projectSettingsPath);
   } catch (err: any) {
     try {
       if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);

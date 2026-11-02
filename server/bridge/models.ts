@@ -1,6 +1,7 @@
 import { publicProviderConfig, readModelsConfigFile, writeModelsConfigFileAtomically, mergeCustomProviderAdditive, validateProviderId, assertNoDangerousProperties } from './custom-providers';
 import { fetchBackendProviderModels, OPENROUTER_MODELS_URL } from './provider-discovery';
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import {
   getPiAgentDir,
@@ -951,7 +952,7 @@ export async function handleToggleMcpServer(args: any = {}) {
     }
     const tmpPath = `${projectMcpFile}.tmp.${Date.now()}.${process.pid}`;
     fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, projectMcpFile);
+    replaceStagedFileSync(tmpPath, projectMcpFile);
 
     return {
       success: true,
@@ -985,7 +986,7 @@ export async function handleToggleMcpServer(args: any = {}) {
   fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
   const tmpPath = `${mcpFile}.tmp.${Date.now()}.${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-  fs.renameSync(tmpPath, mcpFile);
+  replaceStagedFileSync(tmpPath, mcpFile);
 
   return { success: true, name, enabled: Boolean(enabled), path: mcpFile };
 }
@@ -1115,7 +1116,7 @@ export async function handleTogglePiResource(args: any = {}) {
     fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
     const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
     fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, settingsFile);
+    replaceStagedFileSync(tmpPath, settingsFile);
 
     return {
       success: true,
@@ -1228,7 +1229,7 @@ export async function handleTogglePiResource(args: any = {}) {
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  fs.renameSync(tmpPath, settingsFile);
+  replaceStagedFileSync(tmpPath, settingsFile);
 
   return {
     success: true,

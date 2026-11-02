@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getPiAgentDir } from './state';
@@ -256,7 +257,7 @@ export function writeModelsConfigFileAtomically(filePath: string, config: Models
     targetMode = 0o600;
   }
 
-  const tempFile = path.join(dir, `models.json.tmp.${process.pid}.${Date.now()}.${randomUUID()}`);
+  const tempFile = path.join(dir, `${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`);
   let fd: number | null = null;
   try {
     fd = fs.openSync(tempFile, 'wx', targetMode);
@@ -271,18 +272,14 @@ export function writeModelsConfigFileAtomically(filePath: string, config: Models
     fs.closeSync(fd);
     fd = null;
 
-    fs.renameSync(tempFile, filePath);
+    replaceStagedFileSync(tempFile, filePath);
   } finally {
     if (fd !== null) {
       try {
         fs.closeSync(fd);
       } catch {}
     }
-    if (fs.existsSync(tempFile)) {
-      try {
-        fs.unlinkSync(tempFile);
-      } catch {}
-    }
+    try { fs.unlinkSync(tempFile); } catch {}
   }
 }
 
