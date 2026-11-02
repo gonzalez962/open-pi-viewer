@@ -369,11 +369,10 @@ export async function handleConnect(args: any = {}) {
   let hasMore = false;
   const messages = snapshot?.messages ?? parsed?.messages;
   if (messages) {
-    const total = messages.length;
     const loadAll = Boolean(payload.loadAll);
-    hasMore = !loadAll && total > 80;
-    // Window messages to recent 80 on connect for instantaneous load across network
-    initialMessages = loadAll || total <= 80 ? messages : messages.slice(-80);
+    const windowed = windowMessages(messages, loadAll, undefined, 80);
+    initialMessages = windowed.messages;
+    hasMore = windowed.hasMore;
   }
 
   const todo = todoFromHistory(messages ?? []);
@@ -389,6 +388,89 @@ export async function handleConnect(args: any = {}) {
     messages: initialMessages,
     ...(todo ? { todo } : {}),
     hasMore,
+  };
+}
+
+function hasVisibleText(content: unknown): boolean {
+  if (typeof content === 'string') {
+    return content.trim().length > 0;
+  }
+  if (Array.isArray(content)) {
+    return content.some(
+      (block) =>
+        block &&
+        typeof block === 'object' &&
+        (block.type === 'text' || typeof block.text === 'string') &&
+        typeof block.text === 'string' &&
+        block.text.trim().length > 0
+    );
+  }
+  return false;
+}
+
+export function isActivityMessage(msg: any): boolean {
+  if (!msg || typeof msg !== 'object') return false;
+  const role = msg.role;
+  if (role === 'toolResult') return true;
+  if (role === 'assistant') {
+    return !hasVisibleText(msg.content);
+  }
+  return false;
+}
+
+export function windowMessages<T extends Record<string, any>>(
+  messages: T[],
+  loadAll?: boolean,
+  limit?: number,
+  defaultLimit: number = 60
+): { messages: T[]; hasMore: boolean } {
+  if (loadAll || !messages || messages.length === 0) {
+    return { messages: messages || [], hasMore: false };
+  }
+
+  const effectiveLimit = limit !== undefined && limit !== null ? limit : defaultLimit;
+  if (effectiveLimit <= 0) {
+    return { messages: [], hasMore: messages.length > 0 };
+  }
+
+  let conversationalCount = 0;
+  let splitIndex = 0;
+  let hitLimit = false;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!isActivityMessage(msg)) {
+      conversationalCount++;
+      if (conversationalCount >= effectiveLimit) {
+        splitIndex = i;
+        hitLimit = true;
+        break;
+      }
+    }
+  }
+
+  if (!hitLimit) {
+    return { messages, hasMore: false };
+  }
+
+  // Turn boundary adjustment: if splitIndex lands on an assistant or toolResult,
+  // expand backwards to include the preceding user prompt so turns remain intact.
+  while (splitIndex > 0) {
+    const role = messages[splitIndex]?.role;
+    if (role === 'assistant' || role === 'toolResult') {
+      splitIndex--;
+    } else {
+      break;
+    }
+  }
+
+  if (splitIndex === 0) {
+    return { messages, hasMore: false };
+  }
+
+  return {
+    messages: messages.slice(splitIndex),
+    hasMore: true,
   };
 }
 
@@ -430,7 +512,9 @@ export function handleSwitchSession(args: any = {}) {
 
   const totalCount = parsed.messageCount;
   const allMsgs = parsed.messages || [];
-  const messagesToSend = limit && limit < allMsgs.length ? allMsgs.slice(-limit) : allMsgs;
+  const windowed = windowMessages(allMsgs, loadAll, limit, 60);
+  const messagesToSend = windowed.messages;
+  const hasMore = windowed.hasMore;
   const todo = todoFromHistory(allMsgs);
 
   return {
@@ -440,7 +524,7 @@ export function handleSwitchSession(args: any = {}) {
     messageCount: totalCount,
     messages: messagesToSend,
     ...(todo ? { todo } : {}),
-    hasMore: allMsgs.length > messagesToSend.length,
+    hasMore,
     status: getSessionStatus(sessionPath),
     error: null,
   };
