@@ -13,6 +13,7 @@ import { parseTodo, todoFromHistory } from '@core/todo';
 import { parseSubagentSnapshot } from '@core/agent-activity';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationEventType,
 } from '@core/notifications';
 import { loadUiPreferences, type UiPreferences } from '@infra/preferences';
 import { DEFAULT_LOCALE, translate } from '@shared/i18n';
@@ -38,6 +39,12 @@ import type { ConnectConfig } from '@core/types/connection';
 import type { SessionPersistenceStatus } from '@core/types/sessions';
 import type { SessionStats } from '@core/types/models';
 
+export interface ProjectAttentionEvent {
+  projectId: string;
+  sessionId?: string;
+  type: NotificationEventType;
+}
+
 export interface SessionEventControllerOptions {
   getCurrentConfig: () => ConnectConfig;
   getCurrentSessionId: () => string | null;
@@ -59,6 +66,7 @@ export interface SessionEventControllerOptions {
   getPreferences?: () => UiPreferences;
   notifyAppEventFn?: (params: NotifyAppEventParams) => void;
   resolveNotificationOriginName?: (cwd: string) => string | Promise<string>;
+  onAttention?: (event: ProjectAttentionEvent) => void;
 }
 
 interface PendingDialogRequest {
@@ -90,6 +98,7 @@ export class SessionEventController {
   private readonly notifyAppEventFn: (params: NotifyAppEventParams) => void;
   private readonly pendingDialogRequests = new Map<string, PendingDialogRequest>();
   private readonly outcomeTracker = new AgentOutcomeTracker();
+  private readonly attentionTurns = new Map<string, Set<string>>();
 
   constructor(options: SessionEventControllerOptions) {
     this.options = options;
@@ -104,6 +113,20 @@ export class SessionEventController {
     return this.options.resolveTargetProjectId
       ? this.options.resolveTargetProjectId(cwd)
       : undefined;
+  }
+
+  private emitAttention(projectId: string | undefined, sessionId: string | undefined, sessionKey: string, type: NotificationEventType | null, identity: string): void {
+    if (!projectId || !this.options.onAttention) return;
+    let seen = this.attentionTurns.get(sessionKey);
+    if (!seen) {
+      if (this.attentionTurns.size >= 256) this.attentionTurns.delete(this.attentionTurns.keys().next().value!);
+      seen = new Set();
+      this.attentionTurns.set(sessionKey, seen);
+    }
+    if (seen.has(identity)) return;
+    if (seen.size >= 256) seen.delete(seen.values().next().value!);
+    seen.add(identity);
+    if (type !== null) this.options.onAttention({ projectId, sessionId, type });
   }
 
   /**
@@ -132,6 +155,15 @@ export class SessionEventController {
     };
     const outcome = this.outcomeTracker.observe({ ...event, cwd: notificationCwd });
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
+    const attentionSessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
+    const attentionKey = JSON.stringify([targetProjectId ?? '', attentionSessionId ?? event.sessionFile ?? '']);
+    if (eventType === 'agent_start') this.attentionTurns.delete(attentionKey);
+    if (eventType === 'agent_settled') {
+      this.emitAttention(targetProjectId, attentionSessionId, attentionKey, outcome === null ? null : outcome ?? 'task_complete', 'settled');
+    } else if (eventType === 'extension_ui_request' && isSupportedDialogExtensionUiRequest(event as unknown as ExtensionUiRequest)) {
+      const id = typeof event.id === 'string' ? event.id.trim() : '';
+      if (id) this.emitAttention(targetProjectId, attentionSessionId, attentionKey, 'waiting_input', `prompt:${id}`);
+    }
     if (eventType === 'runtime_snapshot') {
       const selected = targetProjectId && this.options.getProjectSessionId
         ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
@@ -381,6 +413,10 @@ export class SessionEventController {
    */
   public handleStatusChange(status: BridgeStatusPayload): void {
     const targetProjectId = this.resolveTargetProjectId(status.cwd ?? undefined);
+    if (status.state === 'error') {
+      const key = JSON.stringify([targetProjectId ?? '', status.sessionId ?? '']);
+      this.emitAttention(targetProjectId, status.sessionId ?? undefined, key, 'error', `status:${status.detail ?? ''}`);
+    }
     const expectedSessionId = targetProjectId && this.options.getProjectSessionId
       ? this.options.getProjectSessionId(targetProjectId)
       : this.options.getCurrentSessionId();

@@ -8,7 +8,7 @@ import {
   type DiscoveredEnvironment,
   type DiscoverEnvironmentPayload,
 } from '@infra/bridge';
-import { SessionEventController, shouldRefreshWorkspaceOnEvent } from '@features/chat/session-events';
+import { SessionEventController, shouldRefreshWorkspaceOnEvent, type ProjectAttentionEvent } from '@features/chat/session-events';
 import type { ExtensionUiDialogAdapter } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig } from '@core/types/connection';
@@ -70,6 +70,7 @@ export interface UseSessionEventsOptions {
   projectSessionIds?: Record<string, string | null>;
   projects?: ProjectItem[];
   activeProjectId?: string | null;
+  onAttention?: (event: ProjectAttentionEvent) => void;
   dispatch: (action: ChatAction & { targetProjectId?: string }) => void;
   /**
    * Real branching this hook must not import the workspace feature to perform (T5 plan:
@@ -292,6 +293,7 @@ export function useSessionEvents({
   projectSessionIds,
   projects,
   activeProjectId,
+  onAttention,
   dispatch,
   onWorkspaceChanged,
   onStorageWarning,
@@ -314,6 +316,8 @@ export function useSessionEvents({
   projectsRef.current = projects ?? [];
   const activeProjectIdRef = useRef<string | null>(activeProjectId ?? null);
   activeProjectIdRef.current = activeProjectId ?? null;
+  const onAttentionRef = useRef(onAttention);
+  onAttentionRef.current = onAttention;
   const dialogAdapterRef = useRef<ExtensionUiDialogAdapter | undefined>(dialogAdapter);
   dialogAdapterRef.current = dialogAdapter;
 
@@ -331,6 +335,7 @@ export function useSessionEvents({
     sessionEventControllerRef.current = new SessionEventController({
       getCurrentConfig: () => configRef.current,
       getCurrentSessionId: () => sessionIdRef.current,
+      onAttention: (event) => onAttentionRef.current?.(event),
       resolveNotificationOriginName: (cwd) => resolveNotificationOriginName(cwd, projectsRef.current),
       getProjectSessionId: (projectId) => projectSessionIdsRef.current
         ? projectSessionIdsRef.current[projectId] ?? null
