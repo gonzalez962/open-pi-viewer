@@ -1,3 +1,11 @@
+.subagent-entry { margin: 8px; padding: 7px 12px; cursor: pointer; }
+.subagent-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: #0009; }
+.subagent-modal { background: var(--bg-primary, #202020); color: var(--text-primary, #eee); border: 1px solid var(--border-muted); border-radius: 8px; width: min(900px, 90vw); max-height: 80vh; padding: 16px; }
+.subagent-modal header { display: flex; justify-content: space-between; align-items: center; }
+.subagent-body { display: flex; gap: 16px; max-height: 60vh; overflow: auto; }
+.subagent-body nav { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+.subagent-thread { min-width: 0; overflow-wrap: anywhere; }
+.subagent-thread pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .todo-panel { border: 1px solid var(--border-muted); border-radius: 8px; margin-bottom: 8px; }
 .todo-toggle { width: 100%; display: flex; justify-content: space-between; padding: 8px 10px; color: inherit; background: transparent; border: 0; cursor: pointer; }
 .todo-list { list-style: none; margin: 0; padding: 0 10px 8px; max-height: 180px; overflow-y: auto; }

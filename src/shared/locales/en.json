@@ -1,4 +1,11 @@
 {
+  "subagent.title": "Subagent process",
+  "subagent.close": "Close",
+  "subagent.bounded": "Bounded live snapshot; earlier activity may be unavailable.",
+  "subagent.viewer_truncated": "The viewer truncated some activity or metadata.",
+  "subagent.tasks": "Active tasks",
+  "subagent.partial": "Earlier activity was truncated; this thread is partial.",
+  "subagent.unavailable": "Activity details unavailable.",
   "todo.title": "Todos",
   "todo.pending": "Pending",
   "todo.in_progress": "In progress",

@@ -33,6 +33,8 @@ import {
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
 import { PromptControls } from '@features/chat/PromptControls';
 import { TodoPanel } from '@features/chat/TodoPanel';
+import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
+import { SubagentActivityEntry, createSubagentActivityController } from '@features/chat/subagent-activity-modal';
 import { parseTodo, todoFromHistory } from '@core/todo';
 import {
   isMessageEmpty,
@@ -694,6 +696,31 @@ export const App: React.FC = () => {
     handleBack,
   } = useExtensionUiDialog();
 
+  const [subagentOpen, setSubagentOpen] = useState(false);
+  const [selectedSubagent, setSelectedSubagent] = useState('');
+  const subagentContext = useRef({ tasks: state.subagents, otherDialog: false });
+  const subagentController = useRef<ReturnType<typeof createSubagentActivityController> | null>(null);
+  if (!subagentController.current) {
+    subagentController.current = createSubagentActivityController({
+      getTasks: () => subagentContext.current.tasks,
+      getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element => !element.closest('.subagent-overlay'))),
+      getActiveElement: () => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+      setOpen: setSubagentOpen,
+    });
+  }
+  useEffect(() => {
+    const controller = subagentController.current!;
+    window.addEventListener('keydown', controller.onKeyDown);
+    return () => window.removeEventListener('keydown', controller.onKeyDown);
+  }, []);
+  useEffect(() => {
+    subagentController.current?.close(false);
+    setSelectedSubagent('');
+  }, [state.sessionId, projectsRegistry.activeProjectId, state.connectionStatus]);
+  useEffect(() => {
+    if (!state.subagents.length) subagentController.current?.close(false);
+  }, [state.subagents]);
+
   const handleDialogBack = useCallback(
     (
       itemKey: string,
@@ -1210,6 +1237,11 @@ export const App: React.FC = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [isMobileNavOpen]);
+
+  subagentContext.current = {
+    tasks: state.subagents,
+    otherDialog: Boolean(activeDialog || showSettings || showKanban || viewingFile || profilesHook.isModalOpen || isFolderPickerOpen || isGitHubCloneOpen || isGitHubCreateOpen || isDefaultDirSetupOpen || commandPalette.isOpen || isMobileNavOpen),
+  };
 
   const handleToggleZenMode = useCallback(() => {
     const hasOpenModal = Boolean(
@@ -1887,6 +1919,7 @@ export const App: React.FC = () => {
             aria-label={t('empty.history_label')}
             tabIndex={0}
           >
+          <SubagentActivityEntry tasks={state.subagents} onClick={subagentController.current!.onClick} t={t} />
           {state.messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">
@@ -2309,6 +2342,10 @@ export const App: React.FC = () => {
           )}
         </main>
       </div>
+
+      {subagentOpen && state.subagents.length > 0 && !subagentContext.current.otherDialog && (
+        <SubagentActivityModal tasks={state.subagents} selectedId={selectedSubagent} onSelect={setSelectedSubagent} onClose={() => subagentController.current?.close()} t={t} />
+      )}
 
       {showKanban && kanbanCwd && (
         <React.Suspense fallback={null}>

@@ -3,6 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { translate } from '@shared/i18n';
+import { parseSubagentSnapshot } from '@core/agent-activity';
 
 const t = (key: any, params?: Record<string, string | number>) => translate('en', key, params);
 const tasks = [
@@ -63,6 +64,39 @@ test('S3.3 modal communicates partial and metadata-only activity without inventi
   assert.match(metadata, /Metadata only/);
   assert.match(metadata, /unavailable|no activity|no.*detail/i);
   assert.doesNotMatch(metadata, /Real output|First response/);
+});
+
+test('S3.3 parsed oversized thread renders viewer truncation and bounded snapshot notices', async () => {
+  const { SubagentActivityModal } = await import('@features/chat/SubagentActivityModal');
+  const parsed = parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'a', agent: 'worker', status: 'running' }, thread: { version: 1, dropped: 0, items: [{ kind: 'text', text: 'z'.repeat(3000) }] } }] });
+  assert.ok(parsed);
+  const html = renderToStaticMarkup(React.createElement(SubagentActivityModal, { tasks: parsed, selectedId: 'a', onSelect: () => {}, onClose: () => {}, t }));
+  assert.match(html, /viewer.*truncat/i);
+  assert.match(html, /bounded|limited.*snapshot/i);
+  assert.ok(!html.includes('z'.repeat(3000)));
+});
+
+test('S3.2 production modal focus handlers move focus inside and wrap Tab', async () => {
+  const { SubagentActivityModal } = await import('@features/chat/SubagentActivityModal');
+  let tree: any;
+  function Host() { tree = SubagentActivityModal({ tasks: tasks as any, selectedId: 'one', onSelect: () => {}, onClose: () => {}, t }); return tree; }
+  renderToStaticMarkup(React.createElement(Host));
+  const dialog = find(tree, node => node.props?.role === 'dialog');
+  let focused = '';
+  const first = { focus: () => { focused = 'first'; }, hidden: false, getAttribute: () => null, style: {} };
+  const last = { focus: () => { focused = 'last'; }, hidden: false, getAttribute: () => null, style: {} };
+  const element = { querySelector: () => first, querySelectorAll: () => [first, last], contains: (value: unknown) => value === first || value === last };
+  assert.equal(typeof dialog.ref, 'function');
+  dialog.ref(element);
+  assert.equal(focused, 'first');
+  let prevented = false;
+  dialog.props.onKeyDown({ key: 'Tab', shiftKey: false, preventDefault: () => { prevented = true; }, currentTarget: element, target: last });
+  assert.equal(prevented, true);
+  assert.equal(focused, 'first');
+  prevented = false;
+  dialog.props.onKeyDown({ key: 'Tab', shiftKey: true, preventDefault: () => { prevented = true; }, currentTarget: element, target: first });
+  assert.equal(prevented, true);
+  assert.equal(focused, 'last');
 });
 
 // The interaction controller is the production handler used by the entry point and

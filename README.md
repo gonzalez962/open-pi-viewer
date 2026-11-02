@@ -218,6 +218,10 @@ Tauri IPC does not expose generic command execution or raw RPC pass-through. The
 - **Shutdown Cleanup**: The child PID is tracked and reaped upon explicit disconnect, window destruction, or application exit. Tauri's `prevent_exit()` is used on application exit to await asynchronous child process reaping. `kill_on_drop(true)` provides defense-in-depth against leaked processes.
 - **Process Termination Scope**: Direct child process termination signals and reaps the immediate Node process. In read-only or controlled mutation mode, Node reaps managed child operations. However, direct process termination does not guarantee process-tree cleanup across all platforms if descendant processes were spawned by terminal tools or extensions; full OS-level process-tree management (such as Windows Job Objects or POSIX process groups) would be required if arbitrary external tools or subagents were executed.
 
+### Subagent activity
+
+When a compatible gentle-agents activity hook publishes active tasks, **Subagent process** appears in the conversation with the active count. Select it or press **Alt+A** to inspect the received activity; select a task to follow its live updates and press **Escape** to close. Thread details may be partial or unavailable when the publisher limits its payload. Without the hook or active tasks, the entry and shortcut remain inactive.
+
 ## Checklist
 
 - [x] Tauri 2 + React 18 + TypeScript + Vite desktop application shell
