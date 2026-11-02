@@ -82,13 +82,12 @@ fn has_visible_text(content: &Value) -> bool {
     if let Some(arr) = content.as_array() {
         return arr.iter().any(|item| {
             if let Some(obj) = item.as_object() {
-                let is_text_type = obj.get("type").and_then(|t| t.as_str()) == Some("text");
                 let has_text_str = obj
                     .get("text")
                     .and_then(|t| t.as_str())
                     .map(|s| !s.trim().is_empty())
                     .unwrap_or(false);
-                is_text_type || has_text_str
+                has_text_str
             } else {
                 false
             }
@@ -1946,6 +1945,32 @@ mod tests {
         assert!(delete_res_json.contains("\"newSession\":null"));
         let deserialized_del_res: DeleteSessionResult = serde_json::from_str(&delete_res_json).unwrap();
         assert_eq!(deserialized_del_res, delete_res);
+    }
+
+    #[test]
+    fn test_window_messages_empty_text_does_not_consume_limit() {
+        for empty in [
+            serde_json::json!({ "type": "text", "text": "" }),
+            serde_json::json!({ "type": "text", "text": " \n\t" }),
+            serde_json::json!({ "type": "text" }),
+        ] {
+            let messages = vec![
+                serde_json::json!({ "id": "user", "role": "user", "content": "Question" }),
+                serde_json::json!({ "id": "activity", "role": "assistant", "content": [empty] }),
+                serde_json::json!({ "id": "reply", "role": "assistant", "content": [{ "type": "text", "text": "Answer" }] }),
+            ];
+            assert!(is_activity_message(&messages[1]), "empty text must remain activity");
+            let (window, has_more) = window_messages(messages.clone(), None, Some(2), 60);
+            assert_eq!(window, messages);
+            assert!(!has_more);
+        }
+    }
+
+    #[test]
+    fn test_visible_text_classification_preserves_nonempty_blocks() {
+        assert!(has_visible_text(&serde_json::json!([{ "type": "text", "text": "Answer" }])));
+        assert!(has_visible_text(&serde_json::json!([{ "text": "Answer" }])));
+        assert!(!has_visible_text(&serde_json::json!([{ "type": "tool_call" }])));
     }
 
     #[test]
