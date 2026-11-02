@@ -46,7 +46,8 @@ test('S3.2 task selection and live updates show only the selected real activity'
   select.props.onClick();
   html = render();
   assert.equal(selectedId, 'two');
-  assert.match(html, /Real output/);
+  assert.match(html, /read/);
+  assert.match(html, /aria-expanded="false"/);
   assert.doesNotMatch(html, /First response/);
   current = [tasks[0], { ...tasks[1], thread: { version: 3, dropped: 2, items: [{ kind: 'note', text: 'New live note' }] } }];
   html = render();
@@ -58,7 +59,8 @@ test('S3.3 modal communicates partial and metadata-only activity without inventi
   const { SubagentActivityModal } = await import('@features/chat/SubagentActivityModal');
   const render = (list: any[], selectedId: string) => renderToStaticMarkup(React.createElement(SubagentActivityModal, { tasks: list, selectedId, onSelect: () => {}, onClose: () => {}, t } as any));
   const partial = render(tasks, 'two');
-  assert.match(partial, /Real output/);
+  assert.match(partial, /read/);
+  assert.match(partial, /aria-expanded="false"/);
   assert.match(partial, /partial|truncat|earlier|dropped/i);
   const metadata = render([{ id: 'three', agent: 'worker', label: 'Metadata only', status: 'running', thread: { version: 1, dropped: 0, items: [] } }], 'three');
   assert.match(metadata, /Metadata only/);

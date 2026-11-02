@@ -71,8 +71,26 @@ try {
   await entry.focus(); await page.keyboard.press('Alt+a'); await modal.waitFor();
   await publish('Updated child activity');
   await modal.getByText('Updated child activity').waitFor();
+  await page.evaluate(() => window.emitFixture({ type: 'extension_ui_request', sessionId: 's1', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', label: 'Child task', status: 'running' }, thread: { version: 2, dropped: 1, items: [{ kind: 'thinking', text: 'Actual reasoning' }, { kind: 'tool', name: 'read', args: '{"path":"fixture.txt"}', running: false, isError: false, output: 'Actual tool output' }] } }, { summary: { id: 'other', agent: 'reviewer', label: 'Other task', status: 'waiting' }, thread: { version: 1, dropped: 0, items: [{ kind: 'note', text: 'Other note' }] } }] })] }));
+  const tool = modal.locator('.tool-card-header');
+  await tool.waitFor();
+  assert.equal(await tool.getAttribute('aria-expanded'), 'false');
+  await tool.click();
+  assert.equal(await tool.getAttribute('aria-expanded'), 'true');
+  assert.match(await modal.innerText(), /Actual tool output/);
+  const thinking = modal.locator('.thinking-header');
+  await thinking.click();
+  assert.match(await modal.innerText(), /Actual reasoning/);
+  await modal.getByRole('button', { name: /Other task/ }).click();
+  assert.match(await modal.innerText(), /Other note/);
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 700 }]) {
+    await page.setViewportSize(viewport);
+    const geometry = await modal.evaluate(el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height, left: r.left, right: r.right, bottom: r.bottom, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }; });
+    assert.ok(geometry.width > viewport.width * 0.85 && geometry.height > viewport.height * 0.85);
+    assert.ok(geometry.left >= 0 && geometry.right <= viewport.width && geometry.bottom <= viewport.height && geometry.scrollWidth <= geometry.clientWidth);
+  }
   await page.keyboard.press('Escape'); await modal.waitFor({ state: 'hidden' });
-  console.log('PASS S3.1/S3.2 click, Alt+A, live content, focus, Tab and Escape');
+  console.log('PASS S5/S3.1/S3.2 responsive geometry, card expansion, selection, live content, focus and Escape');
   await page.evaluate(() => { const other = document.createElement('div'); other.setAttribute('role', 'dialog'); other.id = 'fixture-other-dialog'; document.body.appendChild(other); });
   await page.keyboard.press('Alt+a');
   assert.equal(await modal.count(), 0);
