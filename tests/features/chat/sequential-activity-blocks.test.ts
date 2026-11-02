@@ -202,7 +202,7 @@ test('ActivityBlocksScrollContainer: encapsulates blocks inside activity-blocks 
     )
   );
 
-  assert.match(html, /class="[^"]*activity-blocks[^"]*"/);
+  assert.match(html, /class="[^"]*activity-blocks-scroll-container[^"]*"/);
   assert.match(html, /class="[^"]*tool-card[^"]*tool-card-collapsed[^"]*"/);
   assert.match(html, /git status/);
 });

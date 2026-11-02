@@ -586,7 +586,7 @@ export const ActivityBlocksScrollContainer: React.FC<ActivityBlocksScrollContain
   return (
     <div
       ref={containerRef}
-      className={`activity-blocks ${className}`.trim()}
+      className={`activity-blocks-scroll-container activity-blocks ${className}`.trim()}
       onScroll={handleScroll}
       onFocusCapture={handleFocusCapture}
     >

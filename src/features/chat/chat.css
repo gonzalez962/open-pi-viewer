@@ -2004,8 +2004,16 @@
   color: var(--border-muted);
 }
 
-/* Activity Blocks Container: borderless scrollable container showing up to 6 blocks */
+/* Activity Blocks List */
 .activity-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Activity Blocks Encapsulating Scroll Container: borderless, up to 6 blocks visible */
+.activity-blocks-scroll-container {
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -2018,25 +2026,25 @@
   box-sizing: border-box;
 }
 
-.activity-blocks > .thinking-card,
-.activity-blocks > .tool-card {
+.activity-blocks-scroll-container > .thinking-card,
+.activity-blocks-scroll-container > .tool-card {
   flex-shrink: 0;
 }
 
-.activity-blocks::-webkit-scrollbar {
+.activity-blocks-scroll-container::-webkit-scrollbar {
   width: 6px;
 }
 
-.activity-blocks::-webkit-scrollbar-track {
+.activity-blocks-scroll-container::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.activity-blocks::-webkit-scrollbar-thumb {
+.activity-blocks-scroll-container::-webkit-scrollbar-thumb {
   background-color: var(--border-subtle);
   border-radius: 3px;
 }
 
-.activity-blocks::-webkit-scrollbar-thumb:hover {
+.activity-blocks-scroll-container::-webkit-scrollbar-thumb:hover {
   background-color: var(--fg-muted);
 }
 
