@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { handleRemoteStorageUpdate, initStorageSynchronization } from '@app/storage-sync';
 import { GITHUB_PAT_STORAGE_KEY, saveGitHubPat, createGitHubCloneController } from '@features/projects/github-clone';
 import { createGitHubCreateController } from '@features/projects/github-create';
+import { MOCK_CUSTOM_PROVIDERS_STORAGE_KEY } from '@infra/bridge';
+import { handleIpcCommand, setPiAgentDirForTest } from '@server/web-ipc-bridge';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 function browser(initial: Record<string, string>, invoke: (cmd: string, args?: any) => Promise<any>) {
   const data = new Map(Object.entries(initial));
@@ -17,6 +22,40 @@ function browser(initial: Record<string, string>, invoke: (cmd: string, args?: a
   const previous = (globalThis as any).window;
   (globalThis as any).window = { localStorage, __IS_WEB_IPC__: true, __TAURI_INTERNALS__: { invoke }, addEventListener() {}, dispatchEvent() {} };
   return { localStorage, restore: () => { (globalThis as any).window = previous; } };
+}
+
+for (const mode of ['import', 'conflict', 'failure', 'uncertain'] as const) {
+  test(`T2 S2.3: browser provider migration ${mode} retains source until acknowledged`, async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-sync-'));
+    setPiAgentDirForTest(dir);
+    const legacy = JSON.stringify({ providers: { p: { baseUrl: 'https://example.test', api: 'openai', apiKey: 'legacy-key', headers: { A: 'legacy-header', B: 'new-header' } } } });
+    if (mode === 'conflict') fs.writeFileSync(path.join(dir, 'models.json'), JSON.stringify({ providers: { p: { baseUrl: 'https://example.test', api: 'openai', apiKey: 'server-key', headers: { A: 'server-header' } } } }));
+    let imports = 0;
+    const b = browser({ [MOCK_CUSTOM_PROVIDERS_STORAGE_KEY]: legacy }, async (cmd, args) => {
+      if (cmd === 'get_viewer_storage') return { version: 1 };
+      if (cmd === 'import_provider_credentials') {
+        imports++;
+        assert.equal(b.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY), legacy);
+        if (mode === 'failure') throw new Error('offline');
+        if (mode === 'uncertain') return { imported: false };
+        return handleIpcCommand(cmd, args);
+      }
+      throw new Error(`Unexpected command ${cmd}`);
+    });
+    try {
+      await initStorageSynchronization();
+      assert.equal(imports, 1);
+      assert.equal(b.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY), mode === 'failure' || mode === 'uncertain' ? legacy : null);
+      if (mode === 'import' || mode === 'conflict') {
+        const saved = JSON.parse(fs.readFileSync(path.join(dir, 'models.json'), 'utf8')).providers.p;
+        assert.equal(saved.apiKey, mode === 'conflict' ? 'server-key' : 'legacy-key');
+        assert.deepEqual(saved.headers, { A: mode === 'conflict' ? 'server-header' : 'legacy-header', B: 'new-header' });
+        await initStorageSynchronization();
+        assert.equal(imports, 1);
+        assert.equal(b.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY), null);
+      } else assert.equal(fs.existsSync(path.join(dir, 'models.json')), false);
+    } finally { b.restore(); setPiAgentDirForTest(null); fs.rmSync(dir, { recursive: true, force: true }); }
+  });
 }
 
 for (const existing of [false, true]) {

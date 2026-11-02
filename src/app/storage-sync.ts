@@ -22,6 +22,7 @@ import {
 import { GITHUB_PAT_STORAGE_KEY, getSavedGitHubPat } from '@features/projects/github-clone';
 import type { ConnectConfig } from '@core/types/connection';
 import { isWebShim } from '@infra/web-oauth-access';
+import { migrateLegacyProviderCredentials } from '@infra/bridge';
 
 export interface StorageSyncCallbacks {
   onUiPreferencesUpdated?: (prefs: Record<string, unknown>) => void;
@@ -139,6 +140,7 @@ export async function initStorageSynchronization(callbacks: StorageSyncCallbacks
 
     // 6. GitHub PAT: web migration removes the legacy copy only after backend acknowledgement.
     if (isWebShim()) {
+      await migrateLegacyProviderCredentials(window.localStorage);
       const localPat = window.localStorage.getItem(GITHUB_PAT_STORAGE_KEY)?.trim();
       if (localPat) {
         try {

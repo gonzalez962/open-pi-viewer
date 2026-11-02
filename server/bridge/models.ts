@@ -1,3 +1,5 @@
+import { publicProviderConfig, readModelsConfigFile, writeModelsConfigFileAtomically, mergeCustomProviderAdditive, validateProviderId, assertNoDangerousProperties } from './custom-providers';
+import { fetchProviderModels, OPENROUTER_MODELS_URL } from '../../src/features/providers/providers';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -648,7 +650,7 @@ export function handleGetCustomProviders() {
   const modelsFile = path.join(getPiAgentDir(), 'models.json');
   if (fs.existsSync(modelsFile)) {
     try {
-      return JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
+      return publicProviderConfig(JSON.parse(fs.readFileSync(modelsFile, 'utf8')));
     } catch {}
   }
   return { providers: {} };
@@ -662,9 +664,71 @@ export function handleSaveCustomProviders(args: any = {}) {
       rootObj = JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
     } catch {}
   }
-  rootObj.providers = args.providers;
-  fs.writeFileSync(modelsFile, JSON.stringify(rootObj, null, 2) + '\n', 'utf8');
-  return rootObj;
+  if (!args.providers || typeof args.providers !== 'object' || Array.isArray(args.providers)) throw new Error('Invalid providers');
+  assertNoDangerousProperties(args.providers);
+  const next: any = {};
+  for (const [id, value] of Object.entries<any>(args.providers)) {
+    validateProviderId(id);
+    const previous = rootObj.providers?.[id] || {};
+    const { apiKey, headers, apiKeyConfigured, headerKeys, ...rest } = value;
+    const mergedHeaders = { ...(previous.headers || {}) };
+    for (const [key, v] of Object.entries(headers || {})) {
+      if (v === null) delete mergedHeaders[key];
+      else if (typeof v === 'string' && v.trim()) mergedHeaders[key] = v;
+    }
+    next[id] = { ...rest, ...(apiKey === null ? {} : { apiKey: typeof apiKey === 'string' && apiKey.trim() ? apiKey : previous.apiKey }), ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}) };
+  }
+  rootObj.providers = next;
+  writeModelsConfigFileAtomically(modelsFile, rootObj);
+  return publicProviderConfig(rootObj);
+}
+
+export function handleImportProviderCredentials(args: any) {
+  assertNoDangerousProperties(args);
+  if (!args?.providers || typeof args.providers !== 'object' || Array.isArray(args.providers)) throw new Error('Invalid providers');
+  const file = path.join(getPiAgentDir(), 'models.json');
+  let config = readModelsConfigFile(file);
+  for (const [id, incoming] of Object.entries<any>(args.providers)) {
+    validateProviderId(id);
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid provider');
+    const existing = config.providers?.[id];
+    const headers = { ...(existing?.headers || {}) };
+    for (const [key, value] of Object.entries(incoming.headers || {})) {
+      if (!Object.prototype.hasOwnProperty.call(headers, key) && typeof value === 'string' && value.trim()) headers[key] = value;
+    }
+    const provider = { ...incoming, ...(existing || {}), headers, apiKey: existing?.apiKey || incoming.apiKey };
+    config = mergeCustomProviderAdditive(config, id, provider);
+  }
+  writeModelsConfigFileAtomically(file, config);
+  return { imported: true };
+}
+
+export async function handleDiscoverProviderModels(args: any) {
+  const id = validateProviderId(args?.providerId);
+  const config = readModelsConfigFile(path.join(getPiAgentDir(), 'models.json'));
+  const saved = config.providers?.[id];
+  const baseUrl = saved?.baseUrl || args.baseUrl;
+  const api = saved?.api || args.api;
+  if (typeof baseUrl !== 'string' || typeof api !== 'string') throw new Error('Provider unavailable');
+  try {
+    const url = new URL(baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid endpoint');
+    const headers = saved?.headers || {};
+    const key = typeof args.apiKey === 'string' && args.apiKey.trim() ? args.apiKey : saved?.apiKey;
+    const secrets = [saved?.apiKey, key, ...Object.values(headers)].filter((v): v is string => typeof v === 'string' && v.length > 0);
+    const guardedFetch: typeof fetch = async (input, init) => {
+      const target = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (target.origin !== url.origin || target.username || target.password) throw new Error('Invalid endpoint');
+      return fetch(input, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string> || {}) }, redirect: 'error' });
+    };
+    const catalogFetch: typeof fetch = async (input, init) => {
+      const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (target !== OPENROUTER_MODELS_URL) throw new Error('Invalid catalog endpoint');
+      return fetch(input, { ...init, headers: { Accept: 'application/json' }, redirect: 'error' });
+    };
+    const models = await fetchProviderModels(baseUrl, api, key, { fetchFn: guardedFetch, catalogFetchFn: catalogFetch });
+    return models.filter(model => !secrets.some(secret => JSON.stringify(model).includes(secret)));
+  } catch { throw new Error('Provider model discovery failed'); }
 }
 
 export function handleGetEnabledModels(): string[] {

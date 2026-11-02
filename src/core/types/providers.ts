@@ -26,9 +26,11 @@ export interface CustomProviderConfig {
   name?: string;
   baseUrl?: string;
   api?: string;
-  apiKey?: string;
+  apiKey?: string | null;
+  apiKeyConfigured?: boolean;
+  headerKeys?: string[];
   authHeader?: boolean;
-  headers?: Record<string, string>;
+  headers?: Record<string, string | null>;
   models: CustomModelDefinition[];
   excludedModels?: string[];
   includedModels?: string[];

@@ -159,6 +159,8 @@ import {
   handleSaveCustomProviders,
   handleGetModelThinkingLevels,
   handleSaveModelThinkingLevels,
+  handleImportProviderCredentials,
+  handleDiscoverProviderModels,
   handleGetMcpServers,
   handleToggleMcpServer,
   handleGetPiResources,
@@ -267,6 +269,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetAvailableThinkingLevels();
     case 'set_thinking_level':
       return await handleSetThinkingLevel(args);
+    case 'import_provider_credentials':
+      return handleImportProviderCredentials(args);
+    case 'discover_provider_models':
+      return await handleDiscoverProviderModels(args);
     case 'get_custom_providers':
       return handleGetCustomProviders();
     case 'save_custom_providers':
@@ -383,7 +389,7 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return sanitizeStorageForClient(loadViewerStorage());
     case 'save_viewer_storage': {
       const payload = args.payload || args;
-      if (Object.hasOwn(payload, 'githubPat') || Object.hasOwn(payload, 'githubPatConfigured')) throw new Error('Protected storage key');
+      if (Object.prototype.hasOwnProperty.call(payload, 'githubPat') || Object.prototype.hasOwnProperty.call(payload, 'githubPatConfigured')) throw new Error('Protected storage key');
       return sanitizeStorageForClient(saveViewerStorage(payload));
     }
     case 'update_viewer_storage_key': {

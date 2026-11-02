@@ -484,6 +484,8 @@ export function mapProvidersToArray(providersMap: CustomProvidersMap = {}): Cust
       baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : '',
       api: typeof raw.api === 'string' ? raw.api : 'openai-completions',
       apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : undefined,
+      ...(raw.apiKeyConfigured === true ? { apiKeyConfigured: true } : {}),
+      ...(Array.isArray(raw.headerKeys) ? { headerKeys: raw.headerKeys.filter((v): v is string => typeof v === 'string') } : {}),
       authHeader: typeof raw.authHeader === 'boolean' ? raw.authHeader : undefined,
       headers: raw.headers && typeof raw.headers === 'object' ? (raw.headers as Record<string, string>) : undefined,
       models: Array.isArray(raw.models)
@@ -545,7 +547,7 @@ export function arrayToProvidersMap(providers: CustomProviderConfig[]): CustomPr
     };
 
     if (name !== undefined && name.trim() !== '') entry.name = name.trim();
-    if (apiKey !== undefined && apiKey.trim() !== '') entry.apiKey = apiKey.trim();
+    if (typeof apiKey === 'string' && apiKey.trim() !== '') entry.apiKey = apiKey.trim();
     if (authHeader !== undefined) entry.authHeader = authHeader;
     if (headers !== undefined) entry.headers = headers;
     if (includedModels && Array.isArray(includedModels) && includedModels.length > 0) {
@@ -1260,6 +1262,7 @@ export interface FetchModelsOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   fetchFn?: typeof fetch;
+  catalogFetchFn?: typeof fetch;
 }
 
 export const DEFAULT_MAX_TOKENS = 16_384;
@@ -2021,7 +2024,7 @@ export async function fetchProviderModels(
     }
 
     try {
-      const catalog = await fetchOpenRouterModelsCatalog(effectiveFetch);
+      const catalog = await fetchOpenRouterModelsCatalog(options?.catalogFetchFn ?? effectiveFetch);
       return enrichModelsWithModalities(parsed, catalog);
     } catch {
       return parsed;

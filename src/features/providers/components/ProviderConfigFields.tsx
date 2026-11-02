@@ -127,7 +127,13 @@ export const ProviderConfigFields: React.FC<ProviderConfigFieldsProps> = ({
           </button>
         </div>
         <span className="field-subtext">{t('providers.field_api_key_subtext')}</span>
+        {formData.apiKeyConfigured && <label><input type="checkbox" checked={!!formData.deleteApiKey} onChange={e => setFormData(prev => ({ ...prev, deleteApiKey: e.target.checked }))} /> Delete configured API key</label>}
+        {formData.apiKeyConfigured && <span>API key configured</span>}
       </div>
+      {(formData.headerKeys || []).map(key => <div className="field-group" key={key}>
+        <label>{key} (configured)<input type="password" value={formData.headerEdits?.[key] || ''} onChange={e => setFormData(prev => ({ ...prev, headerEdits: { ...prev.headerEdits, [key]: e.target.value } }))} placeholder="Replace header value" /></label>
+        <label><input type="checkbox" checked={formData.headerEdits?.[key] === null} onChange={e => setFormData(prev => ({ ...prev, headerEdits: { ...prev.headerEdits, [key]: e.target.checked ? null : '' } }))} /> Delete header</label>
+      </div>)}
     </fieldset>
   );
 };

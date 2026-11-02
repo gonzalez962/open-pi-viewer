@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { isPiBuiltinProvider } from '@features/providers/providers';
 import ts from 'typescript';
 import {
   handleIpcCommand,
@@ -35,6 +37,7 @@ function loadSaveProviderCallback() {
 
   const scope = {
     prepareProviderPayload,
+    isPiBuiltinProvider,
     validateProviderConfig: () => ({ valid: true }),
     setIsSaving: () => {},
     providers: [],
@@ -91,7 +94,7 @@ test('Defect 1 — actual saveProvider callback sends explicit [] for empty patt
 });
 
 test('Defect 1 — additive backend clears patterns when explicit [] is received, preserving omitted fields', async () => {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.workspace-pattern-test-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-pattern-test-'));
   const agentDir = path.join(root, 'agent');
   fs.mkdirSync(agentDir, { recursive: true });
   setPiAgentDirForTest(agentDir);
