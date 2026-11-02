@@ -21,8 +21,7 @@ import {
   computeWorkAnimationStyles,
   type AppearancePreferences,
 } from '@infra/preferences';
-import { ThinkingCard, ToolCard, ActivityBlocksContainer } from '@features/chat/ActivityBlocks';
-import type { ThinkingBlock, ToolCallBlock } from '@core/types/messages';
+import { ThinkingCard, ToolCard } from '@features/chat/ActivityBlocks';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
@@ -1995,72 +1994,45 @@ export const App: React.FC = () => {
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
-                      (() => {
-                        type Segment =
-                          | { kind: 'activity'; blocks: (ThinkingBlock | ToolCallBlock)[]; startIndex: number }
-                          | { kind: 'text'; text: string; index: number };
-                        const segments: Segment[] = [];
-                        let currentRun: (ThinkingBlock | ToolCallBlock)[] = [];
-                        let runStart = 0;
-                        for (let i = 0; i < msg.blocks.length; i++) {
-                          const b = msg.blocks[i];
-                          if (b.type === 'thinking' || b.type === 'tool_call') {
-                            if (currentRun.length === 0) runStart = i;
-                            currentRun.push(b);
-                          } else if (b.type === 'text') {
-                            if (currentRun.length > 0) {
-                              segments.push({ kind: 'activity', blocks: currentRun, startIndex: runStart });
-                              currentRun = [];
-                            }
-                            segments.push({ kind: 'text', text: b.text, index: i });
-                          }
-                        }
-                        if (currentRun.length > 0) {
-                          segments.push({ kind: 'activity', blocks: currentRun, startIndex: runStart });
-                        }
-
-                        return segments.map((seg) => {
-                          if (seg.kind === 'activity') {
+                      <div className="activity-blocks">
+                        {msg.blocks.map((block, bIndex) => {
+                          if (block.type === 'thinking') {
                             return (
-                              <ActivityBlocksContainer key={`act-seg-${seg.startIndex}`} itemCount={seg.blocks.length}>
-                                {seg.blocks.map((block, idx) => {
-                                  const originalIndex = seg.startIndex + idx;
-                                  if (block.type === 'thinking') {
-                                    return (
-                                      <ThinkingCard
-                                        key={`thinking-${originalIndex}`}
-                                        block={block}
-                                        t={t}
-                                      />
-                                    );
-                                  }
-                                  return (
-                                    <ToolCard
-                                      key={block.id || `tool-${originalIndex}`}
-                                      block={block}
-                                      t={t}
-                                    />
-                                  );
-                                })}
-                              </ActivityBlocksContainer>
+                              <ThinkingCard
+                                key={`thinking-${bIndex}`}
+                                block={block}
+                                t={t}
+                              />
                             );
                           }
-                          return (
-                            <div key={`text-${seg.index}`} style={{ display: 'flex', flexDirection: 'column' }}>
-                              <MarkdownContent
-                                content={seg.text}
+                          if (block.type === 'tool_call') {
+                            return (
+                              <ToolCard
+                                key={block.id || `tool-${bIndex}`}
+                                block={block}
                                 t={t}
-                                onInsertCode={insertCodeIntoPrompt}
                               />
-                              {preferences.speech?.ttsEnabled && (
-                                <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
-                                  <MessageSpeechButton text={seg.text} preferences={preferences.speech} messageId={msg.id} />
-                                </div>
-                              )}
-                            </div>
-                          );
-                        });
-                      })()
+                            );
+                          }
+                          if (block.type === 'text') {
+                            return (
+                              <div key={`text-${bIndex}`} style={{ display: 'flex', flexDirection: 'column' }}>
+                                <MarkdownContent
+                                  content={block.text}
+                                  t={t}
+                                  onInsertCode={insertCodeIntoPrompt}
+                                />
+                                {preferences.speech?.ttsEnabled && (
+                                  <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
+                                    <MessageSpeechButton text={block.text} preferences={preferences.speech} messageId={msg.id} />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return null;
+                        })}
+                      </div>
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
                         <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
