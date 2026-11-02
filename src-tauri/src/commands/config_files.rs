@@ -220,7 +220,7 @@ pub fn write_models_config_file_atomically(
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, path) {
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, path) {
         let _ = std::fs::remove_file(&temp_file_path);
         return Err(format!("Failed to commit config file to {:?}: {}", path, e));
     }
@@ -1028,7 +1028,7 @@ pub fn save_model_thinking_levels_impl(
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, config_path) {
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, config_path) {
         let _ = std::fs::remove_file(&temp_file_path);
         return Err(format!("Failed to commit config file to {:?}: {}", config_path, e));
     }
@@ -1137,7 +1137,7 @@ pub fn save_enabled_models_impl(
     std::fs::write(&temp_path, serialized.as_bytes())
         .map_err(|e| format!("Failed to write temporary settings.json: {}", e))?;
 
-    std::fs::rename(&temp_path, config_path)
+    crate::atomic_file::replace(&temp_path, config_path)
         .map_err(|e| format!("Failed to rename temporary settings.json to destination: {}", e))?;
 
     Ok(clean_models)
@@ -1586,7 +1586,7 @@ pub fn toggle_mcp_server_impl(
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, target_path) {
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, target_path) {
         let _ = std::fs::remove_file(&temp_file_path);
         return Err(format!("Failed to commit config file to {:?}: {}", target_path, e));
     }
@@ -1903,7 +1903,7 @@ pub fn save_mcp_server_impl(
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, target_path) {
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, target_path) {
         let _ = std::fs::remove_file(&temp_file_path);
         return Err(format!("Failed to commit config file to {:?}: {}", target_path, e));
     }
@@ -1973,7 +1973,7 @@ pub fn delete_mcp_server_impl(
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, target_path) {
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, target_path) {
         let _ = std::fs::remove_file(&temp_file_path);
         return Err(format!("Failed to commit config file to {:?}: {}", target_path, e));
     }
@@ -2142,20 +2142,7 @@ pub fn parse_project_resources_from_candidates(cwd: &Path) -> Result<Vec<Value>,
 }
 
 #[cfg(test)]
-thread_local! {
-    static ATOMIC_JSON_RENAME_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(&Path, &Path) -> std::io::Result<()>>>> = std::cell::RefCell::new(None);
-}
-
-#[cfg(test)]
-fn atomic_json_rename(from: &Path, to: &Path) -> std::io::Result<()> {
-    ATOMIC_JSON_RENAME_HOOK.with(|hook| match hook.borrow_mut().as_mut() {
-        Some(rename) => rename(from, to),
-        None => std::fs::rename(from, to),
-    })
-}
-
-#[cfg(not(test))]
-use std::fs::rename as atomic_json_rename;
+use crate::atomic_file::ATOMIC_JSON_RENAME_HOOK;
 
 /// Writes JSON atomically using a temporary file and platform-safe rename/replace semantics.
 pub fn atomic_write_json(target_path: &Path, value: &Value) -> Result<(), String> {
@@ -2181,29 +2168,7 @@ pub fn atomic_write_json(target_path: &Path, value: &Value) -> Result<(), String
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = atomic_json_rename(&temp_file_path, target_path) {
-        #[cfg(windows)]
-        {
-            if target_path.exists() {
-                let backup_path = target_path.with_extension(format!(
-                    "bak.{}.{}",
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0)
-                ));
-                if atomic_json_rename(target_path, &backup_path).is_ok() {
-                    if atomic_json_rename(&temp_file_path, target_path).is_ok() {
-                        let _ = std::fs::remove_file(&backup_path);
-                        return Ok(());
-                    } else {
-                        let _ = atomic_json_rename(&backup_path, target_path);
-                    }
-                }
-            }
-        }
-        let _ = std::fs::remove_file(&temp_file_path);
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, target_path) {
         return Err(format!("Failed to commit config file to {:?}: {}", target_path, e));
     }
 
@@ -5890,30 +5855,7 @@ pub fn atomic_copy_config_file(
         }
     }
 
-    if let Err(e) = std::fs::rename(&temp_file_path, dest_path) {
-        #[cfg(windows)]
-        {
-            if dest_path.exists() {
-                let backup_path = dest_dir.join(format!(
-                    ".{}.bak.{}.{}",
-                    file_name,
-                    std::process::id(),
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_nanos())
-                        .unwrap_or(0)
-                ));
-                if std::fs::rename(dest_path, &backup_path).is_ok() {
-                    if std::fs::rename(&temp_file_path, dest_path).is_ok() {
-                        let _ = std::fs::remove_file(&backup_path);
-                        return Ok(());
-                    } else {
-                        let _ = std::fs::rename(&backup_path, dest_path);
-                    }
-                }
-            }
-        }
-        let _ = std::fs::remove_file(&temp_file_path);
+    if let Err(e) = crate::atomic_file::replace(&temp_file_path, dest_path) {
         return Err(format!(
             "Failed to atomically commit {} to {}: {e}",
             temp_file_path.display(),
@@ -11449,7 +11391,7 @@ pub async fn save_viewer_storage(
     let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
 
     std::fs::write(&tmp_path, serialized).map_err(|e| format!("Failed to write tmp storage: {e}"))?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
+    crate::atomic_file::replace(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
 
     let _ = app_handle.emit("viewer://storage_updated", &updated);
 
@@ -11496,7 +11438,7 @@ pub async fn update_viewer_storage_key(
     let tmp_path = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
 
     std::fs::write(&tmp_path, serialized).map_err(|e| format!("Failed to write tmp storage: {e}"))?;
-    std::fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
+    crate::atomic_file::replace(&tmp_path, &path).map_err(|e| format!("Failed to atomically rename storage: {e}"))?;
 
     let _ = app_handle.emit("viewer://storage_updated", &updated);
 
