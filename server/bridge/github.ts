@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { getAgnosticExecEnv } from '../config';
+import { getSavedGithubPat } from '../github-credentials';
 
 // ---------------------------------------------------------------------------
 // Authorization & Security Boundary
@@ -694,7 +695,7 @@ function normalizeRawGithubRepo(raw: any): GithubRepositorySummary {
 export async function listGithubRepositories(
   options: ListGithubRepositoriesOptions = {}
 ): Promise<ListGithubRepositoriesResult> {
-  const token = typeof options.token === 'string' ? options.token.trim() : '';
+  const token = (typeof options.token === 'string' ? options.token.trim() : '') || getSavedGithubPat();
 
   if (token) {
     if (/[\r\n\0]/.test(token)) {
@@ -732,7 +733,7 @@ export async function listGithubRepositories(
           'User-Agent': 'open-pi-viewer',
           'X-GitHub-Api-Version': '2022-11-28',
         },
-      });
+      }).catch(() => { throw new Error('GitHub request failed'); });
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
@@ -855,7 +856,8 @@ export async function cloneGithubRepository(
     throw new Error('Arguments must be an object with repository and parentPath');
   }
 
-  const { repository, parentPath, token } = args;
+  const { repository, parentPath } = args;
+  const token = (typeof args.token === 'string' ? args.token.trim() : '') || getSavedGithubPat();
 
   // 1. Validate repository input
   const { repo, canonicalHttpsUrl } = parseGithubRepository(repository);
@@ -1046,7 +1048,7 @@ export async function createGithubRepository(
     }
   }
 
-  const token = typeof args.token === 'string' ? args.token.trim() : '';
+  const token = (typeof args.token === 'string' ? args.token.trim() : '') || getSavedGithubPat();
   if (token && /[\r\n\0]/.test(token)) {
     throw new Error('Token contains invalid characters');
   }
@@ -1082,7 +1084,7 @@ export async function createGithubRepository(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(payload),
-    });
+    }).catch(() => { throw new Error('GitHub request failed'); });
 
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) {

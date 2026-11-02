@@ -159,7 +159,11 @@ import {
   handleSaveCustomProviders,
   handleGetModelThinkingLevels,
   handleSaveModelThinkingLevels,
+  handleImportProviderCredentials,
+  handleDiscoverProviderModels,
   handleGetMcpServers,
+  handleSaveMcpServer,
+  handleImportMcpServers,
   handleToggleMcpServer,
   handleGetPiResources,
   handleTogglePiResource,
@@ -200,6 +204,7 @@ import {
 
 import { handleGetProjectKanban, handleSaveProjectKanban } from './bridge/kanban';
 import { getVoiceCredential, saveVoiceCredential, clearVoiceCredential, voiceCredentialStatus } from './bridge/speech-secrets';
+import { githubCredentialStatus, saveGithubCredential, clearGithubCredential } from './github-credentials';
 import { isOAuthCommand, OAUTH_UNAUTHORIZED_MESSAGE } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
 
@@ -266,6 +271,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetAvailableThinkingLevels();
     case 'set_thinking_level':
       return await handleSetThinkingLevel(args);
+    case 'import_provider_credentials':
+      return handleImportProviderCredentials(args);
+    case 'discover_provider_models':
+      return await handleDiscoverProviderModels(args);
     case 'get_custom_providers':
       return handleGetCustomProviders();
     case 'save_custom_providers':
@@ -280,6 +289,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleSaveModelThinkingLevels(args);
     case 'get_mcp_servers':
       return handleGetMcpServers(args);
+    case 'save_mcp_server':
+      return handleSaveMcpServer(args.payload || args);
+    case 'import_mcp_servers':
+      return handleImportMcpServers(args.payload || args);
     case 'toggle_mcp_server':
       return await handleToggleMcpServer(args.payload || args);
     case 'delete_mcp_server':
@@ -370,12 +383,24 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       const payload = args.payload || args;
       return sanitizeStorageForClient(patchSpeechPreferences(payload.patch));
     }
+    case 'get_github_credential_status':
+      return githubCredentialStatus();
+    case 'save_github_credential':
+      return saveGithubCredential((args.payload || args).token);
+    case 'import_github_credential':
+      return saveGithubCredential((args.payload || args).token, true);
+    case 'clear_github_credential':
+      return clearGithubCredential();
     case 'get_viewer_storage':
       return sanitizeStorageForClient(loadViewerStorage());
-    case 'save_viewer_storage':
-      return sanitizeStorageForClient(saveViewerStorage(args.payload || args));
+    case 'save_viewer_storage': {
+      const payload = args.payload || args;
+      if (Object.prototype.hasOwnProperty.call(payload, 'githubPat') || Object.prototype.hasOwnProperty.call(payload, 'githubPatConfigured')) throw new Error('Protected storage key');
+      return sanitizeStorageForClient(saveViewerStorage(payload));
+    }
     case 'update_viewer_storage_key': {
       const payload = args.payload || args;
+      if (payload.key === 'githubPat' || payload.key === 'githubPatConfigured') throw new Error('Protected storage key');
       return sanitizeStorageForClient(updateViewerStorageKey(payload.key, payload.value));
     }
     case 'inspect_custom_speech_model': {

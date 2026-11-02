@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from './atomic-file';
 import path from 'node:path';
 import { broadcastSse } from './bridge/sse';
 
@@ -50,8 +51,8 @@ function sanitizeVoiceKeys(data: OpenPiViewerStorageData): OpenPiViewerStorageDa
 
 export function sanitizeStorageForClient(data: OpenPiViewerStorageData): OpenPiViewerStorageData {
   const sanitized = sanitizeVoiceKeys(data);
-  const { voiceCredentials, ...clientData } = sanitized;
-  return clientData as OpenPiViewerStorageData;
+  const { voiceCredentials, githubPat, ...clientData } = sanitized;
+  return { ...clientData, githubPatConfigured: typeof githubPat === 'string' && !!githubPat.trim() } as OpenPiViewerStorageData;
 }
 
 /**
@@ -100,7 +101,7 @@ export function saveViewerStorage(data: Partial<OpenPiViewerStorageData>): OpenP
 
   const tmpPath = `${filePath}.tmp.${Date.now()}.${Math.random().toString(36).slice(2, 8)}`;
   fs.writeFileSync(tmpPath, JSON.stringify(updated, null, 2), 'utf8');
-  fs.renameSync(tmpPath, filePath);
+  replaceStagedFileSync(tmpPath, filePath);
 
   // Broadcast sanitized update via SSE so open clients can stay synchronized without seeing credentials
   try {

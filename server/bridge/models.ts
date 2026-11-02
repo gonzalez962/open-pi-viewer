@@ -1,4 +1,7 @@
+import { publicProviderConfig, readModelsConfigFile, writeModelsConfigFileAtomically, mergeCustomProviderAdditive, validateProviderId, assertNoDangerousProperties } from './custom-providers';
+import { fetchBackendProviderModels, OPENROUTER_MODELS_URL } from './provider-discovery';
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import {
   getPiAgentDir,
@@ -124,7 +127,82 @@ export function getMcpServersImpl(cwd?: string) {
     }
   });
 
-  return { servers };
+  return { servers: servers.map(({ env, headers, args, url, ...rest }) => ({
+    ...rest, envKeys: Object.keys(env || {}), headers: Object.fromEntries(Object.keys(headers || {}).map(key => [key, ''])),
+    headersConfigured: Boolean(headers && Object.keys(headers).length), argsConfigured: Boolean(args?.length), urlConfigured: Boolean(url), args, url: '',
+  })) };
+}
+
+function mcpConfig(file: string): any {
+  const root = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('Invalid MCP configuration');
+  const map = root.mcpServers ?? root.servers ?? (root.mcpServers = {});
+  if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error('Invalid MCP servers');
+  return { root, map };
+}
+
+export function handleSaveMcpServer(args: any) {
+  assertNoDangerousProperties(args);
+  const { name, oldName, server, cwd, scope } = args || {};
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name) || ['constructor', 'prototype', '__proto__'].includes(name)) throw new Error('Invalid MCP server name');
+  if (oldName !== undefined && (typeof oldName !== 'string' || !/^[A-Za-z0-9_-]+$/.test(oldName) || ['constructor', 'prototype', '__proto__'].includes(oldName))) throw new Error('Invalid MCP server name');
+  if (!server || typeof server !== 'object' || Array.isArray(server)) throw new Error('Invalid MCP server');
+  if (scope !== undefined && scope !== 'global' && scope !== 'project') throw new Error('Invalid MCP scope');
+  if (scope === 'project' && (typeof cwd !== 'string' || !cwd.trim())) throw new Error('Project cwd required');
+  const file = scope === 'project' || (!scope && cwd) ? getNativeProjectMcpPath(cwd) : path.join(getPiAgentDir(), 'mcp.json');
+  const { root, map } = mcpConfig(file);
+  const previous = Object.prototype.hasOwnProperty.call(map, oldName || name) ? map[oldName || name] : {};
+  if (oldName && oldName !== name && Object.prototype.hasOwnProperty.call(map, name)) throw new Error('MCP server already exists');
+  const next = { ...previous };
+  const requestedType = server.type ?? server.serverType;
+  if (requestedType !== undefined && !['stdio', 'sse', 'remote'].includes(requestedType)) throw new Error('Invalid MCP transport');
+  const wasRemote = Boolean(previous.url);
+  if (requestedType && Object.keys(previous).length > 0) {
+    if (requestedType === 'stdio' && wasRemote) {
+      if (typeof server.command !== 'string' || !server.command.trim()) throw new Error('Command required for transport switch');
+      delete next.url;
+      delete next.args;
+    } else if (requestedType !== 'stdio' && !wasRemote) {
+      if (typeof server.url !== 'string' || !server.url.trim()) throw new Error('URL required for transport switch');
+      delete next.command;
+      delete next.args;
+    }
+  }
+  if (server.command !== undefined) { if (typeof server.command !== 'string') throw new Error('Invalid command'); next.command = server.command; }
+  if (server.enabled !== undefined) { if (typeof server.enabled !== 'boolean') throw new Error('Invalid enabled'); next.enabled = server.enabled; }
+  if (server.url !== undefined) { if (typeof server.url !== 'string') throw new Error('Invalid URL'); if (server.url.trim()) next.url = server.url; }
+  if (server.args !== undefined) { if (!Array.isArray(server.args) || !server.args.every((x: unknown) => typeof x === 'string')) throw new Error('Invalid arguments'); next.args = server.args; }
+  for (const field of ['env', 'headers']) {
+    const incoming = server[field];
+    if (incoming === undefined) continue;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid MCP map');
+    const merged = { ...(previous[field] || {}) };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (value === null) delete merged[key];
+      else if (typeof value !== 'string') throw new Error('Invalid MCP value');
+      else if (value.trim()) merged[key] = value;
+    }
+    next[field] = merged;
+  }
+  if (oldName && oldName !== name) delete map[oldName];
+  map[name] = next;
+  writeModelsConfigFileAtomically(file, root);
+  return { success: true, name, path: file };
+}
+
+export function handleImportMcpServers(args: any) {
+  assertNoDangerousProperties(args);
+  if (!Array.isArray(args?.servers)) throw new Error('Invalid MCP servers');
+  const file = path.join(getPiAgentDir(), 'mcp.json');
+  const { root, map } = mcpConfig(file);
+  for (const entry of args.servers) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(entry.name) || ['constructor', 'prototype', '__proto__'].includes(entry.name)) throw new Error('Invalid MCP server');
+    if (Object.prototype.hasOwnProperty.call(map, entry.name)) continue;
+    const { name, command, args: argv, url, env, headers, enabled, disabled } = entry;
+    map[name] = { ...(command ? { command } : {}), ...(argv ? { args: argv } : {}), ...(url ? { url } : {}), ...(env ? { env } : {}), ...(headers ? { headers } : {}), enabled: enabled ?? !disabled };
+  }
+  writeModelsConfigFileAtomically(file, root);
+  return { imported: true };
 }
 
 export function getPiResourcesImpl(cwd?: string) {
@@ -648,7 +726,7 @@ export function handleGetCustomProviders() {
   const modelsFile = path.join(getPiAgentDir(), 'models.json');
   if (fs.existsSync(modelsFile)) {
     try {
-      return JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
+      return publicProviderConfig(JSON.parse(fs.readFileSync(modelsFile, 'utf8')));
     } catch {}
   }
   return { providers: {} };
@@ -662,9 +740,71 @@ export function handleSaveCustomProviders(args: any = {}) {
       rootObj = JSON.parse(fs.readFileSync(modelsFile, 'utf8'));
     } catch {}
   }
-  rootObj.providers = args.providers;
-  fs.writeFileSync(modelsFile, JSON.stringify(rootObj, null, 2) + '\n', 'utf8');
-  return rootObj;
+  if (!args.providers || typeof args.providers !== 'object' || Array.isArray(args.providers)) throw new Error('Invalid providers');
+  assertNoDangerousProperties(args.providers);
+  const next: any = {};
+  for (const [id, value] of Object.entries<any>(args.providers)) {
+    validateProviderId(id);
+    const previous = rootObj.providers?.[id] || {};
+    const { apiKey, headers, apiKeyConfigured, headerKeys, ...rest } = value;
+    const mergedHeaders = { ...(previous.headers || {}) };
+    for (const [key, v] of Object.entries(headers || {})) {
+      if (v === null) delete mergedHeaders[key];
+      else if (typeof v === 'string' && v.trim()) mergedHeaders[key] = v;
+    }
+    next[id] = { ...rest, ...(apiKey === null ? {} : { apiKey: typeof apiKey === 'string' && apiKey.trim() ? apiKey : previous.apiKey }), ...(Object.keys(mergedHeaders).length ? { headers: mergedHeaders } : {}) };
+  }
+  rootObj.providers = next;
+  writeModelsConfigFileAtomically(modelsFile, rootObj);
+  return publicProviderConfig(rootObj);
+}
+
+export function handleImportProviderCredentials(args: any) {
+  assertNoDangerousProperties(args);
+  if (!args?.providers || typeof args.providers !== 'object' || Array.isArray(args.providers)) throw new Error('Invalid providers');
+  const file = path.join(getPiAgentDir(), 'models.json');
+  let config = readModelsConfigFile(file);
+  for (const [id, incoming] of Object.entries<any>(args.providers)) {
+    validateProviderId(id);
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid provider');
+    const existing = config.providers?.[id];
+    const headers = { ...(existing?.headers || {}) };
+    for (const [key, value] of Object.entries(incoming.headers || {})) {
+      if (!Object.prototype.hasOwnProperty.call(headers, key) && typeof value === 'string' && value.trim()) headers[key] = value;
+    }
+    const provider = { ...incoming, ...(existing || {}), headers, apiKey: existing?.apiKey || incoming.apiKey };
+    config = mergeCustomProviderAdditive(config, id, provider);
+  }
+  writeModelsConfigFileAtomically(file, config);
+  return { imported: true };
+}
+
+export async function handleDiscoverProviderModels(args: any) {
+  const id = validateProviderId(args?.providerId);
+  const config = readModelsConfigFile(path.join(getPiAgentDir(), 'models.json'));
+  const saved = config.providers?.[id];
+  const baseUrl = saved?.baseUrl || args.baseUrl;
+  const api = saved?.api || args.api;
+  if (typeof baseUrl !== 'string' || typeof api !== 'string') throw new Error('Provider unavailable');
+  try {
+    const url = new URL(baseUrl);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Invalid endpoint');
+    const headers = saved?.headers || {};
+    const key = typeof args.apiKey === 'string' && args.apiKey.trim() ? args.apiKey : saved?.apiKey;
+    const secrets = [saved?.apiKey, key, ...Object.values(headers)].filter((v): v is string => typeof v === 'string' && v.length > 0);
+    const guardedFetch: typeof fetch = async (input, init) => {
+      const target = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+      if (target.origin !== url.origin || target.username || target.password) throw new Error('Invalid endpoint');
+      return fetch(input, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string> || {}) }, redirect: 'error' });
+    };
+    const catalogFetch: typeof fetch = async (input, init) => {
+      const target = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (target !== OPENROUTER_MODELS_URL) throw new Error('Invalid catalog endpoint');
+      return fetch(input, { ...init, headers: { Accept: 'application/json' }, redirect: 'error' });
+    };
+    const models = await fetchBackendProviderModels(baseUrl, api, key, { fetchFn: guardedFetch, catalogFetchFn: catalogFetch });
+    return models.filter(model => !secrets.some(secret => JSON.stringify(model).includes(secret)));
+  } catch { throw new Error('Provider model discovery failed'); }
 }
 
 export function handleGetEnabledModels(): string[] {
@@ -812,7 +952,7 @@ export async function handleToggleMcpServer(args: any = {}) {
     }
     const tmpPath = `${projectMcpFile}.tmp.${Date.now()}.${process.pid}`;
     fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, projectMcpFile);
+    replaceStagedFileSync(tmpPath, projectMcpFile);
 
     return {
       success: true,
@@ -846,7 +986,7 @@ export async function handleToggleMcpServer(args: any = {}) {
   fs.mkdirSync(path.dirname(mcpFile), { recursive: true });
   const tmpPath = `${mcpFile}.tmp.${Date.now()}.${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2) + '\n', 'utf8');
-  fs.renameSync(tmpPath, mcpFile);
+  replaceStagedFileSync(tmpPath, mcpFile);
 
   return { success: true, name, enabled: Boolean(enabled), path: mcpFile };
 }
@@ -976,7 +1116,7 @@ export async function handleTogglePiResource(args: any = {}) {
     fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
     const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
     fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-    fs.renameSync(tmpPath, settingsFile);
+    replaceStagedFileSync(tmpPath, settingsFile);
 
     return {
       success: true,
@@ -1089,7 +1229,7 @@ export async function handleTogglePiResource(args: any = {}) {
   fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
   const tmpPath = `${settingsFile}.tmp.${Date.now()}.${process.pid}`;
   fs.writeFileSync(tmpPath, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  fs.renameSync(tmpPath, settingsFile);
+  replaceStagedFileSync(tmpPath, settingsFile);
 
   return {
     success: true,

@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { TranslationKey } from '@shared/i18n';
 import type { CustomModelDefinition, CustomProviderConfig } from '@core/types/providers';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
-import { getBuiltinProviderCatalogPi } from '@infra/bridge';
+import { getBuiltinProviderCatalogPi, discoverProviderModelsPi } from '@infra/bridge';
+import { isWebShim } from '@infra/web-oauth-access';
 import {
   clampThinkingLevelToSupported,
   fetchProviderModels,
@@ -213,6 +214,8 @@ export function buildInitialCustomProviderDraft(
     baseUrl: provider.baseUrl || '',
     api: provider.api || '',
     apiKey: provider.apiKey || '',
+    apiKeyConfigured: provider.apiKeyConfigured,
+    headerKeys: provider.headerKeys,
     models: allowedModels,
     excludedModels,
     includedModels,
@@ -360,7 +363,7 @@ export function useProviderModalForm({
   };
 
   const closeModal = () => {
-    setIsModalOpen(false); resetModalState();
+    setIsModalOpen(false); setFormData(EMPTY_FORM); resetModalState();
   };
 
   useEffect(() => {
@@ -384,7 +387,7 @@ export function useProviderModalForm({
       setIsAutoDiscovering(true);
       setAutoDiscoveryNotice(null);
       try {
-        const fetched = await fetchProviderModels(trimmedUrl, formData.api, formData.apiKey);
+        const fetched = isWebShim() ? await discoverProviderModelsPi(formData.id, formData.apiKey || undefined, undefined, { baseUrl: trimmedUrl, api: formData.api }) : await fetchProviderModels(trimmedUrl, formData.api, formData.apiKey);
         const allowed = fetched.filter((m) =>
           isModelAllowed(m.id, {
             includedModels: formData.includedModels,
@@ -466,7 +469,7 @@ export function useProviderModalForm({
     setAutoDiscoveryNotice(null);
 
     try {
-      const fetched = await fetchProviderModels(trimmedUrl, formData.api, formData.apiKey);
+      const fetched = isWebShim() ? await discoverProviderModelsPi(formData.id, formData.apiKey || undefined, undefined, { baseUrl: trimmedUrl, api: formData.api }) : await fetchProviderModels(trimmedUrl, formData.api, formData.apiKey);
       const excludedList = formData.excludedModels || [];
       const includedList = formData.includedModels || [];
       const allowedFetched = fetched.filter((m) =>

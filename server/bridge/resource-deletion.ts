@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import {
@@ -27,9 +28,9 @@ function writeConfig(file: string, value: Config): void {
     fs.writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', {
       flag: 'wx', mode: fs.statSync(file).mode & 0o777,
     });
-    fs.renameSync(temporary, file);
+    replaceStagedFileSync(temporary, file);
   } finally {
-    fs.rmSync(temporary, { force: true });
+    try { fs.unlinkSync(temporary); } catch {}
   }
 }
 

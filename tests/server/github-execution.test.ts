@@ -11,6 +11,11 @@ import {
   setProcessRunnerForTest,
 } from '@server/bridge/github';
 
+import { setStorageFilePathForTest } from '@server/storage';
+const isolatedStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-execution-storage-'));
+test.beforeEach(() => setStorageFilePathForTest(path.join(isolatedStorageDir, 'empty.json')));
+test.after(() => { setStorageFilePathForTest(null); fs.rmSync(isolatedStorageDir, { recursive: true, force: true }); });
+
 // ---------------------------------------------------------------------------
 // 1. Error sanitization: generic fallback for unknown child output, no leaks
 // ---------------------------------------------------------------------------

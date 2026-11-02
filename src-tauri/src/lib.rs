@@ -1,3 +1,4 @@
+mod atomic_file;
 mod background;
 mod tray;
 mod tray_activity;

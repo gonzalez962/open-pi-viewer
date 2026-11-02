@@ -87,7 +87,7 @@ fn atomic_write(file: &Path, data: &[u8]) -> Result<(), String> {
         output.write_all(data)?;
         output.sync_all()?;
         drop(output);
-        fs::rename(&temp, file)
+        crate::atomic_file::replace(&temp, file)
     })();
     if temp.exists() { let _ = fs::remove_file(&temp); }
     result.map_err(|e: std::io::Error| e.to_string())

@@ -18,7 +18,8 @@ import {
  */
 export function validateMcpForm(
   formData: McpFormData,
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string,
+  urlConfigured = false
 ): string | null {
   const trimmedName = formData.name.trim();
   if (!trimmedName) {
@@ -35,7 +36,7 @@ export function validateMcpForm(
   } else {
     const trimmedUrl = formData.url.trim();
     if (!trimmedUrl) {
-      return t('mcp.error_url_required');
+      return urlConfigured ? null : t('mcp.error_url_required');
     }
     try {
       const parsed = new URL(trimmedUrl);
@@ -190,7 +191,7 @@ export function useMcpModalForm(): UseMcpModalFormResult {
       t: (key: TranslationKey, params?: Record<string, string | number>) => string,
       cwd?: string
     ): Promise<boolean> => {
-      const validationError = validateMcpForm(formData, t);
+      const validationError = validateMcpForm(formData, t, Boolean(originalServer?.urlConfigured));
       if (validationError) {
         setFormError(validationError);
         return false;
@@ -203,7 +204,8 @@ export function useMcpModalForm(): UseMcpModalFormResult {
         const payload = formDataToSavePayload(
           formData,
           originalServer?.name,
-          cwd
+          cwd,
+          originalServer
         );
         const success = await saveFn(payload);
         if (success) {

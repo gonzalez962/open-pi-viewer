@@ -61,6 +61,20 @@ The existing authentication, IPC, OAuth, and SSE routes are shared with developm
 
 `npm run preview` remains a frontend-only preview, not the service startup command.
 
+### GitHub credentials in web mode
+
+In Settings, save or explicitly replace or clear a GitHub personal access token. Web clients see configured status, not the saved token. The webserver stores it in viewer storage and uses it for GitHub operations and newly spawned processes; it is not an encrypted vault. Restrict access to that storage and the service OS account, including its process environment. Use authenticated access and HTTPS for remote deployments: a token entered over HTTP can be observed in transit.
+
+A legacy browser copy is imported only when the backend has no token; an existing backend token wins. The browser copy is removed only after backend acknowledgement, and remains for retry on failure. This behavior applies to webserver mode; native Tauri credential handling is unchanged and has not been hardened by this change.
+
+### MCP arguments in web mode
+
+MCP arguments are visible to web clients and editable in the viewer. Use environment variables for secrets where the MCP server supports them; environment values, header values, and URLs remain redacted from inventory responses.
+
+### Provider credentials in web mode
+
+Provider API keys and header values are stored on the server, not returned to web clients. The provider editor displays configured status and header names; blank fields preserve existing values, while replacement and deletion are explicit. Model discovery uses server-held credentials. Legacy browser provider copies are imported without replacing existing backend credentials and removed only after backend acknowledgement; failures retain the copy for retry. Protect the server configuration and use authenticated HTTPS: server storage is not an encrypted vault. Native Tauri credential handling is unchanged.
+
 ## OpenAI Realtime speech synthesis (web)
 
 In **Settings → Voice**, select OpenAI Realtime for TTS, choose a supported voice and save the OpenAI connection. The web bridge sends text to the configured Realtime WebSocket endpoint using the server-held API key and converts 24 kHz PCM to WAV for playback. The default model is `gpt-realtime-2.1-mini`; legacy TTS model and unsupported voice settings fall back to the new defaults. The configured endpoint must support the OpenAI Realtime protocol; remote connections require TLS. Realtime generates speech from an instruction to read the supplied text, so exact verbal reproduction is not guaranteed. Realtime speech rate uses the existing speech-rate control, limited to OpenAI's supported 0.25–1.5 range. Wyoming remains available for local synthesis.

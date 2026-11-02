@@ -467,7 +467,10 @@ test('server/bridge: IPC get_github_auth_status dispatches and returns status ob
 
 test('server/bridge: IPC clone_github_repository dispatches with payload or direct args', async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-clone-test-'));
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(path.join(tmpDir, 'storage.json'));
   t.after(() => {
+    setStorageFilePathForTest(null);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -502,7 +505,11 @@ test('server/bridge: IPC clone_github_repository dispatches with payload or dire
   }
 });
 
-test('server/bridge: IPC create_github_repository dispatches with payload or direct args', async () => {
+test('server/bridge: IPC create_github_repository dispatches with payload or direct args', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ipc-create-storage-'));
+  const { setStorageFilePathForTest } = await import('@server/storage');
+  setStorageFilePathForTest(path.join(dir, 'storage.json'));
+  t.after(() => { setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
   setProcessRunnerForTest(async (file, args) => {
     if (file === 'gh' && args.includes('--version')) {
       return { stdout: 'gh version 2.50.0', stderr: '', exitCode: 0 };

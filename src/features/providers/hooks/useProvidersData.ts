@@ -43,7 +43,8 @@ export function prepareProviderPayload(formData: ProviderFormData): CustomProvid
     name: formData.name.trim() || undefined,
     baseUrl: baseUrlTrimmed ? baseUrlTrimmed : (isBuiltin ? undefined : ''),
     api: apiTrimmed ? apiTrimmed : (isBuiltin ? undefined : ''),
-    apiKey: apiKeyTrimmed || undefined,
+    apiKey: formData.deleteApiKey ? null : apiKeyTrimmed || undefined,
+    ...(formData.headerEdits ? { headers: formData.headerEdits } : {}),
     models: formData.models
       .filter((m) => isModelAllowed(m.id.trim(), policy))
       .map((m) => ({

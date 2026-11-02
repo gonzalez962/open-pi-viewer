@@ -10,6 +10,10 @@ import {
   type ListGitHubRepositoriesResult,
 } from '@infra/bridge';
 
+import { isWebShim } from '@infra/web-oauth-access';
+import { githubCredentialPi } from '@infra/viewer-storage';
+import { isTauri } from '@tauri-apps/api/core';
+
 export interface GitHubRepoValidationResult {
   valid: boolean;
   normalized?: string;
@@ -32,6 +36,7 @@ function resolveStorage(storage?: Storage | null): Storage | null {
  * Loads the saved GitHub Personal Access Token from persistent storage.
  */
 export function getSavedGitHubPat(storage?: Storage | null): string {
+  if (isWebShim()) return '';
   try {
     const store = resolveStorage(storage);
     return (store?.getItem(GITHUB_PAT_STORAGE_KEY) || '').trim();
@@ -44,7 +49,12 @@ export function getSavedGitHubPat(storage?: Storage | null): string {
  * Persists a GitHub Personal Access Token to local storage for subsequent private repo clones.
  * If an empty or whitespace-only token is provided, the stored token is removed.
  */
-export function saveGitHubPat(token: string, storage?: Storage | null): void {
+export function saveGitHubPat(token: string, storage?: Storage | null): void | Promise<void> {
+  if (isWebShim()) {
+    if (!token.trim()) return Promise.reject(new Error('GitHub token required'));
+    return githubCredentialPi('save_github_credential', token).then(status => { if (!status?.configured) throw new Error('GitHub credential operation failed'); });
+  }
+  if (typeof window !== 'undefined' && !isTauri()) return;
   try {
     const store = resolveStorage(storage);
     const clean = token.trim();
@@ -69,7 +79,9 @@ export function saveGitHubPat(token: string, storage?: Storage | null): void {
 /**
  * Removes the saved GitHub Personal Access Token from persistent storage.
  */
-export function clearSavedGitHubPat(storage?: Storage | null): void {
+export function clearSavedGitHubPat(storage?: Storage | null): void | Promise<void> {
+  if (isWebShim()) return githubCredentialPi('clear_github_credential').then(() => {});
+  if (typeof window !== 'undefined' && !isTauri()) return;
   try {
     const store = resolveStorage(storage);
     store?.removeItem(GITHUB_PAT_STORAGE_KEY);
@@ -403,14 +415,18 @@ export function createGitHubCloneController(
 
     setToken: (token: string) => {
       if (isDisposed) return;
-      updateState({ token, hasSavedToken: Boolean(token.trim()), error: null });
-      void fetchPatUser(token);
+      updateState({ token, hasSavedToken: isWebShim() ? state.hasSavedToken : Boolean(token.trim()), error: null });
+      if (!isWebShim()) void fetchPatUser(token);
     },
 
     clearToken: () => {
       if (isDisposed) return;
-      clearSavedGitHubPat(storage);
-      updateState({ token: '', hasSavedToken: false, patUser: undefined });
+      if (isWebShim()) {
+        void Promise.resolve(clearSavedGitHubPat(storage)).then(() => updateState({ token: '', hasSavedToken: false, patUser: undefined })).catch(() => {});
+      } else {
+        void clearSavedGitHubPat(storage);
+        updateState({ token: '', hasSavedToken: false, patUser: undefined });
+      }
     },
 
     fetchPatUser,
@@ -442,8 +458,11 @@ export function createGitHubCloneController(
           },
         });
       }
+      if (isWebShim()) {
+        try { updateState({ hasSavedToken: (await githubCredentialPi('get_github_credential_status')).configured }); } catch {}
+      }
       const effectiveToken = state.token.trim() || getSavedGitHubPat(storage);
-      if (effectiveToken) {
+      if (effectiveToken && !isWebShim()) {
         void fetchPatUser(effectiveToken);
       }
     },
@@ -451,7 +470,7 @@ export function createGitHubCloneController(
     loadRepositories: async () => {
       if (isDisposed) return;
       const effectiveToken = state.token.trim() || getSavedGitHubPat(storage);
-      const isAuth = state.authStatus.authenticated || Boolean(effectiveToken);
+      const isAuth = state.authStatus.authenticated || Boolean(effectiveToken) || (isWebShim() && state.hasSavedToken);
 
       if (!isAuth) {
         updateState({
@@ -539,12 +558,15 @@ export function createGitHubCloneController(
       const savedToken = getSavedGitHubPat(storage);
       const effectiveToken = trimmedToken || savedToken;
 
-      if (effectiveToken) {
+      if (isWebShim()) {
+        tokenToSend = trimmedToken || undefined;
+        updateState({ token: '' });
+      } else if (effectiveToken) {
         tokenToSend = effectiveToken;
-        saveGitHubPat(effectiveToken, storage);
+        void saveGitHubPat(effectiveToken, storage);
         updateState({ token: effectiveToken, hasSavedToken: true });
       } else {
-        clearSavedGitHubPat(storage);
+        void clearSavedGitHubPat(storage);
         updateState({ token: '', hasSavedToken: false });
       }
 

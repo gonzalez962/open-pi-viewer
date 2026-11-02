@@ -12,6 +12,10 @@ export interface ProviderFormData {
   baseUrl: string;
   api: SupportedApiProtocol | string;
   apiKey: string;
+  apiKeyConfigured?: boolean;
+  deleteApiKey?: boolean;
+  headerKeys?: string[];
+  headerEdits?: Record<string, string | null>;
   models: CustomModelDefinition[];
   excludedModels: string[];
   includedModels: string[];

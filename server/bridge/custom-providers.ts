@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getPiAgentDir } from './state';
@@ -256,7 +257,7 @@ export function writeModelsConfigFileAtomically(filePath: string, config: Models
     targetMode = 0o600;
   }
 
-  const tempFile = path.join(dir, `models.json.tmp.${process.pid}.${Date.now()}.${randomUUID()}`);
+  const tempFile = path.join(dir, `${path.basename(filePath)}.tmp.${process.pid}.${Date.now()}.${randomUUID()}`);
   let fd: number | null = null;
   try {
     fd = fs.openSync(tempFile, 'wx', targetMode);
@@ -271,18 +272,14 @@ export function writeModelsConfigFileAtomically(filePath: string, config: Models
     fs.closeSync(fd);
     fd = null;
 
-    fs.renameSync(tempFile, filePath);
+    replaceStagedFileSync(tempFile, filePath);
   } finally {
     if (fd !== null) {
       try {
         fs.closeSync(fd);
       } catch {}
     }
-    if (fs.existsSync(tempFile)) {
-      try {
-        fs.unlinkSync(tempFile);
-      } catch {}
-    }
+    try { fs.unlinkSync(tempFile); } catch {}
   }
 }
 
@@ -443,6 +440,18 @@ export function removeCustomProviderFromConfig(
 /**
  * Handler for public web IPC upsert_custom_provider.
  */
+export function publicProviderConfig(config: ModelsConfigFile): ModelsConfigFile {
+  const providers: CustomProvidersMap = {};
+  for (const [id, value] of Object.entries(config.providers || {})) {
+    const { apiKey, headers, ...rest } = value;
+    Object.defineProperty(providers, id, { enumerable: true, configurable: true, writable: true, value: {
+      ...rest, ...(typeof apiKey === 'string' && apiKey.trim() ? { apiKeyConfigured: true } : {}),
+      ...(headers && typeof headers === 'object' && Object.keys(headers).length ? { headerKeys: Object.keys(headers) } : {}),
+    } });
+  }
+  return { ...config, providers };
+}
+
 export function handleUpsertCustomProvider(args: any = {}): ModelsConfigFile {
   assertNoDangerousProperties(args, 'args');
   const payload =
@@ -480,9 +489,21 @@ export function handleUpsertCustomProvider(args: any = {}): ModelsConfigFile {
   const modelsPath = path.join(getPiAgentDir(), 'models.json');
   const currentConfig = readModelsConfigFile(modelsPath);
 
+  const existing = currentConfig.providers?.[validatedId];
+  if (typeof providerObj.apiKey === 'string' && !providerObj.apiKey.trim()) delete providerObj.apiKey;
+  delete providerObj.apiKeyConfigured;
+  delete providerObj.headerKeys;
+  if (providerObj.headers && typeof providerObj.headers === 'object') {
+    const headers: Record<string, string> = { ...(existing?.headers || {}) };
+    for (const [key, value] of Object.entries(providerObj.headers)) {
+      if (value === null) delete headers[key];
+      else if (typeof value === 'string' && value.trim()) headers[key] = value;
+    }
+    providerObj.headers = headers;
+  }
   const updatedConfig = mergeCustomProviderAdditive(currentConfig, validatedId, providerObj);
   writeModelsConfigFileAtomically(modelsPath, updatedConfig);
-  return updatedConfig;
+  return publicProviderConfig(updatedConfig);
 }
 
 /**
@@ -510,5 +531,5 @@ export function handleDeleteCustomProvider(args: any = {}): ModelsConfigFile {
   const currentConfig = readModelsConfigFile(modelsPath);
   const updatedConfig = removeCustomProviderFromConfig(currentConfig, validatedId);
   writeModelsConfigFileAtomically(modelsPath, updatedConfig);
-  return updatedConfig;
+  return publicProviderConfig(updatedConfig);
 }

@@ -17,6 +17,9 @@ export {
   clearSavedGitHubPat,
 };
 
+import { isWebShim } from '@infra/web-oauth-access';
+import { githubCredentialPi } from '@infra/viewer-storage';
+
 export interface GitHubRepoNameValidationResult {
   valid: boolean;
   normalized?: string;
@@ -213,6 +216,9 @@ export function createGitHubCreateController(
         username: undefined,
       };
     }
+    if (isWebShim()) {
+      try { state.hasSavedToken = (await githubCredentialPi('get_github_credential_status')).configured; } catch {}
+    }
     notify();
   };
 
@@ -250,18 +256,18 @@ export function createGitHubCreateController(
 
   const setToken = (token: string) => {
     state.token = token;
-    state.hasSavedToken = Boolean(token.trim());
-    saveGitHubPat(token, storage);
-    void fetchPatUser(token);
+    if (!isWebShim()) {
+      state.hasSavedToken = Boolean(token.trim());
+      void saveGitHubPat(token, storage);
+      void fetchPatUser(token);
+    }
     notify();
   };
 
   const clearToken = () => {
-    state.token = '';
-    state.hasSavedToken = false;
-    state.patUser = undefined;
-    clearSavedGitHubPat(storage);
-    notify();
+    const clearState = () => { state.token = ''; state.hasSavedToken = false; state.patUser = undefined; notify(); };
+    if (isWebShim()) void Promise.resolve(clearSavedGitHubPat(storage)).then(clearState).catch(() => {});
+    else { void clearSavedGitHubPat(storage); clearState(); }
   };
 
   const submit = async (): Promise<void> => {
@@ -296,6 +302,7 @@ export function createGitHubCreateController(
         token: state.token.trim() || undefined,
       };
 
+      if (isWebShim()) { state.token = ''; notify(); }
       const result = await createRepository(payload);
       state.isSubmitting = false;
       state.successResult = result;

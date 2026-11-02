@@ -10,10 +10,20 @@ export interface ViewerStoragePayload {
   sessions?: Record<string, unknown> | null;
   profileSnapshots?: Record<string, unknown> | null;
   githubPat?: string | null;
+  githubPatConfigured?: boolean;
   [key: string]: unknown;
 }
 
 type InvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+
+export async function githubCredentialPi(command: 'get_github_credential_status' | 'save_github_credential' | 'clear_github_credential' | 'import_github_credential', token?: string): Promise<{ configured: boolean }> {
+  if (!isWebShim()) throw new Error('GitHub credential backend unavailable');
+  try {
+    return await invoke<{ configured: boolean }>(command, token === undefined ? {} : { payload: { token } });
+  } catch {
+    throw new Error('GitHub credential operation failed');
+  }
+}
 const defaultInvoke: InvokeFn = invoke;
 
 export async function getViewerStoragePi(

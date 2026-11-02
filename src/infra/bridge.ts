@@ -877,26 +877,29 @@ export async function openExternalUrlPi(
 
 export const MOCK_CUSTOM_PROVIDERS_STORAGE_KEY = 'pi_viewer_custom_providers_mock';
 
+export async function migrateLegacyProviderCredentials(storage: Storage, invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke): Promise<void> {
+  const source = storage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY);
+  if (!source) return;
+  try {
+    const parsed = JSON.parse(source);
+    const ack = await invokeFn<{ imported: boolean }>('import_provider_credentials', { providers: parsed.providers });
+    if (ack?.imported === true && storage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY) === source) storage.removeItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY);
+  } catch { /* Retain the source for retry. */ }
+}
+
+export async function discoverProviderModelsPi(providerId: string, apiKey?: string, invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke, endpoint?: { baseUrl: string; api: string }): Promise<import('@core/types/providers').CustomModelDefinition[]> {
+  return invokeFn('discover_provider_models', { providerId, apiKey, ...endpoint });
+}
+
 /**
  * Fetch configured custom model providers from ~/.pi/agent/models.json via Tauri IPC.
  */
 export async function getCustomProvidersPi(
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<ModelsConfigFile> {
-  if (!isTauri() && invokeFn === invoke) {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const stored = window.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY);
-      if (stored) {
-        try {
-          return JSON.parse(stored);
-        } catch {
-          // Fallback to empty mock
-        }
-      }
-    }
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
     return { providers: {} };
   }
-
   return await invokeFn<ModelsConfigFile>('get_custom_providers');
 }
 
@@ -907,14 +910,7 @@ export async function saveCustomProvidersPi(
   providers: CustomProvidersMap,
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<ModelsConfigFile> {
-  if (!isTauri() && invokeFn === invoke) {
-    const config: ModelsConfigFile = { providers };
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY, JSON.stringify(config));
-    }
-    return config;
-  }
-
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) throw new Error('Provider persistence requires a backend');
   return await invokeFn<ModelsConfigFile>('save_custom_providers', { providers });
 }
 
@@ -926,30 +922,7 @@ export async function upsertCustomProviderPi(
   cwd?: string | null,
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<ModelsConfigFile> {
-  if (!isTauri() && invokeFn === invoke) {
-    let currentConfig: ModelsConfigFile = { providers: {} };
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const stored = window.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY);
-      if (stored) {
-        try {
-          currentConfig = JSON.parse(stored);
-        } catch {
-          // ignore
-        }
-      }
-    }
-    const currentProviders = (currentConfig.providers && typeof currentConfig.providers === 'object')
-      ? { ...currentConfig.providers }
-      : {};
-    const { id, ...providerData } = provider;
-    currentProviders[id] = providerData;
-    currentConfig.providers = currentProviders;
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY, JSON.stringify(currentConfig));
-    }
-    return currentConfig;
-  }
-
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) throw new Error('Provider persistence requires a backend');
   return await invokeFn<ModelsConfigFile>('upsert_custom_provider', {
     provider,
     providerId: provider.id,
@@ -964,29 +937,7 @@ export async function deleteCustomProviderPi(
   providerId: string,
   invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
 ): Promise<ModelsConfigFile> {
-  if (!isTauri() && invokeFn === invoke) {
-    let currentConfig: ModelsConfigFile = { providers: {} };
-    if (typeof window !== 'undefined' && window.localStorage) {
-      const stored = window.localStorage.getItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY);
-      if (stored) {
-        try {
-          currentConfig = JSON.parse(stored);
-        } catch {
-          // ignore
-        }
-      }
-    }
-    const currentProviders = (currentConfig.providers && typeof currentConfig.providers === 'object')
-      ? { ...currentConfig.providers }
-      : {};
-    delete currentProviders[providerId];
-    currentConfig.providers = currentProviders;
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(MOCK_CUSTOM_PROVIDERS_STORAGE_KEY, JSON.stringify(currentConfig));
-    }
-    return currentConfig;
-  }
-
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) throw new Error('Provider persistence requires a backend');
   return await invokeFn<ModelsConfigFile>('delete_custom_provider', {
     providerId,
     id: providerId,
@@ -1438,7 +1389,7 @@ export async function getMcpServersPi(
   cwd?: string,
   invokeFn = invoke
 ): Promise<McpServersPayload> {
-  if (!isTauri() && invokeFn === invoke) {
+  if (!isWebShim() && !isTauri() && invokeFn === invoke) {
     let servers: McpServerConfig[] = [];
     const storage =
       typeof window !== 'undefined' && window.localStorage
@@ -1533,7 +1484,7 @@ export async function toggleMcpServerPi(
   payload: ToggleMcpServerPayload,
   invokeFn = invoke
 ): Promise<ToggleMcpServerResult> {
-  if (!isTauri() && invokeFn === invoke) {
+  if (!isWebShim() && !isTauri() && invokeFn === invoke) {
     try {
       const current = await getMcpServersPi(payload.cwd, invokeFn);
       const existing = current.servers.find((s) => s.name === payload.name);
@@ -1620,9 +1571,13 @@ export async function saveMcpServerPi(
   payload: SaveMcpServerPayload,
   invokeFn = invoke
 ): Promise<SaveMcpServerResult> {
-  if (!isTauri() && invokeFn === invoke) {
+  if (!isWebShim() && !isTauri() && invokeFn === invoke) {
     try {
+      const hasProtectedValues = (server: { env?: Record<string, string | null>; headers?: Record<string, string | null>; url?: string; args?: string[] }) =>
+        Boolean(server.url || server.args?.length || Object.values(server.env || {}).some(Boolean) || Object.values(server.headers || {}).some(Boolean));
+      if (hasProtectedValues(payload.server)) return { success: false, name: payload.name, path: '' };
       const current = await getMcpServersPi(payload.cwd, invokeFn);
+      if (current.servers.some(hasProtectedValues)) return { success: false, name: payload.name, path: '' };
       const targetName = payload.name.trim();
       const oldName = payload.oldName?.trim();
 
@@ -1686,10 +1641,10 @@ export async function saveMcpServerPi(
       };
 
       if (env) {
-        serverConfig.env = env;
+        serverConfig.env = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
       }
       if (headers) {
-        serverConfig.headers = headers;
+        serverConfig.headers = Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
       }
 
       if (payload.server.url) {
@@ -1778,7 +1733,7 @@ export async function deleteMcpServerPi(
   payload: DeleteMcpServerPayload,
   invokeFn = invoke
 ): Promise<DeleteMcpServerResult> {
-  if (!isTauri() && invokeFn === invoke) {
+  if (!isWebShim() && !isTauri() && invokeFn === invoke) {
     try {
       const current = await getMcpServersPi(payload.cwd, invokeFn);
       const targetName = payload.name.trim();

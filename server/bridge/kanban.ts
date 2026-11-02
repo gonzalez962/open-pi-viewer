@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { replaceStagedFileSync } from '../atomic-file';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -38,9 +39,9 @@ function atomicWrite(file: string, contents: string): void {
   const temp = `${file}.tmp-${randomUUID()}`;
   try {
     fs.writeFileSync(temp, contents, { flag: 'wx', mode: 0o600 });
-    fs.renameSync(temp, file);
+    replaceStagedFileSync(temp, file);
   } finally {
-    if (fs.existsSync(temp)) fs.unlinkSync(temp);
+    try { fs.unlinkSync(temp); } catch {}
   }
 }
 

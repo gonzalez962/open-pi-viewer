@@ -2,13 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {
   handleIpcCommand,
   setPiAgentDirForTest,
 } from '@server/web-ipc-bridge';
 
 function createIsolatedFixture() {
-  const root = fs.mkdtempSync(path.join(process.cwd(), '.workspace-provider-test-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-provider-test-'));
   const agentDir = path.join(root, 'agent');
   fs.mkdirSync(agentDir, { recursive: true });
   setPiAgentDirForTest(agentDir);

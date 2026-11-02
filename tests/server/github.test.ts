@@ -15,6 +15,49 @@ import {
   createGithubRepository,
 } from '@server/bridge/github';
 
+import { setStorageFilePathForTest } from '@server/storage';
+const isolatedStorageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-suite-storage-'));
+test.beforeEach(() => setStorageFilePathForTest(path.join(isolatedStorageDir, 'empty.json')));
+test.after(() => { setStorageFilePathForTest(null); fs.rmSync(isolatedStorageDir, { recursive: true, force: true }); });
+
+test('T1 S1.2: clone resolves a saved PAT without a client token', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-saved-clone-'));
+  const { setStorageFilePathForTest, saveViewerStorage } = await import('@server/storage');
+  setStorageFilePathForTest(path.join(dir, 'storage.json'));
+  saveViewerStorage({ githubPat: 'fake_saved_clone_pat' });
+  let env: NodeJS.ProcessEnv | undefined;
+  setProcessRunnerForTest(async (_file, _args, options) => {
+    env = options.env;
+    return { stdout: '', stderr: '', exitCode: 0 };
+  });
+  t.after(() => { setProcessRunnerForTest(null); setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
+  await cloneGithubRepository({ repository: 'owner/repo', parentPath: dir });
+  const encoded = Buffer.from('x-access-token:fake_saved_clone_pat').toString('base64');
+  assert.ok(Object.values(env ?? {}).some((value) => typeof value === 'string' && value.includes(encoded)));
+});
+
+for (const operation of ['list', 'create'] as const) {
+  test(`T1 S1.2: ${operation} uses backend PAT without client token`, async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'github-saved-api-'));
+    const { setStorageFilePathForTest, saveViewerStorage } = await import('@server/storage');
+    setStorageFilePathForTest(path.join(dir, 'storage.json'));
+    saveViewerStorage({ githubPat: 'fake_saved_api_pat' });
+    const originalFetch = globalThis.fetch;
+    const headers: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      headers.push((init?.headers as Record<string, string>)?.Authorization);
+      const json = String(input).endsWith('/user') ? { login: 'owner' } : operation === 'list' ? [] : { id: 1, name: 'repo', full_name: 'owner/repo', owner: { login: 'owner' } };
+      return { ok: true, status: 200, json: async () => json } as Response;
+    };
+    setProcessRunnerForTest(async () => ({ stdout: '', stderr: '', exitCode: 1 }));
+    t.after(() => { globalThis.fetch = originalFetch; setProcessRunnerForTest(null); setStorageFilePathForTest(null); fs.rmSync(dir, { recursive: true, force: true }); });
+    if (operation === 'list') await listGithubRepositories();
+    else await createGithubRepository({ name: 'repo' });
+    assert.ok(headers.length > 0);
+    assert.ok(headers.every((header) => header === 'Bearer fake_saved_api_pat'));
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 1. Repository parsing & validation
 // ---------------------------------------------------------------------------

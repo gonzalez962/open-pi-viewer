@@ -4,6 +4,7 @@ import {
   updateViewerStorageKeyPi,
   listenViewerStorageUpdatesPi,
   type ViewerStoragePayload,
+  githubCredentialPi,
 } from '@infra/viewer-storage';
 import { UI_PREFERENCES_STORAGE_KEY, loadUiPreferences, validateUiPreferences } from '@infra/preferences';
 import { CONFIG_STORAGE_KEY, loadConnectConfig } from '@features/settings/config';
@@ -20,6 +21,9 @@ import {
 } from '@features/profiles/lib/sessionProfileSnapshot';
 import { GITHUB_PAT_STORAGE_KEY, getSavedGitHubPat } from '@features/projects/github-clone';
 import type { ConnectConfig } from '@core/types/connection';
+import { isWebShim } from '@infra/web-oauth-access';
+import { migrateLegacyProviderCredentials, MOCK_MCP_SERVERS_STORAGE_KEY } from '@infra/bridge';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface StorageSyncCallbacks {
   onUiPreferencesUpdated?: (prefs: Record<string, unknown>) => void;
@@ -135,8 +139,31 @@ export async function initStorageSynchronization(callbacks: StorageSyncCallbacks
       }
     }
 
-    // 6. GitHub PAT
-    if (serverStorage.githubPat !== undefined && serverStorage.githubPat !== null) {
+    // 6. GitHub PAT: web migration removes the legacy copy only after backend acknowledgement.
+    if (isWebShim()) {
+      await migrateLegacyProviderCredentials(window.localStorage);
+      const legacyMcp = window.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+      if (legacyMcp !== null) {
+        try {
+          const parsed = JSON.parse(legacyMcp);
+          const servers = Array.isArray(parsed) ? parsed : parsed?.servers;
+          if (Array.isArray(servers)) {
+            const result = await invoke<{ imported: boolean }>('import_mcp_servers', { servers });
+            if (result?.imported === true && window.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY) === legacyMcp) window.localStorage.removeItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+          }
+        } catch { /* Keep the source for retry. */ }
+      }
+      const localPat = window.localStorage.getItem(GITHUB_PAT_STORAGE_KEY)?.trim();
+      if (localPat) {
+        try {
+          const status = await githubCredentialPi('import_github_credential', localPat);
+          if (status?.configured === true && window.localStorage.getItem(GITHUB_PAT_STORAGE_KEY)?.trim() === localPat) {
+            window.localStorage.removeItem(GITHUB_PAT_STORAGE_KEY);
+          }
+        } catch { /* Keep the legacy source for retry. */ }
+      }
+      delete serverStorage.githubPat;
+    } else if (serverStorage.githubPat !== undefined && serverStorage.githubPat !== null) {
       if (serverStorage.githubPat) {
         window.localStorage.setItem(GITHUB_PAT_STORAGE_KEY, serverStorage.githubPat);
       } else {
@@ -256,7 +283,10 @@ export function handleRemoteStorageUpdate(
     );
   }
 
-  if (updated.githubPat !== undefined) {
+  if (isWebShim()) {
+    const { githubPat, ...safe } = updated;
+    updated = safe as ViewerStoragePayload;
+  } else if (updated.githubPat !== undefined) {
     if (updated.githubPat) {
       window.localStorage.setItem(GITHUB_PAT_STORAGE_KEY, updated.githubPat);
     } else {
