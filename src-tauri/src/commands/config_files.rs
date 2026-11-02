@@ -2141,6 +2141,22 @@ pub fn parse_project_resources_from_candidates(cwd: &Path) -> Result<Vec<Value>,
     Ok(merged)
 }
 
+#[cfg(test)]
+thread_local! {
+    static ATOMIC_JSON_RENAME_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(&Path, &Path) -> std::io::Result<()>>>> = std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+fn atomic_json_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    ATOMIC_JSON_RENAME_HOOK.with(|hook| match hook.borrow_mut().as_mut() {
+        Some(rename) => rename(from, to),
+        None => std::fs::rename(from, to),
+    })
+}
+
+#[cfg(not(test))]
+use std::fs::rename as atomic_json_rename;
+
 /// Writes JSON atomically using a temporary file and platform-safe rename/replace semantics.
 pub fn atomic_write_json(target_path: &Path, value: &Value) -> Result<(), String> {
     if let Some(parent) = target_path.parent() {
@@ -2165,7 +2181,7 @@ pub fn atomic_write_json(target_path: &Path, value: &Value) -> Result<(), String
     std::fs::write(&temp_file_path, serialized)
         .map_err(|e| format!("Failed to write temporary config file {:?}: {}", temp_file_path, e))?;
 
-    if let Err(e) = std::fs::rename(&temp_file_path, target_path) {
+    if let Err(e) = atomic_json_rename(&temp_file_path, target_path) {
         #[cfg(windows)]
         {
             if target_path.exists() {
@@ -2177,12 +2193,12 @@ pub fn atomic_write_json(target_path: &Path, value: &Value) -> Result<(), String
                         .map(|d| d.as_nanos())
                         .unwrap_or(0)
                 ));
-                if std::fs::rename(target_path, &backup_path).is_ok() {
-                    if std::fs::rename(&temp_file_path, target_path).is_ok() {
+                if atomic_json_rename(target_path, &backup_path).is_ok() {
+                    if atomic_json_rename(&temp_file_path, target_path).is_ok() {
                         let _ = std::fs::remove_file(&backup_path);
                         return Ok(());
                     } else {
-                        let _ = std::fs::rename(&backup_path, target_path);
+                        let _ = atomic_json_rename(&backup_path, target_path);
                     }
                 }
             }
@@ -6603,6 +6619,82 @@ pub async fn enroll_engram_project(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The hook is thread-local so parallel tests cannot intercept each other's writes.
+    struct AtomicJsonFixture(PathBuf);
+    impl AtomicJsonFixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("windows-atomic-save-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&dir).unwrap();
+            Self(dir)
+        }
+        fn assert_only_destination(&self) {
+            let entries: Vec<_> = std::fs::read_dir(&self.0).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+            assert_eq!(entries, vec![std::ffi::OsString::from("config.json")]);
+        }
+    }
+    impl Drop for AtomicJsonFixture {
+        fn drop(&mut self) {
+            ATOMIC_JSON_RENAME_HOOK.with(|hook| *hook.borrow_mut() = None);
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn windows_atomic_save_S3_1_transient_sharing_and_access_denied() {
+        for code in [5, 32] {
+            let fixture = AtomicJsonFixture::new();
+            let destination = fixture.0.join("config.json");
+            std::fs::write(&destination, b"original bytes").unwrap();
+            let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let observed = calls.clone();
+            ATOMIC_JSON_RENAME_HOOK.with(|hook| *hook.borrow_mut() = Some(Box::new(move |from, to| {
+                let mut calls = observed.borrow_mut();
+                calls.push((from.to_path_buf(), to.to_path_buf()));
+                if calls.len() == 1 { Err(std::io::Error::from_raw_os_error(code)) }
+                else { std::fs::rename(from, to) }
+            })));
+            let intended = serde_json::json!({"updated": true});
+            let result = atomic_write_json(&destination, &intended);
+            ATOMIC_JSON_RENAME_HOOK.with(|hook| *hook.borrow_mut() = None);
+            let calls = calls.borrow();
+            assert!(result.is_ok(), "raw OS error {code}: {result:?}; calls: {calls:?}");
+            assert!(calls.len() >= 2 && calls.len() <= 100, "unbounded or missing retry: {calls:?}");
+            assert!(calls.iter().all(|(from, to)| from != &destination && to == &destination), "destination moved: {calls:?}");
+            assert_eq!(serde_json::from_slice::<Value>(&std::fs::read(&destination).unwrap()).unwrap(), intended);
+            fixture.assert_only_destination();
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn windows_atomic_save_S3_2_persistent_and_non_retryable_failures() {
+        for (code, retryable) in [(5, true), (32, true), (3, false)] {
+            let fixture = AtomicJsonFixture::new();
+            let destination = fixture.0.join("config.json");
+            let original = b"original bytes";
+            std::fs::write(&destination, original).unwrap();
+            let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let observed = calls.clone();
+            ATOMIC_JSON_RENAME_HOOK.with(|hook| *hook.borrow_mut() = Some(Box::new(move |from, to| {
+                observed.borrow_mut().push((from.to_path_buf(), to.to_path_buf()));
+                Err(std::io::Error::from_raw_os_error(code))
+            })));
+            let result = atomic_write_json(&destination, &serde_json::json!({"updated": true}));
+            ATOMIC_JSON_RENAME_HOOK.with(|hook| *hook.borrow_mut() = None);
+            let calls = calls.borrow();
+            assert!(result.is_err(), "raw OS error {code} must be reported");
+            assert_eq!(std::fs::read(&destination).unwrap(), original);
+            fixture.assert_only_destination();
+            assert!(calls.iter().all(|(from, to)| from != &destination && to == &destination), "destination moved: {calls:?}");
+            if retryable {
+                assert!(calls.len() >= 2 && calls.len() <= 100, "unbounded or missing retry: {calls:?}");
+            } else {
+                assert_eq!(calls.len(), 1, "non-retryable error must be attempted once");
+            }
+        }
+    }
 
     #[test]
     fn test_resolve_models_config_path() {
