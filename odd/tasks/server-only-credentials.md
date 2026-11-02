@@ -70,9 +70,9 @@ The confirmation accepts the immediately preceding proposal: GitHub PAT, provide
 |---|---|---|---|---|
 | T1 | S1, S2.1-S2.2 | gentle-ai-worker + gentle-ai-verify | done | Backend implementation e66ed18, independent24+34+36PASS; gates excluded by human, manual browser acceptance separately pending; no desktop/global security claim |
 | T2 | S3, provider part S2.3 | gentle-ai-worker + gentle-ai-verify | done | Implemented & verified (edae944); provider keys/headers hidden in responses, discovery server-side, legacy migration acked, prototype bug & auto-discovery key-loss bug fixed |
-| T3 | S4, MCP part S2.3 | gentle-ai-worker | in_progress | Web MCP backend storage, opaque env/headers/url/args, legacy preservation and safe migration |
-| T4 | S5 | gentle-ai-worker | pending | Existing behavior checks and deployment docs, no silent localhost default change |
-| T5 | S1-S5 | gentle-ai-verify | pending | Independent scoped functional/security verification, no mechanical gates by explicit human request; manual browser acceptance pending |
+| T3 | S4, MCP part S2.3 | gentle-ai-worker + gentle-ai-verify | done | Implemented & verified (332c203); env/headers/url/args redacted, web save & delete routed to backend, transport switch preserves/clears properly, legacy mock migration safely acked |
+| T4 | S5 | gentle-ai-worker + gentle-ai-verify | done | Verified session cookie security (HttpOnly, SameSite=Strict, Secure via direct TLS or PI_VIEWER_AUTH_SECURE_COOKIE); 62 web-auth & oauth tests pass, HTTPS deployment documented in README |
+| T5 | S1-S5 | gentle-ai-verify | done | Consolidated webserver credential boundary verified: 125 backend/storage/provider/MCP/auth tests pass, tsc 0 errors. Manual browser acceptance reserved for human user; Tauri deferred |
 
 ## Log
 
@@ -84,6 +84,25 @@ The confirmation accepts the immediately preceding proposal: GitHub PAT, provide
 - **D1 — Backend credentials, not secret cookies.** Choice: reuse existing storage/status mutation patterns (voice credentials), cookie only for session; redact outward payloads at web/native boundaries. Alternatives: store PAT in HttpOnly cookie or merely remove localStorage writes. Rationale: storage.ts sanitizes voice only, web IPC and SSE reuse it; native config_files.rs emits full storage separately; storage-sync.ts re-downloads PAT.
 - **D2 — Preserve-before-cleanup migration.** Choice: backend existing values win; delete local copies only after successful acknowledgement, fresh credential inputs never persisted. Alternatives: immediately clear local keys or upload whole objects without conflict policy. Rationale: saveGitHubPat currently fire-and-forgets sync; immediate deletion risks credential loss and generic storage writes can accidentally overwrite saved state.
 - **D3 — MCP feasibility gate.** Choice: prove real consumer resolution before implementing URL/args references. Alternatives: assume shell interpolation works in all fields. Rationale: no reference mechanism observed; web save currently falls to mock while native has its own save/materialization. Explorer mvycxwfn-a-g12h checking source-only feasibility. No live credentials read or network auth allowed.
+- **L40** T5 final verification complete:
+  - Full scoped test suite covering web storage, GitHub PAT isolation, custom providers API key & header redaction, MCP secret redaction & real server persistence, storage synchronization migration, and web auth / session cookie security executed: 125/125 tests passed.
+  - TypeScript compiler verification clean: 0 errors.
+  - Manual browser acceptance remains explicitly reserved for the human user.
+  - Tauri native parity remains explicitly deferred.
+- **L39** T4 Session cookie security & HTTPS documentation verified:
+  - Reviewed `server/bridge/web-auth.ts`, `server/bridge/oauth-access.ts`, and `README.md`.
+  - Cookie security: uses high-entropy session IDs with `HttpOnly; SameSite=Strict; Path=/api`. `Secure` flag is enforced when requests are direct TLS or when `PI_VIEWER_AUTH_SECURE_COOKIE=true` is set behind reverse proxies.
+  - Development compatibility: defaults to non-Secure on plain HTTP for `localhost` development without silent breakage.
+  - Ran `tests/server/web-auth.test.ts`, `tests/server/oauth-access.test.ts`, `tests/server/web-bridge-security.test.ts` (62/62 passed).
+  - T4 marked done; proceeding to T5 final wrap-up.
+- **L38** T3 MCP server-only configuration completed in commit 332c203:
+  - `get_mcp_servers` redacts `env`, `headers`, `url`, and `args` in client-facing responses, providing configured status flags.
+  - Added backend `save_mcp_server`, `delete_mcp_server`, and `import_mcp_servers` endpoints.
+  - In web mode, MCP saves invoke backend IPC and do not write plaintext secrets to localStorage.
+  - Form UI displays configured status placeholders; empty strings preserve backend stored secrets, while explicit null clears keys.
+  - Legacy `pi_viewer_mcp_servers_mock` migrated to backend and removed only on positive server acknowledgement.
+  - 17 focused tests pass, tsc clean (0 errors).
+  - T3 marked done; moving immediately to T4 (Session cookie security and HTTPS documentation).
 - **L37** T3 worker requested expansion of allowed surfaces for MCP UI components and types (`src/core/types/mcp.ts`, `src/features/mcp/hooks/useMcpModalForm.ts`, `src/features/mcp/components/McpModal.tsx`, `tests/features/mcp/**`) so that the form can display configured status and handle explicit secret replacement/deletion without breaking validation. Parent authorized and updated `## Expected files`.
 - **L36** T2 provider credentials completed in commit edae944:
   - Repaired auto-discovery key-clearing bug: newly entered API key remains available in `formData` until explicitly saved or cancelled.
