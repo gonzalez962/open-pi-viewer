@@ -24,8 +24,8 @@ const result = (value: unknown, isError = false) => ({
 const recent = Array.from({ length: 90 }, (_, i) => ({ role: 'user', id: `recent-${i}`, content: `Message ${i}`, timestamp: i + 1 }));
 const messages = [result(todo), result({ tasks: [{ id: 2, title: 'Failed', status: 'done' }], nextId: 3, updatedTurn: 2 }, true), ...recent];
 
-function fixture(t: import('node:test').TestContext) {
-  const files = new Map([[file, messages], [otherFile, recent]]);
+function fixture(t: import('node:test').TestContext, history: unknown[] = messages) {
+  const files = new Map([[file, history], [otherFile, recent]]);
   t.mock.method(fs, 'existsSync', (p: fs.PathLike) => files.has(String(p)));
   t.mock.method(fs, 'statSync', (() => ({ mtimeMs: 1, size: 100, mtime: new Date(0) })) as unknown as typeof fs.statSync);
   t.mock.method(fs, 'readFileSync', ((p: fs.PathOrFileDescriptor) => {
@@ -91,6 +91,32 @@ test('S1.2 reattachment metadata reaches the visible panel when the todo is outs
   assert.match(markup, /Older plan/);
   assert.match(markup, /0\s*\/\s*1/);
   assert.doesNotMatch(markup, /Failed/);
+});
+
+test('windowing retains tool-heavy turns and restores todo from outside the visible history', async t => {
+  const activity = Array.from({ length: 70 }, (_, i) => ({
+    role: i % 2 ? 'toolResult' : 'assistant',
+    id: `activity-${i}`,
+    content: i % 2 ? 'tool output' : [{ type: 'tool_call', id: `call-${i}` }],
+  }));
+  const history = [result(todo), ...recent, ...activity];
+  fixture(t, history);
+  const connected = await handleConnect({ payload: { workingDirectory: cwd, sessionFile: file } });
+  assert.equal(connected.hasMore, true);
+  assert.equal(connected.messages.length, 150);
+  assert.deepEqual((connected as any).todo, todo);
+  const switched = handleSwitchSession({ payload: { sessionPath: file, limit: 6 } });
+  assert.ok('hasMore' in switched);
+  assert.equal(switched.hasMore, true);
+  assert.deepEqual(switched.messages.map((message: any) => message.id), [...recent.slice(-6), ...activity].map(message => message.id));
+  assert.deepEqual((switched as any).todo, todo);
+  const all = handleSwitchSession({ payload: { sessionPath: file, loadAll: true } });
+  assert.ok('hasMore' in all);
+  assert.equal(all.hasMore, false);
+  assert.equal(all.messages.length, history.length);
+  assert.deepEqual((all as any).todo, todo);
+  const other = handleSwitchSession({ payload: { sessionPath: otherFile } });
+  assert.ok(!(other as any).todo);
 });
 
 test('PRESERVE ordinary session switch retains bounded history and loadAll behavior without todo', t => {
