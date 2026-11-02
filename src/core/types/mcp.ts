@@ -12,6 +12,9 @@ export interface McpServerConfig {
   disabled: boolean;
   enabled: boolean;
   scope: McpServerScope;
+  urlConfigured?: boolean;
+  argsConfigured?: boolean;
+  headersConfigured?: boolean;
   hasProjectOverride?: boolean;
   alwaysActive?: boolean;
   configPath: string;
@@ -46,8 +49,8 @@ export interface SaveMcpServerPayload {
     url?: string;
     type?: string;
     serverType?: string;
-    env?: Record<string, string>;
-    headers?: Record<string, string>;
+    env?: Record<string, string | null>;
+    headers?: Record<string, string | null>;
     disabled?: boolean;
     enabled?: boolean;
     [key: string]: unknown;

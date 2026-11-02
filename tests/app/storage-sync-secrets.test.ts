@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { handleRemoteStorageUpdate, initStorageSynchronization } from '@app/storage-sync';
 import { GITHUB_PAT_STORAGE_KEY, saveGitHubPat, createGitHubCloneController } from '@features/projects/github-clone';
 import { createGitHubCreateController } from '@features/projects/github-create';
-import { MOCK_CUSTOM_PROVIDERS_STORAGE_KEY } from '@infra/bridge';
+import { MOCK_CUSTOM_PROVIDERS_STORAGE_KEY, MOCK_MCP_SERVERS_STORAGE_KEY, saveMcpServerPi } from '@infra/bridge';
 import { handleIpcCommand, setPiAgentDirForTest } from '@server/web-ipc-bridge';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,6 +22,40 @@ function browser(initial: Record<string, string>, invoke: (cmd: string, args?: a
   const previous = (globalThis as any).window;
   (globalThis as any).window = { localStorage, __IS_WEB_IPC__: true, __TAURI_INTERNALS__: { invoke }, addEventListener() {}, dispatchEvent() {} };
   return { localStorage, restore: () => { (globalThis as any).window = previous; } };
+}
+
+test('preview rejects MCP secret saves without writing local storage', async () => {
+  const b = browser({}, async () => { throw new Error('unexpected IPC'); });
+  delete (globalThis as any).window.__IS_WEB_IPC__;
+  delete (globalThis as any).window.__TAURI_INTERNALS__;
+  try {
+    for (const server of [{ env: { KEY: 'secret-env' } }, { headers: { H: 'secret-header' } }, { url: 'https://secret.test' }, { args: ['secret-arg'] }]) {
+      const before = b.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+      let success = false;
+      try { success = (await saveMcpServerPi({ name: 'test', server })).success; } catch { /* rejection is acceptable */ }
+      assert.equal(success, false);
+      assert.equal(b.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY), before);
+    }
+  } finally { b.restore(); }
+});
+
+for (const mode of ['import', 'failure', 'uncertain'] as const) {
+  test(`MCP migration ${mode} cleans only after acknowledgement`, async () => {
+    const legacy = JSON.stringify({ servers: [{ name: 'test', command: 'node', env: { TOKEN: 'secret' } }] });
+    const b = browser({ [MOCK_MCP_SERVERS_STORAGE_KEY]: legacy }, async (cmd) => {
+      if (cmd === 'get_viewer_storage') return { version: 1 };
+      if (cmd === 'import_mcp_servers') {
+        assert.equal(b.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY), legacy);
+        if (mode === 'failure') throw new Error('offline');
+        return { imported: mode === 'import' };
+      }
+      throw new Error('unexpected');
+    });
+    try {
+      await initStorageSynchronization();
+      assert.equal(b.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY), mode === 'import' ? null : legacy);
+    } finally { b.restore(); }
+  });
 }
 
 for (const mode of ['import', 'conflict', 'failure', 'uncertain'] as const) {

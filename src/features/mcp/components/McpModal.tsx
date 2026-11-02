@@ -215,7 +215,7 @@ export const McpModal: React.FC<McpModalProps> = ({
                       onChange={(e) =>
                         modalForm.updateFormField('argsText', e.target.value)
                       }
-                      placeholder="-y @modelcontextprotocol/server-postgres"
+                      placeholder={modalForm.originalServer?.argsConfigured ? '•••••••• (configured)' : '-y @modelcontextprotocol/server-postgres'}
                       disabled={modalForm.isSaving}
                     />
                   </McpFormField>
@@ -224,7 +224,7 @@ export const McpModal: React.FC<McpModalProps> = ({
                     title={t('mcp.field_env')}
                     addButtonLabel={t('mcp.btn_add_env')}
                     keyPlaceholder={t('mcp.env_key_placeholder')}
-                    valuePlaceholder={t('mcp.env_value_placeholder')}
+                    valuePlaceholder={modalForm.originalServer?.envKeys?.length ? '•••••••• (configured)' : t('mcp.env_value_placeholder')}
                     keyColumnLabel={t('mcp.kv_col_key')}
                     valueColumnLabel={t('mcp.kv_col_value')}
                     emptyNotice={t('mcp.kv_env_empty')}
@@ -252,9 +252,9 @@ export const McpModal: React.FC<McpModalProps> = ({
                       onChange={(e) =>
                         modalForm.updateFormField('url', e.target.value)
                       }
-                      placeholder="https://example.com/sse"
+                      placeholder={modalForm.originalServer?.urlConfigured ? '•••••••• (configured)' : 'https://example.com/sse'}
                       disabled={modalForm.isSaving}
-                      required
+                      required={!modalForm.originalServer?.urlConfigured}
                     />
                   </McpFormField>
 
@@ -262,7 +262,7 @@ export const McpModal: React.FC<McpModalProps> = ({
                     title={t('mcp.field_headers')}
                     addButtonLabel={t('mcp.btn_add_header')}
                     keyPlaceholder={t('mcp.header_key_placeholder')}
-                    valuePlaceholder={t('mcp.header_value_placeholder')}
+                    valuePlaceholder={modalForm.originalServer?.headersConfigured ? '•••••••• (configured)' : t('mcp.header_value_placeholder')}
                     keyColumnLabel={t('mcp.kv_col_header')}
                     valueColumnLabel={t('mcp.kv_col_value')}
                     emptyNotice={t('mcp.kv_headers_empty')}

@@ -162,6 +162,8 @@ import {
   handleImportProviderCredentials,
   handleDiscoverProviderModels,
   handleGetMcpServers,
+  handleSaveMcpServer,
+  handleImportMcpServers,
   handleToggleMcpServer,
   handleGetPiResources,
   handleTogglePiResource,
@@ -287,6 +289,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleSaveModelThinkingLevels(args);
     case 'get_mcp_servers':
       return handleGetMcpServers(args);
+    case 'save_mcp_server':
+      return handleSaveMcpServer(args.payload || args);
+    case 'import_mcp_servers':
+      return handleImportMcpServers(args.payload || args);
     case 'toggle_mcp_server':
       return await handleToggleMcpServer(args.payload || args);
     case 'delete_mcp_server':

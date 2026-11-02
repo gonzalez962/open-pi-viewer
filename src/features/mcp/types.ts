@@ -136,7 +136,8 @@ export function serverConfigToFormData(server: McpServerConfig): McpFormData {
 export function formDataToSavePayload(
   formData: McpFormData,
   oldName?: string,
-  cwd?: string
+  cwd?: string,
+  originalServer?: McpServerConfig | null
 ): SaveMcpServerPayload {
   const isStdio = formData.serverType === 'stdio';
   const server: SaveMcpServerPayload['server'] = {
@@ -152,13 +153,19 @@ export function formDataToSavePayload(
     if (args.length > 0) {
       server.args = args;
     }
-    const env = keyValueEntriesToRecord(formData.envEntries);
+    const env: Record<string, string | null> = keyValueEntriesToRecord(formData.envEntries);
+    if (originalServer?.envKeys && originalServer.urlConfigured !== undefined) {
+      for (const key of originalServer.envKeys) if (!(key in env)) env[key] = null;
+    }
     if (Object.keys(env).length > 0) {
       server.env = env;
     }
   } else {
     server.url = formData.url.trim();
-    const headers = keyValueEntriesToRecord(formData.headersEntries);
+    const headers: Record<string, string | null> = keyValueEntriesToRecord(formData.headersEntries);
+    if (originalServer?.headersConfigured) {
+      for (const key of Object.keys(originalServer.headers || {})) if (!(key in headers)) headers[key] = null;
+    }
     if (Object.keys(headers).length > 0) {
       server.headers = headers;
     }

@@ -126,7 +126,82 @@ export function getMcpServersImpl(cwd?: string) {
     }
   });
 
-  return { servers };
+  return { servers: servers.map(({ env, headers, args, url, ...rest }) => ({
+    ...rest, envKeys: Object.keys(env || {}), headers: Object.fromEntries(Object.keys(headers || {}).map(key => [key, ''])),
+    headersConfigured: Boolean(headers && Object.keys(headers).length), argsConfigured: Boolean(args?.length), urlConfigured: Boolean(url), args: [], url: '',
+  })) };
+}
+
+function mcpConfig(file: string): any {
+  const root = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('Invalid MCP configuration');
+  const map = root.mcpServers ?? root.servers ?? (root.mcpServers = {});
+  if (!map || typeof map !== 'object' || Array.isArray(map)) throw new Error('Invalid MCP servers');
+  return { root, map };
+}
+
+export function handleSaveMcpServer(args: any) {
+  assertNoDangerousProperties(args);
+  const { name, oldName, server, cwd, scope } = args || {};
+  if (typeof name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(name) || ['constructor', 'prototype', '__proto__'].includes(name)) throw new Error('Invalid MCP server name');
+  if (oldName !== undefined && (typeof oldName !== 'string' || !/^[A-Za-z0-9_-]+$/.test(oldName) || ['constructor', 'prototype', '__proto__'].includes(oldName))) throw new Error('Invalid MCP server name');
+  if (!server || typeof server !== 'object' || Array.isArray(server)) throw new Error('Invalid MCP server');
+  if (scope !== undefined && scope !== 'global' && scope !== 'project') throw new Error('Invalid MCP scope');
+  if (scope === 'project' && (typeof cwd !== 'string' || !cwd.trim())) throw new Error('Project cwd required');
+  const file = scope === 'project' || (!scope && cwd) ? getNativeProjectMcpPath(cwd) : path.join(getPiAgentDir(), 'mcp.json');
+  const { root, map } = mcpConfig(file);
+  const previous = Object.prototype.hasOwnProperty.call(map, oldName || name) ? map[oldName || name] : {};
+  if (oldName && oldName !== name && Object.prototype.hasOwnProperty.call(map, name)) throw new Error('MCP server already exists');
+  const next = { ...previous };
+  const requestedType = server.type ?? server.serverType;
+  if (requestedType !== undefined && !['stdio', 'sse', 'remote'].includes(requestedType)) throw new Error('Invalid MCP transport');
+  const wasRemote = Boolean(previous.url);
+  if (requestedType && Object.keys(previous).length > 0) {
+    if (requestedType === 'stdio' && wasRemote) {
+      if (typeof server.command !== 'string' || !server.command.trim()) throw new Error('Command required for transport switch');
+      delete next.url;
+      delete next.args;
+    } else if (requestedType !== 'stdio' && !wasRemote) {
+      if (typeof server.url !== 'string' || !server.url.trim()) throw new Error('URL required for transport switch');
+      delete next.command;
+      delete next.args;
+    }
+  }
+  if (server.command !== undefined) { if (typeof server.command !== 'string') throw new Error('Invalid command'); next.command = server.command; }
+  if (server.enabled !== undefined) { if (typeof server.enabled !== 'boolean') throw new Error('Invalid enabled'); next.enabled = server.enabled; }
+  if (server.url !== undefined) { if (typeof server.url !== 'string') throw new Error('Invalid URL'); if (server.url.trim()) next.url = server.url; }
+  if (server.args !== undefined) { if (!Array.isArray(server.args) || !server.args.every((x: unknown) => typeof x === 'string')) throw new Error('Invalid arguments'); if (server.args.length) next.args = server.args; }
+  for (const field of ['env', 'headers']) {
+    const incoming = server[field];
+    if (incoming === undefined) continue;
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('Invalid MCP map');
+    const merged = { ...(previous[field] || {}) };
+    for (const [key, value] of Object.entries(incoming)) {
+      if (value === null) delete merged[key];
+      else if (typeof value !== 'string') throw new Error('Invalid MCP value');
+      else if (value.trim()) merged[key] = value;
+    }
+    next[field] = merged;
+  }
+  if (oldName && oldName !== name) delete map[oldName];
+  map[name] = next;
+  writeModelsConfigFileAtomically(file, root);
+  return { success: true, name, path: file };
+}
+
+export function handleImportMcpServers(args: any) {
+  assertNoDangerousProperties(args);
+  if (!Array.isArray(args?.servers)) throw new Error('Invalid MCP servers');
+  const file = path.join(getPiAgentDir(), 'mcp.json');
+  const { root, map } = mcpConfig(file);
+  for (const entry of args.servers) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry) || typeof entry.name !== 'string' || !/^[A-Za-z0-9_-]+$/.test(entry.name) || ['constructor', 'prototype', '__proto__'].includes(entry.name)) throw new Error('Invalid MCP server');
+    if (Object.prototype.hasOwnProperty.call(map, entry.name)) continue;
+    const { name, command, args: argv, url, env, headers, enabled, disabled } = entry;
+    map[name] = { ...(command ? { command } : {}), ...(argv ? { args: argv } : {}), ...(url ? { url } : {}), ...(env ? { env } : {}), ...(headers ? { headers } : {}), enabled: enabled ?? !disabled };
+  }
+  writeModelsConfigFileAtomically(file, root);
+  return { imported: true };
 }
 
 export function getPiResourcesImpl(cwd?: string) {

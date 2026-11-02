@@ -22,7 +22,8 @@ import {
 import { GITHUB_PAT_STORAGE_KEY, getSavedGitHubPat } from '@features/projects/github-clone';
 import type { ConnectConfig } from '@core/types/connection';
 import { isWebShim } from '@infra/web-oauth-access';
-import { migrateLegacyProviderCredentials } from '@infra/bridge';
+import { migrateLegacyProviderCredentials, MOCK_MCP_SERVERS_STORAGE_KEY } from '@infra/bridge';
+import { invoke } from '@tauri-apps/api/core';
 
 export interface StorageSyncCallbacks {
   onUiPreferencesUpdated?: (prefs: Record<string, unknown>) => void;
@@ -141,6 +142,17 @@ export async function initStorageSynchronization(callbacks: StorageSyncCallbacks
     // 6. GitHub PAT: web migration removes the legacy copy only after backend acknowledgement.
     if (isWebShim()) {
       await migrateLegacyProviderCredentials(window.localStorage);
+      const legacyMcp = window.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+      if (legacyMcp !== null) {
+        try {
+          const parsed = JSON.parse(legacyMcp);
+          const servers = Array.isArray(parsed) ? parsed : parsed?.servers;
+          if (Array.isArray(servers)) {
+            const result = await invoke<{ imported: boolean }>('import_mcp_servers', { servers });
+            if (result?.imported === true && window.localStorage.getItem(MOCK_MCP_SERVERS_STORAGE_KEY) === legacyMcp) window.localStorage.removeItem(MOCK_MCP_SERVERS_STORAGE_KEY);
+          }
+        } catch { /* Keep the source for retry. */ }
+      }
       const localPat = window.localStorage.getItem(GITHUB_PAT_STORAGE_KEY)?.trim();
       if (localPat) {
         try {
