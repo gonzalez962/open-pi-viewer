@@ -1,5 +1,5 @@
 import { publicProviderConfig, readModelsConfigFile, writeModelsConfigFileAtomically, mergeCustomProviderAdditive, validateProviderId, assertNoDangerousProperties } from './custom-providers';
-import { fetchProviderModels, OPENROUTER_MODELS_URL } from '../../src/features/providers/providers';
+import { fetchBackendProviderModels, OPENROUTER_MODELS_URL } from './provider-discovery';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -801,7 +801,7 @@ export async function handleDiscoverProviderModels(args: any) {
       if (target !== OPENROUTER_MODELS_URL) throw new Error('Invalid catalog endpoint');
       return fetch(input, { ...init, headers: { Accept: 'application/json' }, redirect: 'error' });
     };
-    const models = await fetchProviderModels(baseUrl, api, key, { fetchFn: guardedFetch, catalogFetchFn: catalogFetch });
+    const models = await fetchBackendProviderModels(baseUrl, api, key, { fetchFn: guardedFetch, catalogFetchFn: catalogFetch });
     return models.filter(model => !secrets.some(secret => JSON.stringify(model).includes(secret)));
   } catch { throw new Error('Provider model discovery failed'); }
 }
