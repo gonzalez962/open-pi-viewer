@@ -816,6 +816,20 @@ test('Bridge: listWorkspaceBranchesPi invokes list_workspace_branches command', 
   assert.strictEqual(res.branches[1].upstream, 'origin/feat/test');
 });
 
+test('Bridge: listWorkspaceBranchesPi forwards sync and range options', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const result: WorkspaceBranchList = { current: 'main', branches: [], allBases: ['main'], hasMore: false };
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return result as T;
+  };
+  const response = await listWorkspaceBranchesPi('C:/project', { sync: true, offset: 2, limit: 3, filter: 'feat' }, mockInvoke);
+  assert.deepStrictEqual(calls, [{ cmd: 'list_workspace_branches', args: { payload: {
+    workingDirectory: 'C:/project', sync: true, offset: 2, limit: 3, filter: 'feat',
+  } } }]);
+  assert.deepStrictEqual(response, result);
+});
+
 test('Bridge: switchWorkspaceBranchPi invokes switch_workspace_branch with payload', async () => {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
   const mockResult: BranchOperationResult = {

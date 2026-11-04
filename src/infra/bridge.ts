@@ -37,6 +37,7 @@ import type {
   WorkspaceGitStatus,
   WorkspaceFileDiff,
   WorkspaceBranchList,
+  ListWorkspaceBranchesPayload,
   BranchOperationResult,
   WorkspaceBranchCommitsResult,
   ListWorkspaceBranchCommitsPayload,
@@ -599,8 +600,10 @@ export async function getWorkspaceFileDiffPi(
  */
 export async function listWorkspaceBranchesPi(
   workingDirectory?: string,
-  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+  optionsOrInvoke?: Omit<ListWorkspaceBranchesPayload, 'workingDirectory'> | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
+  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<WorkspaceBranchList> {
+  const invokeFn = typeof optionsOrInvoke === 'function' ? optionsOrInvoke : invokeFnParam ?? invoke;
   if (!isTauri() && invokeFn === invoke) {
     return {
       current: null,
@@ -609,7 +612,8 @@ export async function listWorkspaceBranchesPi(
     };
   }
 
-  const payload = workingDirectory ? { workingDirectory } : undefined;
+  const options = typeof optionsOrInvoke === 'function' ? undefined : optionsOrInvoke;
+  const payload = workingDirectory || options ? { ...options, ...(workingDirectory ? { workingDirectory } : {}) } : undefined;
   return await invokeFn<WorkspaceBranchList>('list_workspace_branches', payload ? { payload } : undefined);
 }
 

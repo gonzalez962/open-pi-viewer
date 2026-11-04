@@ -908,6 +908,8 @@ export function deduplicateBaseBranches(localBranches: string[], remoteRefs: str
   return result;
 }
 
+const branchFetchCache = new Map<string, Set<string>>();
+
 /**
  * Lists all local workspace branches, their upstream tracking branches, the active branch,
  * and available base branches (including remotes) for branching off.
@@ -921,8 +923,16 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
       return { current: null, branches: [], allBases: [] };
     }
 
-    // If remotes exist, attempt to fetch latest remote branch references safely
-    try {
+    const repository = fs.realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: targetCwd, encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim());
+    const observedNames = new Set(execFileSync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], {
+      cwd: targetCwd, encoding: 'utf8', timeout: 2500, stdio: ['ignore', 'pipe', 'ignore'],
+    }).split('\n').map((name) => name.trim()).filter(Boolean));
+    const cached = branchFetchCache.get(repository);
+    if (cached && [...observedNames].every((name) => cached.has(name))) branchFetchCache.set(repository, observedNames);
+    // Synchronous Git calls serialize cache updates within the Node process.
+    if (!cached || payload.sync === true || [...observedNames].some((name) => !cached.has(name))) try {
       const remotesOut = execFileSync('git', ['remote'], {
         cwd: targetCwd,
         encoding: 'utf8',
@@ -939,8 +949,9 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
             timeout: 8000,
             stdio: ['ignore', 'ignore', 'ignore'],
           });
+          branchFetchCache.set(repository, observedNames);
         } catch {
-          // Non-blocking: network timeout, offline, or auth failure shouldn't prevent listing local/cached branches
+          // Keep the last successful snapshot so failed refreshes are retried.
         }
       }
     } catch {}
@@ -1025,12 +1036,18 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
       }
     }
 
-    return {
-      current,
-      defaultBranch,
-      branches,
-      allBases,
-    };
+    if (payload.offset !== undefined || payload.limit !== undefined || payload.filter !== undefined) {
+      const filter = typeof payload.filter === 'string' ? payload.filter.trim().toLowerCase() : '';
+      const matching = branches.filter((branch) => branch.name.toLowerCase().includes(filter));
+      matching.sort((a, b) => {
+        const rank = (branch: WorkspaceBranch) => branch.name === 'main' ? 0 : branch.name === defaultBranch ? 1 : branch.isRemote ? 3 : 2;
+        return rank(a) - rank(b) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+      });
+      const offset = Number.isFinite(payload.offset) ? Math.max(0, Math.floor(payload.offset)) : 0;
+      const limit = Number.isFinite(payload.limit) ? Math.max(0, Math.floor(payload.limit)) : matching.length;
+      return { current, defaultBranch, branches: matching.slice(offset, offset + limit), allBases, hasMore: offset + limit < matching.length };
+    }
+    return { current, defaultBranch, branches, allBases };
   } catch {
     return {
       current: null,

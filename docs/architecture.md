@@ -98,6 +98,10 @@ Dialog responses preserve the originating session file and must match a pending 
 
 Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/session-reattach.test.ts`, and `tests/infra/web-session-reattach.test.ts` use isolated fake subprocesses and connection adapters.
 
+## Workspace branch retrieval
+
+Node and Tauri retain successful fetch state per repository for the process lifetime; listings read current local and remote-tracking refs from Git. Explicit `sync` and newly observed local branch names trigger a fetch, while failed fetches leave existing refs available and remain eligible for retry. Optional `offset`, `limit`, and `filter` provide sorted ranges with `hasMore`; `allBases` remains complete. Calls without range or filter options retain the legacy full listing.
+
 ## Web resource deletion
 
 The web bridge supports `delete_mcp_server` and `delete_pi_resource` (extensions and packages). Deletion removes the selected definition from its configuration file, not extension source files or installed packages. Autoload-only extensions without a settings entry cannot be deleted this way; use activation controls to disable them. Removing a settings entry does not stop filesystem auto-discovery. Other definitions and configuration fields are preserved, and writes replace the file atomically.
