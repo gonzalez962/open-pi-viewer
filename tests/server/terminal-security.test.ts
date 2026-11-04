@@ -384,16 +384,12 @@ test('S4.1: Owner isolation prevents cross-tenant access and terminal data does 
     /access denied/i
   );
 
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_open',
-        { cwd: dir },
-        { owner: undefined, manager }
-      );
-    },
-    /access denied/i
+  const anonymous = await handleTerminalIpcCommand(
+    'terminal_open',
+    { cwd: dir },
+    { owner: undefined, manager }
   );
+  assert.notStrictEqual(anonymous.id, sessionA.id);
 
   const getUnauth = await handleTerminalIpcCommand(
     'terminal_get',
@@ -423,6 +419,52 @@ test('S4.1: Owner isolation prevents cross-tenant access and terminal data does 
     { id: sessionA.id },
     { owner: 'tenant_alice', manager }
   );
+});
+
+test('S1.1 S1.2 S2.1: IPC isolates owners sharing a canonical directory and preserves independent lifecycles', async (t) => {
+  const { createTerminalManager } = await import('@server/terminal/terminal-manager');
+  const { handleTerminalIpcCommand } = await import('@server/terminal/ipc-handler');
+  const manager = createTerminalManager();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-owner-isolation-'));
+  t.after(async () => {
+    await manager.dispose();
+    await safeRmDir(dir);
+  });
+  const call = (owner: string | undefined, cmd: string, args: any = {}) =>
+    handleTerminalIpcCommand(cmd, args, { owner, manager });
+  const a = await call('alice', 'terminal_open', { cwd: dir });
+  const b = await call('bob', 'terminal_open', { cwd: path.join(dir, '.') });
+  assert.notStrictEqual(a.id, b.id);
+  for (const [owner, session] of [['alice', a], ['bob', b]] as const) {
+    assert.strictEqual((await call(owner, 'terminal_open', { cwd: dir })).id, session.id);
+    assert.strictEqual((await call(owner, 'terminal_get', { cwd: dir })).id, session.id);
+    assert.deepStrictEqual((await call(owner, 'terminal_list')).map((s: any) => s.id), [session.id]);
+    assert.strictEqual((await call(owner, 'terminal_poll', { id: session.id, cursor: 0 })).id, session.id);
+  }
+  const before = await call('alice', 'terminal_get', { id: a.id });
+  for (const [cmd, args] of [
+    ['terminal_write', { id: a.id, data: 'echo forbidden\r\n' }],
+    ['terminal_resize', { id: a.id, cols: 100, rows: 40 }],
+    ['terminal_poll', { id: a.id, cursor: 0 }],
+    ['terminal_close', { id: a.id }],
+  ] as const) {
+    await assert.rejects(call('bob', cmd, args), /Access denied: terminal session belongs to another owner/);
+    await assert.rejects(call(undefined, cmd, args), /Access denied: terminal session belongs to another owner/);
+  }
+  assert.strictEqual(await call('bob', 'terminal_get', { id: a.id }), null);
+  assert.deepStrictEqual(await call('alice', 'terminal_get', { id: a.id }), before);
+  assert.strictEqual((await call('alice', 'terminal_poll', { id: a.id, cursor: 0 })).id, a.id);
+  await call('alice', 'terminal_close', { id: a.id });
+  const replacement = await call('alice', 'terminal_open', { cwd: dir });
+  assert.notStrictEqual(replacement.id, a.id);
+  assert.notStrictEqual(replacement.id, b.id);
+  assert.strictEqual((await call('bob', 'terminal_poll', { id: b.id, cursor: 0 })).id, b.id);
+  assert.strictEqual((await call('bob', 'terminal_open', { cwd: dir })).id, b.id);
+  const anonymous = await call(undefined, 'terminal_open', { cwd: dir });
+  const stringOwner = await call('undefined', 'terminal_open', { cwd: dir });
+  assert.notStrictEqual(anonymous.id, stringOwner.id);
+  assert.strictEqual((await call(undefined, 'terminal_open', { cwd: dir })).id, anonymous.id);
+  assert.strictEqual((await call('undefined', 'terminal_open', { cwd: dir })).id, stringOwner.id);
 });
 
 test('PRESERVE: existing /api/ipc commands continue to work without regression', async () => {
