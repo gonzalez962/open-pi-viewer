@@ -9,12 +9,12 @@ Success: A running job keeps its project working after agent settlement; its ter
 
 ## Specs
 
-### S1 — Fresh feature branch
+### S1 — Fresh feature branch [existing]
 > "crea un rama nueva desde origin/main"
 - Work MUST use a new branch rooted at origin/main.
 - **S1.1** Given origin/main, when implementation starts, then feat/background-job-activity has that starting commit as its ancestor.
 
-### S2 — Detect background work
+### S2 — Detect background work [behavior]
 > "agrega soporte para detectar jobs para mostrar que el proyecto esta aun en proceso"
 - The viewer MUST keep a project's working indication while its observed background jobs remain active, independently of agent streaming.
 - The viewer MUST clear a job's contribution when its exit/stop is observed, without clearing unrelated jobs, sessions, or ongoing agent work.
@@ -25,7 +25,7 @@ Success: A running job keeps its project working after agent settlement; its ter
 - **S2.4** Given ordinary agent work or a pending input request without jobs, when existing events arrive, then existing activity/input behavior remains unchanged; errors or disconnects do not leave stale job indicators.
 - **S2.5** Given desktop activity events for jobs and agent settlement, when a job is still active, then the tray remains busy until that job finishes without clearing other sessions.
 
-### S3 — Reference-compatible evidence
+### S3 — Reference-compatible evidence [behavior]
 > "puedes usar de base el siguiente repo te doy permiso de leer el repo C:\\xampp\\htdocs\\trabajosgithub\\gentle-ai\\pi-notify"
 - Detection SHOULD reuse the reference's RPC-visible gentleJobs details, background-start text fallback, job_stop results, and gentle-jobs.notice completion messages; malformed/failed events MUST NOT invent active jobs.
 - **S3.1** Given structured gentleJobs starts/stops/notices or reference-compatible text starts/completions, when observed through public event handling, then active job state changes correctly; malformed/failed starts leave state unchanged.
@@ -40,6 +40,7 @@ Success: A running job keeps its project working after agent settlement; its ter
 | T2 | S1-S3 | independent gentle-ai-verify | in_progress | User authorized versioning spec and rerunning gate; runtime/module recheck PASS, compiler0, both slice assessments valid |
 
 ## Log
+- L20 — Human confirms classification, verbatim: "si esta bien". S1 kind existing; S2/S3 kind behavior. Previous gate job10 exited2 before tests because kind headings were missing. Record approved kinds without changing requirements and rerun scoped gate. S1 is existing because branch creation was already observed (GREEN-only ancestry evidence, no meaningful RED).
 - L19 — User authorization verbatim: "si versionalo". Version this exact ignored feature document explicitly (without changing ignore rules) and rerun the previously blocked mechanical gate. No source changes or publishing authorized by this step.
 - L18 — Mechanical gate job9 exited2 before tests: git show HEAD:odd/tasks/background-job-activity.md failed because spec exists on disk but is ignored/uncommitted, absent from HEAD. No scenario matrix produced; do not claim gate passed. No automatic retry under unavailable-proof rule. Implementation and requested commits complete, remaining decision is whether to version the ignored local spec and authorize rerunning mechanical gate, or accept named scoped/manual evidence without that gate. No code blocker remains in verified scope. Final status: Needs user decision only for mechanical proof. Spec was intentionally not force-added without explaining repository ignored-tracking convention.
 - L17 — Native commit f3418dd created (139 insertions/21 deletions); git status clean except preexisting .worktrees/. Core/web assess committed range911470a..0c91766 valid336 lines; native0c91766..f3418dd valid160 lines. Both high risk by concurrency escalation, reviewDue:false, RDD off, require self-verification + independent verifier (both observed). Mechanical gentle-sdd gate launched job9 with --only S2-S3, explicit base/red, scoped TS JUnit; result pending. No push/PR.
