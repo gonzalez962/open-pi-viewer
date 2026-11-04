@@ -12,7 +12,7 @@ The Persistent Project Terminal feature provides an interactive terminal session
 
 ## Lifecycle & Isolation
 
-- **One Session Per Canonical Working Directory**: Each project has at most one active terminal session indexed by its resolved canonical path (`resolveCanonicalCwd`). Reopening an existing project directory reattaches to the existing running process and restores buffered history.
+- **Project Session Collections**: The web backend keeps an in-memory collection of PTY-backed sessions (including ID and PID) per resolved canonical directory (`resolveCanonicalCwd`). Opening a project reattaches to its existing live terminal, including buffered output, even when the authorized web login identity changes. The current interface opens one default terminal; tabs and additional-terminal creation are not implemented. Collections survive browser closure, not server restart. The native single-user backend keeps one session per canonical directory.
 - **Process Isolation**: Terminal processes run completely independently in their respective working directories. Input or output in project A never crosses into project B.
 - **Session Continuity (S3.1, S3.2)**: Minimizing the terminal overlay, navigating between projects, or disconnecting and reconnecting a client preserves backend processes and retains up to 256 KB of bounded scrollback history. Minimizing and unmounting stops UI polling but never sends `terminal_close`.
 - **Explicit Close (S3.3)**: Explicit termination requires user confirmation via an accessible dialog (`role="alertdialog"`). Confirmed termination kills the targeted shell process and its child process tree, releasing all OS locks. Reopening the project afterwards spawns a fresh session with a new PID and clean buffer.
@@ -66,7 +66,7 @@ node tests/browser/terminal.mjs
 - **Loopback Enforcement**: When web authentication is disabled, access is strictly limited to verified loopback addresses (`127.0.0.1`, `::1`, and loopback hosts). Remote requests without authentication are rejected with `401 Unauthorized` or `403 Forbidden`.
 - **Anti-Spoofing**: Header-based loopback indicators (`x-forwarded-for`, `x-real-ip`) are never trusted for shell access.
 - **Same-Origin Validation**: All terminal requests must satisfy Same-Origin integrity. Cross-origin requests (`Sec-Fetch-Site: cross-site`, mismatching `Origin`) are rejected before process spawning or interaction.
-- **Multi-Tenant / Owner Isolation**: Terminal sessions are tagged with their authenticated owner. Cross-tenant attempts to read, write, resize, poll, or close sessions are rejected with `403 Forbidden`.
+- **WebBridge Trust Boundary**: This is a shared, user-owned environment: authorized WebBridge clients can read, write, resize, poll, and close the same project terminals regardless of login identity. It is not a multi-tenant terminal isolation model. Every HTTP terminal command still requires the existing same-origin and web-authentication checks, or verified loopback access when authentication is disabled.
 
 ### Dedicated Authorized Poll Transport (`terminal_poll`)
 - **No Shared SSE Broadcast**: Terminal data (keystrokes, command output, credentials) is strictly forbidden from broadcasting over the shared `/api/events` SSE stream, where unauthenticated or cross-tenant clients could intercept data.
