@@ -131,6 +131,8 @@
   "file_tree.switch_confirm_msg": "The agent is currently working. Switching branches now might modify files the agent is working with. Are you sure you want to switch to '{branch}'?",
   "file_tree.switch_confirm_action": "Switch Branch",
   "file_tree.search_branches": "Filter branches...",
+  "file_tree.sync_branches": "Sync branches",
+  "file_tree.syncing_branches": "Syncing branches...",
   "file_tree.no_branches_found": "No branches found",
   "file_tree.uncommitted_changes_title": "Uncommitted changes detected",
   "file_tree.uncommitted_changes_msg": "You have uncommitted changes in your workspace. Do you want to carry them to the new branch or leave them in the base branch?",

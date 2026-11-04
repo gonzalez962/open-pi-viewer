@@ -1186,6 +1186,37 @@
   transition: all 0.15s ease;
 }
 
+.btn-branch-sync {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.btn-branch-sync > svg {
+  display: block;
+  flex-shrink: 0;
+}
+
+.btn-branch-sync[aria-busy="true"] > svg {
+  animation: branch-sync-spin 0.9s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes branch-sync-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-branch-sync[aria-busy="true"] > svg {
+    animation: none;
+  }
+}
+
 .btn-branch-new:hover,
 .btn-branch-new.active {
   background-color: var(--bg-subtle-hover);

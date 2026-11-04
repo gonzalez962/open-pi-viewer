@@ -100,6 +100,8 @@ Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/sess
 
 ## Workspace branch retrieval
 
+The branch manager offers **Sync branches** to request an explicit sync and refresh the displayed branches and available bases. The button shows pending state; bridge errors appear in the modal. A failed network fetch may instead fall back to existing refs without an error.
+
 Node and Tauri retain successful fetch state per repository for the process lifetime; listings read current local and remote-tracking refs from Git. Explicit `sync` and newly observed local branch names trigger a fetch, while failed fetches leave existing refs available and remain eligible for retry. Optional `offset`, `limit`, and `filter` provide sorted ranges with `hasMore`; `allBases` remains complete. Calls without range or filter options retain the legacy full listing.
 
 ## Web resource deletion

@@ -77,6 +77,8 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
   const [defaultBranch, setDefaultBranch] = useState<string | null>(null);
   const [allBases, setAllBases] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const syncPendingRef = useRef(false);
   const [isSwitching, setIsSwitching] = useState<string | null>(null);
   const [isCloning, setIsCloning] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState<boolean>(false);
@@ -106,11 +108,13 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
     [locale]
   );
 
-  const loadBranches = useCallback(async () => {
+  const loadBranches = useCallback(async (sync = false) => {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await listWorkspaceBranchesPi(workingDirectory);
+      const data = sync
+        ? await listWorkspaceBranchesPi(workingDirectory, { sync: true })
+        : await listWorkspaceBranchesPi(workingDirectory);
       setBranches(data.branches || []);
       setDefaultBranch(data.defaultBranch || null);
       setAllBases(data.allBases || []);
@@ -125,6 +129,18 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
       setIsLoading(false);
     }
   }, [workingDirectory, currentBranch, selectedBaseBranch, onError]);
+
+  const handleSync = useCallback(async () => {
+    if (syncPendingRef.current) return;
+    syncPendingRef.current = true;
+    setIsSyncing(true);
+    try {
+      await loadBranches(true);
+    } finally {
+      syncPendingRef.current = false;
+      setIsSyncing(false);
+    }
+  }, [loadBranches]);
 
   useEffect(() => {
     if (isOpen) {
@@ -425,6 +441,24 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
             }}
           >
             {t('file_tree.create_branch_btn')}
+          </button>
+
+          <button
+            type="button"
+            className="btn-branch-new btn-branch-sync"
+            onClick={() => void handleSync()}
+            disabled={isLoading || isSyncing}
+            aria-label={isSyncing ? t('file_tree.syncing_branches') : t('file_tree.sync_branches')}
+            title={isSyncing ? t('file_tree.syncing_branches') : t('file_tree.sync_branches')}
+            aria-busy={isSyncing}
+          >
+            {/* Lucide RefreshCw — ISC license, https://lucide.dev/license */}
+            <svg className="lucide lucide-refresh-cw" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+              <path d="M8 16H3v5" />
+            </svg>
           </button>
         </div>
 
