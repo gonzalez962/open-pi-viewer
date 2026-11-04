@@ -5,6 +5,7 @@ import type { WorkspaceBranch } from '@core/types/workspace';
 import {
   listWorkspaceBranchesPi,
   switchWorkspaceBranchPi,
+  cloneWorkspaceBranchPi,
   createWorkspaceBranchPi,
   deleteWorkspaceBranchPi,
   publishWorkspaceBranchPi,
@@ -77,6 +78,7 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
   const [allBases, setAllBases] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSwitching, setIsSwitching] = useState<string | null>(null);
+  const [isCloning, setIsCloning] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [isPublishing, setIsPublishing] = useState<boolean>(false);
@@ -207,6 +209,21 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
     },
     [currentBranch, isAgentWorking, executeSwitch]
   );
+
+  const handleCloneBranch = useCallback(async (branch: string) => {
+    setIsCloning(branch);
+    setError(null);
+    try {
+      await cloneWorkspaceBranchPi(branch, workingDirectory);
+      await loadBranches();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg);
+      onError?.(msg);
+    } finally {
+      setIsCloning(null);
+    }
+  }, [workingDirectory, loadBranches, onError]);
 
   const handleDeleteBranch = useCallback(
     async (branchToDelete: string) => {
@@ -753,7 +770,16 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                         </button>
                       )}
 
-                      {isCurrent ? (
+                      {b.isRemote ? (
+                        <button
+                          type="button"
+                          className="btn-branch-switch"
+                          onClick={() => void handleCloneBranch(b.name)}
+                          disabled={isCloning !== null || isSwitching !== null || isDeleting || isPublishing}
+                        >
+                          {isCloning === b.name ? '...' : t('file_tree.clone_branch_btn')}
+                        </button>
+                      ) : isCurrent ? (
                         <span className="badge-branch-current">
                           {t('file_tree.current_branch')}
                         </span>
@@ -768,15 +794,17 @@ export const BranchManagerModal: React.FC<BranchManagerModalProps> = ({
                         </button>
                       )}
 
-                      <button
-                        type="button"
-                        className={`btn-branch-commits ${selectedCommitsBranch === b.name ? 'is-active' : ''}`}
-                        onClick={() => setSelectedCommitsBranch(b.name)}
-                        title={t('file_tree.view_commits_btn')}
-                        aria-label={t('file_tree.view_commits_btn')}
-                      >
-                        {t('file_tree.view_commits_btn')}
-                      </button>
+                      {!b.isRemote && (
+                        <button
+                          type="button"
+                          className={`btn-branch-commits ${selectedCommitsBranch === b.name ? 'is-active' : ''}`}
+                          onClick={() => setSelectedCommitsBranch(b.name)}
+                          title={t('file_tree.view_commits_btn')}
+                          aria-label={t('file_tree.view_commits_btn')}
+                        >
+                          {t('file_tree.view_commits_btn')}
+                        </button>
+                      )}
 
                       {!isCurrent && !isDefault && !b.isRemote && (
                         <button

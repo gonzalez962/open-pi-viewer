@@ -617,6 +617,17 @@ export async function listWorkspaceBranchesPi(
   return await invokeFn<WorkspaceBranchList>('list_workspace_branches', payload ? { payload } : undefined);
 }
 
+/** Create a local tracking branch without switching the active branch. */
+export async function cloneWorkspaceBranchPi(
+  branch: string,
+  workingDirectory?: string,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<BranchOperationResult> {
+  return await invokeFn<BranchOperationResult>('clone_workspace_branch', {
+    payload: { branch, workingDirectory: workingDirectory || undefined },
+  });
+}
+
 /**
  * Switches the active git branch in the workspace.
  */

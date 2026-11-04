@@ -1233,6 +1233,37 @@ async fn list_workspace_branches_at(canonical_root: &Path, payload: Option<&List
     Ok(WorkspaceBranchList { current, default_branch, branches, all_bases, has_more })
 }
 
+/// Create a local tracking branch without changing the checked-out branch.
+#[tauri::command]
+pub async fn clone_workspace_branch(
+    payload: SwitchWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    let root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+    clone_workspace_branch_at(&root, &payload.branch).await
+}
+
+async fn clone_workspace_branch_at(root: &Path, remote_branch: &str) -> Result<BranchOperationResult, String> {
+    validate_branch_name(remote_branch)?;
+    let (_, branch) = remote_branch.split_once('/').ok_or("Invalid remote branch name")?;
+    validate_branch_name(branch)?;
+    if remote_branch.ends_with("/HEAD") { return Err("Invalid remote branch name".into()); }
+    let remote_ref = format!("refs/remotes/{remote_branch}");
+    let exists = tokio::process::Command::new("git").args(["show-ref", "--verify", "--quiet", &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if !exists.status.success() { return Err(format!("Remote branch not found: \"{remote_branch}\"")); }
+    let symbolic = tokio::process::Command::new("git").args(["symbolic-ref", "-q", &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if symbolic.status.code() != Some(1) { return Err(format!("Remote branch is not a direct ref: \"{remote_branch}\"")); }
+    let out = tokio::process::Command::new("git").args(["branch", "--track", branch, &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let message = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(BranchOperationResult { success: true, branch: branch.to_string(), message: Some(message) })
+}
+
 /// Switch git branch in workspace
 #[tauri::command]
 pub async fn switch_workspace_branch(
@@ -1797,6 +1828,38 @@ mod tests {
         }
     }
     fn has(list: &WorkspaceBranchList, name: &str) -> bool { list.branches.iter().any(|b| b.name == name) }
+
+    #[tokio::test]
+    async fn clone_branch_tracks_without_checkout_and_rejects_invalid_refs() {
+        struct Guard(PathBuf);
+        impl Drop for Guard { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        let dir = std::env::temp_dir().join(format!("pi_clone_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&dir).unwrap();
+        let _guard = Guard(dir.clone());
+        git(&dir, &["init", "-b", "main"]);
+        git(&dir, &["config", "user.name", "Tester"]);
+        git(&dir, &["config", "user.email", "tester@example.com"]);
+        git(&dir, &["commit", "--allow-empty", "-m", "initial"]);
+        git(&dir, &["remote", "add", "origin", "unused"]);
+        git(&dir, &["update-ref", "refs/remotes/origin/feature/nested", "HEAD"]);
+        git(&dir, &["symbolic-ref", "refs/remotes/origin/alias", "refs/remotes/origin/feature/nested"]);
+        std::fs::write(dir.join("dirty"), "staged").unwrap();
+        git(&dir, &["add", "dirty"]);
+        std::fs::write(dir.join("dirty"), "unstaged").unwrap();
+        let output = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&dir).output().unwrap().stdout;
+        let before = (output(&["rev-parse", "HEAD"]), output(&["ls-files", "--stage"]), output(&["status", "--porcelain"]), output(&["stash", "list"]));
+        let result = clone_workspace_branch_at(&dir, "origin/feature/nested").await.unwrap();
+        assert_eq!(result.branch, "feature/nested");
+        assert_eq!(String::from_utf8_lossy(&output(&["rev-parse", "--abbrev-ref", "feature/nested@{upstream}"])).trim(), "origin/feature/nested");
+        let refs = output(&["show-ref"]);
+        for branch in ["origin/feature/nested", "origin/missing", "origin/alias", "origin/HEAD", "origin/bad..name"] {
+            assert!(clone_workspace_branch_at(&dir, branch).await.is_err(), "{branch}");
+            assert_eq!(output(&["show-ref"]), refs);
+        }
+        assert_eq!(before, (output(&["rev-parse", "HEAD"]), output(&["ls-files", "--stage"]), output(&["status", "--porcelain"]), output(&["stash", "list"])));
+        assert_eq!(String::from_utf8_lossy(&output(&["branch", "--show-current"])).trim(), "main");
+        assert_eq!(std::fs::read_to_string(dir.join("dirty")).unwrap(), "unstaged");
+    }
 
     #[tokio::test]
     async fn branch_cache_refresh_ranges_offline() {

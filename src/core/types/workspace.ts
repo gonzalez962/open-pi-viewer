@@ -80,6 +80,11 @@ export interface ListWorkspaceBranchesPayload {
   filter?: string;
 }
 
+export interface CloneWorkspaceBranchPayload {
+  workingDirectory?: string;
+  branch: string;
+}
+
 export interface SwitchWorkspaceBranchPayload {
   workingDirectory?: string;
   branch: string;

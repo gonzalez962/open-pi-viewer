@@ -96,6 +96,7 @@ import {
   handleGetWorkspaceFileDiff,
   handleListWorkspaceBranches,
   handleSwitchWorkspaceBranch,
+  handleCloneWorkspaceBranch,
   handleCreateWorkspaceBranch,
   handleDeleteWorkspaceBranch,
   handlePublishWorkspaceBranch,
@@ -351,6 +352,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleListWorkspaceBranches(args);
     case 'switch_workspace_branch':
       return handleSwitchWorkspaceBranch(args);
+    case 'clone_workspace_branch':
+      return handleCloneWorkspaceBranch(args);
     case 'create_workspace_branch':
       return handleCreateWorkspaceBranch(args);
     case 'delete_workspace_branch':

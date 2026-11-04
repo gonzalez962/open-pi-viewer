@@ -147,6 +147,7 @@
   "file_tree.publish_confirm_title": "Publish branch '{branch}'?",
   "file_tree.publish_confirm_msg": "This will push the local branch '{branch}' to the remote and set up upstream tracking. Continue?",
   "file_tree.view_commits_btn": "Commits",
+  "file_tree.clone_branch_btn": "Clone branch locally",
   "file_tree.load_more_commits": "Load 10 more commits",
   "file_tree.loading_commits": "Loading commits...",
   "file_tree.no_commits_found": "No commits found",

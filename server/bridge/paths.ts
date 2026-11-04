@@ -1058,6 +1058,35 @@ export function handleListWorkspaceBranches(args: any = {}): WorkspaceBranchList
   }
 }
 
+/** Create a local tracking branch without checking it out. */
+export function handleCloneWorkspaceBranch(args: any = {}): BranchOperationResult {
+  const payload = args.payload || args || {};
+  const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());
+  const remoteBranch = payload.branch;
+  if (typeof remoteBranch !== 'string' || !isValidGitBranchName(remoteBranch)) {
+    throw new Error(`Invalid remote branch name: "${remoteBranch}"`);
+  }
+  const slash = remoteBranch.indexOf('/');
+  const branch = remoteBranch.slice(slash + 1);
+  if (slash <= 0 || !isValidGitBranchName(branch) || remoteBranch.endsWith('/HEAD')) {
+    throw new Error(`Invalid remote branch name: "${remoteBranch}"`);
+  }
+  const ref = `refs/remotes/${remoteBranch}`;
+  const exists = spawnSync('git', ['show-ref', '--verify', '--quiet', ref], {
+    cwd: targetCwd, encoding: 'utf8', timeout: 2500,
+  });
+  if (exists.status !== 0) throw new Error(`Remote branch not found: "${remoteBranch}"`);
+  const symbolic = spawnSync('git', ['symbolic-ref', '-q', ref], {
+    cwd: targetCwd, encoding: 'utf8', timeout: 2500,
+  });
+  if (symbolic.status !== 1) throw new Error(`Remote branch is not a direct ref: "${remoteBranch}"`);
+  const result = spawnSync('git', ['branch', '--track', branch, ref], {
+    cwd: targetCwd, encoding: 'utf8', timeout: 10000,
+  });
+  if (result.status !== 0) throw new Error((result.stderr || result.stdout || 'Failed to clone branch').trim());
+  return { success: true, branch, message: (result.stderr || result.stdout || '').trim() };
+}
+
 /**
  * Switches the active git branch via `git checkout <branch>`.
  * Automatically isolates uncommitted changes per-branch:

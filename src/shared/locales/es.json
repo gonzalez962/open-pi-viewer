@@ -147,6 +147,7 @@
   "file_tree.publish_confirm_title": "¿Publicar la rama '{branch}'?",
   "file_tree.publish_confirm_msg": "Esto subirá la rama local '{branch}' al remoto y configurará el seguimiento upstream. ¿Deseás continuar?",
   "file_tree.view_commits_btn": "Commits",
+  "file_tree.clone_branch_btn": "Clonar rama localmente",
   "file_tree.load_more_commits": "Cargar 10 commits más",
   "file_tree.loading_commits": "Cargando commits...",
   "file_tree.no_commits_found": "No se encontraron commits",

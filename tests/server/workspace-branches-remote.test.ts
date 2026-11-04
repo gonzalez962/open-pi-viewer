@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { handleListWorkspaceBranches, handleSwitchWorkspaceBranch } from '@server/bridge/paths';
+import { handleListWorkspaceBranches, handleSwitchWorkspaceBranch, handleCloneWorkspaceBranch } from '@server/bridge/paths';
 
 function branchFixture(t: import('node:test').TestContext) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-branch-cache-'));
@@ -31,6 +31,51 @@ function branchFixture(t: import('node:test').TestContext) {
     handleListWorkspaceBranches({ workingDirectory: local, ...options });
   return { dir, local, remote, git, pushBranch, list };
 }
+
+function dirtySnapshot(f: ReturnType<typeof branchFixture>) {
+  return {
+    head: f.git(f.local, 'rev-parse', 'HEAD'),
+    current: f.git(f.local, 'branch', '--show-current'),
+    index: f.git(f.local, 'ls-files', '--stage'),
+    status: f.git(f.local, 'status', '--porcelain'),
+    stash: f.git(f.local, 'stash', 'list'),
+    content: fs.readFileSync(path.join(f.local, 'dirty.txt'), 'utf8'),
+  };
+}
+function makeDirty(f: ReturnType<typeof branchFixture>) {
+  fs.writeFileSync(path.join(f.local, 'dirty.txt'), 'staged');
+  f.git(f.local, 'add', 'dirty.txt');
+  fs.writeFileSync(path.join(f.local, 'dirty.txt'), 'unstaged');
+}
+
+test('clone creates a nested tracking branch without touching the current worktree', (t) => {
+  const f = branchFixture(t);
+  f.pushBranch('feature/nested');
+  f.git(f.local, 'fetch', 'origin');
+  makeDirty(f);
+  const before = dirtySnapshot(f);
+  const result = handleCloneWorkspaceBranch({ workingDirectory: f.local, branch: 'origin/feature/nested' });
+  assert.equal(result.success, true);
+  assert.equal(result.branch, 'feature/nested');
+  assert.equal(f.git(f.local, 'rev-parse', '--abbrev-ref', 'feature/nested@{upstream}'), 'origin/feature/nested');
+  assert.deepEqual(dirtySnapshot(f), before);
+});
+
+test('clone rejects invalid, missing and colliding remote refs without mutation', (t) => {
+  const f = branchFixture(t);
+  f.pushBranch('existing');
+  f.git(f.local, 'fetch', 'origin');
+  f.git(f.local, 'branch', 'existing');
+  f.git(f.local, 'symbolic-ref', 'refs/remotes/origin/alias', 'refs/remotes/origin/existing');
+  makeDirty(f);
+  const before = f.git(f.local, 'show-ref');
+  const snapshot = dirtySnapshot(f);
+  for (const branch of ['origin/bad..name', 'origin/missing', 'origin/existing', 'origin/alias', 'origin/HEAD']) {
+    assert.throws(() => handleCloneWorkspaceBranch({ workingDirectory: f.local, branch }), branch);
+    assert.equal(f.git(f.local, 'show-ref'), before);
+    assert.deepEqual(dirtySnapshot(f), snapshot);
+  }
+});
 
 test('S1.1 caches successful remote retrieval across listings', (t) => {
   const f = branchFixture(t);
