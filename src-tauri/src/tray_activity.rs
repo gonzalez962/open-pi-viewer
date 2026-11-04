@@ -114,6 +114,22 @@ mod tests {
     }
 
     #[test]
+    fn s2_5_jobs_survive_settlement_and_are_isolated_by_session() {
+        let mut activity = Activity::default();
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"agent_start"}));
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"tool_execution_end","toolName":"bash_background","result":{"details":{"gentleJobs":{"id":"job-1"}}}}));
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"two","type":"agent_start"}));
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"agent_settled"}));
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"two","type":"agent_settled"}));
+        assert!(activity.busy(), "job remains active after both agents settle");
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"two","type":"tool_execution_end","toolName":"monitor","result":{"details":{"gentleJobs":{"id":"job-2"}}}}));
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"message_end","message":{"customType":"gentle-jobs.notice","details":{"gentleJobs":{"id":"job-1"}}}}));
+        assert!(activity.busy(), "another session's job remains active");
+        activity.update("pi://event", &json!({"cwd":"a","sessionId":"two","type":"tool_execution_end","toolName":"job_stop","result":{"details":{"gentleJobs":{"id":"job-2"}}}}));
+        assert!(!activity.busy());
+    }
+
+    #[test]
     fn failures_override_work_and_clear_on_recovery() {
         let mut activity = Activity::default();
         activity.update("pi://event", &json!({"cwd":"a","type":"agent_start"}));

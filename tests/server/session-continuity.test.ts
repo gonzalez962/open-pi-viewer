@@ -221,6 +221,22 @@ test('pool pressure preserves waiting sessions and concurrent attachment creates
   assert.equal((await f.connect(a)).activity, 'waiting');
 });
 
+test('S2.3 reattachment retains jobs and pool pressure preserves their process', async (t) => {
+  const f = fixture(t);
+  const file = f.file('background-job');
+  await getOrCreatePiRpc(f.root, file);
+  const child = f.children[0];
+  child.event({ type: 'tool_execution_end', toolCallId: 'start', toolName: 'bash_background', result: { details: { gentleJobs: { id: 'job-1' } } } });
+  child.event({ type: 'agent_end' });
+  const snapshot = await f.connect(file);
+  assert.equal(snapshot.activity, 'idle', 'a job must not report agent streaming');
+  assert.deepEqual(snapshot.activeJobs, ['job-1']);
+  for (let i = 0; i < 4; i++) await getOrCreatePiRpc(f.root, f.file(`job-pressure-${i}`));
+  assert.equal(child.exitCode, null, 'an active background job protects its process from pruning');
+  child.event({ type: 'message_end', message: { role: 'custom', customType: 'gentle-jobs.notice', details: { gentleJobs: { id: 'job-1' } }, content: '' } });
+  assert.deepEqual((await f.connect(file)).activeJobs, []);
+});
+
 test('abort leaves process alive, explicit stop targets one session and stale responses never spawn', async (t) => {
   const f = fixture(t);
   const a = f.file('a');
