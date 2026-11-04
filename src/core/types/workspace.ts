@@ -69,10 +69,20 @@ export interface WorkspaceBranchList {
   defaultBranch?: string | null;
   branches: WorkspaceBranch[];
   allBases: string[];
+  hasMore?: boolean;
 }
 
 export interface ListWorkspaceBranchesPayload {
   workingDirectory?: string;
+  sync?: boolean;
+  offset?: number;
+  limit?: number;
+  filter?: string;
+}
+
+export interface CloneWorkspaceBranchPayload {
+  workingDirectory?: string;
+  branch: string;
 }
 
 export interface SwitchWorkspaceBranchPayload {

@@ -11,6 +11,7 @@ import {
   getWorkspaceFileDiffPi,
   listWorkspaceBranchesPi,
   switchWorkspaceBranchPi,
+  cloneWorkspaceBranchPi,
   createWorkspaceBranchPi,
   deleteWorkspaceBranchPi,
   publishWorkspaceBranchPi,
@@ -814,6 +815,31 @@ test('Bridge: listWorkspaceBranchesPi invokes list_workspace_branches command', 
   assert.strictEqual(res.current, 'feat/test');
   assert.strictEqual(res.branches.length, 2);
   assert.strictEqual(res.branches[1].upstream, 'origin/feat/test');
+});
+
+test('Bridge: listWorkspaceBranchesPi forwards sync and range options', async () => {
+  const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
+  const result: WorkspaceBranchList = { current: 'main', branches: [], allBases: ['main'], hasMore: false };
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return result as T;
+  };
+  const response = await listWorkspaceBranchesPi('C:/project', { sync: true, offset: 2, limit: 3, filter: 'feat' }, mockInvoke);
+  assert.deepStrictEqual(calls, [{ cmd: 'list_workspace_branches', args: { payload: {
+    workingDirectory: 'C:/project', sync: true, offset: 2, limit: 3, filter: 'feat',
+  } } }]);
+  assert.deepStrictEqual(response, result);
+});
+
+test('Bridge: cloneWorkspaceBranchPi invokes clone command with exact remote branch', async () => {
+  const calls: unknown[] = [];
+  const mockInvoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    calls.push({ cmd, args });
+    return { success: true, branch: 'feature/nested' } as T;
+  };
+  const result = await cloneWorkspaceBranchPi('origin/feature/nested', 'C:/project', mockInvoke);
+  assert.deepStrictEqual(calls, [{ cmd: 'clone_workspace_branch', args: { payload: { branch: 'origin/feature/nested', workingDirectory: 'C:/project' } } }]);
+  assert.strictEqual(result.branch, 'feature/nested');
 });
 
 test('Bridge: switchWorkspaceBranchPi invokes switch_workspace_branch with payload', async () => {

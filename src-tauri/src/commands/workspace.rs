@@ -712,12 +712,18 @@ pub struct WorkspaceBranchList {
     pub default_branch: Option<String>,
     pub branches: Vec<WorkspaceBranch>,
     pub all_bases: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ListWorkspaceBranchesPayload {
     pub working_directory: Option<String>,
+    pub sync: Option<bool>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -1033,6 +1039,10 @@ pub fn validate_branch_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+type BranchNames = std::collections::HashSet<String>;
+type BranchCache = std::collections::HashMap<PathBuf, std::sync::Arc<tokio::sync::Mutex<Option<BranchNames>>>>;
+static BRANCH_CACHE: std::sync::OnceLock<std::sync::Mutex<BranchCache>> = std::sync::OnceLock::new();
+
 /// List local branches in workspace, their upstream tracking branches, and available base branches
 #[tauri::command]
 pub async fn list_workspace_branches(
@@ -1041,8 +1051,36 @@ pub async fn list_workspace_branches(
 ) -> Result<WorkspaceBranchList, String> {
     let working_dir_opt = payload.as_ref().and_then(|p| p.working_directory.as_deref());
     let canonical_root = resolve_canonical_workspace_root(working_dir_opt, &state).await?;
+    list_workspace_branches_at(&canonical_root, payload.as_ref()).await
+}
 
-    // If remotes exist, attempt to fetch latest remote branch references safely
+async fn list_workspace_branches_at(canonical_root: &Path, payload: Option<&ListWorkspaceBranchesPayload>) -> Result<WorkspaceBranchList, String> {
+    let repo_output = tokio::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&canonical_root).output().await
+        .map_err(|e| format!("Failed to identify repository: {e}"))?;
+    let repository = if repo_output.status.success() {
+        dunce::canonicalize(String::from_utf8_lossy(&repo_output.stdout).trim()).unwrap_or_else(|_| canonical_root.to_path_buf())
+    } else {
+        canonical_root.to_path_buf()
+    };
+    let entry = {
+        let mut entries = BRANCH_CACHE.get_or_init(|| std::sync::Mutex::new(BranchCache::new())).lock().unwrap_or_else(|e| e.into_inner());
+        entries.entry(repository).or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(None))).clone()
+    };
+    let mut cache = entry.lock().await;
+    let local_out = tokio::process::Command::new("git")
+        .args(["for-each-ref", "--format=%(refname:short)", "refs/heads"])
+        .current_dir(&canonical_root).output().await
+        .map_err(|e| format!("Failed to list branches: {e}"))?;
+    let observed: std::collections::HashSet<String> = String::from_utf8_lossy(&local_out.stdout)
+        .lines().map(str::trim).filter(|name| !name.is_empty()).map(str::to_owned).collect();
+    let should_fetch = payload.and_then(|p| p.sync).unwrap_or(false)
+        || cache.as_ref().map_or(true, |previous| !observed.is_subset(previous));
+    if !should_fetch {
+        *cache = Some(observed.clone());
+    }
+    if should_fetch {
     if let Ok(remotes_check) = tokio::process::Command::new("git")
         .args(["remote"])
         .current_dir(&canonical_root)
@@ -1066,9 +1104,15 @@ pub async fn list_workspace_branches(
                         fetch_cmd.env(k, v);
                     }
                 }
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), fetch_cmd.output()).await;
+                fetch_cmd.kill_on_drop(true);
+                if let Ok(Ok(output)) = tokio::time::timeout(std::time::Duration::from_secs(8), fetch_cmd.output()).await {
+                    if output.status.success() && local_out.status.success() {
+                        *cache = Some(observed);
+                    }
+                }
             }
         }
+    }
     }
 
     let out = tokio::process::Command::new("git")
@@ -1170,12 +1214,54 @@ pub async fn list_workspace_branches(
         }
     }
 
-    Ok(WorkspaceBranchList {
-        current,
-        default_branch,
-        branches,
-        all_bases,
-    })
+    let ranged = payload.map_or(false, |p| p.offset.is_some() || p.limit.is_some() || p.filter.is_some());
+    let mut has_more = None;
+    if ranged {
+        let options = payload.unwrap();
+        let filter = options.filter.as_deref().unwrap_or("").trim().to_lowercase();
+        branches.retain(|branch| branch.name.to_lowercase().contains(&filter));
+        let rank = |branch: &WorkspaceBranch| {
+            if branch.name == "main" { 0 } else if default_branch.as_ref() == Some(&branch.name) { 1 }
+            else if branch.is_remote == Some(true) { 3 } else { 2 }
+        };
+        branches.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.name.cmp(&b.name)));
+        let offset = options.offset.unwrap_or(0).min(branches.len());
+        let end = offset.saturating_add(options.limit.unwrap_or(branches.len())).min(branches.len());
+        has_more = Some(end < branches.len());
+        branches = branches.drain(offset..end).collect();
+    }
+    Ok(WorkspaceBranchList { current, default_branch, branches, all_bases, has_more })
+}
+
+/// Create a local tracking branch without changing the checked-out branch.
+#[tauri::command]
+pub async fn clone_workspace_branch(
+    payload: SwitchWorkspaceBranchPayload,
+    state: State<'_, AppState>,
+) -> Result<BranchOperationResult, String> {
+    let root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+    clone_workspace_branch_at(&root, &payload.branch).await
+}
+
+async fn clone_workspace_branch_at(root: &Path, remote_branch: &str) -> Result<BranchOperationResult, String> {
+    validate_branch_name(remote_branch)?;
+    let (_, branch) = remote_branch.split_once('/').ok_or("Invalid remote branch name")?;
+    validate_branch_name(branch)?;
+    if remote_branch.ends_with("/HEAD") { return Err("Invalid remote branch name".into()); }
+    let remote_ref = format!("refs/remotes/{remote_branch}");
+    let exists = tokio::process::Command::new("git").args(["show-ref", "--verify", "--quiet", &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if !exists.status.success() { return Err(format!("Remote branch not found: \"{remote_branch}\"")); }
+    let symbolic = tokio::process::Command::new("git").args(["symbolic-ref", "-q", &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if symbolic.status.code() != Some(1) { return Err(format!("Remote branch is not a direct ref: \"{remote_branch}\"")); }
+    let out = tokio::process::Command::new("git").args(["branch", "--track", branch, &remote_ref])
+        .current_dir(root).output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let message = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(BranchOperationResult { success: true, branch: branch.to_string(), message: Some(message) })
 }
 
 /// Switch git branch in workspace
@@ -1427,7 +1513,7 @@ pub async fn delete_workspace_branch(
     let canonical_root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
 
     // Protect active branch and default branch
-    let branches = list_workspace_branches(Some(ListWorkspaceBranchesPayload { working_directory: payload.working_directory.clone() }), state.clone()).await?;
+    let branches = list_workspace_branches(Some(ListWorkspaceBranchesPayload { working_directory: payload.working_directory.clone(), ..Default::default() }), state.clone()).await?;
     if branches.current.as_deref() == Some(&payload.branch) {
         return Err(format!("Cannot delete currently active branch: \"{}\"", payload.branch));
     }
@@ -1713,6 +1799,108 @@ pub async fn list_workspace_branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct BranchFixture { dir: PathBuf, local: PathBuf, worker: PathBuf, remote: PathBuf }
+    impl Drop for BranchFixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
+    fn git(cwd: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git").args(args).current_dir(cwd).output().unwrap();
+        assert!(out.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&out.stderr));
+    }
+    impl BranchFixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("pi_branch_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            std::fs::create_dir(&dir).unwrap();
+            let local = dir.join("local"); let remote = dir.join("remote.git"); let worker = dir.join("worker");
+            git(&dir, &["init", "--bare", remote.to_str().unwrap()]);
+            std::fs::create_dir(&local).unwrap();
+            git(&local, &["init", "-b", "main"]);
+            git(&local, &["config", "user.name", "Tester"]);
+            git(&local, &["config", "user.email", "tester@example.com"]);
+            git(&local, &["commit", "--allow-empty", "-m", "initial"]);
+            git(&local, &["remote", "add", "origin", remote.to_str().unwrap()]);
+            git(&local, &["push", "-u", "origin", "main"]);
+            git(&dir, &["clone", "--branch", "main", remote.to_str().unwrap(), worker.to_str().unwrap()]);
+            Self { dir, local, worker, remote }
+        }
+        fn push(&self, name: &str) { git(&self.worker, &["push", "origin", &format!("HEAD:refs/heads/{name}")]); }
+        async fn list(&self, options: ListWorkspaceBranchesPayload) -> WorkspaceBranchList {
+            list_workspace_branches_at(&self.local, Some(&options)).await.unwrap()
+        }
+    }
+    fn has(list: &WorkspaceBranchList, name: &str) -> bool { list.branches.iter().any(|b| b.name == name) }
+
+    #[tokio::test]
+    async fn clone_branch_tracks_without_checkout_and_rejects_invalid_refs() {
+        struct Guard(PathBuf);
+        impl Drop for Guard { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+        let dir = std::env::temp_dir().join(format!("pi_clone_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&dir).unwrap();
+        let _guard = Guard(dir.clone());
+        git(&dir, &["init", "-b", "main"]);
+        git(&dir, &["config", "user.name", "Tester"]);
+        git(&dir, &["config", "user.email", "tester@example.com"]);
+        git(&dir, &["commit", "--allow-empty", "-m", "initial"]);
+        git(&dir, &["remote", "add", "origin", "unused"]);
+        git(&dir, &["update-ref", "refs/remotes/origin/feature/nested", "HEAD"]);
+        git(&dir, &["symbolic-ref", "refs/remotes/origin/alias", "refs/remotes/origin/feature/nested"]);
+        std::fs::write(dir.join("dirty"), "staged").unwrap();
+        git(&dir, &["add", "dirty"]);
+        std::fs::write(dir.join("dirty"), "unstaged").unwrap();
+        let output = |args: &[&str]| std::process::Command::new("git").args(args).current_dir(&dir).output().unwrap().stdout;
+        let before = (output(&["rev-parse", "HEAD"]), output(&["ls-files", "--stage"]), output(&["status", "--porcelain"]), output(&["stash", "list"]));
+        let result = clone_workspace_branch_at(&dir, "origin/feature/nested").await.unwrap();
+        assert_eq!(result.branch, "feature/nested");
+        assert_eq!(String::from_utf8_lossy(&output(&["rev-parse", "--abbrev-ref", "feature/nested@{upstream}"])).trim(), "origin/feature/nested");
+        let refs = output(&["show-ref"]);
+        for branch in ["origin/feature/nested", "origin/missing", "origin/alias", "origin/HEAD", "origin/bad..name"] {
+            assert!(clone_workspace_branch_at(&dir, branch).await.is_err(), "{branch}");
+            assert_eq!(output(&["show-ref"]), refs);
+        }
+        assert_eq!(before, (output(&["rev-parse", "HEAD"]), output(&["ls-files", "--stage"]), output(&["status", "--porcelain"]), output(&["stash", "list"])));
+        assert_eq!(String::from_utf8_lossy(&output(&["branch", "--show-current"])).trim(), "main");
+        assert_eq!(std::fs::read_to_string(dir.join("dirty")).unwrap(), "unstaged");
+    }
+
+    #[tokio::test]
+    async fn branch_cache_refresh_ranges_offline() {
+        let f = BranchFixture::new();
+        f.push("first");
+        assert!(has(&f.list(Default::default()).await, "origin/first"));
+        f.push("second");
+        assert!(!has(&f.list(Default::default()).await, "origin/second"));
+        assert!(has(&f.list(ListWorkspaceBranchesPayload { sync: Some(true), ..Default::default() }).await, "origin/second"));
+        f.push("third");
+        git(&f.local, &["branch", "feature-z"]);
+        let refreshed = f.list(Default::default()).await;
+        assert!(has(&refreshed, "feature-z") && has(&refreshed, "origin/third"));
+        git(&f.local, &["branch", "feature-a"]);
+        git(&f.local, &["branch", "feature-m"]);
+        let opts = |offset| ListWorkspaceBranchesPayload { offset: Some(offset), limit: Some(2), filter: Some("feature".into()), ..Default::default() };
+        let first = f.list(opts(0)).await; let second = f.list(opts(2)).await;
+        assert_eq!(first.branches.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), vec!["feature-a", "feature-m"]);
+        assert_eq!(second.branches.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(), vec!["feature-z"]);
+        assert_eq!((first.has_more, second.has_more), (Some(true), Some(false)));
+        assert_eq!(first.all_bases, second.all_bases);
+        assert!(first.all_bases.contains(&"origin/third".to_string()));
+        git(&f.local, &["remote", "set-url", "origin", f.dir.join("missing.git").to_str().unwrap()]);
+        let offline = f.list(ListWorkspaceBranchesPayload { sync: Some(true), ..Default::default() }).await;
+        assert!(has(&offline, "main") && has(&offline, "origin/third"));
+        git(&f.local, &["remote", "set-url", "origin", f.remote.to_str().unwrap()]);
+    }
+
+    #[tokio::test]
+    async fn branch_repository_isolation() {
+        let a = BranchFixture::new(); let b = BranchFixture::new();
+        a.push("only-a"); b.push("only-b");
+        let (ra, rb) = tokio::join!(a.list(Default::default()), b.list(Default::default()));
+        assert!(has(&ra, "origin/only-a") && !has(&ra, "origin/only-b"));
+        assert!(has(&rb, "origin/only-b") && !has(&rb, "origin/only-a"));
+        let key = dunce::canonicalize(&a.local).unwrap();
+        let entry = BRANCH_CACHE.get().unwrap().lock().unwrap().get(&key).unwrap().clone();
+        let _held = entry.lock().await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), b.list(Default::default())).await;
+        assert!(result.is_ok(), "repository B must not wait for A's lock");
+    }
 
     #[tokio::test]
     async fn test_workspace_file_tree_security_and_operations() {

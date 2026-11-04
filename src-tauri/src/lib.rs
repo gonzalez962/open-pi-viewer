@@ -76,6 +76,7 @@ pub fn run() {
             commands::get_workspace_git_status,
             commands::get_workspace_file_diff,
             commands::list_workspace_branches,
+            commands::clone_workspace_branch,
             commands::switch_workspace_branch,
             commands::create_workspace_branch,
             commands::delete_workspace_branch,
