@@ -1,4 +1,6 @@
 {
+  "jobs.count_one": "{count} active job",
+  "jobs.count_many": "{count} active jobs",
   "subagent.title": "Subagent process",
   "subagent.close": "Close",
   "subagent.bounded": "Bounded live snapshot; earlier activity may be unavailable.",

@@ -546,12 +546,14 @@ export interface ProjectStatusInfo {
   connectionState: import('@core/types/connection').ConnectionState;
   agentActivity: import('@core/types/messages').AgentActivity;
   isBusy?: boolean;
+  jobCount?: number;
 }
 
 export function getProjectActivity(state: import('@core/types/chat-state').ChatSessionState): ProjectStatusInfo {
   return {
     connectionState: state.connectionStatus,
     agentActivity: state.agentActivity,
+    jobCount: Object.values(state.jobsBySession ?? {}).reduce((total, jobs) => total + jobs.length, 0),
     isBusy: (state.connectionStatus === 'connected' && state.agentActivity === 'busy') || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0),
   };
 }

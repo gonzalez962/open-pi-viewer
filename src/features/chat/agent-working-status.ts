@@ -290,6 +290,10 @@ function localizePhase(phase: string, locale: SupportedLocale): string {
   return capitalize(phase);
 }
 
+export function getSelectedSessionJobCount(state: Pick<ChatSessionState, 'sessionId' | 'jobsBySession'>): number {
+  return state.sessionId ? (state.jobsBySession?.[state.sessionId]?.length ?? 0) : 0;
+}
+
 /**
  * Pure derivation of structured agent working status from chat state.
  */

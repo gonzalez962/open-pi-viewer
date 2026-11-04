@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 fn job_id(value: &serde_json::Value, prefix: &str, suffix: &str) -> Option<String> {
-    if let Some(id) = value.pointer("/details/gentleJobs/id").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+    if let Some(id) = value.pointer("/details/gentleJobs/jobId").or_else(|| value.pointer("/details/gentleJobs/id")).and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
         return Some(id.trim().to_owned());
     }
     let content = value.get("content")?;
@@ -13,7 +13,9 @@ fn job_id(value: &serde_json::Value, prefix: &str, suffix: &str) -> Option<Strin
     let rest = if rest.starts_with('"') { rest.split_once("\" ")?.1 } else { rest };
     let rest = rest.trim_start_matches('(');
     let id: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
-    if id.is_empty() || (!suffix.is_empty() && !rest[id.len()..].trim_start_matches(')').starts_with(suffix)) { None } else { Some(id) }
+    let tail = rest[id.len()..].trim_start_matches(')');
+    let tail = if tail.starts_with(" (\"") { tail.split_once("\")").map(|(_, tail)| tail).unwrap_or(tail) } else { tail };
+    if id.is_empty() || (!suffix.is_empty() && !tail.starts_with(suffix)) { None } else { Some(id) }
 }
 
 #[derive(Default)]
@@ -50,8 +52,13 @@ impl Activity {
             }
             if event.get("type").and_then(|v| v.as_str()) == Some("message_end") {
                 if let Some(message) = event.get("message").filter(|m| m.get("customType").and_then(|v| v.as_str()) == Some("gentle-jobs.notice")) {
-                    if let Some(id) = job_id(message, "Background job ", " exited") {
-                        if let Some(jobs) = self.jobs.get_mut(&key) { jobs.remove(&id); }
+                    let details = message.pointer("/details/gentleJobs");
+                    let status = details.and_then(|d| d.get("status")).and_then(|v| v.as_str());
+                    let batch = details.and_then(|d| d.get("event")).and_then(|v| v.as_str()) == Some("events");
+                    if !batch && status.map_or(true, |s| matches!(s, "exited" | "failed" | "stopped")) {
+                        if let Some(id) = job_id(message, "Background job ", " exited") {
+                            if let Some(jobs) = self.jobs.get_mut(&key) { jobs.remove(&id); }
+                        }
                     }
                 }
             }
@@ -174,6 +181,27 @@ mod tests {
         activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"message_end","message":{"customType":"gentle-jobs.notice","details":{"gentleJobs":{"id":"job-1"}}}}));
         assert!(activity.busy(), "another session's job remains active");
         activity.update("pi://event", &json!({"cwd":"a","sessionId":"two","type":"tool_execution_end","toolName":"job_stop","result":{"details":{"gentleJobs":{"id":"job-2"}}}}));
+        assert!(!activity.busy());
+    }
+
+    #[test]
+    fn real_job_notices_keep_monitor_batches_and_remove_terminal_jobs() {
+        for status in ["exited", "failed", "stopped"] {
+            let mut activity = Activity::default();
+            activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"tool_execution_end","toolName":"bash_background","result":{"details":{"gentleJobs":{"jobId":"j1","status":"running","kind":"background"}}}}));
+            assert!(activity.busy());
+            activity.update("pi://event", &json!({"cwd":"a","sessionId":"one","type":"message_end","message":{"customType":"gentle-jobs.notice","content":"Background job j1 (\"build\") exited with code 0.","details":{"gentleJobs":{"jobId":"j1","status":status,"kind":"background"}}}}));
+            assert!(!activity.busy());
+        }
+        for event in ["events", "timeout", "flood"] {
+            let mut activity = Activity::default();
+            activity.update("pi://event", &json!({"cwd":"a","type":"tool_execution_end","toolName":"monitor","result":{"details":{"gentleJobs":{"jobId":"m1","status":"running"}}}}));
+            activity.update("pi://event", &json!({"cwd":"a","type":"message_end","message":{"customType":"gentle-jobs.notice","details":{"gentleJobs":{"jobId":"m1","status":if event == "events" { "running" } else { "stopped" },"event":event}}}}));
+            assert_eq!(activity.busy(), event == "events");
+        }
+        let mut activity = Activity::default();
+        activity.update("pi://event", &json!({"cwd":"a","type":"tool_execution_end","toolName":"bash_background","result":{"content":[{"text":"Started background job j1 (\"build\")."}]}}));
+        activity.update("pi://event", &json!({"cwd":"a","type":"message_end","message":{"customType":"gentle-jobs.notice","content":"Background job j1 (\"build\") exited with code 0."}}));
         assert!(!activity.busy());
     }
 

@@ -25,10 +25,12 @@ export function parseJobChange(event: any): JobChange | null {
     source = event.result;
   } else if (event?.type === 'message_end' && event.message?.customType === 'gentle-jobs.notice') {
     active = false;
-    pattern = /Background job (?:"[^"]+" )?\(?([a-zA-Z0-9_-]+)\)? exited/i;
+    pattern = /Background job (?:"[^"]+" )?\(?([a-zA-Z0-9_-]+)\)?(?: \("[^"]*"\))? exited/i;
     source = event.message;
+    const details = source?.details?.gentleJobs;
+    if (details?.event === 'events' || (details?.status && !['exited', 'failed', 'stopped'].includes(details.status))) return null;
   } else return null;
-  const raw = source?.details?.gentleJobs?.id;
+  const raw = source?.details?.gentleJobs?.jobId ?? source?.details?.gentleJobs?.id;
   const id = typeof raw === 'string' && raw.trim() ? raw.trim() : text(source?.content).match(pattern)?.[1];
   return id ? { id, active } : null;
 }

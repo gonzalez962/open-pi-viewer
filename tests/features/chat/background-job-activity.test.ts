@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { INITIAL_STATE, chatReducer } from '@core/reducer';
 import { SessionEventController } from '@features/chat/session-events';
-import { deriveAgentWorkingStatus } from '@features/chat/agent-working-status';
+import { deriveAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
 import { planPromptDispatch } from '@features/chat/hooks/usePromptState';
 import { getProjectStatusClass } from '@features/projects/ProjectDock';
 import * as projects from '@features/projects/projects';
@@ -30,6 +30,24 @@ function harness() {
   const working = () => deriveAgentWorkingStatus(state).isWorking;
   return { controller, dispatch, selectSession, emit, start, stop, notice, working, notifications, get state() { return state; } };
 }
+
+test('job counts follow starts, session switches, completion and stop', () => {
+  const h = harness();
+  const counts = () => [projects.getProjectActivity(h.state).jobCount, getSelectedSessionJobCount(h.state)];
+  assert.deepEqual(counts(), [0, 0]);
+  h.start('one'); h.start('two'); h.start('other', 'b');
+  assert.deepEqual(counts(), [3, 2]);
+  h.selectSession('b');
+  assert.deepEqual(counts(), [3, 1]);
+  h.notice('one');
+  assert.deepEqual(counts(), [2, 1]);
+  h.stop('other', 'b');
+  assert.deepEqual(counts(), [1, 0]);
+  h.selectSession('a');
+  assert.deepEqual(counts(), [1, 1]);
+  h.stop('two');
+  assert.deepEqual(counts(), [0, 0]);
+});
 
 test('S2.1 successful background start survives settlement without streaming or disabling prompts', () => {
   const h = harness();
@@ -102,6 +120,34 @@ test('S2.4 waiting and ordinary work survive while disconnect clears jobs', () =
   h.emit({ type: 'message_start', message: { role: 'assistant', content: '' } });
   assert.equal(h.working(), true);
   h.emit({ type: 'agent_settled' });
+  assert.equal(h.working(), false);
+});
+
+test('real producer job notices distinguish monitor batches from terminal outcomes', () => {
+  for (const status of ['exited', 'failed', 'stopped']) {
+    const h = harness();
+    h.emit({ type: 'tool_execution_end', toolCallId: 'start', toolName: 'bash_background', result: { content: [{ type: 'text', text: 'Started background job j1 ("build").' }], details: { gentleJobs: { jobId: 'j1', kind: 'background', status: 'running' } } } });
+    h.emit({ type: 'agent_settled' });
+    assert.equal(h.working(), true);
+    h.emit({ type: 'message_end', message: { role: 'custom', customType: 'gentle-jobs.notice', content: 'Background job j1 ("build") exited with code 0.', details: { gentleJobs: { jobId: 'j1', kind: 'background', status } } } });
+    assert.equal(h.working(), false, status);
+  }
+  for (const event of ['events', 'timeout', 'flood']) {
+    const h = harness();
+    h.emit({ type: 'tool_execution_end', toolCallId: 'start', toolName: 'monitor', result: { details: { gentleJobs: { jobId: 'm1', kind: 'monitor', status: 'running' } } } });
+    h.emit({ type: 'agent_settled' });
+    assert.equal(h.working(), true);
+    h.emit({ type: 'message_end', message: { role: 'custom', customType: 'gentle-jobs.notice', content: 'Monitor m1 ("watch") reported 1 new line:', details: { gentleJobs: { jobId: 'm1', kind: 'monitor', status: event === 'events' ? 'running' : 'stopped', event } } } });
+    assert.equal(h.working(), event === 'events', event);
+  }
+});
+
+test('real completion text without details accepts label after id', () => {
+  const h = harness();
+  h.emit({ type: 'tool_execution_end', toolCallId: 'start', toolName: 'bash_background', result: { content: [{ type: 'text', text: 'Started background job j1 ("build").' }] } });
+  h.emit({ type: 'agent_settled' });
+  assert.equal(h.working(), true);
+  h.emit({ type: 'message_end', message: { role: 'custom', customType: 'gentle-jobs.notice', content: 'Background job j1 ("build") exited with code 0.' } });
   assert.equal(h.working(), false);
 });
 

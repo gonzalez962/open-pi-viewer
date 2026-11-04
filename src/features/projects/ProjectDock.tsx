@@ -187,7 +187,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             const isActive = project.id === activeProjectId;
             const displayName = getProjectDisplayName(project);
             const monogram = getProjectMonogram(displayName);
-            const statusInfo = projectStatusMap?.[project.id] ?? (isActive
+            const statusInfo: ProjectStatusInfo = projectStatusMap?.[project.id] ?? (isActive
               ? { connectionState, agentActivity, isBusy }
               : { connectionState: 'disconnected', agentActivity: 'idle', isBusy: false });
             const statusClass = getProjectStatusClass(
@@ -406,7 +406,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 
                       <div className="project-status-row">
                         <span className="project-status-text">
-                          {statusLabel}
+                          {statusLabel}{Boolean(statusInfo.jobCount) && ` · ${translate(locale, statusInfo.jobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: statusInfo.jobCount! })}`}
                         </span>
                         <span className="project-path-text" title={project.path}>
                           {project.path}
