@@ -4,13 +4,13 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { installWebApi } from '@server/web-api';
+import { resetTerminalManagerForTest } from '@server/terminal/terminal-manager';
 
 async function safeRmDir(dir: string, retries = 15, delayMs = 100): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
-      if (fs.existsSync(dir)) {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
+      if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
       return;
     } catch (err) {
       if (i === retries - 1) throw err;
@@ -22,471 +22,218 @@ async function safeRmDir(dir: string, retries = 15, delayMs = 100): Promise<void
 class MockRequest extends EventEmitter {
   headers: Record<string, string | string[] | undefined>;
   url: string;
-  method: string;
-  socket: { encrypted?: boolean; remoteAddress?: string };
-  originalUrl?: string;
-
-  constructor(options: {
-    url?: string;
-    method?: string;
-    headers?: Record<string, string | string[] | undefined>;
-    encrypted?: boolean;
-    remoteAddress?: string;
-  } = {}) {
+  originalUrl: string;
+  method = 'POST';
+  socket: { encrypted: boolean; remoteAddress: string };
+  constructor(url: string, headers: Record<string, string | string[] | undefined>, remoteAddress: string) {
     super();
-    this.url = options.url || '/api/ipc';
-    this.originalUrl = this.url;
-    this.method = options.method || 'POST';
-    this.headers = { ...options.headers };
-    this.socket = {
-      encrypted: options.encrypted || false,
-      remoteAddress: options.remoteAddress || '127.0.0.1',
-    };
+    this.url = this.originalUrl = url;
+    this.headers = headers;
+    this.socket = { encrypted: false, remoteAddress };
   }
 }
-
 class MockResponse extends EventEmitter {
   statusCode = 200;
   headers: Record<string, string | string[]> = {};
   body = '';
-  ended = false;
   writableEnded = false;
   destroyed = false;
-
-  setHeader(name: string, value: string | string[]) {
-    this.headers[name.toLowerCase()] = value;
-  }
-
-  getHeader(name: string) {
-    return this.headers[name.toLowerCase()];
-  }
-
-  writeHead(statusCode: number, headers?: Record<string, string | string[]>) {
-    this.statusCode = statusCode;
-    if (headers) {
-      for (const [k, v] of Object.entries(headers)) {
-        this.setHeader(k, v);
-      }
-    }
+  setHeader(name: string, value: string | string[]) { this.headers[name.toLowerCase()] = value; }
+  getHeader(name: string) { return this.headers[name.toLowerCase()]; }
+  writeHead(status: number, headers: Record<string, string | string[]> = {}) {
+    this.statusCode = status;
+    for (const [key, value] of Object.entries(headers)) this.setHeader(key, value);
     return this;
   }
-
-  write(chunk: any) {
-    this.body += String(chunk);
-    return true;
-  }
-
-  end(chunk?: any) {
-    if (chunk) this.body += String(chunk);
-    this.ended = true;
-    this.writableEnded = true;
-    this.emit('finish');
-    return this;
-  }
-
-  destroy() {
-    this.destroyed = true;
-    this.emit('close');
-    return this;
-  }
+  write(chunk: any) { this.body += String(chunk); return true; }
+  end(chunk?: any) { if (chunk) this.body += String(chunk); this.writableEnded = true; this.emit('finish'); return this; }
+  destroy() { this.destroyed = true; this.emit('close'); return this; }
 }
-
 function createMockApp() {
   const routes: Array<{ route: string; handler: any }> = [];
-  const app = {
-    use(routeOrHandler: string | any, handler?: any) {
-      if (typeof routeOrHandler === 'string') {
-        routes.push({ route: routeOrHandler, handler });
-      } else {
-        routes.push({ route: '', handler: routeOrHandler });
-      }
-    },
-  };
-
-  const dispatch = async (req: MockRequest, res: MockResponse) => {
+  const app = { use(route: string | any, handler?: any) {
+    routes.push(typeof route === 'string' ? { route, handler } : { route: '', handler: route });
+  } };
+  const dispatch = (req: MockRequest, res: MockResponse) => {
     let index = 0;
     const next = (err?: any) => {
-      if (err) {
-        res.statusCode = 500;
-        res.end(String(err));
-        return;
-      }
+      if (err) { res.statusCode = 500; res.end(String(err)); return; }
       if (res.writableEnded) return;
       const current = routes[index++];
-      if (!current) {
-        res.statusCode = 404;
-        res.end('Not found');
-        return;
-      }
+      if (!current) { res.statusCode = 404; res.end('Not found'); return; }
       const pathname = req.url.split('?')[0];
-      if (current.route && pathname !== current.route && !pathname.startsWith(current.route + '/')) {
-        next();
-        return;
-      }
+      if (current.route && pathname !== current.route && !pathname.startsWith(current.route + '/')) { next(); return; }
       try {
         const result = current.handler(req, res, next);
-        if (result && typeof result.catch === 'function') {
-          result.catch(next);
-        }
-      } catch (e) {
-        next(e);
-      }
+        if (result && typeof result.catch === 'function') result.catch(next);
+      } catch (e) { next(e); }
     };
     next();
   };
-
   return { app, dispatch };
 }
-
-function sendIpcRequest(dispatch: (req: MockRequest, res: MockResponse) => Promise<unknown> | unknown, options: {
-  cmd: string;
-  args?: any;
-  headers?: Record<string, string | string[] | undefined>;
-  remoteAddress?: string;
-}): Promise<MockResponse> {
-  return new Promise((resolve) => {
-    const req = new MockRequest({
-      url: '/api/ipc',
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        host: 'localhost:5173',
-        origin: 'http://localhost:5173',
-        ...options.headers,
-      },
-      remoteAddress: options.remoteAddress || '127.0.0.1',
-    });
+type Dispatch = ReturnType<typeof createMockApp>['dispatch'];
+function request(dispatch: Dispatch, url: string, body: any, headers: Record<string, string> = {}, remoteAddress = '127.0.0.1'): Promise<MockResponse> {
+  return new Promise((resolve, reject) => {
+    const req = new MockRequest(url, { 'content-type': 'application/json', host: 'localhost:5173', origin: 'http://localhost:5173', ...headers }, remoteAddress);
     const res = new MockResponse();
-
-    res.once('finish', () => resolve(res));
-
-    void dispatch(req, res);
-
-    process.nextTick(() => {
-      req.emit('data', JSON.stringify({ cmd: options.cmd, args: options.args || {} }));
-      req.emit('end');
-    });
+    const timer = setTimeout(() => {
+      res.removeAllListeners('finish');
+      res.destroy();
+      req.emit('close');
+      reject(new Error(`Request timed out: ${url} ${body?.cmd || ''}`));
+    }, 2500);
+    res.once('finish', () => { clearTimeout(timer); resolve(res); });
+    dispatch(req, res);
+    setImmediate(() => { req.emit('data', JSON.stringify(body)); req.emit('end'); });
   });
 }
+async function login(dispatch: Dispatch): Promise<string> {
+  const res = await request(dispatch, '/api/auth/login', { key: 'test-key' });
+  assert.equal(res.statusCode, 200, res.body);
+  const cookie = res.getHeader('set-cookie');
+  assert.ok(cookie);
+  return (Array.isArray(cookie) ? cookie[0] : cookie).split(';')[0];
+}
+async function ipc(dispatch: Dispatch, cookie: string, cmd: string, args: any = {}) {
+  return request(dispatch, '/api/ipc', { cmd, args }, cookie ? { cookie } : {});
+}
+async function result(dispatch: Dispatch, cookie: string, cmd: string, args: any = {}) {
+  const res = await ipc(dispatch, cookie, cmd, args);
+  assert.equal(res.statusCode, 200, `${cmd}: ${res.body}`);
+  return JSON.parse(res.body).result;
+}
+async function waitReplay(dispatch: Dispatch, cookie: string, id: string, marker: string) {
+  for (let i = 0; i < 100; i++) {
+    const session = await result(dispatch, cookie, 'terminal_get', { id });
+    if (session?.replay?.includes(marker)) return session;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.fail(`Timed out waiting for ${marker}`);
+}
 
-test('S4.1: Given the web backend, when a permitted client opens/writes/resizes/closes a terminal, then each operation reaches the real backend session and an untrusted remote or cross-origin request is rejected without spawning or changing sessions', async (t) => {
-  const { installWebApi } = await import('@server/web-api');
-  const { getTerminalManager, resetTerminalManagerForTest } = await import('@server/terminal/terminal-manager');
+test('S1.1: distinct authenticated web sessions reattach and operate on the same live project terminal', async (t) => {
   await resetTerminalManagerForTest();
-  const manager = getTerminalManager();
-  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-s41-'));
-
-  t.after(async () => {
-    await manager.dispose();
-    await resetTerminalManagerForTest();
-    await safeRmDir(fixtureDir);
-  });
-
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-share-'));
   const { app, dispatch } = createMockApp();
   const server = new EventEmitter();
-  installWebApi(app, server, { enabled: false });
-
-  // 1. Permitted client (verified loopback peer and host, same-origin)
-  const openRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_open',
-    args: { cwd: fixtureDir },
-    remoteAddress: '127.0.0.1',
-    headers: { host: 'localhost:5173', origin: 'http://localhost:5173' },
-  });
-  assert.strictEqual(openRes.statusCode, 200, `Expected 200 for permitted client, got ${openRes.statusCode}: ${openRes.body}`);
-  const openBody = JSON.parse(openRes.body);
-  assert.ok(openBody.result?.id, 'Session must be returned');
-  const sessionId = openBody.result.id;
-
-  // Write reaches session
-  const writeRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_write',
-    args: { id: sessionId, data: 'echo test\r\n' },
-    remoteAddress: '127.0.0.1',
-  });
-  assert.strictEqual(writeRes.statusCode, 200);
-
-  // Resize reaches session
-  const resizeRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_resize',
-    args: { id: sessionId, cols: 90, rows: 30 },
-    remoteAddress: '127.0.0.1',
-  });
-  assert.strictEqual(resizeRes.statusCode, 200);
-
-  // Poll reaches session
-  const pollRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_poll',
-    args: { id: sessionId, cursor: 0, timeoutMs: 1000 },
-    remoteAddress: '127.0.0.1',
-  });
-  assert.strictEqual(pollRes.statusCode, 200);
-  const pollBody = JSON.parse(pollRes.body);
-  assert.strictEqual(pollBody.result?.id, sessionId);
-
-  // 2. Untrusted remote peer (non-loopback IP with auth disabled)
-  const remoteRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_open',
-    args: { cwd: fixtureDir },
-    remoteAddress: '192.168.1.100',
-    headers: { host: '192.168.1.100:5173', origin: 'http://192.168.1.100:5173' },
-  });
-  assert.ok(remoteRes.statusCode === 403 || remoteRes.statusCode === 401, 'Remote unauthenticated request must be rejected');
-  const sessionsBefore = manager.listSessions().length;
-
-  // 3. Spoofed loopback header from remote peer must NOT bypass security
-  const spoofRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_open',
-    args: { cwd: fixtureDir },
-    remoteAddress: '192.168.1.100',
-    headers: {
-      host: 'localhost:5173',
-      origin: 'http://localhost:5173',
-      'x-forwarded-for': '127.0.0.1',
-      'x-real-ip': '127.0.0.1',
-    },
-  });
-  assert.strictEqual(spoofRes.statusCode, 403, 'Spoofed loopback headers must be rejected');
-  assert.strictEqual(manager.listSessions().length, sessionsBefore, 'No sessions must be spawned on rejected remote request');
-
-  // 4. Cross-origin request must be rejected
-  const csrfRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_open',
-    args: { cwd: fixtureDir },
-    remoteAddress: '127.0.0.1',
-    headers: { host: 'localhost:5173', origin: 'http://malicious-attacker.com' },
-  });
-  assert.strictEqual(csrfRes.statusCode, 403, 'Cross-origin request must be rejected');
-  assert.strictEqual(manager.listSessions().length, sessionsBefore, 'No session must be spawned on cross-origin request');
-
-  // 5. Permitted client closes session
-  const closeRes = await sendIpcRequest(dispatch, {
-    cmd: 'terminal_close',
-    args: { id: sessionId },
-    remoteAddress: '127.0.0.1',
-  });
-  assert.strictEqual(closeRes.statusCode, 200);
-  assert.strictEqual(manager.getSession(sessionId), null, 'Session must be closed');
+  installWebApi(app, server, { enabled: true, key: 'test-key' });
+  t.after(async () => { server.emit('close'); await resetTerminalManagerForTest(); await safeRmDir(dir); });
+  const alice = await login(dispatch);
+  const bob = await login(dispatch);
+  assert.notEqual(alice, bob);
+  const first = await result(dispatch, alice, 'terminal_open', { cwd: dir });
+  assert.ok(first.id && first.pid > 0 && first.running);
+  const marker = 'SHARED_REPLAY_MARKER';
+  assert.deepEqual(await result(dispatch, alice, 'terminal_write', { id: first.id, data: `echo ${marker}\r\n` }), { ok: true });
+  await waitReplay(dispatch, alice, first.id, marker);
+  const reopened = await result(dispatch, bob, 'terminal_open', { cwd: path.join(dir, '.') });
+  assert.equal(reopened.id, first.id, 'different logins must reattach to the same ID');
+  assert.equal(reopened.pid, first.pid);
+  assert.equal(reopened.running, true);
+  assert.ok(reopened.replay.includes(marker));
+  assert.equal((await result(dispatch, bob, 'terminal_get', { id: first.id })).id, first.id);
+  assert.equal((await result(dispatch, bob, 'terminal_get', { cwd: dir })).id, first.id);
+  assert.ok((await result(dispatch, bob, 'terminal_list')).some((s: any) => s.id === first.id));
+  const poll = await result(dispatch, bob, 'terminal_poll', { id: first.id, cursor: 0, timeoutMs: 0 });
+  assert.ok(poll.data.includes(marker));
+  assert.ok(poll.cursor > 0);
+  const incremental = await result(dispatch, bob, 'terminal_poll', { id: first.id, cursor: poll.cursor, timeoutMs: 0 });
+  assert.ok(!incremental.data.includes(marker));
+  assert.ok(incremental.cursor >= poll.cursor);
+  assert.deepEqual(await result(dispatch, bob, 'terminal_resize', { id: first.id, cols: 91, rows: 31 }), { ok: true });
+  const resized = await result(dispatch, alice, 'terminal_get', { id: first.id });
+  assert.equal(resized.cols, 91); assert.equal(resized.rows, 31);
+  const secondMarker = 'SHARED_WRITE_MARKER';
+  assert.deepEqual(await result(dispatch, bob, 'terminal_write', { id: first.id, data: `echo ${secondMarker}\r\n` }), { ok: true });
+  await waitReplay(dispatch, alice, first.id, secondMarker);
+  assert.deepEqual(await result(dispatch, bob, 'terminal_close', { id: first.id }), { ok: true });
+  assert.equal(await result(dispatch, alice, 'terminal_get', { id: first.id }), null);
 });
 
-test('S4.1: Owner isolation prevents cross-tenant access and terminal data does not leak to shared SSE', async (t) => {
-  const { createTerminalManager } = await import('@server/terminal/terminal-manager');
-  const { handleTerminalIpcCommand } = await import('@server/terminal/ipc-handler');
-  const manager = createTerminalManager();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-owner-'));
-  t.after(async () => {
-    await manager.dispose();
-    await safeRmDir(dir);
-  });
-
-  // Owner A opens a session
-  const sessionA = await handleTerminalIpcCommand(
-    'terminal_open',
-    { cwd: dir },
-    { owner: 'tenant_alice', manager }
-  );
-  assert.ok(sessionA.id);
-
-  // Owner B cannot write to Alice's session
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_write',
-        { id: sessionA.id, data: 'echo secret\r\n' },
-        { owner: 'tenant_bob', manager }
-      );
-    },
-    /access denied/i
-  );
-
-  // Owner B cannot resize Alice's session
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_resize',
-        { id: sessionA.id, cols: 100, rows: 40 },
-        { owner: 'tenant_bob', manager }
-      );
-    },
-    /access denied/i
-  );
-
-  // Owner B cannot poll Alice's session
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_poll',
-        { id: sessionA.id, cursor: 0 },
-        { owner: 'tenant_bob', manager }
-      );
-    },
-    /access denied/i
-  );
-
-  // Owner B cannot close Alice's session
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_close',
-        { id: sessionA.id },
-        { owner: 'tenant_bob', manager }
-      );
-    },
-    /access denied/i
-  );
-
-  // Owner B cannot see Alice's session in get or list
-  const getB = await handleTerminalIpcCommand(
-    'terminal_get',
-    { id: sessionA.id },
-    { owner: 'tenant_bob', manager }
-  );
-  assert.strictEqual(getB, null);
-
-  const listB = await handleTerminalIpcCommand(
-    'terminal_list',
-    {},
-    { owner: 'tenant_bob', manager }
-  );
-  assert.strictEqual(listB.length, 0);
-
-  // Missing identity (unauthenticated/undefined owner) MUST NOT access Alice's owned session
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_write',
-        { id: sessionA.id, data: 'echo unauth\r\n' },
-        { owner: undefined, manager }
-      );
-    },
-    /access denied/i
-  );
-
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_poll',
-        { id: sessionA.id, cursor: 0 },
-        { owner: undefined, manager }
-      );
-    },
-    /access denied/i
-  );
-
-  await assert.rejects(
-    async () => {
-      await handleTerminalIpcCommand(
-        'terminal_close',
-        { id: sessionA.id },
-        { owner: undefined, manager }
-      );
-    },
-    /access denied/i
-  );
-
-  const anonymous = await handleTerminalIpcCommand(
-    'terminal_open',
-    { cwd: dir },
-    { owner: undefined, manager }
-  );
-  assert.notStrictEqual(anonymous.id, sessionA.id);
-
-  const getUnauth = await handleTerminalIpcCommand(
-    'terminal_get',
-    { id: sessionA.id },
-    { owner: undefined, manager }
-  );
-  assert.strictEqual(getUnauth, null);
-
-  const listUnauth = await handleTerminalIpcCommand(
-    'terminal_list',
-    {},
-    { owner: undefined, manager }
-  );
-  assert.strictEqual(listUnauth.some((s: any) => s.id === sessionA.id), false);
-
-  // Owner A can successfully poll their session
-  const pollA = await handleTerminalIpcCommand(
-    'terminal_poll',
-    { id: sessionA.id, cursor: 0, timeoutMs: 100 },
-    { owner: 'tenant_alice', manager }
-  );
-  assert.strictEqual(pollA.id, sessionA.id);
-
-  // Alice closes their session cleanly
-  await handleTerminalIpcCommand(
-    'terminal_close',
-    { id: sessionA.id },
-    { owner: 'tenant_alice', manager }
-  );
-});
-
-test('S1.1 S1.2 S2.1: IPC isolates owners sharing a canonical directory and preserves independent lifecycles', async (t) => {
-  const { createTerminalManager } = await import('@server/terminal/terminal-manager');
-  const { handleTerminalIpcCommand } = await import('@server/terminal/ipc-handler');
-  const manager = createTerminalManager();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-owner-isolation-'));
-  t.after(async () => {
-    await manager.dispose();
-    await safeRmDir(dir);
-  });
-  const call = (owner: string | undefined, cmd: string, args: any = {}) =>
-    handleTerminalIpcCommand(cmd, args, { owner, manager });
-  const a = await call('alice', 'terminal_open', { cwd: dir });
-  const b = await call('bob', 'terminal_open', { cwd: path.join(dir, '.') });
-  assert.notStrictEqual(a.id, b.id);
-  for (const [owner, session] of [['alice', a], ['bob', b]] as const) {
-    assert.strictEqual((await call(owner, 'terminal_open', { cwd: dir })).id, session.id);
-    assert.strictEqual((await call(owner, 'terminal_get', { cwd: dir })).id, session.id);
-    assert.deepStrictEqual((await call(owner, 'terminal_list')).map((s: any) => s.id), [session.id]);
-    assert.strictEqual((await call(owner, 'terminal_poll', { id: session.id, cursor: 0 })).id, session.id);
+test('S1.2: closing or exiting one project replaces it without disturbing another project', async (t) => {
+  await resetTerminalManagerForTest();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-projects-'));
+  const a = path.join(root, 'a'); const b = path.join(root, 'b'); fs.mkdirSync(a); fs.mkdirSync(b);
+  const { app, dispatch } = createMockApp(); const server = new EventEmitter();
+  installWebApi(app, server, { enabled: true, key: 'test-key' });
+  t.after(async () => { server.emit('close'); await resetTerminalManagerForTest(); await safeRmDir(root); });
+  const cookie = await login(dispatch);
+  const first = await result(dispatch, cookie, 'terminal_open', { cwd: a });
+  const other = await result(dispatch, cookie, 'terminal_open', { cwd: b });
+  assert.notEqual(first.id, other.id);
+  await result(dispatch, cookie, 'terminal_close', { id: first.id });
+  const replacement = await result(dispatch, cookie, 'terminal_open', { cwd: a });
+  assert.notEqual(replacement.id, first.id);
+  assert.equal((await result(dispatch, cookie, 'terminal_get', { id: other.id })).pid, other.pid);
+  await result(dispatch, cookie, 'terminal_write', { id: replacement.id, data: 'exit\r\n' });
+  let exited = false;
+  for (let i = 0; i < 100; i++) {
+    const current = await result(dispatch, cookie, 'terminal_get', { id: replacement.id });
+    if (!current || !current.running) { exited = true; break; }
+    await new Promise((r) => setTimeout(r, 50));
   }
-  const before = await call('alice', 'terminal_get', { id: a.id });
+  assert.ok(exited, 'shell must exit');
+  const afterExit = await result(dispatch, cookie, 'terminal_open', { cwd: a });
+  assert.notEqual(afterExit.id, replacement.id);
+  const stillOther = await result(dispatch, cookie, 'terminal_open', { cwd: b });
+  assert.equal(stillOther.id, other.id); assert.equal(stillOther.pid, other.pid); assert.equal(stillOther.running, true);
+  await result(dispatch, cookie, 'terminal_write', { id: other.id, data: 'echo OTHER_ALIVE\r\n' });
+  await waitReplay(dispatch, cookie, other.id, 'OTHER_ALIVE');
+});
+
+test('S2.1: HTTP authorization and verified loopback guard live terminals', async (t) => {
+  await resetTerminalManagerForTest();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-guard-'));
+  const enabled = createMockApp(); const enabledServer = new EventEmitter();
+  const local = createMockApp(); const localServer = new EventEmitter();
+  installWebApi(enabled.app, enabledServer, { enabled: true, key: 'test-key' });
+  installWebApi(local.app, localServer, { enabled: false });
+  t.after(async () => { enabledServer.emit('close'); localServer.emit('close'); await resetTerminalManagerForTest(); await safeRmDir(dir); });
+  const cookie = await login(enabled.dispatch);
+  const session = await result(enabled.dispatch, cookie, 'terminal_open', { cwd: dir });
   for (const [cmd, args] of [
-    ['terminal_write', { id: a.id, data: 'echo forbidden\r\n' }],
-    ['terminal_resize', { id: a.id, cols: 100, rows: 40 }],
-    ['terminal_poll', { id: a.id, cursor: 0 }],
-    ['terminal_close', { id: a.id }],
+    ['terminal_open', { cwd: dir }], ['terminal_get', { id: session.id }], ['terminal_list', {}],
+    ['terminal_poll', { id: session.id, cursor: 0 }], ['terminal_write', { id: session.id, data: 'echo FORBIDDEN_INPUT\r\n' }],
+    ['terminal_resize', { id: session.id, cols: 111, rows: 44 }], ['terminal_close', { id: session.id }],
   ] as const) {
-    await assert.rejects(call('bob', cmd, args), /Access denied: terminal session belongs to another owner/);
-    await assert.rejects(call(undefined, cmd, args), /Access denied: terminal session belongs to another owner/);
+    const unauthorized = await ipc(enabled.dispatch, '', cmd, args);
+    assert.equal(unauthorized.statusCode, 401); assert.deepEqual(JSON.parse(unauthorized.body), { error: 'Unauthorized: Web login session required' });
+    const cross = await request(enabled.dispatch, '/api/ipc', { cmd, args }, { cookie, origin: 'http://attacker.invalid' });
+    assert.equal(cross.statusCode, 403); assert.deepEqual(JSON.parse(cross.body), { error: 'Origin validation failed: access denied' });
+    const remote = await request(local.dispatch, '/api/ipc', { cmd, args }, {}, '192.168.1.100');
+    assert.equal(remote.statusCode, 403); assert.deepEqual(JSON.parse(remote.body), { error: 'Access denied: remote shell execution requires authentication' });
   }
-  assert.strictEqual(await call('bob', 'terminal_get', { id: a.id }), null);
-  const after = await call('alice', 'terminal_get', { id: a.id });
-  assert.deepStrictEqual(
-    [after.id, after.pid, after.cols, after.rows, after.running],
-    [before.id, before.pid, before.cols, before.rows, before.running]
-  );
-  const poll = await call('alice', 'terminal_poll', { id: a.id, cursor: 0 });
-  assert.strictEqual(poll.id, a.id);
-  assert.ok(!poll.data.includes('echo forbidden'));
-  await call('alice', 'terminal_close', { id: a.id });
-  const replacement = await call('alice', 'terminal_open', { cwd: dir });
-  assert.notStrictEqual(replacement.id, a.id);
-  assert.notStrictEqual(replacement.id, b.id);
-  assert.strictEqual((await call('bob', 'terminal_poll', { id: b.id, cursor: 0 })).id, b.id);
-  assert.strictEqual((await call('bob', 'terminal_open', { cwd: dir })).id, b.id);
-  const anonymous = await call(undefined, 'terminal_open', { cwd: dir });
-  const stringOwner = await call('undefined', 'terminal_open', { cwd: dir });
-  assert.notStrictEqual(anonymous.id, stringOwner.id);
-  assert.strictEqual((await call(undefined, 'terminal_open', { cwd: dir })).id, anonymous.id);
-  assert.strictEqual((await call('undefined', 'terminal_open', { cwd: dir })).id, stringOwner.id);
+  const spoofed = await request(local.dispatch, '/api/ipc', { cmd: 'terminal_resize', args: { id: session.id, cols: 111, rows: 44 } }, {
+    'x-forwarded-for': '127.0.0.1', 'x-real-ip': '127.0.0.1',
+  }, '192.168.1.100');
+  assert.equal(spoofed.statusCode, 403);
+  assert.deepEqual(JSON.parse(spoofed.body), { error: 'Access denied: remote shell execution requires authentication' });
+  const after = await result(enabled.dispatch, cookie, 'terminal_get', { id: session.id });
+  assert.deepEqual([after.id, after.pid, after.cols, after.rows, after.running], [session.id, session.pid, session.cols, session.rows, true]);
+  assert.ok(!after.replay.includes('FORBIDDEN_INPUT'));
+  const streamReq = new MockRequest('/api/events', { host: 'localhost:5173', origin: 'http://localhost:5173', cookie }, '127.0.0.1');
+  const streamRes = new MockResponse();
+  enabled.dispatch(streamReq, streamRes);
+  assert.equal(streamRes.statusCode, 200);
+  assert.equal(streamRes.getHeader('content-type'), 'text/event-stream');
+  try {
+    await result(enabled.dispatch, cookie, 'terminal_write', { id: session.id, data: 'echo AUTHORIZED_ALIVE\r\n' });
+    await waitReplay(enabled.dispatch, cookie, session.id, 'AUTHORIZED_ALIVE');
+    assert.ok(!streamRes.body.includes('AUTHORIZED_ALIVE'), 'terminal output must not appear on shared SSE');
+  } finally {
+    streamReq.emit('close');
+    streamRes.destroy();
+  }
+  const localOpen = await result(local.dispatch, '', 'terminal_open', { cwd: dir });
+  assert.ok(localOpen.id && localOpen.running);
 });
 
 test('PRESERVE: existing /api/ipc commands continue to work without regression', async () => {
-  const { installWebApi } = await import('@server/web-api');
-  const { app, dispatch } = createMockApp();
-  const server = new EventEmitter();
+  const { app, dispatch } = createMockApp(); const server = new EventEmitter();
   installWebApi(app, server, { enabled: false });
-
-  const res = await sendIpcRequest(dispatch, {
-    cmd: 'detect_gentle_shell',
-    args: {},
-    remoteAddress: '127.0.0.1',
-    headers: { host: 'localhost:5173', origin: 'http://localhost:5173' },
-  });
-  assert.strictEqual(res.statusCode, 200);
-  const body = JSON.parse(res.body);
-  assert.ok(body.result, 'detect_gentle_shell must return result');
-  assert.strictEqual(body.result.status, 'missing');
+  const response = await ipc(dispatch, '', 'detect_gentle_shell');
+  assert.equal(response.statusCode, 200);
+  assert.equal(JSON.parse(response.body).result.status, 'missing');
+  server.emit('close');
 });
