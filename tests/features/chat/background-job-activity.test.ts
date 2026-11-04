@@ -40,7 +40,7 @@ test('S2.1 successful background start survives settlement without streaming or 
   assert.equal(h.state.isHydrated, true);
   assert.equal(h.state.connectionStatus, 'connected');
   assert.deepEqual(h.notifications, ['task_complete']);
-  assert.deepEqual(planPromptDispatch({ prompt: 'next prompt', hasAttachments: false, isReadyToSend: h.state.connectionStatus === 'connected' && h.state.isHydrated && h.state.agentActivity !== 'busy' && !h.state.isResetting, canQueue: false }), { action: 'send_prompt' });
+  assert.deepEqual(planPromptDispatch({ prompt: 'next prompt', hasAttachments: false, isReadyToSend: h.state.connectionStatus === 'connected' && h.state.isHydrated && !Boolean(h.state.agentActivity === ('busy' as string)) && !h.state.isResetting, canQueue: false }), { action: 'send_prompt' });
   assert.equal(h.working(), true, 'job contributes to visible working status');
   h.notice('one');
   assert.equal(h.working(), false);
@@ -90,11 +90,15 @@ test('S2.4 waiting and ordinary work survive while disconnect clears jobs', () =
   h.start('other', 'b');
   h.emit({ type: 'extension_ui_request', sessionId: 'b', sessionFile: '/repo/b', id: 'other-confirm', method: 'confirm' });
   assert.equal(h.state.sessions.find(session => session.id === 'b')?.status, 'waiting', 'pending input takes precedence over job activity');
-  h.controller.handleStatusChange({ state: 'disconnected', cwd: '/repo', sessionId: 'a', label: 'Disconnected' });
+  h.controller.handleStatusChange({ state: 'disconnected', cwd: '/repo', sessionId: 'a', label: 'Disconnected', detail: '' });
   assert.equal(h.state.connectionStatus, 'disconnected');
+  const project = projects.getProjectActivity(h.state);
+  assert.equal(getProjectStatusClass(true, project.connectionState, project.agentActivity, Boolean(project.isBusy)), 'status-busy');
   assert.equal(h.working(), false);
-  h.controller.handleStatusChange({ state: 'connected', cwd: '/repo', sessionId: 'a', label: 'Connected' });
-  assert.equal(h.working(), false, 'reconnect must not resurrect stale jobs');
+  h.controller.handleStatusChange({ state: 'connected', cwd: '/repo', sessionId: 'a', label: 'Connected', detail: '' });
+  assert.equal(h.working(), true, 'live sibling session remains active');
+  h.controller.handleStatusChange({ state: 'disconnected', cwd: '/repo', sessionId: 'b', label: 'Disconnected', detail: '' });
+  assert.equal(h.working(), false, 'disconnected sessions do not leave stale jobs');
   h.emit({ type: 'message_start', message: { role: 'assistant', content: '' } });
   assert.equal(h.working(), true);
   h.emit({ type: 'agent_settled' });

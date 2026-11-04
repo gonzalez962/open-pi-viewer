@@ -111,6 +111,7 @@ export interface BridgeStatusPayload {
   model?: ModelInfo | null;
   cwd?: string | null;
   sessionId?: string | null;
+  sessionFile?: string | null;
 }
 
 export interface BridgeErrorPayload {

@@ -145,6 +145,7 @@ import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
 import {
   findProjectByCwd,
+  getProjectActivity,
   getProjectDisplayName,
   type ProjectItem,
   type ProjectStatusInfo,
@@ -323,6 +324,7 @@ export const App: React.FC = () => {
           model: res.model,
           hasMore: res.hasMore,
           activity: res.activity,
+          activeJobs: res.activeJobs,
           detail:
             hydrated.length > 0
               ? `Resumed session (${hydrated.length} messages)`
@@ -692,11 +694,7 @@ export const App: React.FC = () => {
     for (const project of projectsRegistry.projects) {
       const projState = multiProjectState.projects[project.id];
       if (projState) {
-        map[project.id] = {
-          connectionState: projState.connectionStatus,
-          agentActivity: projState.agentActivity,
-          isBusy: projState.agentActivity === 'busy',
-        };
+        map[project.id] = getProjectActivity(projState);
       } else {
         map[project.id] = {
           connectionState: 'disconnected',
@@ -837,6 +835,7 @@ export const App: React.FC = () => {
       dispatch,
       t,
       requestFileTreeRefresh,
+      restoreExtensionPrompts,
       pinAndHide,
       scrollToBottomNextFrame,
       startConnection,

@@ -26,6 +26,7 @@ export interface ConnectSessionOptions {
 export interface ConnectResult {
   activity?: 'idle' | 'busy' | 'waiting';
   pendingExtensionPrompts?: ExtensionUiRequest[];
+  activeJobs?: string[];
   connected: boolean;
   model: ModelInfo | null;
   sessionId?: string;

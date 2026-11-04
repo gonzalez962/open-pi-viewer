@@ -548,6 +548,14 @@ export interface ProjectStatusInfo {
   isBusy?: boolean;
 }
 
+export function getProjectActivity(state: import('@core/types/chat-state').ChatSessionState): ProjectStatusInfo {
+  return {
+    connectionState: state.connectionStatus,
+    agentActivity: state.agentActivity,
+    isBusy: (state.connectionStatus === 'connected' && state.agentActivity === 'busy') || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0),
+  };
+}
+
 export interface SelectProjectDecision {
   action: 'noop' | 'apply';
   registry: ProjectsRegistry;

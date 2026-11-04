@@ -46,6 +46,9 @@ export interface SwitchSessionResult {
   messages: unknown[];
   hasMore?: boolean;
   status?: SessionRuntimeStatus;
+  activity?: 'idle' | 'busy' | 'waiting';
+  activeJobs?: string[];
+  pendingExtensionPrompts?: import('./events').ExtensionUiRequest[];
   error?: string;
 }
 

@@ -299,6 +299,7 @@ export function deriveAgentWorkingStatus(
     'connectionStatus' | 'agentActivity' | 'messages' | 'activeAssistantMessageId'
   > & {
     subagents?: SubagentTask[];
+    jobsBySession?: Record<string, string[]>;
   },
   locale: SupportedLocale = 'en'
 ): AgentWorkingStatus {
@@ -331,7 +332,7 @@ export function deriveAgentWorkingStatus(
   }
 
   const isMainBusy = state.agentActivity === 'busy';
-  const hasLiveSubagents = subagents.length > 0;
+  const hasLiveSubagents = subagents.length > 0 || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0);
 
   if (!isMainBusy && !hasLiveSubagents) {
     return {
@@ -482,6 +483,7 @@ export function getAgentWorkingStatus(
     'connectionStatus' | 'agentActivity' | 'messages' | 'activeAssistantMessageId'
   > & {
     subagents?: SubagentTask[];
+    jobsBySession?: Record<string, string[]>;
   },
   locale: SupportedLocale = 'en'
 ): string | null {
