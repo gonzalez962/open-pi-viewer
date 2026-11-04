@@ -34,13 +34,10 @@ export class TerminalManager {
       throw new Error(`Target directory does not exist or is not a directory: ${args.cwd}`);
     }
 
-    const cwdKey = toCanonicalKey(canonicalCwd);
+    const cwdKey = JSON.stringify([owner, toCanonicalKey(canonicalCwd)]);
     const existing = this.sessionsByCwd.get(cwdKey);
 
     if (existing) {
-      if (existing.owner !== owner) {
-        throw new Error('Access denied: terminal session in this directory belongs to another owner');
-      }
       if (existing.running) {
         return existing.toDto(true);
       }
@@ -119,7 +116,7 @@ export class TerminalManager {
       throw new Error('Access denied: terminal session belongs to another owner');
     }
     this.sessionsById.delete(session.id);
-    this.sessionsByCwd.delete(toCanonicalKey(session.canonicalCwd));
+    this.sessionsByCwd.delete(JSON.stringify([session.owner, toCanonicalKey(session.canonicalCwd)]));
     await session.kill();
   }
 
@@ -163,7 +160,7 @@ export class TerminalManager {
   getSessionByCwd(cwd: string, owner?: string): TerminalSessionDto | null {
     if (!cwd || typeof cwd !== 'string') return null;
     const canonical = resolveCanonicalCwd(cwd);
-    const session = this.sessionsByCwd.get(toCanonicalKey(canonical));
+    const session = this.sessionsByCwd.get(JSON.stringify([owner, toCanonicalKey(canonical)]));
     if (!session) return null;
     if (session.owner !== owner) return null;
     return session.toDto(true);

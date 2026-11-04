@@ -12,7 +12,7 @@ The Persistent Project Terminal feature provides an interactive terminal session
 
 ## Lifecycle & Isolation
 
-- **One Session Per Canonical Working Directory**: Each project has at most one active terminal session indexed by its resolved canonical path (`resolveCanonicalCwd`). Reopening an existing project directory reattaches to the existing running process and restores buffered history.
+- **Sessions Per Canonical Working Directory**: The web backend indexes sessions by owner and resolved canonical path (`resolveCanonicalCwd`): reopening by the same owner reattaches to their running process, while different owners receive independent sessions. The native single-user backend keeps one session per canonical directory.
 - **Process Isolation**: Terminal processes run completely independently in their respective working directories. Input or output in project A never crosses into project B.
 - **Session Continuity (S3.1, S3.2)**: Minimizing the terminal overlay, navigating between projects, or disconnecting and reconnecting a client preserves backend processes and retains up to 256 KB of bounded scrollback history. Minimizing and unmounting stops UI polling but never sends `terminal_close`.
 - **Explicit Close (S3.3)**: Explicit termination requires user confirmation via an accessible dialog (`role="alertdialog"`). Confirmed termination kills the targeted shell process and its child process tree, releasing all OS locks. Reopening the project afterwards spawns a fresh session with a new PID and clean buffer.

@@ -452,8 +452,14 @@ test('S1.1 S1.2 S2.1: IPC isolates owners sharing a canonical directory and pres
     await assert.rejects(call(undefined, cmd, args), /Access denied: terminal session belongs to another owner/);
   }
   assert.strictEqual(await call('bob', 'terminal_get', { id: a.id }), null);
-  assert.deepStrictEqual(await call('alice', 'terminal_get', { id: a.id }), before);
-  assert.strictEqual((await call('alice', 'terminal_poll', { id: a.id, cursor: 0 })).id, a.id);
+  const after = await call('alice', 'terminal_get', { id: a.id });
+  assert.deepStrictEqual(
+    [after.id, after.pid, after.cols, after.rows, after.running],
+    [before.id, before.pid, before.cols, before.rows, before.running]
+  );
+  const poll = await call('alice', 'terminal_poll', { id: a.id, cursor: 0 });
+  assert.strictEqual(poll.id, a.id);
+  assert.ok(!poll.data.includes('echo forbidden'));
   await call('alice', 'terminal_close', { id: a.id });
   const replacement = await call('alice', 'terminal_open', { cwd: dir });
   assert.notStrictEqual(replacement.id, a.id);
