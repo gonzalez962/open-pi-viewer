@@ -290,6 +290,10 @@ function localizePhase(phase: string, locale: SupportedLocale): string {
   return capitalize(phase);
 }
 
+export function getSelectedSessionJobCount(state: Pick<ChatSessionState, 'sessionId' | 'jobsBySession'>): number {
+  return state.sessionId ? (state.jobsBySession?.[state.sessionId]?.length ?? 0) : 0;
+}
+
 /**
  * Pure derivation of structured agent working status from chat state.
  */
@@ -299,6 +303,7 @@ export function deriveAgentWorkingStatus(
     'connectionStatus' | 'agentActivity' | 'messages' | 'activeAssistantMessageId'
   > & {
     subagents?: SubagentTask[];
+    jobsBySession?: Record<string, string[]>;
   },
   locale: SupportedLocale = 'en'
 ): AgentWorkingStatus {
@@ -331,7 +336,7 @@ export function deriveAgentWorkingStatus(
   }
 
   const isMainBusy = state.agentActivity === 'busy';
-  const hasLiveSubagents = subagents.length > 0;
+  const hasLiveSubagents = subagents.length > 0 || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0);
 
   if (!isMainBusy && !hasLiveSubagents) {
     return {
@@ -482,6 +487,7 @@ export function getAgentWorkingStatus(
     'connectionStatus' | 'agentActivity' | 'messages' | 'activeAssistantMessageId'
   > & {
     subagents?: SubagentTask[];
+    jobsBySession?: Record<string, string[]>;
   },
   locale: SupportedLocale = 'en'
 ): string | null {

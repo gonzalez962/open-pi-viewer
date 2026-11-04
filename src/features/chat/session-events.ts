@@ -9,6 +9,7 @@ import {
   type NotifyAppEventParams,
 } from '@infra/notifications';
 import { AgentOutcomeTracker } from '@core/agent-outcome';
+import { parseJobChange } from '@core/job-activity';
 import { parseTodo, todoFromHistory } from '@core/todo';
 import { parseSubagentSnapshot } from '@core/agent-activity';
 import {
@@ -164,10 +165,21 @@ export class SessionEventController {
       const id = typeof event.id === 'string' ? event.id.trim() : '';
       if (id) this.emitAttention(targetProjectId, attentionSessionId, attentionKey, 'waiting_input', `prompt:${id}`);
     }
+    const jobChange = parseJobChange(event);
+    const jobSessionId = typeof event.sessionId === 'string' ? event.sessionId : this.options.getCurrentSessionId();
+    if (jobChange && jobSessionId) {
+      this.options.dispatch({ type: 'JOB_CHANGE', payload: { sessionId: jobSessionId, change: jobChange }, targetProjectId });
+    }
     if (eventType === 'runtime_snapshot') {
       const selected = targetProjectId && this.options.getProjectSessionId
         ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
-      if (selected && event.sessionId && selected !== event.sessionId) return;
+      if (typeof event.sessionId === 'string' && Array.isArray(event.activeJobs)) {
+        this.options.dispatch({ type: 'JOB_SNAPSHOT', payload: { sessionId: event.sessionId, jobs: event.activeJobs as string[] }, targetProjectId });
+      }
+      if (selected && event.sessionId && selected !== event.sessionId) {
+        for (const request of (event.pendingExtensionPrompts as ExtensionUiRequest[] ?? [])) void this.handleExtensionUiRequest(request);
+        return;
+      }
       this.options.dispatch({
         type: 'SESSION_READY', targetProjectId,
         payload: {
@@ -176,6 +188,7 @@ export class SessionEventController {
           messages: hydrateChatMessages(event.messages as unknown[] ?? []),
           todo: parseTodo(event.todo) ?? todoFromHistory(event.messages as unknown[] ?? []),
           activity: event.activity as 'idle' | 'busy' | 'waiting',
+          activeJobs: Array.isArray(event.activeJobs) ? event.activeJobs as string[] : undefined,
           hasMore: Boolean(event.hasMore),
         },
       });
@@ -417,10 +430,19 @@ export class SessionEventController {
       const key = JSON.stringify([targetProjectId ?? '', status.sessionId ?? '']);
       this.emitAttention(targetProjectId, status.sessionId ?? undefined, key, 'error', `status:${status.detail ?? ''}`);
     }
+    if (!status.sessionId && status.sessionFile && (status.state === 'disconnected' || status.state === 'error')) {
+      this.options.dispatch({ type: 'SESSION_FILE_EXIT', payload: { sessionFile: status.sessionFile, error: status.state === 'error' ? status.detail : undefined, detail: status.detail }, targetProjectId });
+      return;
+    }
     const expectedSessionId = targetProjectId && this.options.getProjectSessionId
       ? this.options.getProjectSessionId(targetProjectId)
       : this.options.getCurrentSessionId();
-    if (status.sessionId && expectedSessionId && status.sessionId !== expectedSessionId) return;
+    if (status.sessionId && expectedSessionId && status.sessionId !== expectedSessionId) {
+      if (status.state === 'disconnected' || status.state === 'error') {
+        this.options.dispatch({ type: 'CLEAR_SESSION_JOBS', payload: { sessionId: status.sessionId }, targetProjectId });
+      }
+      return;
+    }
     if (status.state === 'connected') {
       this.options.dispatch({
         type: 'CONNECT_SUCCESS',
@@ -437,14 +459,14 @@ export class SessionEventController {
       this.cancelPendingDialogRequests(status.cwd ?? undefined);
       this.options.dispatch({
         type: 'DISCONNECT',
-        payload: { detail: status.detail },
+        payload: { detail: status.detail, sessionId: status.sessionId ?? undefined },
         targetProjectId,
       });
     } else if (status.state === 'error') {
       this.cancelPendingDialogRequests(status.cwd ?? undefined);
       this.options.dispatch({
         type: 'PROCESS_EXIT',
-        payload: { error: status.detail },
+        payload: { error: status.detail, sessionId: status.sessionId ?? undefined },
         targetProjectId,
       });
     }

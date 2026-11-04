@@ -310,6 +310,14 @@ export async function handleConnect(args: any = {}) {
   const payload = args.payload || {};
   const requestedCwd = payload.workingDirectory || getActiveCwd();
   const targetCwd = resolveCrossPlatformCwd(requestedCwd);
+  if (payload.liveOnly) {
+    const file = typeof payload.sessionFile === 'string' ? payload.sessionFile : '';
+    const live = file ? sessionPool.get(path.resolve(file)) : undefined;
+    if (!live?.isAlive() || path.resolve(live.cwd) !== path.resolve(targetCwd)) {
+      return { unavailable: true, canonicalCwd: targetCwd, sessionFile: file, sessionId: live?.sessionId ?? null };
+    }
+    return { connected: true, canonicalCwd: targetCwd, sessionFile: file, sessionId: live.sessionId, model: live.modelInfo, ...(await live.snapshot()) };
+  }
   const previousCwd = getActiveCwd();
   const projectChanged = path.resolve(targetCwd) !== path.resolve(previousCwd);
   setActiveCwd(targetCwd);
@@ -384,6 +392,7 @@ export async function handleConnect(args: any = {}) {
     messageCount: messages?.length || 0,
     canonicalCwd: targetCwd,
     activity: snapshot?.activity ?? 'idle',
+    activeJobs: snapshot?.activeJobs ?? [],
     pendingExtensionPrompts: snapshot?.pendingExtensionPrompts ?? [],
     messages: initialMessages,
     ...(todo ? { todo } : {}),
@@ -480,7 +489,7 @@ export function handleListSessions(args: any = {}) {
   return listSessions(targetCwd);
 }
 
-export function handleSwitchSession(args: any = {}) {
+export async function handleSwitchSession(args: any = {}) {
   const sessionPath = args.payload?.sessionPath || args.sessionPath;
   const loadAll = Boolean(args.payload?.loadAll ?? args.loadAll);
   const limit = args.payload?.limit ?? args.limit ?? (loadAll ? undefined : 60);
@@ -507,11 +516,13 @@ export function handleSwitchSession(args: any = {}) {
   setActiveSessionFile(sessionPath);
   setActiveSessionId(parsed.id);
 
+  const live = sessionPool.get(path.resolve(sessionPath));
+  const snapshot = live?.isAlive() ? await live.snapshot() : null;
   // Warm target session process in pool without killing or aborting other sessions!
   void getOrCreatePiRpc(getActiveCwd(), sessionPath).catch(() => {});
 
   const totalCount = parsed.messageCount;
-  const allMsgs = parsed.messages || [];
+  const allMsgs = snapshot?.messages ?? parsed.messages ?? [];
   const windowed = windowMessages(allMsgs, loadAll, limit, 60);
   const messagesToSend = windowed.messages;
   const hasMore = windowed.hasMore;
@@ -526,6 +537,9 @@ export function handleSwitchSession(args: any = {}) {
     ...(todo ? { todo } : {}),
     hasMore,
     status: getSessionStatus(sessionPath),
+    activity: snapshot?.activity,
+    activeJobs: snapshot?.activeJobs,
+    pendingExtensionPrompts: snapshot?.pendingExtensionPrompts,
     error: null,
   };
 }

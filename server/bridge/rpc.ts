@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { applyJobChange, parseJobChange } from '../../src/core/job-activity';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { getBridgeConfig, getAgnosticExecEnv } from '../config';
@@ -69,12 +70,14 @@ export class PiRpcSession {
   public modelInfo: any = null;
   public pendingExtensionPrompts = new Map<string, any>();
   public activity: 'idle' | 'busy' | 'waiting' = 'idle';
+  public activeJobs: string[] = [];
 
   public async snapshot() {
     const response = await this.sendCommand({ type: 'get_messages' });
     if (response.success === false) throw new Error(response.error || 'Unable to read live messages');
     return {
       messages: response.data?.messages || [],
+      activeJobs: [...this.activeJobs],
       activity: this.pendingExtensionPrompts.size ? 'waiting' : this.activity,
       pendingExtensionPrompts: [...this.pendingExtensionPrompts.values()],
     };
@@ -85,6 +88,7 @@ export class PiRpcSession {
   }
 
   public kill() {
+    this.activeJobs = [];
     this.pendingExtensionPrompts.clear();
     this.activity = 'idle';
     if (this.child) {
@@ -218,6 +222,7 @@ export class PiRpcSession {
     this.child.on('exit', (code, signal) => {
       if (this.child !== childProc) return;
       this.pendingExtensionPrompts.clear();
+      this.activeJobs = [];
       this.activity = 'idle';
       console.log(`[Pi CLI exit] code: ${code}, signal: ${signal}`);
       if (this.sessionFile) {
@@ -301,6 +306,14 @@ export class PiRpcSession {
       data.sessionFile = this.sessionFile;
       data.sessionId = this.sessionId;
 
+      const jobChange = parseJobChange(data);
+      if (jobChange) {
+        this.activeJobs = applyJobChange(this.activeJobs, jobChange);
+        if (this.sessionFile) {
+          setSessionStatus(this.sessionFile, this.pendingExtensionPrompts.size ? 'waiting' : (this.activity === 'busy' || this.activeJobs.length ? 'working' : 'completed'), this.sessionId);
+        }
+      }
+
       if (data.type === 'agent_start' || data.type === 'message_start') {
         this.activity = this.pendingExtensionPrompts.size ? 'waiting' : 'busy';
         if (this.sessionFile) {
@@ -340,7 +353,7 @@ export class PiRpcSession {
         this.activity = 'idle';
         this.pendingExtensionPrompts.clear();
         if (this.sessionFile) {
-          setSessionStatus(this.sessionFile, 'completed', this.sessionId);
+          setSessionStatus(this.sessionFile, this.activeJobs.length ? 'working' : 'completed', this.sessionId);
           invalidateSessionParseCache(this.sessionFile);
         }
         broadcastSse('pi://event', {
@@ -384,7 +397,7 @@ export async function getOrCreatePiRpc(cwd: string, sessionFile?: string | null)
   // Pool management: prune dead or completed idle processes if pool size >= 4
   if (sessionPool.size >= 4) {
     for (const [sFile, rpc] of sessionPool.entries()) {
-      if (sFile !== normFile && !sessionCreations.has(sFile) && rpc.activity === 'idle' && sessionStatusMap.get(sFile) !== 'working' && sessionStatusMap.get(sFile) !== 'waiting') {
+      if (sFile !== normFile && !sessionCreations.has(sFile) && rpc.activity === 'idle' && rpc.activeJobs.length === 0 && sessionStatusMap.get(sFile) !== 'working' && sessionStatusMap.get(sFile) !== 'waiting') {
         rpc.kill();
         sessionPool.delete(sFile);
         if (sessionStatusMap.get(sFile) !== 'waiting') {

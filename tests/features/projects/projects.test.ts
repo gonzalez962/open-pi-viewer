@@ -819,6 +819,16 @@ const baseProjectDockProps: ProjectDockProps = {
   onRemoveProject: () => {},
 };
 
+test('ProjectDock renders localized project job counts and hides zero', () => {
+  const render = (locale: 'en' | 'es', jobCount: number) => renderToStaticMarkup(React.createElement(ProjectDock, {
+    ...baseProjectDockProps, locale,
+    projectStatusMap: { 'proj-1': { connectionState: 'connected', agentActivity: 'idle', isBusy: true, jobCount } },
+  }));
+  assert.ok(render('en', 2).includes('2 active jobs'));
+  assert.ok(render('es', 1).includes('1 job activo'));
+  assert.ok(!render('en', 0).includes('active jobs'));
+});
+
 test('ProjectDock footer: renders Add Project button directly followed by Settings button in order', () => {
   const markup = renderToStaticMarkup(
     React.createElement(ProjectDock, {

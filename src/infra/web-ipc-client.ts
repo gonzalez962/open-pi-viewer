@@ -22,6 +22,7 @@ export function initWebIpcClient(): void {
   const callbacks = new Map<number, (payload: any) => void>();
   const eventListeners = new Map<string, Set<number>>();
   const attachedSessions = new Map<string, Record<string, unknown>>();
+  const attachmentKey = (cwd: string, file: string) => JSON.stringify([cwd, file]);
   let foreground: { cwd: string; sessionFile: string } | null = null;
   const publish = (event: string, payload: any) => {
     eventListeners.get(event)?.forEach((id) => callbacks.get(id)?.({ event, id, payload }));
@@ -43,8 +44,14 @@ export function initWebIpcClient(): void {
       ready?.();
       // Reconcile missed output and dialogs whenever EventSource reconnects.
       for (const args of attachedSessions.values()) {
-        void win.__TAURI_INTERNALS__.invoke('connect', { ...args, __reattach: true }).then((snapshot: any) => {
-          const current = attachedSessions.get(snapshot.canonicalCwd);
+        void win.__TAURI_INTERNALS__.invoke('connect', { ...args, payload: { ...(args.payload as object), liveOnly: true }, __reattach: true }).then((snapshot: any) => {
+          if (snapshot.unavailable) {
+            const payload = args.payload as { workingDirectory: string; sessionFile: string };
+            attachedSessions.delete(attachmentKey(payload.workingDirectory, payload.sessionFile));
+            publish('pi://status-change', { state: 'disconnected', cwd: payload.workingDirectory, sessionFile: payload.sessionFile, sessionId: snapshot.sessionId, label: 'Disconnected', detail: 'Session is no longer running' });
+            return;
+          }
+          const current = attachedSessions.get(attachmentKey(snapshot.canonicalCwd, snapshot.sessionFile));
           if ((current?.payload as any)?.sessionFile !== snapshot.sessionFile) return;
           publish('pi://event', { type: 'runtime_snapshot', cwd: snapshot.canonicalCwd, ...snapshot });
         }).catch((error: unknown) => console.warn('[Web IPC reattach]', error));
@@ -192,18 +199,24 @@ export function initWebIpcClient(): void {
       }
       if (cmd === 'connect' && !(args as any)?.__reattach && data.result?.sessionFile) {
         foreground = { cwd: data.result.canonicalCwd, sessionFile: data.result.sessionFile };
-        attachedSessions.set(data.result.canonicalCwd, {
+        attachedSessions.set(attachmentKey(data.result.canonicalCwd, data.result.sessionFile), {
           payload: { ...(args as any)?.payload, sessionFile: data.result.sessionFile, workingDirectory: data.result.canonicalCwd },
         });
       }
+      if (cmd === 'stop_session' && (args as any)?.payload?.sessionFile) {
+        const file = (args as any).payload.sessionFile;
+        for (const [key, attached] of attachedSessions) {
+          if ((attached.payload as any)?.sessionFile === file) attachedSessions.delete(key);
+        }
+      }
       if (cmd === 'new_session' && creationCwd && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
         const created = { cwd: data.result.canonicalCwd || creationCwd, sessionFile: data.result.sessionFile };
-        attachedSessions.set(created.cwd, { payload: { workingDirectory: created.cwd, sessionFile: created.sessionFile } });
+        attachedSessions.set(attachmentKey(created.cwd, created.sessionFile), { payload: { workingDirectory: created.cwd, sessionFile: created.sessionFile } });
         if (foreground === creationForeground && creationForeground?.cwd === created.cwd) foreground = created;
       }
       if (cmd === 'switch_session' && foreground && data.result?.sessionFile && !data.result?.error && !data.result?.cancelled) {
         foreground = { ...foreground, sessionFile: data.result.sessionFile };
-        attachedSessions.set(foreground.cwd, { payload: { workingDirectory: foreground.cwd, sessionFile: foreground.sessionFile } });
+        attachedSessions.set(attachmentKey(foreground.cwd, foreground.sessionFile), { payload: { workingDirectory: foreground.cwd, sessionFile: foreground.sessionFile } });
       }
       return data.result;
     },

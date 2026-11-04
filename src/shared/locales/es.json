@@ -1,4 +1,6 @@
 {
+  "jobs.count_one": "{count} job activo",
+  "jobs.count_many": "{count} jobs activos",
   "subagent.title": "Proceso de subagentes",
   "subagent.close": "Cerrar",
   "subagent.bounded": "Instantánea limitada en vivo; la actividad anterior puede no estar disponible.",

@@ -40,6 +40,7 @@ export interface UseSessionsOptions {
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   /** Workspace cluster callback; this hook never imports the workspace feature. */
   requestFileTreeRefresh: () => void;
+  restoreExtensionPrompts?: (requests: import('@core/types/events').ExtensionUiRequest[]) => void;
   /** Chat cluster callbacks (T5a's useChatScroll primitives); injected, not imported. */
   pinAndHide: () => void;
   scrollToBottomNextFrame: () => void;
@@ -82,6 +83,7 @@ export function useSessions({
   dispatch,
   t,
   requestFileTreeRefresh,
+  restoreExtensionPrompts,
   pinAndHide,
   scrollToBottomNextFrame,
   startConnection,
@@ -189,6 +191,14 @@ export function useSessions({
           hasMore: result.hasMore,
         },
       });
+
+      if (result.activity !== undefined || result.activeJobs !== undefined) {
+        dispatch({
+          type: 'SESSION_READY', targetProjectId,
+          payload: { sessionId: result.sessionId, sessionFile: result.sessionFile, messages: hydrated, activity: result.activity, activeJobs: result.activeJobs, hasMore: result.hasMore, todo: parseTodo((result as typeof result & { todo?: unknown }).todo) ?? todoFromHistory(result.messages || []) },
+        });
+        restoreExtensionPrompts?.(result.pendingExtensionPrompts ?? []);
+      }
 
       // Synchronize persistence record
       recordSessionSwitched(

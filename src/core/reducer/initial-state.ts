@@ -30,4 +30,5 @@ export const INITIAL_STATE: ChatSessionState = {
   isSidebarOpen: true,
   pendingApprovals: [],
   subagents: [],
+  jobsBySession: {},
 };

@@ -35,5 +35,6 @@ export interface ChatSessionState {
   isSidebarOpen: boolean;
   pendingApprovals?: unknown[];
   subagents: SubagentTask[];
+  jobsBySession?: Record<string, string[]>;
   todo?: TodoSnapshot | null;
 }

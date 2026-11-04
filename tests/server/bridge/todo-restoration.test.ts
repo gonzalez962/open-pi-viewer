@@ -52,21 +52,22 @@ function fixture(t: import('node:test').TestContext, history: unknown[] = messag
 test('S1.2 connect reattachment restores an older successful todo outside the 80-message window', async t => {
   fixture(t);
   const response = await handleConnect({ payload: { workingDirectory: cwd, sessionFile: file } });
+  assert.ok('hasMore' in response && response.hasMore !== undefined);
   assert.equal(response.sessionId, 'a');
   assert.equal(response.hasMore, true);
   assert.deepEqual(response.messages, recent.slice(-80));
   assert.deepEqual((response as any).todo, todo);
 });
 
-test('S1.2 switching restores an older successful todo outside the 60-message window without leaking to another session', t => {
+test('S1.2 switching restores an older successful todo outside the 60-message window without leaking to another session', async t => {
   fixture(t);
-  const response = handleSwitchSession({ payload: { sessionPath: file } });
+  const response = await handleSwitchSession({ payload: { sessionPath: file } });
   assert.ok('sessionId' in response);
   assert.equal(response.sessionId, 'a');
   assert.equal(response.hasMore, true);
   assert.deepEqual(response.messages.map((message: any) => message.id), recent.slice(-60).map(message => message.id));
   assert.deepEqual((response as any).todo, todo);
-  const other = handleSwitchSession({ payload: { sessionPath: otherFile } });
+  const other = await handleSwitchSession({ payload: { sessionPath: otherFile } });
   assert.ok('sessionId' in other);
   assert.equal(other.sessionId, 'b');
   assert.ok(!(other as any).todo);
@@ -75,8 +76,9 @@ test('S1.2 switching restores an older successful todo outside the 60-message wi
 test('S1.2 reattachment metadata reaches the visible panel when the todo is outside returned history', async t => {
   fixture(t);
   const response = await handleConnect({ payload: { workingDirectory: cwd, sessionFile: file } });
+  assert.ok('messages' in response && response.messages);
   assert.equal(response.messages.length, 80);
-  assert.ok(response.messages.every(message => message.role !== 'toolResult'));
+  assert.ok(response.messages.every((message: { role: string }) => message.role !== 'toolResult'));
   let state = chatReducer(INITIAL_STATE, { type: 'SESSION_READY', payload: { sessionId: 'a', messages: [] } });
   const controller = new SessionEventController({
     getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: '/pi.js', workingDirectory: cwd }),
@@ -102,30 +104,31 @@ test('windowing retains tool-heavy turns and restores todo from outside the visi
   const history = [result(todo), ...recent, ...activity];
   fixture(t, history);
   const connected = await handleConnect({ payload: { workingDirectory: cwd, sessionFile: file } });
+  assert.ok('hasMore' in connected && connected.hasMore !== undefined);
   assert.equal(connected.hasMore, true);
   assert.equal(connected.messages.length, 150);
   assert.deepEqual((connected as any).todo, todo);
-  const switched = handleSwitchSession({ payload: { sessionPath: file, limit: 6 } });
+  const switched = await handleSwitchSession({ payload: { sessionPath: file, limit: 6 } });
   assert.ok('hasMore' in switched);
   assert.equal(switched.hasMore, true);
   assert.deepEqual(switched.messages.map((message: any) => message.id), [...recent.slice(-6), ...activity].map(message => message.id));
   assert.deepEqual((switched as any).todo, todo);
-  const all = handleSwitchSession({ payload: { sessionPath: file, loadAll: true } });
+  const all = await handleSwitchSession({ payload: { sessionPath: file, loadAll: true } });
   assert.ok('hasMore' in all);
   assert.equal(all.hasMore, false);
   assert.equal(all.messages.length, history.length);
   assert.deepEqual((all as any).todo, todo);
-  const other = handleSwitchSession({ payload: { sessionPath: otherFile } });
+  const other = await handleSwitchSession({ payload: { sessionPath: otherFile } });
   assert.ok(!(other as any).todo);
 });
 
-test('PRESERVE ordinary session switch retains bounded history and loadAll behavior without todo', t => {
+test('PRESERVE ordinary session switch retains bounded history and loadAll behavior without todo', async t => {
   fixture(t);
-  const bounded = handleSwitchSession({ payload: { sessionPath: otherFile } });
+  const bounded = await handleSwitchSession({ payload: { sessionPath: otherFile } });
   assert.ok('hasMore' in bounded);
   assert.equal(bounded.hasMore, true);
   assert.deepEqual(bounded.messages.map((message: any) => message.id), recent.slice(-60).map(message => message.id));
-  const all = handleSwitchSession({ payload: { sessionPath: otherFile, loadAll: true } });
+  const all = await handleSwitchSession({ payload: { sessionPath: otherFile, loadAll: true } });
   assert.ok('hasMore' in all);
   assert.equal(all.hasMore, false);
   assert.deepEqual(all.messages.map((message: any) => message.id), recent.map(message => message.id));

@@ -45,6 +45,46 @@ test('runtime snapshots restore dialogs before the current React session identit
   controller.cancelPendingDialogRequests(undefined, true);
 });
 
+test('S2.3 nonselected live snapshot reconciles jobs without replacing selected conversation', () => {
+  let state = { ...INITIAL_STATE, connectionStatus: 'connected' as const, sessionId: 'selected', sessionFile: '/project/selected', messages: [{ id: 'm', role: 'user' as const, content: 'keep', timestamp: '' }] };
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi', workingDirectory: '/project' }),
+    getCurrentSessionId: () => state.sessionId,
+    dispatch: action => { state = chatReducer(state, action) as typeof state; },
+  });
+  controller.handleEvent({ type: 'runtime_snapshot', sessionId: 'other', sessionFile: '/project/other', messages: [], activeJobs: ['job-1'], pendingExtensionPrompts: [] });
+  assert.deepEqual(state.jobsBySession?.other, ['job-1']);
+  assert.equal(state.sessionId, 'selected');
+  assert.equal(state.messages[0].content, 'keep');
+});
+
+test('S2.4 selected process exit keeps sibling session jobs', () => {
+  let state = { ...INITIAL_STATE, connectionStatus: 'connected' as const, sessionId: 'selected', jobsBySession: { selected: ['a'], other: ['b'] } };
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi', workingDirectory: '/project' }),
+    getCurrentSessionId: () => state.sessionId,
+    dispatch: action => { state = chatReducer(state, action) as typeof state; },
+  });
+  controller.handleStatusChange({ state: 'disconnected', label: 'Disconnected', detail: '', cwd: '/project', sessionId: 'selected' });
+  assert.deepEqual(state.jobsBySession.other, ['b']);
+  assert.equal(state.jobsBySession.selected, undefined);
+});
+
+test('S2.3 unavailable background session identified only by file preserves selected session', () => {
+  let state = { ...INITIAL_STATE, connectionStatus: 'connected' as const, sessionId: 'b', sessionFile: '/project/b', jobsBySession: { a: ['ja'], b: ['jb'] }, sessions: [
+    { id: 'a', path: '/project/a', firstMessage: '', messageCount: 0, isActive: false },
+    { id: 'b', path: '/project/b', firstMessage: '', messageCount: 0, isActive: true },
+  ] };
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi', workingDirectory: '/project' }),
+    getCurrentSessionId: () => state.sessionId,
+    dispatch: action => { state = chatReducer(state, action) as typeof state; },
+  });
+  controller.handleStatusChange({ state: 'disconnected', label: 'Disconnected', detail: '', cwd: '/project', sessionId: null, sessionFile: '/project/a' } as any);
+  assert.equal(state.connectionStatus, 'connected');
+  assert.deepEqual(state.jobsBySession, { b: ['jb'] });
+});
+
 test('browser controller detachment dismisses local dialog without cancelling runtime request', async () => {
   const responses: any[] = [];
   let finish!: (value: boolean | null) => void;

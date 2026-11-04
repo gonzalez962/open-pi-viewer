@@ -145,6 +145,7 @@ import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
 import {
   findProjectByCwd,
+  getProjectActivity,
   getProjectDisplayName,
   type ProjectItem,
   type ProjectStatusInfo,
@@ -158,7 +159,7 @@ import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { useAutoSpeech } from '@features/chat/hooks/useAutoSpeech';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
-import { getAgentWorkingStatus } from '@features/chat/agent-working-status';
+import { getAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
 import { useMcpServers } from '@features/mcp/hooks/useMcpServers';
 import { usePiResources } from '@features/extensions/hooks/usePiResources';
@@ -323,6 +324,7 @@ export const App: React.FC = () => {
           model: res.model,
           hasMore: res.hasMore,
           activity: res.activity,
+          activeJobs: res.activeJobs,
           detail:
             hydrated.length > 0
               ? `Resumed session (${hydrated.length} messages)`
@@ -387,6 +389,7 @@ export const App: React.FC = () => {
     t,
   } = usePreferences();
 
+  const selectedSessionJobCount = getSelectedSessionJobCount(state);
   const derivedWorkingStatus = getAgentWorkingStatus(state, preferences.language);
   const workingStatusText = isBusy
     ? (derivedWorkingStatus ?? t('agent_working_status.fallback'))
@@ -692,11 +695,7 @@ export const App: React.FC = () => {
     for (const project of projectsRegistry.projects) {
       const projState = multiProjectState.projects[project.id];
       if (projState) {
-        map[project.id] = {
-          connectionState: projState.connectionStatus,
-          agentActivity: projState.agentActivity,
-          isBusy: projState.agentActivity === 'busy',
-        };
+        map[project.id] = getProjectActivity(projState);
       } else {
         map[project.id] = {
           connectionState: 'disconnected',
@@ -837,6 +836,7 @@ export const App: React.FC = () => {
       dispatch,
       t,
       requestFileTreeRefresh,
+      restoreExtensionPrompts,
       pinAndHide,
       scrollToBottomNextFrame,
       startConnection,
@@ -2234,7 +2234,10 @@ export const App: React.FC = () => {
                         />
                       ))}
                     </span>
-                    <span className="working-text">{workingStatusText}</span>
+                    <span className="working-text">
+                      {workingStatusText}
+                      {selectedSessionJobCount > 0 && ` · ${t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}`}
+                    </span>
                     <span className="loader">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
@@ -2245,6 +2248,9 @@ export const App: React.FC = () => {
                       ))}
                     </span>
                   </span>
+                )}
+                {selectedSessionJobCount > 0 && (
+                  <span className={isIndicatorActive ? 'prompt-job-count-accessible' : 'working-text'}>{t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}</span>
                 )}
               </div>
               <span id="prompt-status-hint" className="prompt-hint">

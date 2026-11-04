@@ -422,6 +422,12 @@ impl ActiveSession {
         let cwd_buf = cwd.to_path_buf();
         let cwd_stdout = cwd_buf.clone();
         let cwd_monitor = cwd_buf.clone();
+        let current_session_id = Arc::new(Mutex::new(None::<String>));
+        let current_session_file = Arc::new(Mutex::new(session_file.map(|p| p.to_string_lossy().into_owned())));
+        let stdout_session_id = Arc::clone(&current_session_id);
+        let stdout_session_file = Arc::clone(&current_session_file);
+        let monitor_session_id = Arc::clone(&current_session_id);
+        let monitor_session_file = Arc::clone(&current_session_file);
 
         let pending_resp_clone = Arc::clone(&pending_responses);
         let app_handle_clone = app_handle.clone();
@@ -459,6 +465,8 @@ impl ActiveSession {
                                         &stdin_tx_clone,
                                         &app_handle_clone,
                                         &cwd_stdout,
+                                        &stdout_session_id,
+                                        &stdout_session_file,
                                     )
                                     .await;
                                 }
@@ -545,13 +553,12 @@ impl ActiveSession {
 
                         let _ = app_handle_monitor.emit(
                             "pi://status-change",
-                            StatusChangePayload {
-                                state,
-                                label,
-                                detail,
-                                model: None,
-                                cwd: Some(cwd_monitor.to_string_lossy().into_owned()),
-                            },
+                            serde_json::json!({
+                                "state": state, "label": label, "detail": detail,
+                                "cwd": cwd_monitor.to_string_lossy(),
+                                "sessionId": *monitor_session_id.lock().await,
+                                "sessionFile": *monitor_session_file.lock().await,
+                            }),
                         );
 
                         // Clear any pending requests with an error
@@ -652,6 +659,9 @@ impl ActiveSession {
             .and_then(|d| d.get("sessionFile"))
             .and_then(|s| s.as_str())
             .map(|s| s.to_string());
+
+        *current_session_id.lock().await = session_id.clone();
+        *current_session_file.lock().await = session_file_returned.clone();
 
         let message_count = data
             .and_then(|d| d.get("messageCount"))
@@ -765,8 +775,8 @@ impl ActiveSession {
             stderr_collector,
             abort_kill_tx: Arc::new(Mutex::new(Some(abort_kill_tx))),
             child_reap_rx: Arc::new(Mutex::new(Some(reap_done_rx))),
-            current_session_id: Arc::new(Mutex::new(session_id.clone())),
-            current_session_file: Arc::new(Mutex::new(session_file_returned.clone())),
+            current_session_id,
+            current_session_file,
             is_alive: is_alive_session,
         };
 
@@ -929,6 +939,25 @@ pub fn decide_extension_ui_action(value: &Value) -> ExtensionUiAction {
     }
 }
 
+fn enrich_rpc_event(value: &mut Value, cwd: &Path, session_id: Option<&str>, session_file: Option<&str>) {
+    if let Value::Object(map) = value {
+        map.insert("cwd".to_string(), Value::String(cwd.to_string_lossy().into_owned()));
+        if let Some(id) = session_id { map.insert("sessionId".to_string(), Value::String(id.to_owned())); }
+        if let Some(file) = session_file { map.insert("sessionFile".to_string(), Value::String(file.to_owned())); }
+    }
+}
+
+fn rpc_events_for_emission(value: Value) -> Vec<Value> {
+    let settled = value.get("type").and_then(Value::as_str) == Some("agent_end")
+        && value.get("willRetry").and_then(Value::as_bool) != Some(true);
+    if !settled { return vec![value]; }
+    let mut event = value.clone();
+    if let Value::Object(ref mut map) = event {
+        map.insert("type".into(), Value::String("agent_settled".into()));
+    }
+    vec![value, event]
+}
+
 /// Process a single incoming JSON line from Pi RPC stdout
 async fn handle_rpc_line<R: tauri::Runtime>(
     line: &str,
@@ -936,6 +965,8 @@ async fn handle_rpc_line<R: tauri::Runtime>(
     stdin_tx: &mpsc::Sender<String>,
     app_handle: &tauri::AppHandle<R>,
     cwd: &Path,
+    session_id: &Arc<Mutex<Option<String>>>,
+    session_file: &Arc<Mutex<Option<String>>>,
 ) {
     let Ok(mut value) = serde_json::from_str::<Value>(line) else {
         // Emit malformed frame error for bounded diagnostics
@@ -949,9 +980,9 @@ async fn handle_rpc_line<R: tauri::Runtime>(
         return;
     };
 
-    if let Value::Object(ref mut map) = value {
-        map.insert("cwd".to_string(), Value::String(cwd.to_string_lossy().into_owned()));
-    }
+    let id = session_id.lock().await.clone();
+    let file = session_file.lock().await.clone();
+    enrich_rpc_event(&mut value, cwd, id.as_deref(), file.as_deref());
 
     let msg_type = value.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -982,8 +1013,10 @@ async fn handle_rpc_line<R: tauri::Runtime>(
         }
     }
 
-    // 3. Emit all RPC events to frontend with cwd attached
-    let _ = app_handle.emit("pi://event", value);
+    // 3. Emit all RPC events and the final settlement with the same process identity.
+    for event in rpc_events_for_emission(value) {
+        let _ = app_handle.emit("pi://event", event);
+    }
 }
 
 /// Validate that a client-provided prompt request ID is bounded, non-empty,
@@ -1021,6 +1054,43 @@ pub fn next_request_id(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_rpc_end_settles_agent_without_clearing_jobs_or_other_sessions() {
+        let mut tray = crate::tray_activity::Activity::default();
+        let mut emit = |mut event: Value, id: &str| {
+            enrich_rpc_event(&mut event, Path::new("project"), Some(id), Some(id));
+            for payload in rpc_events_for_emission(event) { tray.update("pi://event", &payload); }
+        };
+        emit(serde_json::json!({"type":"agent_start"}), "a");
+        emit(serde_json::json!({"type":"tool_execution_end","toolName":"bash_background","result":{"details":{"gentleJobs":{"id":"j"}}}}), "a");
+        emit(serde_json::json!({"type":"agent_start"}), "b");
+        emit(serde_json::json!({"type":"agent_end","willRetry":true}), "b");
+        emit(serde_json::json!({"type":"agent_end"}), "a");
+        emit(serde_json::json!({"type":"message_end","message":{"customType":"gentle-jobs.notice","details":{"gentleJobs":{"id":"j"}}}}), "a");
+        drop(emit);
+        assert!(tray.busy(), "retrying session remains active");
+        let mut end = serde_json::json!({"type":"agent_end"});
+        enrich_rpc_event(&mut end, Path::new("project"), Some("b"), Some("b"));
+        let events = rpc_events_for_emission(end);
+        assert_eq!(events[1]["type"], "agent_settled");
+        assert_eq!(events[1]["sessionId"], "b");
+        assert_eq!(events[1]["sessionFile"], "b");
+        for event in events { tray.update("pi://event", &event); }
+        assert!(!tray.busy());
+    }
+
+    #[test]
+    fn rpc_event_enrichment_preserves_origin_for_settlement_and_jobs() {
+        for event_type in ["agent_settled", "tool_execution_end", "message_end"] {
+            let mut event = serde_json::json!({"type":event_type,"sessionId":"wrong","cwd":"wrong"});
+            enrich_rpc_event(&mut event, Path::new("project"), Some("session-a"), Some("file-a"));
+            assert_eq!(event["type"], event_type);
+            assert_eq!(event["cwd"], "project");
+            assert_eq!(event["sessionId"], "session-a");
+            assert_eq!(event["sessionFile"], "file-a");
+        }
+    }
 
     #[test]
     fn test_stderr_collector_bounds_and_decoding() {
