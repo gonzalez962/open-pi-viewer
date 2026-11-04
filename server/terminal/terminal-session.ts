@@ -126,6 +126,13 @@ export class TerminalSession {
       this.running = false;
       this.exitCode = exitCode ?? null;
       this.exitSignal = signal;
+      // Natural exit must release ConPTY's input pipe and output worker too.
+      // node-pty drains the output before firing onExit, so buffered data is safe.
+      if (process.platform === 'win32') {
+        const agent = this.ptyProcess?._agent;
+        agent?._inSocket?.destroy();
+        agent?._conoutSocketWorker?.dispose();
+      }
       this.resolveExit({ exitCode: this.exitCode, signal: this.exitSignal });
       for (const listener of this.exitListeners) {
         try {

@@ -17,14 +17,14 @@ import {
 
 export class TerminalManager {
   private readonly sessionsById = new Map<string, TerminalSession>();
-  private readonly sessionsByCwd = new Map<string, TerminalSession>();
+  private readonly sessionsByCwd = new Map<string, Set<TerminalSession>>();
   private readonly options: TerminalManagerOptions;
 
   constructor(options: TerminalManagerOptions = {}) {
     this.options = options;
   }
 
-  async openSession(args: TerminalOpenArgs, owner?: string): Promise<TerminalSessionDto> {
+  async openSession(args: TerminalOpenArgs, _owner?: string): Promise<TerminalSessionDto> {
     if (!args || typeof args.cwd !== 'string' || !args.cwd.trim()) {
       throw new Error('Working directory (cwd) is required to open a terminal session');
     }
@@ -34,17 +34,17 @@ export class TerminalManager {
       throw new Error(`Target directory does not exist or is not a directory: ${args.cwd}`);
     }
 
-    const cwdKey = JSON.stringify([owner, toCanonicalKey(canonicalCwd)]);
-    const existing = this.sessionsByCwd.get(cwdKey);
+    const cwdKey = toCanonicalKey(canonicalCwd);
+    const sessions = this.sessionsByCwd.get(cwdKey) ?? new Set<TerminalSession>();
 
-    if (existing) {
+    for (const existing of sessions) {
       if (existing.running) {
         return existing.toDto(true);
       }
       // Dead process; clean up before respawning
       this.sessionsById.delete(existing.id);
-      this.sessionsByCwd.delete(cwdKey);
-      await existing.kill();
+      sessions.delete(existing);
+      // An exited PTY already owns its cleanup; no asynchronous gap before spawn.
     }
 
     const session = new TerminalSession({
@@ -54,16 +54,17 @@ export class TerminalManager {
       rows: args.rows,
       shell: this.options.defaultShell,
       maxReplayBytes: this.options.maxReplayBytes,
-      owner,
+      owner: _owner,
     });
 
     this.sessionsById.set(session.id, session);
-    this.sessionsByCwd.set(cwdKey, session);
+    sessions.add(session);
+    this.sessionsByCwd.set(cwdKey, sessions);
 
     return session.toDto(true);
   }
 
-  writeSession(args: TerminalWriteArgs, owner?: string): void {
+  writeSession(args: TerminalWriteArgs, _owner?: string): void {
     if (!args || typeof args.id !== 'string' || !args.id.trim()) {
       throw new Error('Terminal session ID is required for write');
     }
@@ -74,22 +75,16 @@ export class TerminalManager {
     if (!session) {
       throw new Error(`Terminal session not found: ${args.id}`);
     }
-    if (session.owner !== owner) {
-      throw new Error('Access denied: terminal session belongs to another owner');
-    }
     session.write(args.data);
   }
 
-  resizeSession(args: TerminalResizeArgs, owner?: string): void {
+  resizeSession(args: TerminalResizeArgs, _owner?: string): void {
     if (!args || typeof args.id !== 'string' || !args.id.trim()) {
       throw new Error('Terminal session ID is required for resize');
     }
     const session = this.sessionsById.get(args.id);
     if (!session) {
       throw new Error(`Terminal session not found: ${args.id}`);
-    }
-    if (session.owner !== owner) {
-      throw new Error('Access denied: terminal session belongs to another owner');
     }
     if (
       typeof args.cols !== 'number' ||
@@ -104,7 +99,7 @@ export class TerminalManager {
     session.resize(args.cols, args.rows);
   }
 
-  async closeSession(args: TerminalCloseArgs, owner?: string): Promise<void> {
+  async closeSession(args: TerminalCloseArgs, _owner?: string): Promise<void> {
     if (!args || typeof args.id !== 'string' || !args.id.trim()) {
       throw new Error('Terminal session ID is required for close');
     }
@@ -112,24 +107,21 @@ export class TerminalManager {
     if (!session) {
       throw new Error(`Terminal session not found: ${args.id}`);
     }
-    if (session.owner !== owner) {
-      throw new Error('Access denied: terminal session belongs to another owner');
-    }
     this.sessionsById.delete(session.id);
-    this.sessionsByCwd.delete(JSON.stringify([session.owner, toCanonicalKey(session.canonicalCwd)]));
+    const cwdKey = toCanonicalKey(session.canonicalCwd);
+    const sessions = this.sessionsByCwd.get(cwdKey);
+    sessions?.delete(session);
+    if (sessions?.size === 0) this.sessionsByCwd.delete(cwdKey);
     await session.kill();
   }
 
-  async pollSession(args: TerminalPollArgs, owner?: string, signal?: AbortSignal): Promise<TerminalPollResult> {
+  async pollSession(args: TerminalPollArgs, _owner?: string, signal?: AbortSignal): Promise<TerminalPollResult> {
     if (!args || typeof args.id !== 'string' || !args.id.trim()) {
       throw new Error('Terminal session ID is required for poll');
     }
     const session = this.sessionsById.get(args.id);
     if (!session) {
       throw new Error(`Terminal session not found: ${args.id}`);
-    }
-    if (session.owner !== owner) {
-      throw new Error('Access denied: terminal session belongs to another owner');
     }
 
     const cursor = typeof args.cursor === 'number' && Number.isFinite(args.cursor) && args.cursor >= 0 ? args.cursor : 0;
@@ -149,27 +141,24 @@ export class TerminalManager {
     };
   }
 
-  getSession(id: string, owner?: string): TerminalSessionDto | null {
+  getSession(id: string, _owner?: string): TerminalSessionDto | null {
     if (!id || typeof id !== 'string') return null;
     const session = this.sessionsById.get(id);
     if (!session) return null;
-    if (session.owner !== owner) return null;
     return session.toDto(true);
   }
 
-  getSessionByCwd(cwd: string, owner?: string): TerminalSessionDto | null {
+  getSessionByCwd(cwd: string, _owner?: string): TerminalSessionDto | null {
     if (!cwd || typeof cwd !== 'string') return null;
     const canonical = resolveCanonicalCwd(cwd);
-    const session = this.sessionsByCwd.get(JSON.stringify([owner, toCanonicalKey(canonical)]));
+    const session = this.sessionsByCwd.get(toCanonicalKey(canonical))?.values().next().value;
     if (!session) return null;
-    if (session.owner !== owner) return null;
     return session.toDto(true);
   }
 
-  listSessions(owner?: string): TerminalSessionDto[] {
+  listSessions(_owner?: string): TerminalSessionDto[] {
     const list: TerminalSessionDto[] = [];
     for (const s of this.sessionsById.values()) {
-      if (s.owner !== owner) continue;
       list.push(s.toDto(false));
     }
     return list;
