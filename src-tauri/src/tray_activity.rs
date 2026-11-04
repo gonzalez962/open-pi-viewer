@@ -1,8 +1,25 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+fn job_id(value: &serde_json::Value, prefix: &str, suffix: &str) -> Option<String> {
+    if let Some(id) = value.pointer("/details/gentleJobs/id").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+        return Some(id.trim().to_owned());
+    }
+    let content = value.get("content")?;
+    let text = if let Some(s) = content.as_str() { s.to_owned() } else {
+        content.as_array()?.iter().filter_map(|v| v.get("text").and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n")
+    };
+    let start = text.find(prefix)? + prefix.len();
+    let rest = &text[start..];
+    let rest = if rest.starts_with('"') { rest.split_once("\" ")?.1 } else { rest };
+    let rest = rest.trim_start_matches('(');
+    let id: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect();
+    if id.is_empty() || (!suffix.is_empty() && !rest[id.len()..].trim_start_matches(')').starts_with(suffix)) { None } else { Some(id) }
+}
 
 #[derive(Default)]
 pub struct Activity {
-    working: HashSet<String>,
+    working: HashSet<(String, String)>,
+    jobs: HashMap<(String, String), HashSet<String>>,
     failed: HashSet<String>,
 }
 
@@ -12,17 +29,42 @@ impl Activity {
         let Some(cwd) = event.get("cwd").and_then(|v| v.as_str()) else {
             return false;
         };
+        let session = event.get("sessionId").and_then(|v| v.as_str()).or_else(|| event.get("sessionFile").and_then(|v| v.as_str())).unwrap_or("");
+        let key = (cwd.to_owned(), session.to_owned());
         if channel == "pi://event" {
+            let tool = event.get("toolName").and_then(|v| v.as_str()).unwrap_or("");
+            if event.get("type").and_then(|v| v.as_str()) == Some("tool_execution_end")
+                && event.get("isError").and_then(|v| v.as_bool()) != Some(true)
+                && event.pointer("/result/isError").and_then(|v| v.as_bool()) != Some(true)
+                && event.pointer("/result/details/error").map_or(true, |v| v.is_null() || v == false)
+            {
+                if let Some(result) = event.get("result") {
+                    let prefix = match tool { "bash_background" => "Started background job ", "monitor" => "Started monitor ", "job_stop" => "Stopped ", _ => "" };
+                    if !prefix.is_empty() {
+                        if let Some(id) = job_id(result, prefix, "") {
+                            if tool == "job_stop" { if let Some(jobs) = self.jobs.get_mut(&key) { jobs.remove(&id); } }
+                            else { self.jobs.entry(key.clone()).or_default().insert(id); }
+                        }
+                    }
+                }
+            }
+            if event.get("type").and_then(|v| v.as_str()) == Some("message_end") {
+                if let Some(message) = event.get("message").filter(|m| m.get("customType").and_then(|v| v.as_str()) == Some("gentle-jobs.notice")) {
+                    if let Some(id) = job_id(message, "Background job ", " exited") {
+                        if let Some(jobs) = self.jobs.get_mut(&key) { jobs.remove(&id); }
+                    }
+                }
+            }
             match event.get("type").and_then(|v| v.as_str()) {
                 Some("agent_start") => {
                     self.failed.remove(cwd);
-                    self.working.insert(cwd.to_owned());
+                    self.working.insert(key.clone());
                 }
                 Some("message_start" | "tool_execution_start") => {
-                    self.working.insert(cwd.to_owned());
+                    self.working.insert(key.clone());
                 }
                 Some("agent_settled") => {
-                    self.working.remove(cwd);
+                    self.working.remove(&key);
                 }
                 Some("tool_execution_end")
                     if event.get("isError").and_then(|v| v.as_bool()) == Some(true) =>
@@ -37,7 +79,13 @@ impl Activity {
             event.get("state").and_then(|v| v.as_str()),
             Some("disconnected" | "error")
         ) {
-            self.working.remove(cwd);
+            if session.is_empty() {
+                self.working.retain(|(dir, _)| dir != cwd);
+                self.jobs.retain(|(dir, _), _| dir != cwd);
+            } else {
+                self.working.remove(&key);
+                self.jobs.remove(&key);
+            }
             if event.get("state").and_then(|v| v.as_str()) == Some("error") {
                 self.failed.insert(cwd.to_owned());
             }
@@ -62,7 +110,7 @@ impl Activity {
     }
 
     pub fn busy(&self) -> bool {
-        !self.working.is_empty()
+        !self.working.is_empty() || self.jobs.values().any(|jobs| !jobs.is_empty())
     }
 }
 
