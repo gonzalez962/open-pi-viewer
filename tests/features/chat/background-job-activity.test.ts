@@ -12,7 +12,7 @@ function harness() {
     { id: 'a', path: '/repo/a', firstMessage: '', messageCount: 0, isActive: true },
     { id: 'b', path: '/repo/b', firstMessage: '', messageCount: 0, isActive: false },
   ] };
-  const dispatch = (action: any) => { state = chatReducer(state, action); }; 
+  const dispatch = (action: any) => { state = chatReducer(state, action); };
   const selectSession = (id: string) => dispatch({ type: 'SESSION_READY', payload: { sessionId: id, sessionFile: `/repo/${id}`, messages: [], activity: 'idle' } });
   const notifications: string[] = [];
   const controller = new SessionEventController({
