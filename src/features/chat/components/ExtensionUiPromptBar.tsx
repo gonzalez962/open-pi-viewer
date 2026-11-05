@@ -954,7 +954,7 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
               </span>
             )
           )}
-          <h3 id="extension-prompt-title" className="extension-prompt-title" style={method === 'confirm' ? { whiteSpace: 'pre-wrap' } : undefined}>
+          <h3 id="extension-prompt-title" className="extension-prompt-title">
             {headerTitle}
           </h3>
           {pendingCount > 1 && (
