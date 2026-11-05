@@ -2430,16 +2430,14 @@ export const App: React.FC = () => {
         </React.Suspense>
       )}
 
-      {viewingFile && (
-        <React.Suspense fallback={null}>
-          <FileViewerModal
-            file={viewingFile}
-            workingDirectory={config.workingDirectory}
-            onClose={closeFile}
-            locale={preferences.language}
-          />
-        </React.Suspense>
-      )}
+      <React.Suspense fallback={null}>
+        <FileViewerModal
+          file={viewingFile}
+          workingDirectory={config.workingDirectory}
+          onClose={closeFile}
+          locale={preferences.language}
+        />
+      </React.Suspense>
 
       {profilesHook.isModalOpen && (
         <React.Suspense fallback={null}>

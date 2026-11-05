@@ -60,6 +60,48 @@ function extractDesktopRule(css: string, selector: string): string {
   return beforeMedia.slice(ruleOpenIdx + 1, ruleCloseIdx);
 }
 
+test('file viewer: all modal buttons share sizing and have comfortable spacing', () => {
+  const css = loadWorkspaceCss();
+  const shared = extractDesktopRule(css, '.file-viewer-container button {');
+  assert.match(shared, /height:\s*30px;/);
+  assert.match(shared, /box-sizing:\s*border-box;/);
+  assert.match(shared, /font-size:\s*12px;/);
+  assert.match(shared, /line-height:\s*1;/);
+  assert.match(shared, /border-radius:\s*var\(--radius-sm\);/);
+  assert.match(extractDesktopRule(css, '.file-viewer-actions {'), /gap:\s*10px;/);
+  assert.match(extractDesktopRule(css, '.file-viewer-actions {'), /flex-wrap:\s*wrap;/);
+  const header = extractDesktopRule(css, '.file-viewer-header {');
+  assert.match(header, /flex-wrap:\s*wrap;/);
+  assert.match(header, /gap:\s*12px;/);
+  assert.doesNotMatch(css, /\.btn-file-close\s*\{[^}]*min-(?:width|height):\s*32px;/);
+  assert.match(extractDesktopRule(css, '.file-viewer-container .btn-file-editor:focus-visible'), /outline:\s*2px solid var\(--editor-action-fg\)/);
+  assert.match(extractDesktopRule(css, '.file-viewer-tabs {'), /gap:\s*6px;/);
+  const icons = extractDesktopRule(css, '.file-viewer-container :is(.btn-file-toggle-wrap, .btn-file-close) {');
+  assert.match(icons, /width:\s*30px;/);
+  assert.match(icons, /padding:\s*0;/);
+});
+
+test('file editor: action buttons share aligned dimensions and semantic colors', () => {
+  const css = loadWorkspaceCss();
+  const button = extractDesktopRule(css, '.file-viewer-container button {');
+  assert.match(button, /display:\s*inline-flex;/);
+  assert.match(button, /align-items:\s*center;/);
+  assert.match(button, /justify-content:\s*center;/);
+  assert.match(button, /height:\s*30px;/);
+  assert.match(button, /box-sizing:\s*border-box;/);
+  assert.match(button, /line-height:\s*1;/);
+  for (const [action, token] of [['edit', '--accent-primary'], ['save', '--status-green'], ['cancel', '--status-red']]) {
+    const variant = extractDesktopRule(css, `.btn-file-editor-${action} {`);
+    assert.ok(variant.includes(`var(${token})`), `${action} uses its semantic theme color`);
+  }
+  assert.match(extractDesktopRule(css, '.file-viewer-container .btn-file-editor:focus-visible'), /outline:/);
+  assert.match(extractDesktopRule(css, '.btn-file-editor:disabled'), /cursor:\s*not-allowed;/);
+  const source = readFileSync(join(process.cwd(), 'src/features/workspace/FileViewerModal.tsx'), 'utf8');
+  for (const action of ['edit', 'save', 'cancel']) {
+    assert.ok(source.includes(`className="btn-file-editor btn-file-editor-${action}"`));
+  }
+});
+
 test('mobile file viewer: preserves desktop overlay and container layout', () => {
   const css = loadWorkspaceCss();
   const desktopOverlay = extractDesktopRule(css, '.file-viewer-overlay');

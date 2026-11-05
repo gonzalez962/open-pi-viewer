@@ -98,6 +98,10 @@ Dialog responses preserve the originating session file and must match a pending 
 
 Regression coverage: `tests/server/session-continuity.test.ts`, `tests/core/session-reattach.test.ts`, and `tests/infra/web-session-reattach.test.ts` use isolated fake subprocesses and connection adapters.
 
+## Workspace text saves
+
+The web `save_workspace_file` operation accepts `relativePath`, optional `workingDirectory`, `originalContent` and `content`. It rejects paths outside the workspace, multiply linked files, missing or non-text targets, oversized text, and stale originals. It stages and flushes a sibling file before revalidating and replacing the target, preserving UTF-8 text without creating target files or converting content to HTML. The optimistic check is not an atomic compare-and-swap against external writers, and replacement can change metadata beyond basic permissions. Desktop editing is disabled; the preserved Rust save implementation is an unverified draft tracked in [issue #188](https://github.com/gonzalez962/open-pi-viewer/issues/188).
+
 ## Workspace branch retrieval
 
 The branch manager offers **Sync branches** to request an explicit sync and refresh the displayed branches and available bases. The button shows pending state; bridge errors appear in the modal. A failed network fetch may instead fall back to existing refs without an error.

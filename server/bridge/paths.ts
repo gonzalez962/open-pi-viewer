@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { getHomeDir, getBridgeConfig } from '../config';
 import { withGithubCredentials } from '../github-credentials';
@@ -532,6 +533,63 @@ export function handleGetWorkspaceFileDiff(args: any = {}): WorkspaceFileDiff {
   }
   const diff = result.stdout;
   return { relativePath, hasDiff: Boolean(diff.trim()), diff };
+}
+
+/** Save only an existing, contained UTF-8 text file, after checking its original bytes. */
+export function handleSaveWorkspaceFile(args: any = {}): void {
+  const { workingDirectory, relativePath, originalContent, content } = args.payload || {};
+  if (typeof relativePath !== 'string' || !relativePath || path.isAbsolute(relativePath) ||
+      path.win32.isAbsolute(relativePath) || /^[a-zA-Z]:/.test(relativePath) ||
+      relativePath.replace(/\\/g, '/').split('/').includes('..')) {
+    throw new Error('Invalid workspace relative path');
+  }
+  if (typeof originalContent !== 'string' || typeof content !== 'string') throw new Error('Text content is required');
+  const edited = Buffer.from(content, 'utf8');
+  if (edited.toString('utf8') !== content || isBinaryBuffer(edited)) throw new Error('Content is not valid text');
+  if (edited.length > MAX_TEXT_FILE_BYTES) throw new Error('Text file is too large');
+  const root = fs.realpathSync(resolveCrossPlatformCwd(workingDirectory || getActiveCwd()));
+  const target = fs.realpathSync(path.resolve(root, relativePath));
+  const relative = path.relative(root, target);
+  if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    throw new Error('Access denied: path is outside workspace root');
+  }
+  const name = path.basename(target);
+  if (isDeterministicBinary(name) || getImageMimeType(name) || getVideoMimeType(name)) throw new Error('Target is not a text file');
+  const fd = fs.openSync(target, 'r');
+  let fdOpen = true;
+  let tempPath: string | undefined;
+  try {
+    const stat = fs.fstatSync(fd);
+    const currentPath = fs.statSync(target);
+    if (!stat.isFile() || stat.nlink !== 1 || stat.dev !== currentPath.dev || stat.ino !== currentPath.ino) throw new Error('Target changed or has multiple links');
+    if (stat.size > MAX_TEXT_FILE_BYTES) throw new Error('Text file is too large');
+    const bytes = fs.readFileSync(fd);
+    if (isBinaryBuffer(bytes)) throw new Error('Target is not valid UTF-8 text');
+    if (bytes.toString('utf8') !== originalContent) throw new Error('File changed since it was read');
+    const candidate = path.join(path.dirname(target), `.pi-save-${randomUUID()}.tmp`);
+    const tempFd = fs.openSync(candidate, 'wx', stat.mode & 0o777);
+    tempPath = candidate;
+    try {
+      fs.fchmodSync(tempFd, stat.mode & 0o777);
+      let offset = 0;
+      while (offset < edited.length) {
+        const written = fs.writeSync(tempFd, edited, offset, edited.length - offset, offset);
+        if (written === 0) throw new Error('Unable to write staged file');
+        offset += written;
+      }
+      fs.fsyncSync(tempFd);
+    } finally { fs.closeSync(tempFd); }
+    if (fs.realpathSync(path.resolve(root, relativePath)) !== target) throw new Error('Target changed');
+    const latest = fs.statSync(target);
+    if (latest.nlink !== 1 || latest.dev !== stat.dev || latest.ino !== stat.ino || latest.size !== stat.size || latest.mtimeMs !== stat.mtimeMs || !fs.readFileSync(target).equals(bytes)) throw new Error('Target changed');
+    fs.closeSync(fd);
+    fdOpen = false;
+    fs.renameSync(tempPath, target);
+    tempPath = undefined;
+  } finally {
+    if (fdOpen) fs.closeSync(fd);
+    if (tempPath) fs.unlinkSync(tempPath);
+  }
 }
 
 export function handleReadWorkspaceFile(args: any = {}) {

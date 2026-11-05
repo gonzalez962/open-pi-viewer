@@ -55,6 +55,16 @@ pub struct ReadWorkspaceFilePayload {
     pub relative_path: String,
 }
 
+/// Payload for saving an existing workspace text file.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveWorkspaceFilePayload {
+    pub working_directory: Option<String>,
+    pub relative_path: String,
+    pub original_content: String,
+    pub content: String,
+}
+
 /// Payload for creating a new directory in the workspace root
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -526,6 +536,114 @@ pub async fn read_workspace_file(
         mime_type: None,
         media_data_url: None,
     })
+}
+
+#[cfg(test)]
+thread_local! { static SAVE_WRITE_FAILURE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// Save a contained existing text file without truncating before validation.
+#[tauri::command]
+pub async fn save_workspace_file(payload: SaveWorkspaceFilePayload, state: State<'_, AppState>) -> Result<(), String> {
+    use std::io::{Read, Write};
+    let rel = &payload.relative_path;
+    let path = Path::new(rel);
+    if rel.is_empty() || path.is_absolute() || rel.starts_with(['/', '\\']) ||
+        rel.as_bytes().get(1) == Some(&b':') || rel.split(['/', '\\']).any(|part| part == "..") {
+        return Err("Invalid workspace relative path".into());
+    }
+    let edited = payload.content.as_bytes();
+    if edited.len() as u64 > MAX_WORKSPACE_TEXT_BYTES || is_binary_byte_buffer(edited) {
+        return Err("Content is not supported text".into());
+    }
+    let root = resolve_canonical_workspace_root(payload.working_directory.as_deref(), &state).await?;
+    let target = dunce::canonicalize(root.join(path)).map_err(|e| format!("Cannot resolve target: {e}"))?;
+    if !target.starts_with(&root) || target == root { return Err("Access denied: path is outside workspace root".into()); }
+    let name = target.file_name().and_then(|s| s.to_str()).ok_or("Invalid filename")?;
+    if is_deterministic_binary_filename(name) || get_image_mime_type(name).is_some() || get_video_mime_type(name).is_some() {
+        return Err("Target is not a text file".into());
+    }
+    let mut file = std::fs::File::open(&target).map_err(|e| format!("Cannot open target: {e}"))?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_WORKSPACE_TEXT_BYTES { return Err("Target is not a supported text file".into()); }
+    let mut bytes = Vec::new();
+    (&mut file).take(MAX_WORKSPACE_TEXT_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
+    if bytes.len() as u64 > MAX_WORKSPACE_TEXT_BYTES || is_binary_byte_buffer(&bytes) { return Err("Target is not valid UTF-8 text".into()); }
+    if bytes != payload.original_content.as_bytes() { return Err("File changed since it was read".into()); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 { return Err("Target has multiple links".into()); }
+    }
+    #[cfg(windows)]
+    fn identity(file: &std::fs::File) -> Result<(u32, u32, u32, u32), String> {
+        use std::os::windows::io::AsRawHandle;
+        // Stable Win32 handle identity; metadata's equivalent methods are unstable.
+        #[repr(C)]
+        struct FileInformation {
+            attributes: u32,
+            creation_time: [u32; 2],
+            access_time: [u32; 2],
+            write_time: [u32; 2],
+            volume_serial: u32,
+            size_high: u32,
+            size_low: u32,
+            links: u32,
+            index_high: u32,
+            index_low: u32,
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetFileInformationByHandle(handle: *mut std::ffi::c_void, info: *mut FileInformation) -> i32;
+        }
+        let mut info = std::mem::MaybeUninit::<FileInformation>::uninit();
+            // The API initializes the entire structure when it succeeds.
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+                return Err(format!("Cannot inspect target identity: {}", std::io::Error::last_os_error()));
+            }
+            let info = unsafe { info.assume_init() };
+        Ok((info.volume_serial, info.index_high, info.index_low, info.links))
+    }
+    #[cfg(windows)]
+    if identity(&file)?.3 != 1 { return Err("Target has multiple links".into()); }
+    struct Staged(PathBuf);
+    impl Drop for Staged { fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); } }
+    let temp_path = target.with_file_name(format!(".pi-save-{}.tmp", uuid::Uuid::new_v4()));
+    let mut staged_file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temp_path).map_err(|e| e.to_string())?;
+    let staged = Staged(temp_path);
+    staged_file.set_permissions(metadata.permissions()).map_err(|e| e.to_string())?;
+    #[cfg(test)]
+    let fail_write = SAVE_WRITE_FAILURE.with(|flag| flag.get());
+    #[cfg(not(test))]
+    let fail_write = false;
+    if fail_write {
+        staged_file.write_all(&edited[..edited.len().min(2)]).map_err(|e| e.to_string())?;
+        return Err("Injected disk full".into());
+    }
+    staged_file.write_all(edited).map_err(|e| e.to_string())?;
+    staged_file.sync_all().map_err(|e| e.to_string())?;
+    drop(staged_file);
+    let resolved = dunce::canonicalize(root.join(path)).map_err(|e| e.to_string())?;
+    if resolved != target || !resolved.starts_with(&root) { return Err("Target changed".into()); }
+    let mut current = std::fs::File::open(&target).map_err(|e| e.to_string())?;
+    let latest = current.metadata().map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if latest.nlink() != 1 || metadata.dev() != latest.dev() || metadata.ino() != latest.ino() { return Err("Target changed".into()); }
+    }
+    #[cfg(windows)]
+    {
+        // Reuse the handle identity check, including link count, after staging.
+        if identity(&file)? != identity(&current)? || identity(&current)?.3 != 1 { return Err("Target changed".into()); }
+    }
+    if metadata.len() != latest.len() || metadata.modified().ok() != latest.modified().ok() { return Err("Target changed".into()); }
+    let mut latest_bytes = Vec::new();
+    (&mut current).take(MAX_WORKSPACE_TEXT_BYTES + 1).read_to_end(&mut latest_bytes).map_err(|e| e.to_string())?;
+    if latest_bytes != bytes { return Err("File changed since it was read".into()); }
+    drop(current);
+    drop(file);
+    crate::atomic_file::replace(&staged.0, &target).map_err(|e| format!("Cannot replace target: {e}"))?;
+    Ok(())
 }
 
 /// Creates a new directory directly under the active workspace root.
@@ -1799,6 +1917,114 @@ pub async fn list_workspace_branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::Manager;
+
+    struct SaveFixture { dir: PathBuf, root: PathBuf }
+    impl SaveFixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("pi_save_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            let root = dir.join("workspace");
+            std::fs::create_dir_all(&root).unwrap();
+            Self { dir, root }
+        }
+        fn payload(&self, relative_path: &str, original_content: &str, content: &str) -> SaveWorkspaceFilePayload {
+            SaveWorkspaceFilePayload { working_directory: Some(self.root.to_string_lossy().into_owned()), relative_path: relative_path.into(), original_content: original_content.into(), content: content.into() }
+        }
+        fn read_payload(&self, relative_path: &str) -> ReadWorkspaceFilePayload {
+            ReadWorkspaceFilePayload { working_directory: Some(self.root.to_string_lossy().into_owned()), relative_path: relative_path.into() }
+        }
+    }
+    impl Drop for SaveFixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
+
+    #[tokio::test]
+    async fn s1_1_save_exact_text_and_fresh_read() {
+        let f = SaveFixture::new();
+        let app = tauri::Builder::default().manage(AppState::default()).build(tauri::generate_context!()).unwrap();
+        let state = app.state::<AppState>();
+        std::fs::write(f.root.join("text.txt"), "original").unwrap();
+        for content in [" Unicode 日本語 \r\nnext\n  no final newline", "", " \t\r\n", "last"] {
+            let original = read_workspace_file(f.read_payload("text.txt"), state.clone()).await.unwrap().content;
+            save_workspace_file(f.payload("text.txt", &original, content), state.clone()).await.unwrap();
+            assert_eq!(read_workspace_file(f.read_payload("text.txt"), state.clone()).await.unwrap().content, content);
+            assert_eq!(std::fs::read(f.root.join("text.txt")).unwrap(), content.as_bytes());
+        }
+    }
+
+    #[tokio::test]
+    async fn s1_2_reject_unsafe_and_unsupported_targets_without_modification() {
+        let f = SaveFixture::new();
+        let app = tauri::Builder::default().manage(AppState::default()).build(tauri::generate_context!()).unwrap();
+        let state = app.state::<AppState>();
+        let outside = f.dir.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let external = outside.join("external.txt");
+        std::fs::write(&external, b"external").unwrap();
+        std::fs::create_dir(f.root.join("dir")).unwrap();
+        std::fs::write(f.root.join("dir/sentinel.txt"), b"sentinel").unwrap();
+        let mut cases = vec![
+            (external.to_string_lossy().into_owned(), external.clone(), b"external".to_vec()),
+            ("../outside/external.txt".into(), external.clone(), b"external".to_vec()),
+            ("binary.txt".into(), f.root.join("binary.txt"), vec![65, 0, 66]),
+            ("invalid.txt".into(), f.root.join("invalid.txt"), vec![0xff, 0xfe]),
+            ("huge.txt".into(), f.root.join("huge.txt"), vec![b'a'; MAX_WORKSPACE_TEXT_BYTES as usize + 1]),
+            ("known.bin".into(), f.root.join("known.bin"), b"plain but binary extension".to_vec()),
+        ];
+        for (_, file, bytes) in cases.iter().skip(2) { std::fs::write(file, bytes).unwrap(); }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, f.root.join("link")).unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(f.root.join("link")).arg(&outside).status().unwrap();
+            assert!(status.success(), "junction creation failed");
+        }
+        cases.push(("link/external.txt".into(), external.clone(), b"external".to_vec()));
+        for (relative, file, before) in cases {
+            let original = String::from_utf8_lossy(&before);
+            assert!(save_workspace_file(f.payload(&relative, &original, "replacement"), state.clone()).await.is_err(), "{relative}");
+            assert_eq!(std::fs::read(file).unwrap(), before, "{relative}");
+        }
+        for relative in ["missing.txt", "dir"] {
+            assert!(save_workspace_file(f.payload(relative, "", "replacement"), state.clone()).await.is_err(), "{relative}");
+        }
+        assert!(!f.root.join("missing.txt").exists());
+        assert_eq!(std::fs::read(f.root.join("dir/sentinel.txt")).unwrap(), b"sentinel");
+        std::fs::write(f.root.join("valid.txt"), b"valid").unwrap();
+        assert!(save_workspace_file(f.payload("valid.txt", "valid", &"x".repeat(MAX_WORKSPACE_TEXT_BYTES as usize + 1)), state.clone()).await.is_err());
+        assert_eq!(std::fs::read(f.root.join("valid.txt")).unwrap(), b"valid");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn file_editor_s1_2_hardlink_and_failed_staged_write_preserve_original() {
+        let f = SaveFixture::new();
+        let app = tauri::Builder::default().manage(AppState::default()).build(tauri::generate_context!()).unwrap();
+        let state = app.state::<AppState>();
+        let outside = f.dir.join("outside.txt");
+        std::fs::write(&outside, "original").unwrap();
+        std::fs::hard_link(&outside, f.root.join("link.txt")).unwrap();
+        assert!(save_workspace_file(f.payload("link.txt", "original", "replacement"), state.clone()).await.is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"original");
+        assert_eq!(std::fs::read(f.root.join("link.txt")).unwrap(), b"original");
+        std::fs::write(f.root.join("text.txt"), "original").unwrap();
+        SAVE_WRITE_FAILURE.with(|flag| flag.set(true));
+        let result = save_workspace_file(f.payload("text.txt", "original", "replacement"), state.clone()).await;
+        SAVE_WRITE_FAILURE.with(|flag| flag.set(false));
+        assert!(result.unwrap_err().contains("Injected disk full"));
+        assert_eq!(std::fs::read(f.root.join("text.txt")).unwrap(), b"original");
+        assert_eq!(std::fs::read_dir(&f.root).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn s1_3_stale_original_preserves_external_edit() {
+        let f = SaveFixture::new();
+        let app = tauri::Builder::default().manage(AppState::default()).build(tauri::generate_context!()).unwrap();
+        let state = app.state::<AppState>();
+        let file = f.root.join("text.txt");
+        std::fs::write(&file, "original").unwrap();
+        let original = read_workspace_file(f.read_payload("text.txt"), state.clone()).await.unwrap().content;
+        std::fs::write(&file, "external edit\r\n").unwrap();
+        assert!(save_workspace_file(f.payload("text.txt", &original, "my edit"), state.clone()).await.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"external edit\r\n");
+    }
 
     struct BranchFixture { dir: PathBuf, local: PathBuf, worker: PathBuf, remote: PathBuf }
     impl Drop for BranchFixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
