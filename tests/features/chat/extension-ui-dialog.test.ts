@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -19,6 +20,63 @@ import {
 import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 import { ExtensionUiDialogModal } from '@features/chat/components/ExtensionUiDialogModal';
 import type { ExtensionUiRequest } from '@core/types/events';
+
+function renderScenarioPrompt(method: 'confirm' | 'select', title: string, message: string): string {
+  const request: ExtensionUiRequest = {
+    type: 'extension_ui_request', id: 'scenario-s1', method, title, message,
+    ...(method === 'select' ? { options: ['Yes', 'No'] } : {}),
+  };
+  return renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, {
+    dialog: { id: request.id, itemKey: 'scenario-s1', method, request, createdAt: 0, resolve: () => {} },
+    onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {},
+    onConfirm: () => {}, onCancel: () => {},
+  }));
+}
+
+test('S3.1: select displays the exact multiline question', async (t) => {
+  const question = `¿Confirmás la ejecución del siguiente comando?
+
+node -e "
+const archivo_con_nombre = '<archivo>';
+console.log('[sudo] prueba de visualización');
+console.log(archivo_con_nombre);
+console.log('Options:');
+console.log('--force');
+console.log('--verbose');
+"`;
+  const markup = renderScenarioPrompt('select', question, '');
+  const title = markup.match(/<h3\b([^>]*)>([\s\S]*?)<\/h3>/);
+  assert.ok(title);
+
+  await t.test('preserves line breaks in the applicable title style', () => {
+    const css = readFileSync('src/features/chat/chat.css', 'utf8');
+    const rule = css.match(/\.extension-prompt-title\s*\{([^}]*)\}/)?.[1] ?? '';
+    const inline = title[1].match(/style="([^"]*)"/)?.[1] ?? '';
+    const whiteSpace = (inline.match(/white-space\s*:\s*([^;]+)/i) ?? rule.match(/white-space\s*:\s*([^;]+)/i))?.[1].trim() ?? 'normal';
+    assert.ok(['pre', 'pre-wrap', 'pre-line', 'break-spaces'].includes(whiteSpace), `effective title white-space: ${whiteSpace}`);
+  });
+  await t.test('retains the full literal command in title text', () => {
+    const escaped = question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+    assert.strictEqual(title[2], escaped);
+  });
+});
+
+test('S1.1: confirmation title preserves literal command text', () => {
+  const markup = renderScenarioPrompt('confirm', '[sudo] run "echo" <archivo>', 'allow command?');
+  assert.ok(markup.includes('>[sudo] run &quot;echo&quot; &lt;archivo&gt;</h3>'));
+});
+
+test('S1.1: confirmation message preserves multiline options literally', () => {
+  const markup = renderScenarioPrompt('confirm', 'permission', '[sudo] run \'echo\' <archivo>\nOptions:\n--force\n--verbose');
+  assert.ok(markup.includes('>[sudo] run &#x27;echo&#x27; &lt;archivo&gt;\nOptions:\n--force\n--verbose</div>'));
+});
+
+test('S1 preserve: select question metadata is still cleaned', () => {
+  const markup = renderScenarioPrompt('select', '[Choice] choose target', 'select target\nOptions:\nYes\nNo');
+  assert.ok(markup.includes('>Choose target</h3>'));
+  assert.ok(markup.includes('>Select target</div>'));
+  assert.ok(!markup.includes('Options:'));
+});
 
 test('isSamePath: handles POSIX and Windows paths correctly', () => {
   assert.strictEqual(isSamePath('/foo/bar', '/foo/bar'), true);

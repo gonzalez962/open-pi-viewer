@@ -3144,6 +3144,7 @@
   font-weight: 600;
   color: var(--fg-default);
   line-height: 1.3;
+  white-space: pre-wrap;
 }
 
 .extension-prompt-meta {

@@ -6,6 +6,48 @@ import { MarkdownContent } from '@features/chat/MarkdownContent';
 
 const dummyT = (key: string) => key;
 
+function renderMarkdown(content: string): string {
+  return renderToStaticMarkup(React.createElement(MarkdownContent, { content, t: dummyT }));
+}
+
+test('S2.1: list continuation remains visible after its item', () => {
+  const html = renderMarkdown('- Primera\n  detalle importante');
+  assert.match(html, /Primera[\s\S]*detalle importante/);
+});
+
+test('S2.1: nested list continuation remains visible in order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n    detalle anidado\n  - Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*detalle anidado[\s\S]*Otro/);
+});
+
+test('S2.1: parent continuation after nested list remains visible in order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n  continuación padre\n- Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*continuación padre[\s\S]*Otro/);
+});
+
+test('S2.1: alternating nested lists and formatted parent continuations retain order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n  **continuación**\n  - Segundo\n  final\n- Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*<strong>continuación<\/strong>[\s\S]*Segundo[\s\S]*final[\s\S]*Otro/);
+});
+
+test('S2.1: blank line before an indented continuation does not discard text', () => {
+  const html = renderMarkdown('- Padre\n\n  detalle\n- Otro');
+  assert.match(html, /Padre[\s\S]*detalle[\s\S]*Otro/);
+});
+
+test('S2.2: intraword underscores remain literal alongside emphasis and code', () => {
+  const html = renderMarkdown('archivo_con_nombre *énfasis* `codigo_con_guiones`');
+  assert.ok(html.includes('archivo_con_nombre'));
+  assert.ok(html.includes('<em>énfasis</em>'));
+  assert.match(html, /<code[^>]*>codigo_con_guiones<\/code>/);
+});
+
+test('S2 preservation: supported list and inline formatting still renders', () => {
+  const html = renderMarkdown('- **Padre**\n  - _Hijo_ y `código`\n- Otro');
+  assert.match(html, /<strong>Padre<\/strong>[\s\S]*<em>Hijo<\/em>[\s\S]*<code[^>]*>código<\/code>[\s\S]*Otro/);
+  assert.equal((html.match(/<ul/g) || []).length, 2);
+});
+
 test('MarkdownContent: formatted plain URL does not produce duplicate copy buttons', () => {
   const html = renderToStaticMarkup(
     React.createElement(MarkdownContent, {

@@ -28,6 +28,8 @@ export interface ListItemNode {
   type: 'list_item';
   children: InlineNode[];
   subList?: ListBlockNode;
+  /** Additional content following the first nested list, in source order. */
+  continuation?: (InlineNode[] | ListBlockNode)[];
 }
 
 export interface HeadingBlockNode {
@@ -369,6 +371,16 @@ export function parseInline(input: string, depth = 0, allowLinks = true): Inline
   }
 
   const nodes: InlineNode[] = [];
+  const intrawordUnderscore = (index: number, length: number) =>
+    index > 0 && index + length < input.length &&
+    /[\p{L}\p{N}]/u.test(input[index - 1]) && /[\p{L}\p{N}]/u.test(input[index + length]);
+  const findUnderscoreClose = (delimiter: string, from: number) => {
+    let index = input.indexOf(delimiter, from);
+    while (index !== -1 && intrawordUnderscore(index, delimiter.length)) {
+      index = input.indexOf(delimiter, index + delimiter.length);
+    }
+    return index;
+  };
   let i = 0;
   let textBuffer = '';
 
@@ -480,6 +492,16 @@ export function parseInline(input: string, depth = 0, allowLinks = true): Inline
       }
     }
 
+    if (input[i] === '_') {
+      let end = i + 1;
+      while (input[end] === '_') end++;
+      if (intrawordUnderscore(i, end - i)) {
+        textBuffer += input.slice(i, end);
+        i = end;
+        continue;
+      }
+    }
+
     // 3. Bold + Italic: ***...*** or ___...___
     if (input.startsWith('***', i)) {
       const closeIdx = input.indexOf('***', i + 3);
@@ -503,8 +525,8 @@ export function parseInline(input: string, depth = 0, allowLinks = true): Inline
         continue;
       }
     }
-    if (input.startsWith('___', i)) {
-      const closeIdx = input.indexOf('___', i + 3);
+    if (input.startsWith('___', i) && !intrawordUnderscore(i, 3)) {
+      const closeIdx = findUnderscoreClose('___', i + 3);
       if (closeIdx !== -1 && closeIdx > i + 3) {
         flushText();
         const inner = input.slice(i + 3, closeIdx);
@@ -544,8 +566,8 @@ export function parseInline(input: string, depth = 0, allowLinks = true): Inline
         continue;
       }
     }
-    if (input.startsWith('__', i)) {
-      const closeIdx = input.indexOf('__', i + 2);
+    if (input.startsWith('__', i) && !intrawordUnderscore(i, 2)) {
+      const closeIdx = findUnderscoreClose('__', i + 2);
       if (closeIdx !== -1 && closeIdx > i + 2) {
         flushText();
         const inner = input.slice(i + 2, closeIdx);
@@ -576,8 +598,8 @@ export function parseInline(input: string, depth = 0, allowLinks = true): Inline
         continue;
       }
     }
-    if (input[i] === '_') {
-      const closeIdx = input.indexOf('_', i + 1);
+    if (input[i] === '_' && !intrawordUnderscore(i, 1)) {
+      const closeIdx = findUnderscoreClose('_', i + 1);
       if (closeIdx !== -1 && closeIdx > i + 1 && input[i + 1] !== '_') {
         flushText();
         const inner = input.slice(i + 1, closeIdx);
@@ -726,32 +748,38 @@ function parseListBlock(
       }
 
       let subList: ListBlockNode | undefined;
-      if (subLines.length > 0) {
-        if (depth < MAX_LIST_NESTING_DEPTH) {
-          let firstSubIdx = 0;
-          while (firstSubIdx < subLines.length && subLines[firstSubIdx].trim() === '') {
-            firstSubIdx++;
-          }
-          if (firstSubIdx < subLines.length && matchListItem(subLines[firstSubIdx])) {
-            subList = parseListBlock(subLines, firstSubIdx, depth + 1).listBlock;
-          }
-        } else {
-          // Bounded recursion depth reached: deterministically flatten sub-lines into
-          // the current item's text, avoiding call stack exhaustion and preventing content loss
-          const extraText = subLines
-            .map((l) => l.trim())
-            .filter((l) => l.length > 0)
-            .join(' ');
-          if (extraText.length > 0) {
-            itemContent = `${itemContent} ${extraText}`;
+      const continuation: (InlineNode[] | ListBlockNode)[] = [];
+      if (depth < MAX_LIST_NESTING_DEPTH) {
+        let subIndex = 0;
+        while (subIndex < subLines.length) {
+          const line = subLines[subIndex].trim();
+          if (!line) {
+            subIndex++;
+          } else if (matchListItem(subLines[subIndex])) {
+            const parsed = parseListBlock(subLines, subIndex, depth + 1);
+            if (subList) continuation.push(parsed.listBlock);
+            else subList = parsed.listBlock;
+            subIndex = parsed.nextIndex;
+          } else {
+            const text: string[] = [];
+            while (subIndex < subLines.length && subLines[subIndex].trim() && !matchListItem(subLines[subIndex])) {
+              text.push(subLines[subIndex++].trim());
+            }
+            if (subList) continuation.push(parseInline(text.join(' ')));
+            else itemContent += ` ${text.join(' ')}`;
           }
         }
+      } else {
+        // Flatten at the depth cap to preserve content without unbounded recursion.
+        const extraText = subLines.map((line) => line.trim()).filter(Boolean).join(' ');
+        if (extraText) itemContent += ` ${extraText}`;
       }
 
       items.push({
         type: 'list_item',
         children: parseInline(itemContent),
         subList,
+        ...(continuation.length ? { continuation } : {}),
       });
     } else {
       break;
