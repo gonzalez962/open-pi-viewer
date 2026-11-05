@@ -888,6 +888,8 @@ export const App: React.FC = () => {
     handleAbort,
     handleKeyDown,
   } = usePromptState({
+    projectId: projectsRegistry.activeProjectId,
+    sessionId: state.sessionId,
     isReadyToSend,
     isBusy,
     canQueue,
