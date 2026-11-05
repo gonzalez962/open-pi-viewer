@@ -85,7 +85,7 @@ export function connectionReducer(
       const sessionStats =
         key && state.modelStats[key]
           ? state.modelStats[key]
-          : key !== prevKey
+          : prevKey && key !== prevKey
             ? null
             : state.sessionStats;
       return {

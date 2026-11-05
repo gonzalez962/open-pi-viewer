@@ -28,7 +28,7 @@ export interface UseModelsOptions {
   sessionId: string | null;
   projectId?: string;
   cwd?: string;
-  /** Read via closure inside the connect-time effect, exactly like `state.modelInfo` was in App.tsx. */
+  /** Current session model; async hydration reads its latest rendered value. */
   modelInfo: ModelInfo | null | undefined;
   availableModels: ModelInfo[];
   dispatch: React.Dispatch<ChatAction & { targetProjectId?: string }>;
@@ -68,6 +68,8 @@ export function useModels({
   const [initializedCwd, setInitializedCwd] = useState<string | undefined>(undefined);
   const [initializedProjectId, setInitializedProjectId] = useState<string | undefined>(undefined);
   const enabledModelsRef = useRef<string[] | undefined>(undefined);
+  const modelInfoRef = useRef(modelInfo);
+  modelInfoRef.current = modelInfo;
 
   const isSessionInitialized =
     connectionStatus === 'connected' &&
@@ -236,7 +238,10 @@ export function useModels({
             ? resolveSessionSnapshot(currentCwd, currentSessionId)
             : null;
 
-        let baseModel = modelInfo;
+        // Session events can update the model while the catalog and stats load.
+        // Enrich the current model rather than restoring the effect's old snapshot.
+        const latestModelInfo = modelInfoRef.current;
+        let baseModel = latestModelInfo;
         if (!baseModel && snapshot?.modelId) {
           const snapshotMatched = activeModels.find(
             (m) =>
@@ -267,7 +272,7 @@ export function useModels({
             }
           : baseModel || activeModels[0];
 
-        if (currentModel && (!modelInfo || !modelInfo.input_modalities)) {
+        if (currentModel && (!latestModelInfo || !latestModelInfo.input_modalities)) {
           dispatch({
             type: 'MODEL_CHANGE_SUCCESS',
             targetProjectId: currentProjectId,

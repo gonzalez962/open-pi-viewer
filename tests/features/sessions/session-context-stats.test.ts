@@ -3,6 +3,7 @@ import test from 'node:test';
 import { chatReducer, INITIAL_STATE, type ChatSessionState } from '@core/reducer';
 import { createInitialMultiProjectState, multiProjectChatReducer } from '@core/reducer/multi-project';
 import type { SessionStats } from '@core/types/models';
+import { calculateContextMetrics, formatTokens } from '@core/prompt-controls-utils';
 import { SessionEventController } from '@features/chat/session-events';
 
 const usage = (sessionId: string, tokens: number): SessionStats => ({
@@ -64,6 +65,41 @@ test('S1.3 initializing model metadata preserves recorded session usage', () => 
   state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats } });
   state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: { id: 'model', provider: 'provider' } } });
   assert.equal(state.sessionStats?.contextUsage?.tokens, 1200);
+});
+
+test('CONNECT_SUCCESS preserves session usage when model metadata is first initialized', () => {
+  const stats: SessionStats = { ...usage('session-a', 1200), userMessages: 3, tokens: { input: 500, output: 200, total: 700 }, cost: 0.25 };
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a' };
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats } });
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: { id: 'model', provider: 'provider' } } });
+  assert.equal(state.sessionStats?.contextUsage?.tokens, 1200);
+  assert.deepEqual(state.sessionStats, stats);
+  const metrics = calculateContextMetrics(state.sessionStats, state.modelInfo);
+  assert.equal(formatTokens(metrics.contextTokens), '1.2k');
+  assert.equal(metrics.usagePercent, 12);
+});
+
+test('CONNECT_SUCCESS retains known model switch and cache precedence behavior', () => {
+  const a = { id: 'a', provider: 'provider' };
+  const b = { id: 'b', provider: 'provider' };
+  const statsA = usage('session-a', 1200);
+  const statsB = usage('session-a', 2300);
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a', modelInfo: a };
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats: statsA } });
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: b } });
+  assert.equal(state.sessionStats, null);
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats: statsB } });
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsA);
+  state = { ...state, sessionStats: statsB };
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsA);
+  state = { ...state, modelInfo: null, sessionStats: statsB };
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsA);
+  state = { ...state, modelStats: {}, sessionStats: statsB };
+  state = chatReducer(state, { type: 'CONNECT_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsB);
 });
 
 test('S1.4 returning to a used session restores its usage after metadata initialization', async () => {
