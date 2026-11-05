@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { SaveWorkspaceFilePayload, WorkspaceFileContent } from '@core/types/workspace';
-import { createFileEditor } from '@features/workspace/file-editor-state';
+import { createFileEditor, createEditorTarget } from '@features/workspace/file-editor-state';
 
 // Proposed controller contract: the viewer owns this controller and renders its
 // snapshot; the injected save function is the public workspace save bridge.
@@ -14,6 +14,34 @@ const workingDirectory = '/isolated/workspace';
 function setup(content = file.content, save: (payload: SaveWorkspaceFilePayload) => Promise<void> = async () => {}) {
   return createFileEditor({ file: { ...file, content }, workingDirectory, save });
 }
+
+test('S2.2 file and workspace navigation retain the active target when discard is rejected', () => {
+  const initial = { file, workingDirectory };
+  const target = createEditorTarget(initial);
+  const editor = setup();
+  editor.edit();
+  editor.setDraft('keep me');
+  let confirmations = 0;
+  const reject = () => { confirmations++; return false; };
+  for (const next of [
+    { file: { ...file, relativePath: 'other.txt' }, workingDirectory },
+    { file, workingDirectory: '/other-workspace' },
+  ]) {
+    assert.equal(target.switchTo(next, () => editor.close(reject)), false);
+    assert.deepEqual(target.current(), initial);
+    assert.equal(editor.snapshot().draft, 'keep me');
+    assert.equal(editor.snapshot().dirty, true);
+  }
+  assert.equal(target.switchTo(null, () => editor.close(reject)), false);
+  assert.deepEqual(target.current(), initial);
+  assert.equal(editor.snapshot().draft, 'keep me');
+  assert.equal(confirmations, 3);
+  const next = { file: { ...file, relativePath: 'other.txt' }, workingDirectory };
+  assert.equal(target.switchTo(next, () => editor.close(() => true)), true);
+  assert.deepEqual(target.current(), next);
+  assert.equal(target.switchTo(null, () => true), true);
+  assert.equal(target.current(), null);
+});
 
 test('S2.1 edit and explicit save sends the draft and original, then updates displayed content', async () => {
   const calls: SaveWorkspaceFilePayload[] = [];

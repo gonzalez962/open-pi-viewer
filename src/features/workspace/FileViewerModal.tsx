@@ -1,8 +1,10 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
 import type { WorkspaceFileContent, WorkspaceFileDiff } from '@core/types/workspace';
-import { getWorkspaceFileDiffPi } from '@infra/bridge';
+import { getWorkspaceFileDiffPi, saveWorkspaceFilePi } from '@infra/bridge';
+import { createEditorTarget, createFileEditor } from './file-editor-state';
 import { formatFileSize } from '@shared/format';
+import { isWebShim } from '@infra/web-oauth-access';
 
 export interface FileViewerModalProps {
   file: WorkspaceFileContent | null;
@@ -97,17 +99,25 @@ export function parseUnifiedDiff(diffText: string): ParsedDiffLine[] {
 }
 
 export const FileViewerModal: React.FC<FileViewerModalProps> = ({
-  file,
-  workingDirectory,
+  file: requestedFile,
+  workingDirectory: requestedDirectory,
   onClose,
   locale,
 }) => {
+  const targetRef = useRef(createEditorTarget(requestedFile ? { file: requestedFile, workingDirectory: requestedDirectory } : null));
+  const target = targetRef.current.current();
+  const file = target?.file ?? null;
+  const workingDirectory = target?.workingDirectory;
   const [copied, setCopied] = useState(false);
   const [isLineWrap, setIsLineWrap] = useState(true);
   const [activeTab, setActiveTab] = useState<'content' | 'diff'>('content');
   const [diffData, setDiffData] = useState<WorkspaceFileDiff | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [mediaError, setMediaError] = useState(false);
+  const editor = useMemo(() => file ? createFileEditor({ file, workingDirectory, save: saveWorkspaceFilePi }) : null, [file, workingDirectory]);
+  const [, renderEditor] = useState(0);
+  const refreshEditor = () => renderEditor(n => n + 1);
+  const state = editor?.snapshot();
 
   // Reset media error and active tab state on file change
   useEffect(() => {
@@ -121,16 +131,42 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
     [locale]
   );
 
-  // Keyboard shortcut: Close on Escape
+  const confirmDiscard = useCallback(() => window.confirm(t('file_viewer.discard_confirm')), [t]);
+  const handleClose = useCallback(() => {
+    if (targetRef.current.switchTo(null, () => !editor || editor.close(confirmDiscard))) {
+      refreshEditor();
+      onClose();
+    }
+  }, [editor, confirmDiscard, onClose]);
+
+  // The parent may select another file or workspace without closing this modal.
+  // Retain the original file and directory if the user refuses to discard.
+  useEffect(() => {
+    const current = targetRef.current.current();
+    if ((!requestedFile && !current) || (requestedFile === current?.file && requestedDirectory === current?.workingDirectory)) return;
+    if (targetRef.current.switchTo(
+      requestedFile ? { file: requestedFile, workingDirectory: requestedDirectory } : null,
+      () => !editor || editor.close(confirmDiscard),
+    )) refreshEditor();
+  }, [requestedFile, requestedDirectory]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
+      if (e.key === 'Escape') handleClose();
+    };
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (editor?.snapshot().dirty || editor?.snapshot().saving) {
+        e.preventDefault();
+        e.returnValue = '';
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [editor, handleClose]);
 
   // Fetch git diff for this file
   useEffect(() => {
@@ -146,6 +182,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
       .then((res) => {
         if (isMounted) {
           setDiffData(res);
+          if (editor?.snapshot().editing) return;
           if (res.hasDiff) {
             setActiveTab('diff');
           } else {
@@ -167,7 +204,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [file, workingDirectory]);
+  }, [file, workingDirectory, editor]);
 
   const parsedDiff = useMemo(() => {
     if (!diffData?.diff) return [];
@@ -177,7 +214,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
   if (!file) return null;
 
   const currentTextToCopy =
-    activeTab === 'diff' && diffData?.diff ? diffData.diff : file.content;
+    activeTab === 'diff' && diffData?.diff ? diffData.diff : state?.content ?? file.content;
 
   const handleCopy = async () => {
     if (file.isBinary || !currentTextToCopy) return;
@@ -192,7 +229,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
     }
   };
 
-  const contentLines = file.isBinary ? [] : file.content.split('\n');
+  const contentLines = file.isBinary ? [] : (state?.content ?? file.content).split('\n');
 
   return (
     <div
@@ -254,6 +291,13 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
           )}
 
           <div className="file-viewer-actions">
+            {isWebShim() && !file.isBinary && file.kind !== 'image' && file.kind !== 'video' && activeTab === 'content' && editor && state && (
+              state.editing ? <>
+                <button type="button" disabled={state.saving} onClick={() => { void editor.save().then(refreshEditor); refreshEditor(); }}>{t('file_viewer.save')}</button>
+                <button type="button" disabled={state.saving} onClick={() => { editor.cancel(confirmDiscard); refreshEditor(); }}>{t('file_viewer.cancel')}</button>
+                {state.dirty && <span>{t('file_viewer.unsaved')}</span>}
+              </> : <button type="button" onClick={() => { editor.edit(); refreshEditor(); }}>{t('file_viewer.edit')}</button>
+            )}
             {/* Wrap toggle button */}
             {!file.isBinary && (
               <button
@@ -302,7 +346,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
             <button
               type="button"
               className="btn-file-close"
-              onClick={onClose}
+              onClick={handleClose}
               title={t('action.close')}
               aria-label={t('action.close')}
             >
@@ -409,6 +453,12 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
                 </div>
               )}
             </div>
+          ) : state?.editing && editor ? (
+            <div className="file-viewer-editor">
+              {file.content.includes('\r\n') && file.content.replace(/\r\n/g, '').includes('\n') && <p>{t('file_viewer.mixed_endings')}</p>}
+              {state.error && <p role="alert">{t('file_viewer.save_error')}: {state.error}</p>}
+              <textarea aria-label={t('file_viewer.editor_label')} value={state.draft} onChange={e => { editor.setDraft(e.target.value); refreshEditor(); }} spellCheck={false} />
+            </div>
           ) : (
             /* Standard File Content View with Wrap */
             <div className="file-viewer-code-container">
@@ -420,7 +470,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
                 ))}
               </div>
               <pre className={`file-viewer-code ${isLineWrap ? 'wrapped' : 'nowrap'}`}>
-                <code>{file.content}</code>
+                <code>{state?.content ?? file.content}</code>
               </pre>
             </div>
           )}
