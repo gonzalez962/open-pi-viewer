@@ -363,7 +363,7 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
     case 'list_workspace_branch_commits':
       return handleListWorkspaceBranchCommits(args);
     case 'get_session_stats':
-      return await handleGetSessionStats();
+      return await handleGetSessionStats(args);
     case 'get_session_persistence_status':
       return handleGetSessionPersistenceStatus();
     case 'discover_all_projects':

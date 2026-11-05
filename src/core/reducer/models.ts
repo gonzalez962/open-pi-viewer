@@ -17,7 +17,7 @@ export type ModelsAction =
   | { type: 'MODEL_CHANGE_FAIL'; payload: { error: string } }
   | { type: 'SET_THINKING_LEVEL'; payload: { level: ThinkingLevel } }
   | { type: 'SET_AVAILABLE_THINKING_LEVELS'; payload: { levels: ThinkingLevel[] } }
-  | { type: 'SET_SESSION_STATS'; payload: { stats: SessionStats | null } };
+  | { type: 'SET_SESSION_STATS'; payload: { stats: SessionStats | null; expectedSessionId?: string } };
 
 /**
  * Model slice: available models, model switching, thinking levels, session stats.
@@ -49,7 +49,7 @@ export function modelsReducer(
         ...state,
         isChangingModel: false,
         modelInfo: action.payload.model,
-        sessionStats: key && state.modelStats[key] ? state.modelStats[key] : null,
+        sessionStats: key && state.modelStats[key] ? state.modelStats[key] : !getModelStatsKey(state.modelInfo) ? state.sessionStats : null,
         thinkingLevel:
           action.payload.thinkingLevel !== undefined
             ? action.payload.thinkingLevel
@@ -83,6 +83,7 @@ export function modelsReducer(
     }
 
     case 'SET_SESSION_STATS': {
+      if (action.payload.expectedSessionId && action.payload.expectedSessionId !== state.sessionId) return state;
       const stats = action.payload.stats;
       const key = state.modelInfo ? getModelStatsKey(state.modelInfo) : '';
       return {

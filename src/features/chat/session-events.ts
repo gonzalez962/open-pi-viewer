@@ -54,7 +54,7 @@ export interface SessionEventControllerOptions {
   dispatch: (action: ChatAction & { targetProjectId?: string }) => void;
   resolveTargetProjectId?: (cwd?: string) => string | undefined;
   checkPersistenceFn?: () => Promise<SessionPersistenceStatus>;
-  refreshSessionStatsFn?: () => Promise<SessionStats | null>;
+  refreshSessionStatsFn?: (owner: { workingDirectory: string; sessionId?: string; sessionFile?: string }) => Promise<SessionStats | null>;
   updateSessionMarkerFn?: (
     cwd: string,
     hasMessages: boolean
@@ -339,7 +339,7 @@ export class SessionEventController {
         // Trigger native persistence check and stats refresh only when an assistant message completed
         if (msg.role === 'assistant') {
           void this.verifyAndPersistCurrentSession();
-          void this.refreshSessionStats();
+          void this.refreshSessionStats(event.cwd as string | undefined, currentSessionId, event.sessionFile as string | undefined);
         }
       }
     } else if (eventType === 'agent_end') {
@@ -352,7 +352,7 @@ export class SessionEventController {
       this.options.dispatch({ type: 'EVENT_AGENT_SETTLED', targetProjectId });
       // When agent settled, run verification to ensure any completed turns are persisted and stats updated
       void this.verifyAndPersistCurrentSession();
-      void this.refreshSessionStats();
+      void this.refreshSessionStats(event.cwd as string | undefined, currentSessionId, event.sessionFile as string | undefined);
 
       const prefs = this.options.getPreferences
         ? this.options.getPreferences()
@@ -658,13 +658,20 @@ export class SessionEventController {
   /**
    * Refresh session token and context statistics from Pi RPC.
    */
-  public async refreshSessionStats(): Promise<void> {
+  public async refreshSessionStats(cwd?: string, sessionId?: string | null, sessionFile?: string): Promise<void> {
     if (!this.options.refreshSessionStatsFn) return;
+    const workingDirectory = cwd || this.options.getCurrentConfig().workingDirectory;
+    const targetProjectId = this.resolveTargetProjectId(workingDirectory);
+    const expectedSessionId = sessionId ?? (targetProjectId && this.options.getProjectSessionId
+      ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId());
     try {
-      const stats = await this.options.refreshSessionStatsFn();
-      if (stats) {
+      const stats = await this.options.refreshSessionStatsFn({ workingDirectory, sessionId: expectedSessionId ?? undefined, sessionFile });
+      const currentSessionId = targetProjectId && this.options.getProjectSessionId
+        ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
+      if (stats && currentSessionId === expectedSessionId && (!stats.sessionId || stats.sessionId === expectedSessionId) &&
+          (targetProjectId || normalizeWorkingDirectory(this.options.getCurrentConfig().workingDirectory) === normalizeWorkingDirectory(workingDirectory))) {
         this.options.dispatch({
-          type: 'SET_SESSION_STATS',
+          type: 'SET_SESSION_STATS', targetProjectId,
           payload: { stats },
         });
       }

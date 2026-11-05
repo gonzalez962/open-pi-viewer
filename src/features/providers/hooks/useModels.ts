@@ -182,7 +182,7 @@ export function useModels({
         const [models, levels, stats, customProvidersConfig, thinkingLevels] = await Promise.all([
           getAvailableModelsPi(),
           getAvailableThinkingLevelsPi(),
-          getSessionStatsPi(),
+          getSessionStatsPi({ workingDirectory: currentCwd, sessionId: currentSessionId }),
           getCustomProvidersPi().catch(() => ({ providers: {} })),
           getModelThinkingLevelsPi().catch(() => ({})),
         ]);
@@ -223,7 +223,7 @@ export function useModels({
             payload: { levels },
           });
         }
-        if (stats) {
+        if (stats && (!stats.sessionId || stats.sessionId === currentSessionId)) {
           dispatch({
             type: 'SET_SESSION_STATS',
             targetProjectId: currentProjectId,

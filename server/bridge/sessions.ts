@@ -737,7 +737,25 @@ export async function handleRenameSession(args: any = {}) {
   }
 }
 
-export async function handleGetSessionStats() {
+export async function handleGetSessionStats(args: any = {}) {
+  const payload = args.payload ?? {};
+  const requestedFile = payload.sessionFile ?? (payload.workingDirectory && payload.sessionId
+    ? listSessions(payload.workingDirectory).find((session) => session.id === payload.sessionId)?.path
+    : undefined);
+  if (requestedFile !== undefined) {
+    if (!isSessionPathAllowed(requestedFile)) return null;
+    const live = sessionPool.get(path.resolve(requestedFile));
+    if (live?.isAlive()) {
+      try {
+        const result = await live.sendCommand({ id: `stats-${Date.now()}`, type: 'get_session_stats' }, 3000);
+        if (result?.data?.tokens && result.data.contextUsage && (!payload.sessionId || result.data.sessionId === payload.sessionId)) return result.data;
+      } catch {}
+    }
+    const stats = calculateSessionStats(requestedFile, (live?.modelInfo as any)?.contextWindow || (getActiveModel() as any)?.contextWindow || 1048576);
+    return stats && (!payload.sessionId || stats.sessionId === payload.sessionId) ? stats : null;
+  }
+  // An identified request must never fall back to an unrelated active session.
+  if (payload.sessionId || payload.workingDirectory) return null;
   if (piRpc.isAlive()) {
     try {
       const statsRes = await piRpc.sendCommand({ id: `stats-${Date.now()}`, type: 'get_session_stats' }, 3000);

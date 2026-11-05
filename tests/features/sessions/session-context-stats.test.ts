@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { chatReducer, INITIAL_STATE } from '@core/reducer';
+import { chatReducer, INITIAL_STATE, type ChatSessionState } from '@core/reducer';
 import { createInitialMultiProjectState, multiProjectChatReducer } from '@core/reducer/multi-project';
 import type { SessionStats } from '@core/types/models';
 import { SessionEventController } from '@features/chat/session-events';
@@ -41,7 +41,7 @@ test('S1.1 delayed project A statistics do not replace project B usage', async (
 test('S1.2 delayed session A statistics do not replace selected session B usage', async () => {
   const a = usage('session-a', 1200);
   const b = usage('session-b', 2300);
-  let state = { ...INITIAL_STATE, sessionId: 'session-a', sessionStats: a };
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a', sessionStats: a };
   const pending = deferred<SessionStats | null>();
   const controller = new SessionEventController({
     getCurrentConfig: () => config('/project'),
@@ -60,7 +60,7 @@ test('S1.2 delayed session A statistics do not replace selected session B usage'
 
 test('S1.3 initializing model metadata preserves recorded session usage', () => {
   const stats = usage('session-a', 1200);
-  let state = { ...INITIAL_STATE, sessionId: 'session-a' };
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a' };
   state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats } });
   state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: { id: 'model', provider: 'provider' } } });
   assert.equal(state.sessionStats?.contextUsage?.tokens, 1200);
@@ -69,7 +69,7 @@ test('S1.3 initializing model metadata preserves recorded session usage', () => 
 test('S1.4 returning to a used session restores its usage after metadata initialization', async () => {
   const a = usage('session-a', 1200);
   const b = usage('session-b', 2300);
-  let state = { ...INITIAL_STATE, sessionId: 'session-a', sessionStats: a };
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a', sessionStats: a };
   state = chatReducer(state, { type: 'SWITCH_SESSION_SUCCESS', payload: { sessionId: 'session-b', sessionFile: '/b.jsonl', messages: [] } });
   state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats: b } });
   state = chatReducer(state, { type: 'SWITCH_SESSION_SUCCESS', payload: { sessionId: 'session-a', sessionFile: '/a.jsonl', messages: [] } });
