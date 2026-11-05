@@ -12,9 +12,10 @@ The Persistent Project Terminal feature provides an interactive terminal session
 
 ## Lifecycle & Isolation
 
-- **Project Session Collections**: The web backend keeps an in-memory collection of PTY-backed sessions (including ID and PID) per resolved canonical directory (`resolveCanonicalCwd`). Opening a project reattaches to its existing live terminal, including buffered output, even when the authorized web login identity changes. The current interface opens one default terminal; tabs and additional-terminal creation are not implemented. Collections survive browser closure, not server restart. The native single-user backend keeps one session per canonical directory.
+- **Project Session Collections**: The web backend keeps an in-memory collection of PTY-backed sessions (including ID and PID) per resolved canonical directory (`resolveCanonicalCwd`). Opening a project reattaches to its existing live terminal, including buffered output, even when the authorized web login identity changes. Default open reattaches to a live terminal; `createNew: true` explicitly creates an independent session. Collections survive browser closure, not server restart. The native single-user backend follows the same session creation contract. Tab UI support is delivered separately.
 - **Process Isolation**: Terminal processes run completely independently in their respective working directories. Input or output in project A never crosses into project B.
 - **Session Continuity (S3.1, S3.2)**: Minimizing the terminal overlay, navigating between projects, or disconnecting and reconnecting a client preserves backend processes and retains up to 256 KB of bounded scrollback history. Minimizing and unmounting stops UI polling but never sends `terminal_close`.
+- **Tabs**: Each tab has its own close button and confirmation. The selected tab is remembered per project while the application remains open; minimizing or switching projects does not terminate it.
 - **Explicit Close (S3.3)**: Explicit termination requires user confirmation via an accessible dialog (`role="alertdialog"`). Confirmed termination kills the targeted shell process and its child process tree, releasing all OS locks. Reopening the project afterwards spawns a fresh session with a new PID and clean buffer.
 
 ## Frontend UI & Adapter Architecture (T3)
@@ -83,6 +84,7 @@ Opens or attaches to an interactive shell for the specified working directory us
   ```ts
   {
     cwd: string;           // Required project working directory
+    createNew?: boolean;   // Create an additional session instead of reattaching
     cols?: number;         // Initial columns (default 80)
     rows?: number;         // Initial rows (default 24)
   }

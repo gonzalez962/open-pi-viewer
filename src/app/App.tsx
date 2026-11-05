@@ -2562,13 +2562,17 @@ export const App: React.FC = () => {
         projectName={activeProjectName || 'Project'}
         projectCwd={activeProject?.path ?? config.workingDirectory ?? ''}
         session={terminal.currentSession}
+        tabs={terminal.tabs}
+        onCreateTab={terminal.createTab}
+        onSelectTab={terminal.selectTab}
         locale={preferences.language}
         status={terminal.status}
         errorMessage={terminal.errorMessage}
         exitCode={terminal.exitCode}
         isMobile={checkIsMobileViewport()}
         onMinimize={terminal.minimizeTerminal}
-        onTerminate={terminal.requestTerminate}
+        onTerminate={() => terminal.requestTerminate()}
+        onCloseTab={terminal.requestTerminate}
         onRetry={terminal.retryConnection}
         onInput={terminal.handleInput}
         onResize={terminal.handleResize}

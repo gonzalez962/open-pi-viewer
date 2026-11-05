@@ -23,6 +23,10 @@ export interface TerminalOverlayProps {
   errorMessage?: string | null;
   exitCode?: number | null;
   isMobile?: boolean;
+  tabs?: TerminalSessionDto[];
+  onCreateTab?: () => void;
+  onSelectTab?: (id: string) => void;
+  onCloseTab?: (id: string) => void;
   onMinimize: () => void;
   onTerminate: () => void;
   onRetry?: () => void;
@@ -41,6 +45,10 @@ export function TerminalOverlay({
   errorMessage,
   exitCode,
   isMobile = false,
+  tabs = [],
+  onCreateTab,
+  onSelectTab,
+  onCloseTab,
   onMinimize,
   onTerminate,
   onRetry,
@@ -144,6 +152,7 @@ export function TerminalOverlay({
     const fitAddon = new FitAddonConstructor();
     term.loadAddon(fitAddon);
     term.open(screenEl);
+    term.focus();
 
     (screenEl as any).__xterm = term;
     activeTermRef.current = term;
@@ -210,7 +219,7 @@ export function TerminalOverlay({
         terminalInstanceRef.current = null;
       }
     };
-  }, [isOpen, session?.id, isMobile]);
+  }, [isOpen, session, isMobile]);
 
   if (!isOpen) return null;
 
@@ -315,6 +324,13 @@ export function TerminalOverlay({
         </div>
       </header>
 
+      <nav className="terminal-tabs" role="tablist" aria-label={t('terminal.tabs')}>
+        {tabs.map((tab, index) => <span className="terminal-tab" key={tab.id}>
+          <button type="button" role="tab" aria-selected={tab.id === session?.id} onClick={() => onSelectTab?.(tab.id)}>{t('terminal.tab', { number: index + 1 })}</button>
+          <button type="button" aria-label={t('terminal.close_tab', { number: index + 1 })} onClick={() => onCloseTab?.(tab.id)}>×</button>
+        </span>)}
+        <button type="button" onClick={onCreateTab} aria-label={t('terminal.new_tab')}>+</button>
+      </nav>
       {status === 'error' && (
         <div className="terminal-error-banner" role="alert">
           <span className="error-message">{errorMessage || t('terminal.error')}</span>
