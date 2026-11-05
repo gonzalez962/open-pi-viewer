@@ -557,7 +557,7 @@ fn is_process_alive_quick(pid: u32) -> bool {
 }
 
 pub struct TerminalManager {
-    sessions: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
+    sessions: Arc<Mutex<HashMap<String, Vec<Arc<TerminalSession>>>>>,
     by_id: Arc<Mutex<HashMap<String, Arc<TerminalSession>>>>,
 }
 
@@ -575,6 +575,12 @@ impl TerminalManager {
         cols: Option<u16>,
         rows: Option<u16>,
     ) -> Result<TerminalSessionDto, String> {
+        self.open_session_with_mode(cwd, cols, rows, false).await
+    }
+
+    pub async fn open_session_with_mode(
+        &self, cwd: &str, cols: Option<u16>, rows: Option<u16>, create_new: bool,
+    ) -> Result<TerminalSessionDto, String> {
         let trimmed = cwd.trim();
         if trimmed.is_empty() {
             return Err("Working directory is required".to_string());
@@ -590,16 +596,17 @@ impl TerminalManager {
 
         let mut sessions_guard = self.sessions.lock().await;
 
-        let existing = sessions_guard.get(&cwd_key).cloned();
-        if let Some(existing) = existing {
-            if existing.check_running() {
-                return Ok(existing.to_dto(true));
-            }
-            // Dead process: clean up before respawning
+        if let Some(existing) = sessions_guard.get_mut(&cwd_key) {
             let mut by_id_guard = self.by_id.lock().await;
-            by_id_guard.remove(&existing.id);
-            sessions_guard.remove(&cwd_key);
-            let _ = existing.kill();
+            existing.retain(|session| {
+                if session.check_running() { return true; }
+                by_id_guard.remove(&session.id);
+                let _ = session.kill();
+                false
+            });
+            if !create_new {
+                if let Some(session) = existing.first() { return Ok(session.to_dto(true)); }
+            }
         }
 
         let initial_cols = cols.unwrap_or(DEFAULT_COLS);
@@ -608,7 +615,7 @@ impl TerminalManager {
         let session = TerminalSession::new(trimmed, &canonical_cwd, initial_cols, initial_rows)?;
         let session_arc = Arc::new(session);
 
-        sessions_guard.insert(cwd_key, Arc::clone(&session_arc));
+        sessions_guard.entry(cwd_key).or_default().push(Arc::clone(&session_arc));
         self.by_id.lock().await.insert(session_arc.id.clone(), Arc::clone(&session_arc));
 
         Ok(session_arc.to_dto(true))
@@ -674,7 +681,10 @@ impl TerminalManager {
             } else {
                 session.canonical_cwd.clone()
             };
-            sessions_guard.remove(&key);
+            if let Some(sessions) = sessions_guard.get_mut(&key) {
+                sessions.retain(|item| item.id != id);
+                if sessions.is_empty() { sessions_guard.remove(&key); }
+            }
         }
         session.kill()
     }
@@ -687,7 +697,7 @@ impl TerminalManager {
         if let Some(cwd_str) = cwd {
             if let Ok((_, key)) = resolve_canonical_cwd(cwd_str) {
                 let sessions_guard = self.sessions.lock().await;
-                return sessions_guard.get(&key).map(|s| s.to_dto(true));
+                return sessions_guard.get(&key).and_then(|sessions| sessions.first()).map(|s| s.to_dto(true));
             }
         }
         None
@@ -701,7 +711,7 @@ impl TerminalManager {
     pub async fn dispose(&self) {
         let sessions: Vec<Arc<TerminalSession>> = {
             let mut s = self.sessions.lock().await;
-            s.drain().map(|(_, v)| v).collect()
+            s.drain().flat_map(|(_, v)| v).collect()
         };
         {
             let mut by_id = self.by_id.lock().await;
@@ -869,6 +879,23 @@ mod tests {
         };
         let poll_json = serde_json::to_string(&poll_res).expect("Poll serialization failed");
         assert!(poll_json.contains("\"exitCode\":0"));
+    }
+
+    #[tokio::test]
+    async fn terminal_tabs_s1_1_and_s1_3_create_and_close_independent_sessions() {
+        let manager = TerminalManager::new();
+        let dir = temp_test_dir("tabs");
+        let cwd = dir.to_string_lossy();
+        let first = manager.open_session(&cwd, None, None).await.unwrap();
+        let second = manager.open_session_with_mode(&cwd, None, None, true).await.unwrap();
+        assert_ne!(first.id, second.id);
+        assert_ne!(first.pid, second.pid);
+        assert_eq!(manager.open_session(&cwd, None, None).await.unwrap().id, first.id);
+        manager.close_session(&first.id).await.unwrap();
+        assert!(manager.get_session(Some(&second.id), None).await.unwrap().running);
+        assert_eq!(manager.open_session(&cwd, None, None).await.unwrap().id, second.id);
+        manager.close_session(&second.id).await.unwrap();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

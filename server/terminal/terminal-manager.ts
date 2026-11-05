@@ -39,7 +39,8 @@ export class TerminalManager {
 
     for (const existing of sessions) {
       if (existing.running) {
-        return existing.toDto(true);
+        if (!args.createNew) return existing.toDto(true);
+        continue;
       }
       // Dead process; clean up before respawning
       this.sessionsById.delete(existing.id);

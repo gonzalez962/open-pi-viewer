@@ -11,6 +11,89 @@ import {
 } from '@features/terminal/terminal-state';
 import type { TerminalSessionDto } from '@core/terminal';
 
+test('TerminalTabs S4.1 first close then survivor activation keeps one tab', () => {
+  const cwd = '/project';
+  const make = (id: string): TerminalSessionDto => ({ id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: 1, running: true, createdAt: 1 });
+  let state = createInitialTerminalState();
+  for (const id of ['a', 'b']) state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: make(id) } });
+  state = terminalReducer(state, { type: 'SESSION_TERMINATED', payload: { cwd, id: 'a' } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: make('b') } });
+  assert.deepEqual(Object.values(state.sessions).map(s => s.id), ['b']);
+  assert.equal(state.selected[cwd], 'b');
+});
+
+test('TerminalTabs S4.2 interleaved closes and survivor activation retain unique tabs and selection', () => {
+  const cwd = '/project';
+  const make = (id: string): TerminalSessionDto => ({ id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: 1, running: true, createdAt: 1 });
+  let state = createInitialTerminalState();
+  for (const id of ['a', 'b', 'c', 'd']) state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: make(id) } });
+  for (const id of ['a', 'c']) state = terminalReducer(state, { type: 'SESSION_TERMINATED', payload: { cwd, id } });
+  for (const id of ['b', 'd']) state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: make(id) } });
+  assert.deepEqual(Object.values(state.sessions).map(s => s.id).sort(), ['b', 'd']);
+  assert.equal(state.selected[cwd], 'd');
+});
+
+test('TerminalTabs S3.1 inactive and late project closes preserve active selection and overlay', () => {
+  const make = (cwd: string, id: string): TerminalSessionDto => ({ id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: 1, running: true, createdAt: 1 });
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd: '/a' } });
+  for (const id of ['a', 'b', 'c']) state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd: '/a', session: make('/a', id) } });
+  state = terminalReducer(state, { type: 'SESSION_TERMINATED', payload: { cwd: '/a', id: 'a' } });
+  assert.equal(state.selected['/a'], 'c');
+  assert.equal(state.status, 'connected');
+  state = terminalReducer(state, { type: 'SWITCH_PROJECT', payload: { cwd: '/b' } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd: '/b', session: make('/b', 'd') } });
+  state = terminalReducer(state, { type: 'SESSION_TERMINATED', payload: { cwd: '/a', id: 'b' } });
+  state = terminalReducer(state, { type: 'SESSION_TERMINATED', payload: { cwd: '/a', id: 'c' } });
+  assert.equal(state.selected['/b'], 'd');
+  assert.equal(state.isOpen, true);
+  assert.equal(state.status, 'connected');
+});
+
+test('TerminalTabs S3.2 selection survives minimize and project switching', () => {
+  const make = (cwd: string, id: string): TerminalSessionDto => ({ id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: 1, running: true, createdAt: 1 });
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd: '/a' } });
+  for (const id of ['a', 'b']) state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd: '/a', session: make('/a', id) } });
+  state = terminalReducer(state, { type: 'MINIMIZE' });
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd: '/a' } });
+  assert.equal(state.selected['/a'], 'b');
+  state = terminalReducer(state, { type: 'SWITCH_PROJECT', payload: { cwd: '/b' } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd: '/b', session: make('/b', 'c') } });
+  state = terminalReducer(state, { type: 'SWITCH_PROJECT', payload: { cwd: '/a' } });
+  assert.equal(state.selected['/a'], 'b');
+  assert.equal(state.selected['/b'], 'c');
+});
+
+test('TerminalTabs S1.2 same-project sessions survive minimize and reopen independently', () => {
+  const cwd = '/project';
+  const session = (id: string, replay: string): TerminalSessionDto => ({
+    id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: id === 'a' ? 1 : 2,
+    running: true, createdAt: 1, replay, cursor: replay.length,
+  });
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: session('a', 'alpha') } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: session('b', 'beta') } });
+  state = terminalReducer(state, { type: 'MINIMIZE' });
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd } });
+  const sessions = Object.values(state.sessions);
+  assert.deepEqual(sessions.map((item) => item.id).sort(), ['a', 'b']);
+  assert.equal(sessions.find((item) => item.id === 'a')?.replay, 'alpha');
+  assert.equal(sessions.find((item) => item.id === 'b')?.replay, 'beta');
+  assert.ok(sessions.every((item) => item.running));
+});
+
+test('TerminalTabs S1.4 late project open does not replace current selection', () => {
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd: '/a' } });
+  state = terminalReducer(state, { type: 'SWITCH_PROJECT', payload: { cwd: '/b' } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: {
+    cwd: '/a', session: { id: 'a', cwd: '/a', canonicalCwd: '/a', cols: 80, rows: 24,
+      pid: 1, running: true, createdAt: 1, replay: 'stale' },
+  } });
+  assert.equal(state.activeCwd, '/b');
+});
+
 test('S2.1: TerminalOverlay renders full-window dialog with minimize and terminate controls', () => {
   const session: TerminalSessionDto = {
     id: 'term-proj-a',
@@ -103,7 +186,7 @@ test('S3.1: Minimize updates state to hidden without clearing session identity o
   });
 
   assert.equal(openedState.isOpen, true);
-  assert.equal(openedState.sessions['/workspace/app']?.pid, 101);
+  assert.equal(Object.values(openedState.sessions).find(s => s.cwd === '/workspace/app')?.pid, 101);
 
   // User clicks minimize
   const minimizedState = terminalReducer(openedState, {
@@ -112,7 +195,7 @@ test('S3.1: Minimize updates state to hidden without clearing session identity o
 
   assert.equal(minimizedState.isOpen, false, 'overlay must close/minimize');
   assert.equal(
-    minimizedState.sessions['/workspace/app']?.pid,
+    Object.values(minimizedState.sessions).find(s => s.cwd === '/workspace/app')?.pid,
     101,
     'session and process must NOT be destroyed on minimize'
   );
@@ -125,7 +208,7 @@ test('S3.1: Minimize updates state to hidden without clearing session identity o
 
   assert.equal(reopenedState.isOpen, true, 'overlay must reopen');
   assert.equal(
-    reopenedState.sessions['/workspace/app']?.id,
+    Object.values(reopenedState.sessions).find(s => s.cwd === '/workspace/app')?.id,
     'term-app',
     'must preserve existing session on reopen'
   );
@@ -170,8 +253,8 @@ test('S3.2: Switching active projects maintains background session continuity', 
     },
   });
 
-  assert.equal(state.sessions['/projects/A']?.pid, 201, 'Project A process must remain stored');
-  assert.equal(state.sessions['/projects/B']?.pid, 202, 'Project B process must remain stored');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/A')?.pid, 201, 'Project A process must remain stored');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/B')?.pid, 202, 'Project B process must remain stored');
   assert.equal(state.activeCwd, '/projects/B');
 
   // Switch back to Project A
@@ -181,8 +264,8 @@ test('S3.2: Switching active projects maintains background session continuity', 
   });
 
   assert.equal(state.activeCwd, '/projects/A');
-  assert.equal(state.sessions['/projects/A']?.id, 'term-A');
-  assert.equal(state.sessions['/projects/B']?.id, 'term-B');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/A')?.id, 'term-A');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/B')?.id, 'term-B');
 });
 
 test('S3.3: Terminate confirmation modal protects against accidental termination', () => {
@@ -227,7 +310,7 @@ test('S3.3: Confirmed termination resets active project session allowing clean r
   });
 
   assert.equal(state.isOpen, false, 'overlay must close upon termination');
-  assert.equal(state.sessions['/projects/A'], undefined, 'terminated session must be evicted from state');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/A'), undefined, 'terminated session must be evicted from state');
 
   // Reopening gets fresh session
   state = terminalReducer(state, {
@@ -247,8 +330,8 @@ test('S3.3: Confirmed termination resets active project session allowing clean r
     },
   });
 
-  assert.equal(state.sessions['/projects/A']?.id, 'term-A-new');
-  assert.equal(state.sessions['/projects/A']?.pid, 501);
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/A')?.id, 'term-A-new');
+  assert.equal(Object.values(state.sessions).find(s => s.cwd === '/projects/A')?.pid, 501);
 });
 
 test('Error state and retry: displays error banner and allows retry action', () => {

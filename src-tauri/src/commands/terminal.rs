@@ -8,6 +8,7 @@ use crate::terminal::{TerminalPollResult, TerminalSessionDto};
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOpenPayload {
     pub cwd: String,
+    pub create_new: Option<bool>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
 }
@@ -57,6 +58,7 @@ pub struct TerminalSuccessResult {
 pub async fn terminal_open(
     payload: Option<TerminalOpenPayload>,
     cwd: Option<String>,
+    create_new: Option<bool>,
     cols: Option<u16>,
     rows: Option<u16>,
     state: State<'_, AppState>,
@@ -71,7 +73,7 @@ pub async fn terminal_open(
 
     state
         .terminal_manager
-        .open_session(&open_cwd, open_cols, open_rows)
+        .open_session_with_mode(&open_cwd, open_cols, open_rows, payload.as_ref().and_then(|p| p.create_new).or(create_new).unwrap_or(false))
         .await
 }
 

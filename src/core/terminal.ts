@@ -23,6 +23,7 @@ export type TerminalEventName = typeof TERMINAL_EVENTS[keyof typeof TERMINAL_EVE
 
 export interface TerminalOpenArgs {
   cwd: string;
+  createNew?: boolean;
   cols?: number;
   rows?: number;
 }

@@ -15,6 +15,27 @@ import type {
   TerminalPollResult,
 } from '@core/terminal';
 
+test('TerminalTabs S1.1 explicit creation reaches web and native terminal open payloads', async () => {
+  let received: Record<string, any> | undefined;
+  await terminalOpen({ cwd: '/project', createNew: true } as any, async <T>(_cmd: string, args?: Record<string, unknown>) => {
+    received = args;
+    return {} as T;
+  });
+  assert.equal(received?.createNew, true);
+  assert.equal(received?.payload.createNew, true);
+});
+
+test('TerminalTabs S2.1 existing terminalWrite forwards a literal Tab to the active PTY command', async () => {
+  let received: Record<string, any> | undefined;
+  await terminalWrite({ id: 'active', data: '\t' }, async <T>(_cmd: string, args?: Record<string, unknown>) => {
+    received = args;
+    return { ok: true } as T;
+  });
+  assert.equal(received?.id, 'active');
+  assert.equal(received?.data, '\t');
+  assert.equal(received?.payload.data, '\t');
+});
+
 test('S4.1: terminalOpen sends command with payload and args wrapper and returns session DTO', async () => {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
   const fakeSession: TerminalSessionDto = {

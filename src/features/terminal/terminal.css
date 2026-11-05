@@ -1,6 +1,11 @@
 /* Persistent Project Terminal (T3) Styles */
 @import '@xterm/xterm/css/xterm.css';
 
+.terminal-tabs { display: flex; gap: 4px; padding: 4px 12px; overflow-x: auto; flex-shrink: 0; }
+.terminal-tab { display: inline-flex; flex-shrink: 0; }
+.terminal-tabs button { color: inherit; background: var(--bg-subtle, #161b22); border: 1px solid #30363d; padding: 5px 10px; cursor: pointer; }
+.terminal-tabs button[aria-selected="true"] { border-color: #58a6ff; }
+
 .terminal-overlay {
   position: fixed;
   inset: 0;

@@ -65,7 +65,7 @@ async function getAvailablePort(startPort = 5188) {
 }
 
 // Start isolated production server on loopback with authentication disabled
-async function startProductionServer(repoRoot, port) {
+async function startProductionServer(repoRoot, port, storagePath) {
   const startJs = path.join(repoRoot, 'dist-server', 'start.js');
   if (!fs.existsSync(startJs)) {
     throw new Error(`Production server build not found at ${startJs}. Run npm run build first.`);
@@ -79,6 +79,7 @@ async function startProductionServer(repoRoot, port) {
         HOST: '127.0.0.1',
         PORT: String(port),
         PI_VIEWER_AUTH_ENABLED: 'false',
+        PI_VIEWER_CONFIG_PATH: storagePath,
         // Clear any secrets or external auth keys
         PI_VIEWER_AUTH_KEY: '',
         PI_AUTH_SECRET: '',
@@ -92,7 +93,7 @@ async function startProductionServer(repoRoot, port) {
     const onData = (data) => {
       const str = data.toString();
       output += str;
-      if (str.includes(`Pi Viewer listening on http://127.0.0.1:${port}`) || str.includes('Pi Viewer listening on http://')) {
+      if (str.includes(`Pi Viewer listening on http://127.0.0.1:${port}`)) {
         started = true;
         resolve({
           proc: serverProc,
@@ -228,6 +229,92 @@ async function waitForBackendReplay(baseURL, sessionId, expectedText, timeout = 
   throw new Error(`Timed out waiting for backend replay containing: "${expectedText}"`);
 }
 
+// S4 uses the real UI and backend. Tab identity is established by selecting each
+// tab and matching its displayed PID to the backend session list.
+async function runS4(page, baseURL, activeSessionIds) {
+  const overlay = page.locator('.terminal-overlay[role="dialog"]');
+  const tabs = overlay.getByRole('tab');
+  const list = async () => (await ipcInvoke(baseURL, 'terminal_list')) || [];
+  const waitCount = async (count) => page.waitForFunction((n) => document.querySelectorAll('.terminal-overlay [role="tab"]').length === n, count);
+  const selected = async () => {
+    await overlay.locator('.terminal-pid-badge').waitFor({ state: 'visible' });
+    const pid = Number((await overlay.locator('.terminal-pid-badge').textContent()).match(/PID\s+(\d+)/)?.[1]);
+    const session = (await list()).find((s) => s.pid === pid);
+    if (!session) throw new Error(`S4: selected PID ${pid} is absent from backend`);
+    return session.id;
+  };
+  const add = async () => {
+    const before = await tabs.count();
+    await overlay.getByRole('button', { name: /new (terminal )?tab/i }).click();
+    await waitCount(before + 1);
+    const id = await selected(); activeSessionIds.add(id); return id;
+  };
+  const close = async (index) => {
+    await overlay.getByRole('button', { name: `Close terminal ${index + 1}` }).click();
+    await page.locator('[role="alertdialog"] .btn-terminate-confirm').click();
+  };
+  const assertTabs = async (expected) => {
+    await waitCount(expected.length);
+    const ids = [];
+    for (let i = 0; i < expected.length; i++) {
+      await tabs.nth(i).click();
+      // Selection changes immediately but the PID updates after terminal_get.
+      await page.waitForFunction((index) => document.querySelectorAll('.terminal-overlay [role="tab"]')[index]?.getAttribute('aria-selected') === 'true', i);
+      ids.push(await selected());
+    }
+    if (JSON.stringify(ids.slice().sort()) !== JSON.stringify(expected.slice().sort())) throw new Error(`S4: rendered IDs ${JSON.stringify(ids)} != ${JSON.stringify(expected)}`);
+  };
+  await page.locator('.btn-terminal-toggle').click();
+  await overlay.waitFor({ state: 'visible' });
+  await waitCount(1);
+  const a = await selected(); activeSessionIds.add(a);
+  const b = await add();
+  await close(0); await waitCount(1);
+  if ((await list()).some(s => s.id === a)) throw new Error('S4.1: closed first session still listed');
+  await assertTabs([b]);
+  console.log('[S4.1] PASS: first session closed; exactly surviving ID rendered');
+
+  const c = await add(); const d = await add(); const e = await add();
+  await close(0); await waitCount(3);
+  await close(1); await waitCount(2);
+  const remaining = await list();
+  if (remaining.some(s => s.id === b || s.id === d) || !remaining.some(s => s.id === c && s.running) || !remaining.some(s => s.id === e && s.running)) throw new Error('S4.2: backend survivor set incorrect');
+  await assertTabs([c, e]);
+  console.log('[S4.2] PASS: interleaved closes leave exact unique survivors after reactivation');
+
+  // Fetch the selected session before closing it, then delay delivery of that
+  // actual response until after the backend confirms the close.
+  let release, captured, finished, intercepting = true;
+  const held = new Promise(resolve => { captured = resolve; });
+  const delivered = new Promise(resolve => { finished = resolve; });
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/ipc', async (route) => {
+    const request = route.request();
+    let body; try { body = request.postDataJSON(); } catch {}
+    if (!intercepting || body?.cmd !== 'terminal_get' || (body.args?.id ?? body.args?.payload?.id) !== c) return route.continue();
+    intercepting = false;
+    const response = await route.fetch();
+    captured();
+    await gate;
+    await route.fulfill({ response });
+    finished();
+  });
+  await tabs.nth(0).click();
+  await Promise.race([held, page.waitForTimeout(10000).then(() => { throw new Error('S4.2: terminal_get snapshot not captured'); })]);
+  await close(0); await waitCount(1);
+  if ((await list()).some(s => s.id === c)) throw new Error('S4.2: delayed-get target still listed');
+  release();
+  await delivered;
+  await page.unroute('**/api/ipc');
+  await page.waitForTimeout(500);
+  await assertTabs([e]);
+  const marker = 'S4_SURVIVOR_2491';
+  await page.locator('.xterm-helper-textarea').focus();
+  await page.keyboard.type(`node -e "console.log('S4_SURVIVOR_' + (47 * 53))"\r`);
+  await waitForBackendReplay(baseURL, e, marker);
+  console.log('[S4.2] PASS: delayed pre-close get cannot resurrect closed tab; survivor selected and usable');
+}
+
 export async function runTerminalBrowserTests(options = {}) {
   let serverInstance = null;
   let baseURL = options.baseURL || process.env.BASE_URL;
@@ -251,7 +338,7 @@ export async function runTerminalBrowserTests(options = {}) {
     if (!baseURL) {
       const port = await getAvailablePort(5188);
       console.log(`[Browser Test Setup] Starting isolated production server on 127.0.0.1:${port}...`);
-      serverInstance = await startProductionServer(REPO_ROOT, port);
+      serverInstance = await startProductionServer(REPO_ROOT, port, path.join(fixtures.baseDir, 'viewer.json'));
       baseURL = serverInstance.url;
       console.log(`[Browser Test Setup] Production server listening at ${baseURL}`);
     }
@@ -285,6 +372,11 @@ export async function runTerminalBrowserTests(options = {}) {
     console.log(`[Browser Test] Navigating to ${baseURL}...`);
     await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 20000 });
     await page.waitForTimeout(1000);
+
+    if (options.s4) {
+      await runS4(page, baseURL, activeSessionIds);
+      return { success: true };
+    }
 
     // =========================================================================
     // S2.1 Desktop fullscreen viewport bounds and controls
@@ -346,6 +438,83 @@ export async function runTerminalBrowserTests(options = {}) {
     const desktopCols = backendSessionA.cols;
     const desktopRows = backendSessionA.rows;
     console.log(`[Browser Test S2.1] PASS: Desktop bounds (${overlayBox.width}x${overlayBox.height}), controls, and Session A established (ID: ${sessionIdA}, PID: ${pidA}).`);
+
+    // TerminalTabs S2.1: exercise the real focused xterm and shell, without Enter.
+    // Completion depends on the configured interactive shell; failures identify that limitation.
+    const completionPrefix = 'terminaltabs_unique_';
+    const completionName = `${completionPrefix}fixture.txt`;
+    fs.writeFileSync(path.join(fixtures.dirA, completionName), 'fixture');
+    const tabWrites = [];
+    const observeTabWrite = (request) => {
+      if (!request.url().includes('/api/ipc') || request.method() !== 'POST') return;
+      try {
+        const body = request.postDataJSON();
+        if (body.cmd === 'terminal_write' && (body.args?.data ?? body.args?.payload?.data) === '\t') {
+          tabWrites.push(body.args?.id ?? body.args?.payload?.id);
+        }
+      } catch {}
+    };
+    page.on('request', observeTabWrite);
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type(completionPrefix);
+    await page.keyboard.press('Tab');
+    await waitForTerminalText(page, completionName, 12000);
+    if (!tabWrites.includes(sessionIdA)) throw new Error('TerminalTabs S2.1 FAIL: Tab was not sent unchanged to the active PTY');
+    page.off('request', observeTabWrite);
+    // Cancel the unexecuted line, never submit the completed filename.
+    await page.keyboard.press('Control+c');
+
+    // TerminalTabs S1.1/S1.2/S1.3: operate tabs through the visible UI.
+    const newTabButton = overlay.getByRole('button', { name: /new (terminal )?tab/i });
+    await newTabButton.click();
+    const tabs = overlay.getByRole('tab');
+    await tabs.nth(1).waitFor({ state: 'visible', timeout: 5000 });
+    const tabList = await ipcInvoke(baseURL, 'terminal_list');
+    const secondSession = tabList.find((s) => s.cwd === backendSessionA.cwd && s.id !== sessionIdA);
+    if (!secondSession) throw new Error('TerminalTabs S1.1 FAIL: new tab did not create a distinct session');
+    activeSessionIds.add(secondSession.id);
+    const secondMarker = 'SECOND_TAB_2491';
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type(`node -e "console.log('SECOND_TAB_' + (47 * 53))"\r`);
+    await waitForBackendReplay(baseURL, secondSession.id, secondMarker);
+    if ((await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA })).replay?.includes(secondMarker)) {
+      throw new Error('TerminalTabs S1.1 FAIL: second tab output leaked into first');
+    }
+    // S3.1: cancelling an inactive tab close must not select or terminate it.
+    await overlay.getByRole('button', { name: 'Close terminal 1' }).click();
+    await page.locator('[role="alertdialog"] .btn-terminate-cancel').click();
+    if (await tabs.nth(1).getAttribute('aria-selected') !== 'true' || !(await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA }))?.running) throw new Error('TerminalTabs S3.1 FAIL: cancel changed selection or closed inactive tab');
+    await minimizeBtn.click();
+    await launchBtn.click();
+    await page.waitForFunction(() => document.querySelectorAll('[role="tab"]')[1]?.getAttribute('aria-selected') === 'true');
+    await page.waitForFunction(() => document.activeElement?.classList.contains('xterm-helper-textarea'));
+    console.log('[TerminalTabs S3.2] PASS: selected tab and typing focus restored after minimize.');
+    await tabs.nth(0).click();
+    await page.waitForFunction(() => document.activeElement?.classList.contains('xterm-helper-textarea'));
+    await overlay.getByRole('button', { name: 'Close terminal 2' }).click();
+    await page.locator('[role="alertdialog"] .btn-terminate-cancel').click();
+    if (await tabs.nth(0).getAttribute('aria-selected') !== 'true' || !(await ipcInvoke(baseURL, 'terminal_get', { id: secondSession.id }))?.running) throw new Error('TerminalTabs S3.1 FAIL: inactive cancel changed selection or closed session');
+    await tabs.nth(1).click();
+    await waitForTerminalText(page, secondMarker);
+    const screen = await overlay.locator('.xterm-rows').textContent();
+    if (screen.split(secondMarker).length !== 2) throw new Error('TerminalTabs S1.2 FAIL: selected tab replay missing or duplicated');
+    if (!(await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA }))?.running ||
+        !(await ipcInvoke(baseURL, 'terminal_get', { id: secondSession.id }))?.running) {
+      throw new Error('TerminalTabs S1.2 FAIL: switching or minimizing terminated a session');
+    }
+    await overlay.getByRole('button', { name: 'Close terminal 2' }).click();
+    await page.locator('[role="alertdialog"] .btn-terminate-confirm').click();
+    console.log('[TerminalTabs S3.1] PASS: per-tab active close confirmed and cancellations retained sessions.');
+    await overlay.waitFor({ state: 'visible', timeout: 5000 });
+    if (await ipcInvoke(baseURL, 'terminal_get', { id: secondSession.id })) {
+      throw new Error('TerminalTabs S1.3 FAIL: confirmed tab still exists');
+    }
+    activeSessionIds.delete(secondSession.id);
+    if (!(await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA }))?.running) {
+      throw new Error('TerminalTabs S1.3 FAIL: sibling terminated');
+    }
+    // The remaining tab is used by the existing tests, which later confirm
+    // last-tab termination closes the overlay and reopening creates a new PID.
 
     // =========================================================================
     // S1.1 Real shell command output proven beyond echoed input
@@ -781,7 +950,7 @@ export async function runTerminalBrowserTests(options = {}) {
 
 // Direct execution guard
 if (process.argv[1] && process.argv[1].endsWith('terminal.mjs')) {
-  runTerminalBrowserTests()
+  runTerminalBrowserTests({ s4: process.argv.includes('--s4') })
     .then(() => process.exit(0))
     .catch((err) => {
       console.error('\n[Browser Test Execution ERROR]', err.message);

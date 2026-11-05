@@ -28,6 +28,27 @@ async function safeRmDir(dir: string, retries = 15, delayMs = 100): Promise<void
   }
 }
 
+test('TerminalTabs S1.1 S1.3: explicit new session isolates output and closing it leaves its sibling usable', async (t) => {
+  const { createTerminalManager } = await import('@server/terminal/terminal-manager');
+  const manager = createTerminalManager();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-term-tabs-'));
+  t.after(async () => { await manager.dispose(); await safeRmDir(dir); });
+  const first = await manager.openSession({ cwd: dir });
+  const second = await manager.openSession({ cwd: dir, createNew: true } as any);
+  assert.notEqual(second.id, first.id);
+  assert.notEqual(second.pid, first.pid);
+  const marker = `TAB_FIRST_${Date.now()}`;
+  manager.writeSession({ id: first.id, data: `echo ${marker}\r\n` });
+  await waitFor(() => manager.getSession(first.id)?.replay?.includes(marker) ?? false);
+  assert.ok(!manager.getSession(second.id)?.replay?.includes(marker));
+  await manager.closeSession({ id: first.id });
+  assert.equal(manager.getSession(first.id), null);
+  assert.equal(manager.getSession(second.id)?.running, true);
+  const survivor = `TAB_SURVIVOR_${Date.now()}`;
+  manager.writeSession({ id: second.id, data: `echo ${survivor}\r\n` });
+  await waitFor(() => manager.getSession(second.id)?.replay?.includes(survivor) ?? false);
+});
+
 test('S1.1: Given project A, when its terminal opens and executes a cwd command, then output identifies A\'s working directory', async (t) => {
   const { createTerminalManager } = await import('@server/terminal/terminal-manager');
   const manager = createTerminalManager();
