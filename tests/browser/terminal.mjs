@@ -347,6 +347,71 @@ export async function runTerminalBrowserTests(options = {}) {
     const desktopRows = backendSessionA.rows;
     console.log(`[Browser Test S2.1] PASS: Desktop bounds (${overlayBox.width}x${overlayBox.height}), controls, and Session A established (ID: ${sessionIdA}, PID: ${pidA}).`);
 
+    // TerminalTabs S2.1: exercise the real focused xterm and shell, without Enter.
+    // Completion depends on the configured interactive shell; failures identify that limitation.
+    const completionPrefix = 'terminaltabs_unique_';
+    const completionName = `${completionPrefix}fixture.txt`;
+    fs.writeFileSync(path.join(fixtures.dirA, completionName), 'fixture');
+    const tabWrites = [];
+    const observeTabWrite = (request) => {
+      if (!request.url().includes('/api/ipc') || request.method() !== 'POST') return;
+      try {
+        const body = request.postDataJSON();
+        if (body.cmd === 'terminal_write' && (body.args?.data ?? body.args?.payload?.data) === '\t') {
+          tabWrites.push(body.args?.id ?? body.args?.payload?.id);
+        }
+      } catch {}
+    };
+    page.on('request', observeTabWrite);
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type(completionPrefix);
+    await page.keyboard.press('Tab');
+    await waitForTerminalText(page, completionName, 12000);
+    if (!tabWrites.includes(sessionIdA)) throw new Error('TerminalTabs S2.1 FAIL: Tab was not sent unchanged to the active PTY');
+    page.off('request', observeTabWrite);
+    // Cancel the unexecuted line, never submit the completed filename.
+    await page.keyboard.press('Control+c');
+
+    // TerminalTabs S1.1/S1.2/S1.3: operate tabs through the visible UI.
+    const newTabButton = overlay.getByRole('button', { name: /new (terminal )?tab/i });
+    await newTabButton.click();
+    const tabs = overlay.getByRole('tab');
+    await tabs.nth(1).waitFor({ state: 'visible', timeout: 5000 });
+    const tabList = await ipcInvoke(baseURL, 'terminal_list');
+    const secondSession = tabList.find((s) => s.cwd === backendSessionA.cwd && s.id !== sessionIdA);
+    if (!secondSession) throw new Error('TerminalTabs S1.1 FAIL: new tab did not create a distinct session');
+    activeSessionIds.add(secondSession.id);
+    const secondMarker = `SECOND_TAB_${Date.now()}`;
+    await page.locator('.xterm-helper-textarea').focus();
+    await page.keyboard.type(`echo ${secondMarker}\r`);
+    await waitForBackendReplay(baseURL, secondSession.id, secondMarker);
+    if ((await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA })).replay?.includes(secondMarker)) {
+      throw new Error('TerminalTabs S1.1 FAIL: second tab output leaked into first');
+    }
+    await tabs.nth(0).click();
+    await minimizeBtn.click();
+    await launchBtn.click();
+    await tabs.nth(1).click();
+    await waitForTerminalText(page, secondMarker);
+    const screen = await overlay.locator('.xterm-rows').textContent();
+    if (screen.split(secondMarker).length !== 2) throw new Error('TerminalTabs S1.2 FAIL: selected tab replay missing or duplicated');
+    if (!(await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA }))?.running ||
+        !(await ipcInvoke(baseURL, 'terminal_get', { id: secondSession.id }))?.running) {
+      throw new Error('TerminalTabs S1.2 FAIL: switching or minimizing terminated a session');
+    }
+    await overlay.locator('.btn-terminal-terminate').click();
+    await page.locator('[role="alertdialog"] .btn-terminate-confirm').click();
+    await overlay.waitFor({ state: 'visible', timeout: 5000 });
+    if (await ipcInvoke(baseURL, 'terminal_get', { id: secondSession.id })) {
+      throw new Error('TerminalTabs S1.3 FAIL: confirmed tab still exists');
+    }
+    activeSessionIds.delete(secondSession.id);
+    if (!(await ipcInvoke(baseURL, 'terminal_get', { id: sessionIdA }))?.running) {
+      throw new Error('TerminalTabs S1.3 FAIL: sibling terminated');
+    }
+    // The remaining tab is used by the existing tests, which later confirm
+    // last-tab termination closes the overlay and reopening creates a new PID.
+
     // =========================================================================
     // S1.1 Real shell command output proven beyond echoed input
     // =========================================================================

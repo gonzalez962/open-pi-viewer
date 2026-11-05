@@ -11,6 +11,35 @@ import {
 } from '@features/terminal/terminal-state';
 import type { TerminalSessionDto } from '@core/terminal';
 
+test('TerminalTabs S1.2 same-project sessions survive minimize and reopen independently', () => {
+  const cwd = '/project';
+  const session = (id: string, replay: string): TerminalSessionDto => ({
+    id, cwd, canonicalCwd: cwd, cols: 80, rows: 24, pid: id === 'a' ? 1 : 2,
+    running: true, createdAt: 1, replay, cursor: replay.length,
+  });
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: session('a', 'alpha') } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: { cwd, session: session('b', 'beta') } });
+  state = terminalReducer(state, { type: 'MINIMIZE' });
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd } });
+  const sessions = Object.values(state.sessions);
+  assert.deepEqual(sessions.map((item) => item.id).sort(), ['a', 'b']);
+  assert.equal(sessions.find((item) => item.id === 'a')?.replay, 'alpha');
+  assert.equal(sessions.find((item) => item.id === 'b')?.replay, 'beta');
+  assert.ok(sessions.every((item) => item.running));
+});
+
+test('TerminalTabs S1.4 late project open does not replace current selection', () => {
+  let state = createInitialTerminalState();
+  state = terminalReducer(state, { type: 'OPEN', payload: { cwd: '/a' } });
+  state = terminalReducer(state, { type: 'SWITCH_PROJECT', payload: { cwd: '/b' } });
+  state = terminalReducer(state, { type: 'SESSION_OPENED', payload: {
+    cwd: '/a', session: { id: 'a', cwd: '/a', canonicalCwd: '/a', cols: 80, rows: 24,
+      pid: 1, running: true, createdAt: 1, replay: 'stale' },
+  } });
+  assert.equal(state.activeCwd, '/b');
+});
+
 test('S2.1: TerminalOverlay renders full-window dialog with minimize and terminate controls', () => {
   const session: TerminalSessionDto = {
     id: 'term-proj-a',
