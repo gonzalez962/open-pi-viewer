@@ -215,10 +215,9 @@ export function useSessions({
       scrollToBottomNextFrame();
 
       // SWITCH_SESSION_SUCCESS clears sessionStats; re-fetch them for the switched session.
-      const targetPid = activeProjectIdRef.current ?? undefined;
-      const stats = await fetchSwitchedSessionStats(() => getSessionStatsPi(), result.sessionId);
+      const stats = await fetchSwitchedSessionStats(() => getSessionStatsPi({ workingDirectory: config.workingDirectory, sessionId: result.sessionId, sessionFile: result.sessionFile }), result.sessionId);
       if (stats) {
-        dispatch({ type: 'SET_SESSION_STATS', targetProjectId: targetPid, payload: { stats } });
+        dispatch({ type: 'SET_SESSION_STATS', targetProjectId, payload: { stats, expectedSessionId: result.sessionId } });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

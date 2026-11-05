@@ -341,7 +341,7 @@ export function useSessionEvents({
         ? projectSessionIdsRef.current[projectId] ?? null
         : sessionIdRef.current,
       dispatch: handleEventDispatch,
-      refreshSessionStatsFn: () => getSessionStatsPi(),
+      refreshSessionStatsFn: (owner) => getSessionStatsPi(owner),
       onStorageWarning: (warning) => onStorageWarning(warning),
       dialogAdapter: {
         select: (req) =>

@@ -793,13 +793,16 @@ export async function setThinkingLevelPi(
  * Fetch session token usage, cost, and context metrics via Tauri IPC.
  */
 export async function getSessionStatsPi(
-  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+  optionsOrInvoke?: { workingDirectory?: string; sessionId?: string; sessionFile?: string } | (<T>(cmd: string, args?: Record<string, unknown>) => Promise<T>),
+  invokeFnParam?: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>
 ): Promise<SessionStats | null> {
+  const options = typeof optionsOrInvoke === 'function' ? undefined : optionsOrInvoke;
+  const invokeFn = typeof optionsOrInvoke === 'function' ? optionsOrInvoke : invokeFnParam ?? invoke;
   if (!isTauri() && invokeFn === invoke) {
     return null;
   }
 
-  const result = await invokeFn<SessionStats>('get_session_stats');
+  const result = await invokeFn<SessionStats>('get_session_stats', options && isWebShim() ? { payload: options } : undefined);
   return result || null;
 }
 
