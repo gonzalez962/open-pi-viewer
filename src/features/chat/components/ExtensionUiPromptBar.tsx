@@ -425,13 +425,14 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   }, [method, isMultiSelect]);
 
   const displayTitle = useMemo(() => {
+    if (method === 'confirm') return request.title || request.message || defaultTitle;
     const raw =
       stepInfo.cleanTitle ||
       cleanQuestionText(request.title) ||
       cleanQuestionText(request.message) ||
       defaultTitle;
     return cleanQuestionText(raw) || defaultTitle;
-  }, [stepInfo.cleanTitle, request.title, request.message, defaultTitle]);
+  }, [method, stepInfo.cleanTitle, request.title, request.message, defaultTitle]);
 
   const title = displayTitle;
 
@@ -905,12 +906,13 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
 
   const message = useMemo(() => {
     if (!request.message) return undefined;
+    if (method === 'confirm') return request.message;
     const cleaned = cleanQuestionText(request.message);
     if (!cleaned || cleaned.toLowerCase() === displayTitle.toLowerCase()) {
       return undefined;
     }
     return cleaned;
-  }, [request.message, displayTitle]);
+  }, [method, request.message, displayTitle]);
   const headerTitle = isReviewingSummary ? REVIEW_SUMMARY_TITLE : displayTitle;
 
   const singlePrimaryButtonLabel = useMemo(() => {
@@ -952,7 +954,7 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
               </span>
             )
           )}
-          <h3 id="extension-prompt-title" className="extension-prompt-title">
+          <h3 id="extension-prompt-title" className="extension-prompt-title" style={method === 'confirm' ? { whiteSpace: 'pre-wrap' } : undefined}>
             {headerTitle}
           </h3>
           {pendingCount > 1 && (
