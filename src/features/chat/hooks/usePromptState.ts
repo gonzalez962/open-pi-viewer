@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   abortPi,
   sendPromptPi,
@@ -50,6 +50,8 @@ function buildHelpMarkdown(
 }
 
 export interface UsePromptStateOptions {
+  projectId: string | null;
+  sessionId: string | null;
   isReadyToSend: boolean;
   isBusy: boolean;
   /**
@@ -167,6 +169,8 @@ export function planPromptDispatch({
  * Prompt cluster: the textarea draft, send/abort handlers, and the Enter-to-send key binding.
  */
 export function usePromptState({
+  projectId,
+  sessionId,
   isReadyToSend,
   isBusy,
   canQueue,
@@ -182,8 +186,30 @@ export function usePromptState({
   commands = COMMANDS,
   helpCommands = commands,
 }: UsePromptStateOptions) {
-  const [prompt, setPrompt] = useState('');
-  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const [drafts, setDrafts] = useState<Map<string, { prompt: string; attachedFiles: AttachedFile[] }>>(() => new Map());
+  const draftKey = JSON.stringify([projectId, sessionId]);
+  const draft = drafts.get(draftKey);
+  const prompt = draft?.prompt ?? '';
+  const attachedFiles = draft?.attachedFiles ?? [];
+
+  // Capture the identity in each callback so delayed work updates its original draft.
+  const setPrompt = useCallback<React.Dispatch<React.SetStateAction<string>>>((update) => {
+    setDrafts((previous) => {
+      const current = previous.get(draftKey) ?? { prompt: '', attachedFiles: [] };
+      const next = new Map(previous);
+      next.set(draftKey, { ...current, prompt: typeof update === 'function' ? update(current.prompt) : update });
+      return next;
+    });
+  }, [draftKey]);
+
+  const setAttachedFiles = useCallback<React.Dispatch<React.SetStateAction<AttachedFile[]>>>((update) => {
+    setDrafts((previous) => {
+      const current = previous.get(draftKey) ?? { prompt: '', attachedFiles: [] };
+      const next = new Map(previous);
+      next.set(draftKey, { ...current, attachedFiles: typeof update === 'function' ? update(current.attachedFiles) : update });
+      return next;
+    });
+  }, [draftKey]);
 
   // Global Alt+C (copy all executable code from the last assistant message with code) /
   // Alt+I (insert its last snippet into the prompt draft) shortcuts (Issue #7). Uses
@@ -214,7 +240,7 @@ export function usePromptState({
 
     window.addEventListener('keydown', handleGlobalCodeShortcut);
     return () => window.removeEventListener('keydown', handleGlobalCodeShortcut);
-  }, [messages]);
+  }, [messages, setPrompt]);
 
   const addAttachedFiles = (files: AttachedFile[]) => {
     setAttachedFiles((prev) => [...prev, ...files]);
