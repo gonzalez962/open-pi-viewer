@@ -20,6 +20,35 @@ import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromp
 import { ExtensionUiDialogModal } from '@features/chat/components/ExtensionUiDialogModal';
 import type { ExtensionUiRequest } from '@core/types/events';
 
+function renderScenarioPrompt(method: 'confirm' | 'select', title: string, message: string): string {
+  const request: ExtensionUiRequest = {
+    type: 'extension_ui_request', id: 'scenario-s1', method, title, message,
+    ...(method === 'select' ? { options: ['Yes', 'No'] } : {}),
+  };
+  return renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, {
+    dialog: { id: request.id, itemKey: 'scenario-s1', method, request, createdAt: 0, resolve: () => {} },
+    onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {},
+    onConfirm: () => {}, onCancel: () => {},
+  }));
+}
+
+test('S1.1: confirmation title preserves literal command text', () => {
+  const markup = renderScenarioPrompt('confirm', '[sudo] run "echo" <archivo>', 'allow command?');
+  assert.ok(markup.includes('>[sudo] run &quot;echo&quot; &lt;archivo&gt;</h3>'));
+});
+
+test('S1.1: confirmation message preserves multiline options literally', () => {
+  const markup = renderScenarioPrompt('confirm', 'permission', '[sudo] run \'echo\' <archivo>\nOptions:\n--force\n--verbose');
+  assert.ok(markup.includes('>[sudo] run &#x27;echo&#x27; &lt;archivo&gt;\nOptions:\n--force\n--verbose</div>'));
+});
+
+test('S1 preserve: select question metadata is still cleaned', () => {
+  const markup = renderScenarioPrompt('select', '[Choice] choose target', 'select target\nOptions:\nYes\nNo');
+  assert.ok(markup.includes('>Choose target</h3>'));
+  assert.ok(markup.includes('>Select target</div>'));
+  assert.ok(!markup.includes('Options:'));
+});
+
 test('isSamePath: handles POSIX and Windows paths correctly', () => {
   assert.strictEqual(isSamePath('/foo/bar', '/foo/bar'), true);
   assert.strictEqual(isSamePath('/foo/bar', '/foo/baz'), false);
