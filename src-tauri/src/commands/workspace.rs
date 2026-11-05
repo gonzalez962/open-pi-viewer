@@ -1800,6 +1800,90 @@ pub async fn list_workspace_branch_commits(
 mod tests {
     use super::*;
 
+    struct SaveFixture { dir: PathBuf, root: PathBuf }
+    impl SaveFixture {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("pi_save_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+            let root = dir.join("workspace");
+            std::fs::create_dir_all(&root).unwrap();
+            Self { dir, root }
+        }
+        fn payload(&self, relative_path: &str, original_content: &str, content: &str) -> SaveWorkspaceFilePayload {
+            SaveWorkspaceFilePayload { working_directory: Some(self.root.to_string_lossy().into_owned()), relative_path: relative_path.into(), original_content: original_content.into(), content: content.into() }
+        }
+        fn read_payload(&self, relative_path: &str) -> ReadWorkspaceFilePayload {
+            ReadWorkspaceFilePayload { working_directory: Some(self.root.to_string_lossy().into_owned()), relative_path: relative_path.into() }
+        }
+    }
+    impl Drop for SaveFixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
+
+    #[tokio::test]
+    async fn s1_1_save_exact_text_and_fresh_read() {
+        let f = SaveFixture::new();
+        let state = AppState::default();
+        std::fs::write(f.root.join("text.txt"), "original").unwrap();
+        for content in [" Unicode 日本語 \r\nnext\n  no final newline", "", " \t\r\n", "last"] {
+            let original = read_workspace_file(f.read_payload("text.txt"), State::from(&state)).await.unwrap().content;
+            save_workspace_file(f.payload("text.txt", &original, content), State::from(&state)).await.unwrap();
+            assert_eq!(read_workspace_file(f.read_payload("text.txt"), State::from(&state)).await.unwrap().content, content);
+            assert_eq!(std::fs::read(f.root.join("text.txt")).unwrap(), content.as_bytes());
+        }
+    }
+
+    #[tokio::test]
+    async fn s1_2_reject_unsafe_and_unsupported_targets_without_modification() {
+        let f = SaveFixture::new();
+        let state = AppState::default();
+        let outside = f.dir.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let external = outside.join("external.txt");
+        std::fs::write(&external, b"external").unwrap();
+        std::fs::create_dir(f.root.join("dir")).unwrap();
+        std::fs::write(f.root.join("dir/sentinel.txt"), b"sentinel").unwrap();
+        let mut cases = vec![
+            (external.to_string_lossy().into_owned(), external.clone(), b"external".to_vec()),
+            ("../outside/external.txt".into(), external.clone(), b"external".to_vec()),
+            ("binary.txt".into(), f.root.join("binary.txt"), vec![65, 0, 66]),
+            ("invalid.txt".into(), f.root.join("invalid.txt"), vec![0xff, 0xfe]),
+            ("huge.txt".into(), f.root.join("huge.txt"), vec![b'a'; MAX_WORKSPACE_TEXT_BYTES as usize + 1]),
+            ("known.bin".into(), f.root.join("known.bin"), b"plain but binary extension".to_vec()),
+        ];
+        for (_, file, bytes) in cases.iter().skip(2) { std::fs::write(file, bytes).unwrap(); }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, f.root.join("link")).unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(f.root.join("link")).arg(&outside).status().unwrap();
+            assert!(status.success(), "junction creation failed");
+        }
+        cases.push(("link/external.txt".into(), external.clone(), b"external".to_vec()));
+        for (relative, file, before) in cases {
+            let original = String::from_utf8_lossy(&before);
+            assert!(save_workspace_file(f.payload(&relative, &original, "replacement"), State::from(&state)).await.is_err(), "{relative}");
+            assert_eq!(std::fs::read(file).unwrap(), before, "{relative}");
+        }
+        for relative in ["missing.txt", "dir"] {
+            assert!(save_workspace_file(f.payload(relative, "", "replacement"), State::from(&state)).await.is_err(), "{relative}");
+        }
+        assert!(!f.root.join("missing.txt").exists());
+        assert_eq!(std::fs::read(f.root.join("dir/sentinel.txt")).unwrap(), b"sentinel");
+        std::fs::write(f.root.join("valid.txt"), b"valid").unwrap();
+        assert!(save_workspace_file(f.payload("valid.txt", "valid", &"x".repeat(MAX_WORKSPACE_TEXT_BYTES as usize + 1)), State::from(&state)).await.is_err());
+        assert_eq!(std::fs::read(f.root.join("valid.txt")).unwrap(), b"valid");
+    }
+
+    #[tokio::test]
+    async fn s1_3_stale_original_preserves_external_edit() {
+        let f = SaveFixture::new();
+        let state = AppState::default();
+        let file = f.root.join("text.txt");
+        std::fs::write(&file, "original").unwrap();
+        let original = read_workspace_file(f.read_payload("text.txt"), State::from(&state)).await.unwrap().content;
+        std::fs::write(&file, "external edit\r\n").unwrap();
+        assert!(save_workspace_file(f.payload("text.txt", &original, "my edit"), State::from(&state)).await.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"external edit\r\n");
+    }
+
     struct BranchFixture { dir: PathBuf, local: PathBuf, worker: PathBuf, remote: PathBuf }
     impl Drop for BranchFixture { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.dir); } }
     fn git(cwd: &Path, args: &[&str]) {

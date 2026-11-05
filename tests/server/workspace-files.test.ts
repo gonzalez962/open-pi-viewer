@@ -6,6 +6,7 @@ import os from 'node:os';
 
 import {
   handleReadWorkspaceFile,
+  handleSaveWorkspaceFile,
   handleListWorkspaceDir,
   handleGetWorkspaceGitStatus,
   handleCreateWorkspaceDir,
@@ -18,6 +19,69 @@ import {
   MAX_TEXT_FILE_BYTES,
   MAX_MEDIA_FILE_BYTES,
 } from '@core/workspace/file-kind';
+
+test('server bridge S1.1: saves exact text and reads it back', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-'));
+  try {
+    const file = path.join(root, 'text.txt');
+    fs.writeFileSync(file, 'original');
+    for (const content of [' Unicode 日本語 \r\nnext\n  no final newline', '', ' \t\r\n', 'last']) {
+      const originalContent = handleReadWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt' } }).content;
+      handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt', originalContent, content } });
+      assert.equal(handleReadWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt' } }).content, content);
+      assert.deepEqual(fs.readFileSync(file), Buffer.from(content));
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('server bridge S1.2: rejects unsafe and unsupported targets without changing bytes', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-guard-'));
+  try {
+    const root = path.join(fixture, 'workspace');
+    const outside = path.join(fixture, 'outside');
+    fs.mkdirSync(root); fs.mkdirSync(outside);
+    const external = path.join(outside, 'external.txt');
+    fs.writeFileSync(external, 'external');
+    fs.mkdirSync(path.join(root, 'dir'));
+    const sentinel = path.join(root, 'dir', 'sentinel.txt');
+    fs.writeFileSync(sentinel, 'sentinel');
+    const cases: Array<[string, string, Buffer]> = [
+      [external, external, Buffer.from('external')],
+      ['../outside/external.txt', external, Buffer.from('external')],
+      ['binary.txt', path.join(root, 'binary.txt'), Buffer.from([65, 0, 66])],
+      ['invalid.txt', path.join(root, 'invalid.txt'), Buffer.from([0xff, 0xfe])],
+      ['huge.txt', path.join(root, 'huge.txt'), Buffer.alloc(MAX_TEXT_FILE_BYTES + 1, 65)],
+      ['known.bin', path.join(root, 'known.bin'), Buffer.from('plain but binary extension')],
+    ];
+    for (const [, file, bytes] of cases.slice(2)) fs.writeFileSync(file, bytes);
+    fs.symlinkSync(outside, path.join(root, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    cases.push(['link/external.txt', external, Buffer.from('external')]);
+    for (const [relativePath, file, before] of cases) {
+      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: before.toString('utf8'), content: 'replacement' } }), undefined, relativePath);
+      assert.deepEqual(fs.readFileSync(file), before, relativePath);
+    }
+    for (const relativePath of ['missing.txt', 'dir']) {
+      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: '', content: 'replacement' } }), undefined, relativePath);
+    }
+    assert.equal(fs.existsSync(path.join(root, 'missing.txt')), false);
+    assert.equal(fs.readFileSync(sentinel, 'utf8'), 'sentinel');
+    fs.writeFileSync(path.join(root, 'valid.txt'), 'valid');
+    assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'valid.txt', originalContent: 'valid', content: 'x'.repeat(MAX_TEXT_FILE_BYTES + 1) } }));
+    assert.equal(fs.readFileSync(path.join(root, 'valid.txt'), 'utf8'), 'valid');
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('server bridge S1.3: stale original is rejected without overwriting external edits', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-stale-'));
+  try {
+    const file = path.join(root, 'text.txt');
+    fs.writeFileSync(file, 'original');
+    const originalContent = handleReadWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt' } }).content;
+    fs.writeFileSync(file, 'external edit\r\n');
+    assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt', originalContent, content: 'my edit' } }));
+    assert.equal(fs.readFileSync(file, 'utf8'), 'external edit\r\n');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 
 test('server bridge: path containment prevents directory traversal escape', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-ws-test-'));
