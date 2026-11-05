@@ -25,6 +25,16 @@ test('S2.1: parent continuation after nested list remains visible in order', () 
   assert.match(html, /Padre[\s\S]*Hijo[\s\S]*continuación padre[\s\S]*Otro/);
 });
 
+test('S2.1: alternating nested lists and formatted parent continuations retain order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n  **continuación**\n  - Segundo\n  final\n- Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*<strong>continuación<\/strong>[\s\S]*Segundo[\s\S]*final[\s\S]*Otro/);
+});
+
+test('S2.1: blank line before an indented continuation does not discard text', () => {
+  const html = renderMarkdown('- Padre\n\n  detalle\n- Otro');
+  assert.match(html, /Padre[\s\S]*detalle[\s\S]*Otro/);
+});
+
 test('S2.2: intraword underscores remain literal alongside emphasis and code', () => {
   const html = renderMarkdown('archivo_con_nombre *énfasis* `codigo_con_guiones`');
   assert.ok(html.includes('archivo_con_nombre'));

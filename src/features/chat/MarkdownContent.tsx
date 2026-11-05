@@ -404,6 +404,11 @@ function renderListItem(
     <li key={key} className="markdown-li">
       {renderInline(item.children, key, t)}
       {item.subList && renderBlock(item.subList, 0, `${key}-sub`, t, onInsertCode)}
+      {item.continuation?.map((part, partIndex) =>
+        Array.isArray(part)
+          ? renderInline(part, `${key}-continuation-${partIndex}`, t)
+          : renderBlock(part, partIndex, `${key}-continuation`, t, onInsertCode)
+      )}
     </li>
   );
 }
