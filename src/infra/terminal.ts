@@ -41,6 +41,7 @@ export async function terminalOpen(
 ): Promise<TerminalSessionDto> {
   const payload = {
     cwd: args.cwd,
+    createNew: args.createNew,
     cols: args.cols,
     rows: args.rows,
   };
