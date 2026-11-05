@@ -6,6 +6,33 @@ import { MarkdownContent } from '@features/chat/MarkdownContent';
 
 const dummyT = (key: string) => key;
 
+function renderMarkdown(content: string): string {
+  return renderToStaticMarkup(React.createElement(MarkdownContent, { content, t: dummyT }));
+}
+
+test('S2.1: list continuation remains visible after its item', () => {
+  const html = renderMarkdown('- Primera\n  detalle importante');
+  assert.match(html, /Primera[\s\S]*detalle importante/);
+});
+
+test('S2.1: nested list continuation remains visible in order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n    detalle anidado\n  - Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*detalle anidado[\s\S]*Otro/);
+});
+
+test('S2.2: intraword underscores remain literal alongside emphasis and code', () => {
+  const html = renderMarkdown('archivo_con_nombre *énfasis* `codigo_con_guiones`');
+  assert.ok(html.includes('archivo_con_nombre'));
+  assert.ok(html.includes('<em>énfasis</em>'));
+  assert.match(html, /<code[^>]*>codigo_con_guiones<\/code>/);
+});
+
+test('S2 preservation: supported list and inline formatting still renders', () => {
+  const html = renderMarkdown('- **Padre**\n  - _Hijo_ y `código`\n- Otro');
+  assert.match(html, /<strong>Padre<\/strong>[\s\S]*<em>Hijo<\/em>[\s\S]*<code[^>]*>código<\/code>[\s\S]*Otro/);
+  assert.equal((html.match(/<ul/g) || []).length, 2);
+});
+
 test('MarkdownContent: formatted plain URL does not produce duplicate copy buttons', () => {
   const html = renderToStaticMarkup(
     React.createElement(MarkdownContent, {
