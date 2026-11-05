@@ -1,198 +1,112 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import type { Terminal as XTermInstance } from '@xterm/xterm';
-import {
-  terminalOpen,
-  terminalWrite,
-  terminalResize,
-  terminalClose,
-  createTerminalPoller,
-  type TerminalPoller,
-} from '@infra/terminal';
-import type { TerminalSessionDto } from '@core/terminal';
-import {
-  terminalReducer,
-  createInitialTerminalState,
-} from '../terminal-state';
+import { terminalOpen, terminalGet, terminalList, terminalWrite, terminalResize, terminalClose, createTerminalPoller, type TerminalPoller } from '@infra/terminal';
+import { terminalReducer, createInitialTerminalState } from '../terminal-state';
 
-export interface UseTerminalOptions {
-  activeProjectCwd: string | null;
-  activeProjectName: string;
-}
+export interface UseTerminalOptions { activeProjectCwd: string | null; activeProjectName: string }
 
 export function useTerminal({ activeProjectCwd, activeProjectName }: UseTerminalOptions) {
   const [state, dispatch] = useReducer(terminalReducer, createInitialTerminalState());
-  const [isTerminateConfirmOpen, setIsTerminateConfirmOpen] = useState(false);
-
-  const activePollerRef = useRef<TerminalPoller | null>(null);
+  const [terminateTarget, setTerminateTarget] = useState<{ cwd: string; id: string } | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const terminalInstanceRef = useRef<XTermInstance | null>(null);
-  const activeSessionIdRef = useRef<string | null>(null);
+  const poller = useRef<TerminalPoller | null>(null);
+  const generation = useRef(0);
+  const closedIds = useRef(new Set<string>());
+  const projectRef = useRef(activeProjectCwd);
+  projectRef.current = activeProjectCwd;
+  const selectedId = activeProjectCwd ? state.selected[activeProjectCwd] : undefined;
+  const currentSession = Object.values(state.sessions).find((s) => s.id === selectedId) ?? null;
+  const currentId = useRef<string | null>(null);
+  currentId.current = currentSession?.id ?? null;
+  const tabs = Object.values(state.sessions).filter((s) => s.cwd === activeProjectCwd);
 
-  const currentSession: TerminalSessionDto | null =
-    activeProjectCwd && state.sessions[activeProjectCwd]
-      ? state.sessions[activeProjectCwd]
-      : null;
-
-  activeSessionIdRef.current = currentSession?.id ?? null;
-
-  // Cleanup polling loop on unmount or session transition (NEVER issues terminal_close)
-  const stopCurrentPoller = useCallback(() => {
-    if (activePollerRef.current) {
-      activePollerRef.current.stop();
-      activePollerRef.current = null;
-    }
-  }, []);
-
-  const startPolling = useCallback(
-    (session: TerminalSessionDto) => {
-      stopCurrentPoller();
-
-      const initialCursor =
-        session.cursor ?? (session.replay ? session.replay.length : 0);
-
-      const poller = createTerminalPoller({
-        id: session.id,
-        initialCursor,
-        timeoutMs: 15000,
-        onData: (data) => {
-          terminalInstanceRef.current?.write(data);
-        },
-        onExit: (exitCode) => {
-          dispatch({ type: 'PROCESS_EXITED', payload: { exitCode } });
-          terminalInstanceRef.current?.write(
-            `\r\n\x1b[33m[Process completed with exit code ${exitCode}]\x1b[0m\r\n`
-          );
-        },
-        onError: (err) => {
-          dispatch({
-            type: 'SET_STATUS',
-            payload: { status: 'error', error: err.message },
-          });
-        },
-      });
-
-      activePollerRef.current = poller;
-      poller.start();
-    },
-    [stopCurrentPoller]
-  );
-
-  // Open or attach to active project terminal
-  const openTerminal = useCallback(async () => {
-    if (!activeProjectCwd) return;
-
-    dispatch({ type: 'OPEN', payload: { cwd: activeProjectCwd } });
-
-    // Check if session already exists in memory
-    const existing = state.sessions[activeProjectCwd];
-    if (existing) {
-      startPolling(existing);
-      return;
-    }
-
+  const stop = useCallback(() => { generation.current++; poller.current?.stop(); poller.current = null; }, []);
+  const activate = useCallback(async (cwd: string, id: string) => {
+    stop();
+    const token = generation.current;
+    dispatch({ type: 'SELECT_TAB', payload: { cwd, id } });
     try {
-      dispatch({ type: 'SET_STATUS', payload: { status: 'connecting' } });
-      const session = await terminalOpen({ cwd: activeProjectCwd });
-      dispatch({
-        type: 'SESSION_OPENED',
-        payload: { cwd: activeProjectCwd, session },
+      const session = await terminalGet({ id });
+      if (token !== generation.current || projectRef.current !== cwd || !session || closedIds.current.has(id)) return;
+      dispatch({ type: 'SESSION_OPENED', payload: { cwd, session } });
+      const stream = createTerminalPoller({ id, initialCursor: session.cursor ?? session.replay?.length ?? 0,
+        onData: (data) => { if (generation.current === token) terminalInstanceRef.current?.write(data); },
+        onExit: (exitCode) => { if (generation.current === token) dispatch({ type: 'PROCESS_EXITED', payload: { exitCode } }); },
+        onError: (error) => { if (generation.current === token) dispatch({ type: 'SET_STATUS', payload: { status: 'error', error: error.message } }); },
       });
-      startPolling(session);
+      poller.current = stream;
+      stream.start();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      dispatch({
-        type: 'SET_STATUS',
-        payload: { status: 'error', error: message },
-      });
+      if (token === generation.current) dispatch({ type: 'SET_STATUS', payload: { status: 'error', error: String(err) } });
     }
-  }, [activeProjectCwd, state.sessions, startPolling]);
+  }, [stop]);
 
-  // Minimize hides terminal overlay but preserves backend session and process
-  const minimizeTerminal = useCallback(() => {
-    stopCurrentPoller();
-    dispatch({ type: 'MINIMIZE' });
-  }, [stopCurrentPoller]);
-
-  // Request termination confirmation
-  const requestTerminate = useCallback(() => {
-    setIsTerminateConfirmOpen(true);
-  }, []);
-
-  const cancelTerminate = useCallback(() => {
-    setIsTerminateConfirmOpen(false);
-  }, []);
-
-  // Explicit confirmed termination kills backend process and cleans session
-  const confirmTerminate = useCallback(async () => {
-    setIsTerminateConfirmOpen(false);
-    stopCurrentPoller();
-
-    if (activeProjectCwd && currentSession) {
-      try {
-        await terminalClose({ id: currentSession.id });
-      } catch (err) {
-        console.warn('[Terminal] Failed to close session on backend:', err);
+  const openTerminal = useCallback(async () => {
+    const cwd = activeProjectCwd;
+    if (!cwd) return;
+    stop();
+    const token = generation.current;
+    dispatch({ type: 'OPEN', payload: { cwd } });
+    try {
+      const existing = state.selected[cwd];
+      if (existing) { await activate(cwd, existing); return; }
+      const session = await terminalOpen({ cwd });
+      const listed = await terminalList();
+      if (token !== generation.current || projectRef.current !== cwd) return;
+      for (const item of listed.filter((s) => s.canonicalCwd === session.canonicalCwd && s.id !== session.id && !closedIds.current.has(s.id))) {
+        dispatch({ type: 'SESSION_OPENED', payload: { cwd, session: item } });
       }
-      dispatch({ type: 'SESSION_TERMINATED', payload: { cwd: activeProjectCwd } });
+      await activate(cwd, session.id);
+    } catch (err) {
+      if (token === generation.current) dispatch({ type: 'SET_STATUS', payload: { status: 'error', error: String(err) } });
     }
-  }, [activeProjectCwd, currentSession, stopCurrentPoller]);
+  }, [activeProjectCwd, state.selected, stop, activate]);
 
-  // Terminal input & resize handlers
-  const handleInput = useCallback((data: string) => {
-    const id = activeSessionIdRef.current;
-    if (id) {
-      void terminalWrite({ id, data }).catch((err) => {
-        console.warn('[Terminal] Write error:', err);
-      });
+  const createTab = useCallback(async () => {
+    const cwd = activeProjectCwd;
+    if (!cwd) return;
+    stop();
+    const token = generation.current;
+    try {
+      const session = await terminalOpen({ cwd, createNew: true });
+      if (token !== generation.current || projectRef.current !== cwd) return;
+      await activate(cwd, session.id);
+    } catch (err) {
+      if (token === generation.current) dispatch({ type: 'SET_STATUS', payload: { status: 'error', error: String(err) } });
     }
-  }, []);
-
-  const handleResize = useCallback((cols: number, rows: number) => {
-    const id = activeSessionIdRef.current;
-    if (id) {
-      void terminalResize({ id, cols, rows }).catch((err) => {
-        console.warn('[Terminal] Resize error:', err);
-      });
+  }, [activeProjectCwd, stop, activate]);
+  const selectTab = useCallback((id: string) => { if (activeProjectCwd) void activate(activeProjectCwd, id); }, [activeProjectCwd, activate]);
+  const minimizeTerminal = useCallback(() => { stop(); dispatch({ type: 'MINIMIZE' }); }, [stop]);
+  const confirmTerminate = useCallback(async () => {
+    setTerminateTarget(null);
+    if (!terminateTarget) return;
+    const { cwd, id } = terminateTarget;
+    try { await terminalClose({ id }); } catch (err) { console.warn('[Terminal] Failed to close session:', err); return; }
+    closedIds.current.add(id);
+    const current = stateRef.current;
+    const isActive = projectRef.current === cwd && current.selected[cwd] === id && current.isOpen;
+    const sibling = Object.values(current.sessions).find((s) => s.cwd === cwd && s.id !== id);
+    dispatch({ type: 'SESSION_TERMINATED', payload: { cwd, id } });
+    if (isActive) {
+      if (sibling) await activate(cwd, sibling.id); else stop();
     }
-  }, []);
-
-  // Project switch effect: preserve background sessions, cancel polling if minimized
+  }, [terminateTarget, stop, activate]);
+  const handleInput = useCallback((data: string) => { if (currentId.current) void terminalWrite({ id: currentId.current, data }); }, []);
+  const handleResize = useCallback((cols: number, rows: number) => { if (currentId.current) void terminalResize({ id: currentId.current, cols, rows }); }, []);
   useEffect(() => {
+    stop();
     if (!activeProjectCwd) return;
-
     dispatch({ type: 'SWITCH_PROJECT', payload: { cwd: activeProjectCwd } });
-
-    if (state.isOpen) {
-      // Re-open in the newly selected project
-      void openTerminal();
-    } else {
-      stopCurrentPoller();
-    }
+    if (state.isOpen) void openTerminal();
   }, [activeProjectCwd]);
-
-  // Cleanup on unmount (cancels poller, NEVER closes backend terminal)
-  useEffect(() => {
-    return () => {
-      stopCurrentPoller();
-    };
-  }, [stopCurrentPoller]);
-
-  return {
-    isOpen: state.isOpen,
-    status: state.status,
-    errorMessage: state.errorMessage,
-    exitCode: state.exitCode,
-    currentSession,
-    isTerminateConfirmOpen,
-    activeProjectCwd,
-    activeProjectName,
-    terminalInstanceRef,
-    openTerminal,
-    minimizeTerminal,
-    requestTerminate,
-    cancelTerminate,
-    confirmTerminate,
-    retryConnection: openTerminal,
-    handleInput,
-    handleResize,
-  };
+  useEffect(() => () => stop(), [stop]);
+  return { isOpen: state.isOpen, status: state.status, errorMessage: state.errorMessage, exitCode: state.exitCode,
+    currentSession, tabs, createTab, selectTab, isTerminateConfirmOpen: terminateTarget !== null, activeProjectCwd, activeProjectName,
+    terminalInstanceRef, openTerminal, minimizeTerminal, requestTerminate: (id?: string) => {
+      const targetId = id ?? currentSession?.id;
+      if (activeProjectCwd && targetId) setTerminateTarget({ cwd: activeProjectCwd, id: targetId });
+    },
+    cancelTerminate: () => setTerminateTarget(null), confirmTerminate, retryConnection: openTerminal, handleInput, handleResize };
 }
