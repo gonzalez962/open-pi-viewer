@@ -20,6 +20,11 @@ test('S2.1: nested list continuation remains visible in order', () => {
   assert.match(html, /Padre[\s\S]*Hijo[\s\S]*detalle anidado[\s\S]*Otro/);
 });
 
+test('S2.1: parent continuation after nested list remains visible in order', () => {
+  const html = renderMarkdown('- Padre\n  - Hijo\n  continuación padre\n- Otro');
+  assert.match(html, /Padre[\s\S]*Hijo[\s\S]*continuación padre[\s\S]*Otro/);
+});
+
 test('S2.2: intraword underscores remain literal alongside emphasis and code', () => {
   const html = renderMarkdown('archivo_con_nombre *énfasis* `codigo_con_guiones`');
   assert.ok(html.includes('archivo_con_nombre'));
