@@ -92,6 +92,7 @@ import {
   handleCreateWorkspaceDir,
   handleDeleteWorkspaceDir,
   handleReadWorkspaceFile,
+  handleSaveWorkspaceFile,
   handleGetWorkspaceGitStatus,
   handleGetWorkspaceFileDiff,
   handleListWorkspaceBranches,
@@ -344,6 +345,8 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleDeleteWorkspaceDir(args);
     case 'read_workspace_file':
       return handleReadWorkspaceFile(args);
+    case 'save_workspace_file':
+      return handleSaveWorkspaceFile(args);
     case 'get_workspace_git_status':
       return handleGetWorkspaceGitStatus(args);
     case 'get_workspace_file_diff':

@@ -20,7 +20,7 @@ import {
   MAX_MEDIA_FILE_BYTES,
 } from '@core/workspace/file-kind';
 
-test('server bridge S1.1: saves exact text and reads it back', () => {
+test('file editor S1.1: saves exact text and reads it back', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-'));
   try {
     const file = path.join(root, 'text.txt');
@@ -34,7 +34,7 @@ test('server bridge S1.1: saves exact text and reads it back', () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('server bridge S1.2: rejects unsafe and unsupported targets without changing bytes', () => {
+test('file editor S1.2: rejects unsafe and unsupported targets without changing bytes', () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-guard-'));
   try {
     const root = path.join(fixture, 'workspace');
@@ -57,11 +57,11 @@ test('server bridge S1.2: rejects unsafe and unsupported targets without changin
     fs.symlinkSync(outside, path.join(root, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
     cases.push(['link/external.txt', external, Buffer.from('external')]);
     for (const [relativePath, file, before] of cases) {
-      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: before.toString('utf8'), content: 'replacement' } }), undefined, relativePath);
+      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: before.toString('utf8'), content: 'replacement' } }), relativePath);
       assert.deepEqual(fs.readFileSync(file), before, relativePath);
     }
     for (const relativePath of ['missing.txt', 'dir']) {
-      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: '', content: 'replacement' } }), undefined, relativePath);
+      assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath, originalContent: '', content: 'replacement' } }), relativePath);
     }
     assert.equal(fs.existsSync(path.join(root, 'missing.txt')), false);
     assert.equal(fs.readFileSync(sentinel, 'utf8'), 'sentinel');
@@ -71,7 +71,7 @@ test('server bridge S1.2: rejects unsafe and unsupported targets without changin
   } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
 });
 
-test('server bridge S1.3: stale original is rejected without overwriting external edits', () => {
+test('file editor S1.3: stale original is rejected without overwriting external edits', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-stale-'));
   try {
     const file = path.join(root, 'text.txt');
@@ -81,6 +81,39 @@ test('server bridge S1.3: stale original is rejected without overwriting externa
     assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt', originalContent, content: 'my edit' } }));
     assert.equal(fs.readFileSync(file, 'utf8'), 'external edit\r\n');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('file editor S1.2: rejects hard links without touching outside bytes', () => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-hardlink-'));
+  try {
+    const root = path.join(fixture, 'workspace');
+    fs.mkdirSync(root);
+    const outside = path.join(fixture, 'outside.txt');
+    fs.writeFileSync(outside, 'original');
+    fs.linkSync(outside, path.join(root, 'link.txt'));
+    assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'link.txt', originalContent: 'original', content: 'changed' } }));
+    assert.equal(fs.readFileSync(outside, 'utf8'), 'original');
+    assert.equal(fs.readFileSync(path.join(root, 'link.txt'), 'utf8'), 'original');
+  } finally { fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('file editor S1.2: short write followed by disk full leaves original untouched', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-writefail-'));
+  const originalWrite = fs.writeSync;
+  try {
+    const file = path.join(root, 'text.txt');
+    fs.writeFileSync(file, 'original');
+    let calls = 0;
+    fs.writeSync = ((fd: number, buffer: Uint8Array, offset: number, length: number, position: number) => {
+      calls++;
+      if (calls === 1) return originalWrite(fd, buffer, offset, Math.min(2, length), position);
+      throw Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+    }) as typeof fs.writeSync;
+    assert.throws(() => handleSaveWorkspaceFile({ payload: { workingDirectory: root, relativePath: 'text.txt', originalContent: 'original', content: 'replacement' } }), /disk full/);
+    assert.equal(calls, 2);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'original');
+    assert.deepEqual(fs.readdirSync(root), ['text.txt']);
+  } finally { fs.writeSync = originalWrite; fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test('server bridge: path containment prevents directory traversal escape', () => {

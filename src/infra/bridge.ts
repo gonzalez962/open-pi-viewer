@@ -31,6 +31,7 @@ import type {
   WorkspaceEntry,
   WorkspaceFileContent,
   ReadWorkspaceFilePayload,
+  SaveWorkspaceFilePayload,
   CreateWorkspaceDirPayload,
   DeleteWorkspaceDirPayload,
   DeleteWorkspaceDirResult,
@@ -520,6 +521,17 @@ export async function readWorkspaceFilePi(
   };
 
   return await invokeFn<WorkspaceFileContent>('read_workspace_file', { payload });
+}
+
+/** Save an existing workspace text file with an original-content conflict check. */
+export async function saveWorkspaceFilePi(
+  payload: SaveWorkspaceFilePayload,
+  invokeFn: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> = invoke
+): Promise<void> {
+  if (!isTauri() && !isWebShim() && invokeFn === invoke) {
+    throw new Error('Desktop runtime unavailable: cannot save workspace file outside Tauri');
+  }
+  await invokeFn<void>('save_workspace_file', { payload });
 }
 
 /**

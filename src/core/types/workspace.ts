@@ -30,6 +30,11 @@ export interface ReadWorkspaceFilePayload {
   relativePath: string;
 }
 
+export interface SaveWorkspaceFilePayload extends ReadWorkspaceFilePayload {
+  originalContent: string;
+  content: string;
+}
+
 export interface CreateWorkspaceDirPayload {
   workingDirectory?: string;
   name: string;
