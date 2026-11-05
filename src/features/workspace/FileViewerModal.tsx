@@ -293,10 +293,10 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
           <div className="file-viewer-actions">
             {isWebShim() && !file.isBinary && file.kind !== 'image' && file.kind !== 'video' && activeTab === 'content' && editor && state && (
               state.editing ? <>
-                <button type="button" disabled={state.saving} onClick={() => { void editor.save().then(refreshEditor); refreshEditor(); }}>{t('file_viewer.save')}</button>
-                <button type="button" disabled={state.saving} onClick={() => { editor.cancel(confirmDiscard); refreshEditor(); }}>{t('file_viewer.cancel')}</button>
+                <button type="button" className="btn-file-editor btn-file-editor-save" disabled={state.saving} onClick={() => { void editor.save().then(refreshEditor); refreshEditor(); }}>{t('file_viewer.save')}</button>
+                <button type="button" className="btn-file-editor btn-file-editor-cancel" disabled={state.saving} onClick={() => { editor.cancel(confirmDiscard); refreshEditor(); }}>{t('file_viewer.cancel')}</button>
                 {state.dirty && <span>{t('file_viewer.unsaved')}</span>}
-              </> : <button type="button" onClick={() => { editor.edit(); refreshEditor(); }}>{t('file_viewer.edit')}</button>
+              </> : <button type="button" className="btn-file-editor btn-file-editor-edit" onClick={() => { editor.edit(); refreshEditor(); }}>{t('file_viewer.edit')}</button>
             )}
             {/* Wrap toggle button */}
             {!file.isBinary && (

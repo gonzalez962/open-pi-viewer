@@ -599,6 +599,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
   padding: 10px 16px;
   background-color: var(--bg-subtle);
   border-bottom: 1px solid var(--border-muted);
@@ -640,7 +642,100 @@
 .file-viewer-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Shared sizing keeps text and icon controls aligned throughout the modal. */
+.file-viewer-container button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 10px;
+  gap: 5px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.file-viewer-container button:hover:not(:disabled) {
+  background-color: var(--bg-subtle-hover);
+  border-color: var(--fg-subtle);
+  color: var(--fg-default);
+}
+
+.file-viewer-container button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.file-viewer-container :is(.btn-file-toggle-wrap, .btn-file-close) {
+  width: 30px;
+  padding: 0;
+}
+
+.file-viewer-container .btn-file-close {
+  color: var(--status-red);
+}
+
+.file-viewer-container .btn-file-close:hover:not(:disabled) {
+  background-color: var(--status-red-bg);
+  border-color: var(--status-red-border);
+  color: var(--status-red);
+}
+
+.file-viewer-container .btn-file-editor {
+  border-color: var(--editor-action-border);
+  background-color: var(--editor-action-bg);
+  color: var(--editor-action-fg);
+}
+
+.btn-file-editor-edit {
+  --editor-action-bg: var(--accent-primary);
+  --editor-action-border: var(--accent-primary);
+  --editor-action-fg: var(--accent-primary-fg);
+  --editor-action-hover: var(--accent-primary-hover);
+}
+
+.btn-file-editor-save {
+  --editor-action-bg: var(--status-green-bg);
+  --editor-action-border: var(--status-green-border);
+  --editor-action-fg: var(--status-green);
+  --editor-action-hover: color-mix(in srgb, var(--status-green) 22%, var(--bg-surface));
+}
+
+.btn-file-editor-cancel {
+  --editor-action-bg: var(--status-red-bg);
+  --editor-action-border: var(--status-red-border);
+  --editor-action-fg: var(--status-red);
+  --editor-action-hover: var(--btn-stop-hover-bg);
+}
+
+.file-viewer-container .btn-file-editor:hover:not(:disabled) {
+  background-color: var(--editor-action-hover);
+  border-color: var(--editor-action-fg);
+  color: var(--editor-action-fg);
+}
+
+.file-viewer-container .btn-file-editor:focus-visible {
+  outline: 2px solid var(--editor-action-fg);
+  outline-offset: 2px;
+}
+
+.btn-file-editor:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* File Viewer Tabs (Content vs Diff) */
@@ -650,30 +745,11 @@
   background-color: var(--bg-surface);
   border: 1px solid var(--border-muted);
   border-radius: var(--radius-sm);
-  padding: 2px;
-  gap: 2px;
+  padding: 0;
+  gap: 6px;
 }
 
-.viewer-tab-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  font-size: 11.5px;
-  font-weight: 500;
-  color: var(--fg-muted);
-  background: transparent;
-  border: none;
-  border-radius: 3px;
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-
-.viewer-tab-btn:hover {
-  color: var(--fg-default);
-}
-
-.viewer-tab-btn.active {
+.file-viewer-container .viewer-tab-btn.active {
   background-color: var(--bg-subtle-hover);
   color: var(--fg-default);
   font-weight: 600;
@@ -686,71 +762,10 @@
   background-color: var(--status-amber-fg);
 }
 
-.btn-file-toggle-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-file-toggle-wrap:hover {
-  background-color: var(--bg-subtle-hover);
-  color: var(--fg-default);
-  border-color: var(--border-muted);
-}
-
-.btn-file-toggle-wrap.active {
+.file-viewer-container .btn-file-toggle-wrap.active {
   color: var(--accent-primary);
   background-color: var(--bg-surface);
   border-color: var(--border-muted);
-}
-
-.btn-file-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-muted);
-  border-radius: var(--radius-sm);
-  color: var(--fg-muted);
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-file-copy:hover {
-  background-color: var(--bg-subtle-hover);
-  color: var(--fg-default);
-  border-color: var(--fg-subtle);
-}
-
-.btn-file-close {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  color: var(--status-red, #f85149);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.btn-file-close:hover {
-  background-color: transparent;
-  color: var(--status-red, #f85149);
-  border-color: transparent;
-  opacity: 0.8;
 }
 
 .file-viewer-body {
@@ -1057,17 +1072,6 @@
     font-size: 11px;
   }
 
-  .file-viewer-actions {
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .btn-file-close {
-    width: 32px;
-    height: 32px;
-    min-width: 32px;
-    min-height: 32px;
-  }
 
   .file-tree-controls {
     padding: 8px 10px;
