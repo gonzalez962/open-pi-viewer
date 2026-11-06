@@ -62,6 +62,10 @@ The existing authentication, IPC, OAuth, and SSE routes are shared with developm
 
 `npm run preview` remains a frontend-only preview, not the service startup command.
 
+### Engram project remotes in web mode
+
+The web bridge recognizes optional per-project remotes reported by compatible Engram installations while continuing to support base Engram's global cloud status. Project authentication is independent of the global token; when CLI status is unavailable, enrollment is unknown rather than inferred from a token. This support is web-only; desktop follow-up is tracked in [#199](https://github.com/gonzalez962/open-pi-viewer/issues/199).
+
 ### GitHub credentials in web mode
 
 In Settings, save or explicitly replace or clear a GitHub personal access token. Web clients see configured status, not the saved token. The webserver stores it in viewer storage and uses it for GitHub operations and newly spawned processes; it is not an encrypted vault. Restrict access to that storage and the service OS account, including its process environment. Use authenticated access and HTTPS for remote deployments: a token entered over HTTP can be observed in transit.
@@ -227,6 +231,10 @@ Tauri IPC does not expose generic command execution or raw RPC pass-through. The
 - **Process Termination Scope**: Direct child process termination signals and reaps the immediate Node process. In read-only or controlled mutation mode, Node reaps managed child operations. However, direct process termination does not guarantee process-tree cleanup across all platforms if descendant processes were spawned by terminal tools or extensions; full OS-level process-tree management (such as Windows Job Objects or POSIX process groups) would be required if arbitrary external tools or subagents were executed.
 
 ### Subagent activity
+
+### Prompt history
+
+In the prompt editor, press **↑ at the start of the text** to recall earlier user prompts from the loaded session messages. Press **↓ at the end of the text** to move forward; advancing past the newest prompt restores your unsent draft. Repeated arrows continue browsing. Editing a recalled prompt starts a new draft. History browsing is isolated per project/session and recalls text only, leaving current attachments unchanged. Older messages must be loaded to become available. Arrow keys elsewhere, modified arrows, text selections, and the command palette retain their normal behavior.
 
 When a compatible gentle-agents activity hook publishes active tasks, **Subagent process** appears in the conversation with the active count. Select it or press **Alt+A** to inspect the received activity; select a task to follow its live updates and press **Escape** to close. Thread details may be partial or unavailable when the publisher limits its payload. Without the hook or active tasks, the entry and shortcut remain inactive.
 

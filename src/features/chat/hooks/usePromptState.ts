@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   abortPi,
   sendPromptPi,
@@ -69,8 +69,7 @@ export interface UsePromptStateOptions {
    */
   pinAndJumpToBottom: () => void;
   /**
-   * Active project's chat messages, used only by the Alt+C / Alt+I global code shortcuts
-   * (Issue #7) to locate the last assistant message's code blocks.
+   * Active session messages: prompt history and the Alt+C / Alt+I code shortcuts.
    */
   messages: ChatMessage[];
   /** Active UI language, used to localize the "/help" guide and the "/reload" notice. */
@@ -186,18 +185,30 @@ export function usePromptState({
   commands = COMMANDS,
   helpCommands = commands,
 }: UsePromptStateOptions) {
-  const [drafts, setDrafts] = useState<Map<string, { prompt: string; attachedFiles: AttachedFile[] }>>(() => new Map());
+  const [drafts, setDrafts] = useState<Map<string, {
+    prompt: string;
+    attachedFiles: AttachedFile[];
+    history?: { entries: string[]; index: number; original: string };
+  }>>(() => new Map());
   const draftKey = JSON.stringify([projectId, sessionId]);
   const draft = drafts.get(draftKey);
   const prompt = draft?.prompt ?? '';
   const attachedFiles = draft?.attachedFiles ?? [];
+  const historyCaret = useRef<{ input: HTMLTextAreaElement; backward: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const caret = historyCaret.current;
+    historyCaret.current = null;
+    if (!caret || document.activeElement !== caret.input) return;
+    const position = caret.backward ? 0 : caret.input.value.length;
+    caret.input.setSelectionRange(position, position);
+  });
 
   // Capture the identity in each callback so delayed work updates its original draft.
   const setPrompt = useCallback<React.Dispatch<React.SetStateAction<string>>>((update) => {
     setDrafts((previous) => {
       const current = previous.get(draftKey) ?? { prompt: '', attachedFiles: [] };
       const next = new Map(previous);
-      next.set(draftKey, { ...current, prompt: typeof update === 'function' ? update(current.prompt) : update });
+      next.set(draftKey, { ...current, history: undefined, prompt: typeof update === 'function' ? update(current.prompt) : update });
       return next;
     });
   }, [draftKey]);
@@ -439,6 +450,35 @@ export function usePromptState({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const input = e.currentTarget;
+      if (e.defaultPrevented || e.nativeEvent.isComposing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey
+        || input.selectionStart !== input.selectionEnd) return;
+      const backward = e.key === 'ArrowUp';
+      // Only the absolute text boundaries intercept arrows; wrapped and multiline
+      // cursor movement elsewhere stays native to the textarea.
+      if (input.selectionStart !== (backward ? 0 : input.value.length)) return;
+      const entries = draft?.history?.entries ?? messages
+        .filter(message => message.role === 'user' && message.content.trim())
+        .map(message => message.content);
+      if (!entries.length || (!backward && !draft?.history)) return;
+      e.preventDefault();
+      setDrafts(previous => {
+        const current = previous.get(draftKey) ?? { prompt: '', attachedFiles: [] };
+        const history = current.history ?? { entries, index: entries.length, original: current.prompt };
+        const index = Math.max(0, Math.min(history.entries.length, history.index + (backward ? -1 : 1)));
+        const next = new Map(previous);
+        next.set(draftKey, {
+          ...current,
+          prompt: history.entries[index] ?? history.original,
+          history: index === history.entries.length ? undefined : { ...history, index },
+        });
+        return next;
+      });
+      // Position after the controlled value commits, before the next keyboard event.
+      historyCaret.current = { input, backward };
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void handleSend(e);

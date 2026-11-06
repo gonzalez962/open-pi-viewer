@@ -65,8 +65,8 @@ export function getEngramProjectImpl(cwd?: string): string | null {
   if (fs.existsSync(configPath)) {
     try {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      if (cfg.name || cfg.project) {
-        const val = String(cfg.name || cfg.project).trim();
+      if (cfg.project_name || cfg.name || cfg.project) {
+        const val = String(cfg.project_name || cfg.name || cfg.project).trim();
         if (val && val.toLowerCase() !== 'none yet') {
           detected = val;
         }
@@ -91,7 +91,7 @@ export function getEngramProjectImpl(cwd?: string): string | null {
   return detected;
 }
 
-export function parseEngramCloudStatus(stdout: string): EngramCloudStatus {
+export function parseEngramCloudStatus(stdout: string, project?: string): EngramCloudStatus {
   let configured = false;
   let serverUrl: string | null = null;
   let authReady = false;
@@ -100,10 +100,31 @@ export function parseEngramCloudStatus(stdout: string): EngramCloudStatus {
   let daemonPort: number | null = null;
   let reasonCode: string | null = null;
   let lastError: string | null = null;
+  let projectRemote: { serverUrl: string | null; authReady: boolean } | null = null;
+  let inProjectRemotes = false;
 
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim();
     const lower = trimmed.toLowerCase();
+
+    if (trimmed === 'Project remotes:') {
+      inProjectRemotes = true;
+      continue;
+    }
+    if (inProjectRemotes && trimmed.startsWith('- ')) {
+      const prefix = `- ${project}: `;
+      if (project && trimmed.startsWith(prefix)) {
+        const detail = trimmed.slice(prefix.length);
+        if (detail.startsWith('invalid override (')) {
+          projectRemote = { serverUrl: null, authReady: false };
+        } else {
+          const remote = detail.match(/^server=(\S+) token (set(?:, \S+)?|not set) remote_id=\S+$/);
+          if (remote) projectRemote = { serverUrl: remote[1], authReady: remote[2].startsWith('set') };
+        }
+      }
+      continue;
+    }
+    inProjectRemotes = false;
 
     if (lower.startsWith('cloud status:')) {
       configured = lower.includes('configured') && !lower.includes('not configured');
@@ -132,6 +153,12 @@ export function parseEngramCloudStatus(stdout: string): EngramCloudStatus {
       const rest = trimmed.slice('reason_message:'.length).trim();
       if (rest) lastError = rest;
     }
+  }
+
+  if (projectRemote) {
+    configured = projectRemote.serverUrl !== null;
+    serverUrl = projectRemote.serverUrl;
+    authReady = projectRemote.authReady;
   }
 
   return {
@@ -213,7 +240,7 @@ export async function getEngramCloudStatusImpl(project?: string, cwd?: string) {
     });
 
     if (out && out.trim().length > 0) {
-      status = parseEngramCloudStatus(out);
+      status = parseEngramCloudStatus(out, p || undefined);
     }
   } catch {}
 
@@ -247,15 +274,24 @@ export async function getEngramCloudStatusImpl(project?: string, cwd?: string) {
       try {
         const cloudData = JSON.parse(fs.readFileSync(cloudJsonPath, 'utf8'));
         const projOverride = p && cloudData.projects && cloudData.projects[p];
-        const serverUrl = projOverride?.server_url || cloudData.server_url || getBridgeConfig().engramServerUrl;
-        const isAuthReady = Boolean(projOverride?.token || cloudData.token);
-        const isEnrolled = Boolean(projOverride && projOverride.token);
+        let overrideUrl: string | null = null;
+        if (projOverride && typeof projOverride.server_url === 'string') {
+          const value = projOverride.server_url.trim();
+          try {
+            const parsed = new URL(value);
+            if ((parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname && !value.includes('?') && !value.includes('#')) {
+              overrideUrl = value;
+            }
+          } catch {}
+        }
+        const serverUrl = projOverride ? overrideUrl : cloudData.server_url || getBridgeConfig().engramServerUrl;
+        const isAuthReady = Boolean(projOverride ? overrideUrl && projOverride.token : cloudData.token);
 
         status = {
-          configured: true,
+          configured: !projOverride || overrideUrl !== null,
           serverUrl,
           authReady: isAuthReady,
-          enrolled: isEnrolled,
+          enrolled: null,
           daemonRunning: false,
           daemonPort: null,
           phase: null,

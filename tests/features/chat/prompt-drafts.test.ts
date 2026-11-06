@@ -9,13 +9,18 @@ const bundle = build({
     import {createRoot} from 'react-dom/client';
     import {usePromptState} from './src/features/chat/hooks/usePromptState.ts';
     import {PromptControls} from './src/features/chat/PromptControls.tsx';
+    import {useCommandPalette} from './src/features/chat/hooks/useCommandPalette.ts';
     function App() {
       const [context, setContext] = useState({projectId:'A', sessionId:'1', busy:false});
+      const [messages, setMessages] = useState([]);
+      window.setMessages = setMessages;
       const hook = usePromptState({...context, isReadyToSend:!context.busy, isBusy:context.busy, canQueue:context.busy,
-        pendingPromptId:null, dispatch: action => window.actions.push(action), pinAndJumpToBottom:()=>{}, messages:[], language:'en',
+        pendingPromptId:null, dispatch: action => window.actions.push(action), pinAndJumpToBottom:()=>{}, messages, language:'en',
         onNewConversation:()=>{}, onReload:()=>({status:'busy'}), onExport:args=>window.exports.push(args)});
+      const palette = useCommandPalette({prompt:hook.prompt, setPrompt:hook.setPrompt});
       window.hook = hook; window.setContext = setContext;
-      return <form onSubmit={hook.handleSend}><textarea value={hook.prompt} onChange={e=>hook.setPrompt(e.target.value)} />
+      return <form onSubmit={hook.handleSend}><textarea value={hook.prompt} onChange={e=>hook.setPrompt(e.target.value)}
+        onKeyDown={e=>{if (!palette.handleKeyDown(e)) hook.handleKeyDown(e);}} />
         <output>{hook.attachedFiles.map(f=>f.name).join(',')}</output>
         <PromptControls modelInfo={{id:'model',provider:'p',input_modalities:['text']}} availableModels={[]} isChangingModel={false}
           thinkingLevel={null} availableThinkingLevels={[]} sessionStats={null} isConnected={true} isBusy={false}
@@ -153,4 +158,65 @@ for (const busy of [false,true]) test(`S3.1 ${busy ? 'queue' : 'send'} clears on
   assert.equal(actions[0].type,busy ? 'PROMPT_QUEUED' : 'PROMPT_SUBMIT');
   await context(page,'A','1');
   assert.equal((await draft(page)).text,'other');
+}));
+
+async function history(page: any) {
+  await page.evaluate(() => (window as any).setMessages([
+    {id:'1', role:'user', content:'first prompt'},
+    {id:'2', role:'assistant', content:'not a prompt'},
+    {id:'3', role:'user', content:'latest prompt'},
+  ]));
+  await page.waitForTimeout(30);
+}
+
+test('prompt history traverses loaded user messages, clamps and restores draft without sending', async () => withPage(async page => {
+  await history(page);
+  const input = page.locator('textarea');
+  await input.fill('unsent draft');
+  await input.press('Home');
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), 'latest prompt');
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), 'first prompt');
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), 'first prompt');
+  await input.press('End');
+  await input.press('ArrowDown');
+  assert.equal(await input.inputValue(), 'latest prompt');
+  await input.press('ArrowDown');
+  assert.equal(await input.inputValue(), 'unsent draft');
+  assert.deepEqual(await page.evaluate('window.actions'), []);
+}));
+
+test('history preserves cursor editing, selections, modifiers and command palette priority', async () => withPage(async page => {
+  await history(page);
+  const input = page.locator('textarea');
+  await input.fill(`line one\nline two`);
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), `line one\nline two`);
+  await input.fill('draft');
+  await input.press('Home');
+  await input.press('Shift+ArrowUp');
+  assert.equal(await input.inputValue(), 'draft');
+  await input.fill('/');
+  await input.press('Home');
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), '/');
+}));
+
+test('history resets after edits and does not leak between sessions', async () => withPage(async page => {
+  await history(page);
+  const input = page.locator('textarea');
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), 'latest prompt');
+  await input.fill('edited prompt');
+  await input.press('End');
+  await input.press('ArrowDown');
+  assert.equal(await input.inputValue(), 'edited prompt');
+  await context(page,'A','2');
+  await page.evaluate(() => (window as any).setMessages([]));
+  await input.press('ArrowUp');
+  assert.equal(await input.inputValue(), '');
+  await context(page,'A','1');
+  assert.equal(await input.inputValue(), 'edited prompt');
 }));
