@@ -45,11 +45,12 @@ export function modelsReducer(
 
     case 'MODEL_CHANGE_SUCCESS': {
       const key = getModelStatsKey(action.payload.model);
+      const previousKey = getModelStatsKey(state.modelInfo);
       return {
         ...state,
         isChangingModel: false,
         modelInfo: action.payload.model,
-        sessionStats: key && state.modelStats[key] ? state.modelStats[key] : !getModelStatsKey(state.modelInfo) ? state.sessionStats : null,
+        sessionStats: key && state.modelStats[key] ? state.modelStats[key] : !previousKey || key === previousKey ? state.sessionStats : null,
         thinkingLevel:
           action.payload.thinkingLevel !== undefined
             ? action.payload.thinkingLevel

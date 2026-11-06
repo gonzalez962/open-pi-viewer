@@ -67,6 +67,34 @@ test('S1.3 initializing model metadata preserves recorded session usage', () => 
   assert.equal(state.sessionStats?.contextUsage?.tokens, 1200);
 });
 
+test('S1.1 same-model restoration retains statistics received before session hydration', () => {
+  const model = { id: 'model', provider: 'provider' };
+  const stats = usage('session-a', 1200);
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a' };
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats } });
+  state = chatReducer(state, { type: 'SESSION_READY', payload: { sessionId: 'session-a', messages: [], model } });
+  assert.equal(calculateContextMetrics(state.sessionStats, state.modelInfo).contextTokens, 1200);
+  state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: { ...model } } });
+  assert.equal(calculateContextMetrics(state.sessionStats, state.modelInfo).contextTokens, 1200);
+});
+
+test('MODEL_CHANGE_SUCCESS retains cached statistics precedence and resets on an uncached model switch', () => {
+  const a = { id: 'a', provider: 'provider' };
+  const b = { id: 'b', provider: 'provider' };
+  const statsA = usage('session-a', 1200);
+  const statsB = usage('session-a', 2300);
+  let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a', modelInfo: a };
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats: statsA } });
+  state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: b } });
+  assert.equal(state.sessionStats, null);
+  state = chatReducer(state, { type: 'SET_SESSION_STATS', payload: { stats: statsB } });
+  state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsA);
+  state = { ...state, sessionStats: statsB };
+  state = chatReducer(state, { type: 'MODEL_CHANGE_SUCCESS', payload: { model: a } });
+  assert.deepEqual(state.sessionStats, statsA);
+});
+
 test('CONNECT_SUCCESS preserves session usage when model metadata is first initialized', () => {
   const stats: SessionStats = { ...usage('session-a', 1200), userMessages: 3, tokens: { input: 500, output: 200, total: 700 }, cost: 0.25 };
   let state: ChatSessionState = { ...INITIAL_STATE, sessionId: 'session-a' };
