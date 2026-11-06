@@ -208,7 +208,7 @@ export const App: React.FC = () => {
   // Separate Settings draft state for connection configuration. settingsDraft's initial
   // value depends on `config`, which now comes from useConnection below, so its
   // declaration moves there too; the other settings-panel state is independent and stays.
-  const [todoExpanded, setTodoExpanded] = useState(true);
+  const [todoExpanded, setTodoExpanded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);

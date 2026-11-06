@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import webpush from 'web-push';
 import { AgentOutcomeTracker } from '../../src/core/agent-outcome';
+import { CompletionNotifications } from '../../src/core/completion-notifications';
 import en from '../../src/shared/locales/en.json';
 import es from '../../src/shared/locales/es.json';
 import { validateSameOrigin, type WebAuthInstance } from './web-auth';
@@ -634,16 +635,22 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
   // Push Dispatcher: Handles RPC Waiting and Settled Events
   // -------------------------------------------------------------------------
   const outcomeTracker = new AgentOutcomeTracker();
+  const completions = new CompletionNotifications();
   const dispatchPushEvent = async (event: {
     type: string;
     cwd?: string;
     [key: string]: any;
   }): Promise<void> => {
+    if (event.type === 'runtime_disconnected') {
+      completions.clear(event);
+      return;
+    }
     const outcome = outcomeTracker.observe(event);
+    const completedEvent = completions.observe(event, outcome);
     const isWaiting = event.type === 'extension_ui_request'
       && ['select', 'confirm', 'input', 'editor'].includes(event.method);
-    if (event.type !== 'agent_settled' && !isWaiting) return;
-    if (subscriptions.size === 0 || outcome === null) return;
+    if (!completedEvent && !isWaiting) return;
+    if (subscriptions.size === 0 || (outcome === null && !isWaiting)) return;
     const eventType = isWaiting ? 'waiting_input' : outcome ?? 'task_complete';
 
     const sendFn = options.sendNotification || (async (subData, payloadStr, sendOpts) => {
@@ -689,7 +696,7 @@ export function createWebPush(options: WebPushOptions = {}): WebPushService {
         if (!isOwnerAuthorized(record.owner)) continue;
 
         // 3. Resolve origin name according to hierarchy
-        const origin = resolveOriginName(event.cwd, record.projects, options.gitResolver);
+        const origin = resolveOriginName(completedEvent?.cwd ?? event.cwd, record.projects, options.gitResolver);
 
         // 4. Construct title and body based on language and origin
         const strings = record.language === 'es' ? es : en;

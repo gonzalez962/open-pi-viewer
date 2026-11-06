@@ -88,6 +88,7 @@ export class PiRpcSession {
   }
 
   public kill() {
+    dispatchPushNotificationHooks({ type: 'runtime_disconnected', cwd: this.cwd, sessionId: this.sessionId, sessionFile: this.sessionFile });
     this.activeJobs = [];
     this.pendingExtensionPrompts.clear();
     this.activity = 'idle';
@@ -221,6 +222,7 @@ export class PiRpcSession {
 
     this.child.on('exit', (code, signal) => {
       if (this.child !== childProc) return;
+      dispatchPushNotificationHooks({ type: 'runtime_disconnected', cwd: this.cwd, sessionId: this.sessionId, sessionFile: this.sessionFile });
       this.pendingExtensionPrompts.clear();
       this.activeJobs = [];
       this.activity = 'idle';
@@ -342,7 +344,7 @@ export class PiRpcSession {
         }
       }
 
-      if (data.type === 'agent_start' || data.type === 'message_end') {
+      if (data.type === 'agent_start' || data.type === 'message_end' || data.type === 'tool_execution_end' || (data.type === 'extension_ui_request' && data.method === 'setWidget')) {
         dispatchPushNotificationHooks(data);
       }
       broadcastSse('pi://event', data);

@@ -38,6 +38,8 @@ When opening Pi Viewer in a web browser with system notifications enabled, an un
 
 ## Authorization and delivery boundaries
 
+Successful completion is sent after the main turn settles and all jobs and running, queued, or waiting subagents in that session finish. Errors and input requests remain immediate; cancellation does not send a success. A disconnected or replaced runtime cannot release an old pending success.
+
 - With web authentication enabled, delivery pauses when the device's login session expires and stops after logout. Open Pi Viewer and sign in again to renew the subscription authorization.
 - Subscription records follow in-memory authorization leases. Local browser identities also expire after 24 hours; reopen Pi Viewer to renew. After a server restart, reopen Pi Viewer to synchronize the existing browser subscription. Authentication-enabled deployments continue using login leases, not local identities.
 - The server avoids sending push to a device's login session while it has an active, authorized viewer event connection; existing in-page alerts handle that session. Other subscribed devices with no active connection still receive push.

@@ -48,7 +48,17 @@ try {
   console.log('PASS S2.1/S2.3 absent hooks hidden; Alt+A no-op');
   await page.waitForFunction(() => { try { window.emitFixture({ type: 'runtime_snapshot', sessionId: 's1', sessionFile: '/fixture/s1', messages: [], activity: 'idle' }); return true; } catch { return false; } });
   await page.evaluate(() => window.emitFixture({ type: 'tool_execution_end', sessionId: 's1', toolCallId: 'todo1', toolName: 'todo', result: { content: [], details: { gentleTodo: { tasks: [{ id: 1, title: 'Browser task', status: 'pending' }], nextId: 2, updatedTurn: 1 } } } }));
+  const todoToggle = page.locator('.todo-toggle');
+  await todoToggle.waitFor({ timeout: 5000 });
+  assert.equal(await todoToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.getByText('Browser task').count(), 0);
+  await todoToggle.click();
   await page.getByText('Browser task').waitFor({ timeout: 5000 });
+  assert.equal(await todoToggle.getAttribute('aria-expanded'), 'true');
+  await todoToggle.click();
+  assert.equal(await todoToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.getByText('Browser task').count(), 0);
+  console.log('PASS todo collapsed by default; manual expansion and collapse preserved');
   const placement = await page.evaluate(() => ({ todo: document.querySelector('.todo-panel').getBoundingClientRect().bottom, prompt: document.querySelector('#prompt-input').getBoundingClientRect().top }));
   assert.ok(placement.todo <= placement.prompt);
   console.log('PASS S1.1/S4.1 todo above composer');

@@ -9,6 +9,7 @@ import {
   type NotifyAppEventParams,
 } from '@infra/notifications';
 import { AgentOutcomeTracker } from '@core/agent-outcome';
+import { CompletionNotifications } from '@core/completion-notifications';
 import { parseJobChange } from '@core/job-activity';
 import { parseTodo, todoFromHistory } from '@core/todo';
 import { parseSubagentSnapshot } from '@core/agent-activity';
@@ -99,6 +100,7 @@ export class SessionEventController {
   private readonly notifyAppEventFn: (params: NotifyAppEventParams) => void;
   private readonly pendingDialogRequests = new Map<string, PendingDialogRequest>();
   private readonly outcomeTracker = new AgentOutcomeTracker();
+  private readonly completions = new CompletionNotifications();
   private readonly attentionTurns = new Map<string, Set<string>>();
 
   constructor(options: SessionEventControllerOptions) {
@@ -155,13 +157,22 @@ export class SessionEventController {
       } catch { deliver(folderName); }
     };
     const outcome = this.outcomeTracker.observe({ ...event, cwd: notificationCwd });
+    const notificationEvent = this.completions.observe({ ...event, cwd: notificationCwd }, outcome);
     const targetProjectId = this.resolveTargetProjectId(event.cwd as string | undefined);
     const attentionSessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
     const attentionKey = JSON.stringify([targetProjectId ?? '', attentionSessionId ?? event.sessionFile ?? '']);
     if (eventType === 'agent_start') this.attentionTurns.delete(attentionKey);
-    if (eventType === 'agent_settled') {
-      this.emitAttention(targetProjectId, attentionSessionId, attentionKey, outcome === null ? null : outcome ?? 'task_complete', 'settled');
-    } else if (eventType === 'extension_ui_request' && isSupportedDialogExtensionUiRequest(event as unknown as ExtensionUiRequest)) {
+    if (notificationEvent) {
+      this.emitAttention(targetProjectId, attentionSessionId, attentionKey, outcome ?? 'task_complete', 'settled');
+      const selected = targetProjectId && this.options.getProjectSessionId
+        ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
+      if (!attentionSessionId || !selected || attentionSessionId === selected || eventType !== 'agent_settled') {
+        const prefs = this.options.getPreferences ? this.options.getPreferences() : loadUiPreferences().preferences;
+        const type = outcome ?? 'task_complete';
+        notifyWithOrigin({ eventType: type, sessionId: attentionSessionId ?? selected ?? undefined, projectId: targetProjectId, title: translate(prefs?.language ?? DEFAULT_LOCALE, `notifications.${type}_title`), body: translate(prefs?.language ?? DEFAULT_LOCALE, `notifications.${type}_body`), preferences: prefs?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES });
+      }
+    }
+    if (eventType === 'extension_ui_request' && isSupportedDialogExtensionUiRequest(event as unknown as ExtensionUiRequest)) {
       const id = typeof event.id === 'string' ? event.id.trim() : '';
       if (id) this.emitAttention(targetProjectId, attentionSessionId, attentionKey, 'waiting_input', `prompt:${id}`);
     }
@@ -354,23 +365,6 @@ export class SessionEventController {
       void this.verifyAndPersistCurrentSession();
       void this.refreshSessionStats(event.cwd as string | undefined, currentSessionId, event.sessionFile as string | undefined);
 
-      const prefs = this.options.getPreferences
-        ? this.options.getPreferences()
-        : loadUiPreferences().preferences;
-      const notificationPrefs =
-        prefs?.notifications ?? DEFAULT_NOTIFICATION_PREFERENCES;
-      const locale = prefs?.language ?? DEFAULT_LOCALE;
-
-      if (outcome === null) return; // Explicit user cancellation is not a failure.
-      const notificationType = outcome ?? 'task_complete';
-      notifyWithOrigin({
-        eventType: notificationType,
-        sessionId: currentSessionId ?? undefined,
-        projectId: targetProjectId ?? undefined,
-        title: translate(locale, `notifications.${notificationType}_title`),
-        body: translate(locale, `notifications.${notificationType}_body`),
-        preferences: notificationPrefs,
-      });
     } else if (eventType === 'extension_ui_request') {
       const req = event as unknown as ExtensionUiRequest;
       if (req && req.method === 'setWidget') {
@@ -425,6 +419,9 @@ export class SessionEventController {
    * Handle incoming Pi bridge status changes.
    */
   public handleStatusChange(status: BridgeStatusPayload): void {
+    if (status.state === 'disconnected' || status.state === 'error') {
+      this.completions.clear({ type: 'disconnect', cwd: status.cwd ?? this.options.getCurrentConfig().workingDirectory, sessionId: status.sessionId, sessionFile: status.sessionFile });
+    }
     const targetProjectId = this.resolveTargetProjectId(status.cwd ?? undefined);
     if (status.state === 'error') {
       const key = JSON.stringify([targetProjectId ?? '', status.sessionId ?? '']);
