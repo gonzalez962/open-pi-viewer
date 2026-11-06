@@ -19,6 +19,7 @@ import {
   mergeProfileCatalog,
 } from '../providers';
 import { executeModelSelection } from '../lib/modelSelection';
+import { fetchSwitchedSessionStats } from '@features/sessions/session-actions';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import type { ConnectionState } from '@core/types/connection';
 import type { ChatAction } from '@core/reducer';
@@ -70,6 +71,12 @@ export function useModels({
   const enabledModelsRef = useRef<string[] | undefined>(undefined);
   const modelInfoRef = useRef(modelInfo);
   modelInfoRef.current = modelInfo;
+  const ownerRef = useRef({ connectionStatus, sessionId, projectId, cwd, generation: 0 });
+  const owner = ownerRef.current;
+  if (owner.connectionStatus !== connectionStatus || owner.sessionId !== sessionId || owner.projectId !== projectId || owner.cwd !== cwd) {
+    ownerRef.current = { connectionStatus, sessionId, projectId, cwd, generation: owner.generation + 1 };
+  }
+  useEffect(() => () => { ownerRef.current.generation++; }, []);
 
   const isSessionInitialized =
     connectionStatus === 'connected' &&
@@ -80,6 +87,14 @@ export function useModels({
 
   const handleSelectModel = useCallback(
     async (provider: string, modelId: string) => {
+      const generation = ++ownerRef.current.generation;
+      const currentOwner = { connectionStatus, sessionId, projectId, cwd };
+      const isCurrent = () => {
+        const current = ownerRef.current;
+        return current.generation === generation && currentOwner.connectionStatus === 'connected' &&
+          current.connectionStatus === currentOwner.connectionStatus && current.sessionId === currentOwner.sessionId &&
+          current.projectId === currentOwner.projectId && current.cwd === currentOwner.cwd;
+      };
       await executeModelSelection({
         provider,
         modelId,
@@ -89,8 +104,15 @@ export function useModels({
         dispatch,
         onThinkingLevelsFetched: setModelThinkingLevels,
       });
+      if (!sessionId || !isCurrent()) return;
+      const stats = await fetchSwitchedSessionStats(
+        () => getSessionStatsPi({ workingDirectory: cwd, sessionId }), sessionId
+      );
+      if (stats && isCurrent()) {
+        dispatch({ type: 'SET_SESSION_STATS', targetProjectId: projectId, payload: { stats, expectedSessionId: sessionId } });
+      }
     },
-    [availableModels, modelThinkingLevels, projectId, dispatch]
+    [availableModels, modelThinkingLevels, projectId, cwd, sessionId, connectionStatus, dispatch]
   );
 
   const handleSelectThinkingLevel = useCallback(

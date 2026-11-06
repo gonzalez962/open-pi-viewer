@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { setPiAgentDirForTest, setSubprocessSpawnerForTest } from '@server/bridge/state';
+import { setStorageFilePathForTest } from '@server/storage';
 import webpush from 'web-push';
 import {
   addPushNotificationHook,
@@ -584,7 +591,211 @@ test('installWebApi: server close of A does not suppress B with public event inj
 });
 
 
-test('WebPush classifies final outcomes without leaking response content and honors waiting preferences', async () => {
+test('S1.1 Web Push defers completion for active children and jobs', async () => {
+  const payloads: any[] = [];
+  const push = createWebPush({ webAuth: { isEnabled: () => true, authenticate: () => 'owner', validateOwnerLease: () => true } as any, config: VALID_VAPID_CONFIG, gitResolver: () => null, sendNotification: async (_sub, payload) => { payloads.push(JSON.parse(payload)); } });
+  await push.handleSubscriptions(new MockRequest({ url: '/api/push/subscriptions', method: 'POST', headers: { 'content-type': 'application/json' }, body: { subscription: SUB_A } }), new MockResponse());
+  const base = { cwd: '/project', sessionId: 'one' };
+  const widget = (status: string) => push.dispatchPushEvent({ ...base, type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status } }] })] });
+  await push.dispatchPushEvent({ ...base, type: 'agent_start' });
+  await widget('running');
+  await push.dispatchPushEvent({ ...base, type: 'tool_execution_end', toolName: 'bash_background', result: { details: { gentleJobs: { id: 'job' } } } });
+  await push.dispatchPushEvent({ ...base, type: 'agent_settled' });
+  assert.equal(payloads.length, 0);
+  await widget('completed');
+  assert.equal(payloads.length, 0);
+  await push.dispatchPushEvent({ ...base, type: 'tool_execution_end', toolName: 'job_stop', result: { details: { gentleJobs: { id: 'job' } } } });
+  assert.deepEqual(payloads.map(p => p.eventType), ['task_complete']);
+  push.dispose();
+});
+
+async function deferredPushHarness() {
+  const payloads: any[] = [];
+  const push = createWebPush({ webAuth: { isEnabled: () => true, authenticate: () => 'owner', validateOwnerLease: () => true } as any, config: VALID_VAPID_CONFIG, gitResolver: () => null, sendNotification: async (_sub, payload) => { payloads.push(JSON.parse(payload)); } });
+  await push.handleSubscriptions(new MockRequest({ url: '/api/push/subscriptions', method: 'POST', headers: { 'content-type': 'application/json' }, body: { subscription: SUB_A } }), new MockResponse());
+  const send = (cwd: string, sessionId: string, event: Record<string, unknown>) => push.dispatchPushEvent({ ...event, type: String(event.type), cwd, sessionId });
+  const widget = (cwd: string, sessionId: string, status: string) => send(cwd, sessionId, { type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status } }] })] });
+  const job = (cwd: string, sessionId: string, active: boolean) => send(cwd, sessionId, { type: 'tool_execution_end', toolName: active ? 'bash_background' : 'job_stop', result: { details: { gentleJobs: { id: 'job' } } } });
+  return { push, payloads, send, widget, job };
+}
+
+for (const settleFirst of [true, false]) {
+  test(`S1.2 Web Push ${settleFirst ? 'settlement first' : 'activity first'} with duplicates`, async () => {
+    const h = await deferredPushHarness();
+    await h.send('/one', 'one', { type: 'agent_start' });
+    await h.widget('/one', 'one', 'running');
+    await h.job('/one', 'one', true);
+    if (settleFirst) await h.send('/one', 'one', { type: 'agent_settled' });
+    await h.job('/one', 'one', false);
+    await h.job('/one', 'one', false);
+    assert.equal(h.payloads.length, 0);
+    await h.widget('/one', 'one', 'completed');
+    if (!settleFirst) {
+      assert.equal(h.payloads.length, 0);
+      await h.send('/one', 'one', { type: 'agent_settled' });
+    }
+    await h.send('/one', 'one', { type: 'agent_settled' });
+    await h.widget('/one', 'one', 'completed');
+    assert.deepEqual(h.payloads.map(p => p.eventType), ['task_complete']);
+    h.push.dispose();
+  });
+}
+
+test('S1.3 Web Push keeps concurrent session origins isolated', async () => {
+  const h = await deferredPushHarness();
+  for (const [cwd, id] of [['/one', 'one'], ['/two', 'two']]) {
+    await h.send(cwd, id, { type: 'agent_start' });
+    await h.widget(cwd, id, 'running');
+    await h.send(cwd, id, { type: 'agent_settled' });
+  }
+  assert.equal(h.payloads.length, 0);
+  await h.widget('/two', 'two', 'completed');
+  assert.equal(h.payloads.length, 1);
+  assert.match(h.payloads[0].title, /two$/);
+  await h.widget('/one', 'one', 'completed');
+  assert.equal(h.payloads.length, 2);
+  assert.match(h.payloads[1].title, /one$/);
+  h.push.dispose();
+});
+
+for (const invalidation of ['new turn', 'cancel']) {
+  test(`S1.4 Web Push malformed activity and ${invalidation} do not release stale success`, async () => {
+    const h = await deferredPushHarness();
+    await h.send('/one', 'one', { type: 'agent_start' });
+    await h.widget('/one', 'one', 'running');
+    await h.send('/one', 'one', { type: 'agent_settled' });
+    await h.send('/one', 'one', { type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: null })] });
+    assert.deepEqual(h.payloads, []);
+    await h.send('/one', 'one', { type: 'agent_start' });
+    if (invalidation === 'cancel') {
+      await h.send('/one', 'one', { type: 'message_end', message: { role: 'assistant', content: 'Cancelled', stopReason: 'aborted' } });
+      await h.send('/one', 'one', { type: 'agent_settled' });
+    }
+    await h.widget('/one', 'one', 'completed');
+    assert.deepEqual(h.payloads, []);
+    h.push.dispose();
+  });
+}
+
+for (const identity of ['known', 'unknown']) {
+  test(`S1.4 Web Push runtime disconnect with ${identity} identity cannot release pending completion`, async () => {
+    const h = await deferredPushHarness();
+    await h.send('/one', 'one', { type: 'agent_start' });
+    await h.widget('/one', 'one', 'running');
+    await h.send('/one', 'one', { type: 'agent_settled' });
+    assert.equal(h.payloads.length, 0);
+    await h.push.dispatchPushEvent({ type: 'runtime_disconnected', cwd: '/one', ...(identity === 'known' ? { sessionId: 'one' } : {}) });
+    await h.widget('/one', 'one', 'completed');
+    assert.equal(h.payloads.length, 0);
+    h.push.dispose();
+  });
+}
+
+test('S1.4 Web Push replacement snapshot cannot release pending completion', async () => {
+  const h = await deferredPushHarness();
+  await h.send('/one', 'one', { type: 'runtime_snapshot', sessionFile: '/old', activeJobs: [] });
+  await h.send('/one', 'one', { type: 'agent_start' });
+  await h.widget('/one', 'one', 'running');
+  await h.send('/one', 'one', { type: 'agent_settled' });
+  await h.send('/one', 'one', { type: 'runtime_snapshot', sessionFile: '/new', activeJobs: [] });
+  await h.widget('/one', 'one', 'completed');
+  assert.equal(h.payloads.length, 0);
+  h.push.dispose();
+});
+
+test('S1.4 bridge kill forwards runtime disconnect to Web Push', async () => {
+  resetPiRpcForTest();
+  const h = await deferredPushHarness();
+  const events: any[] = [];
+  const unsubscribe = addPushNotificationHook(event => { events.push(event); void h.push.dispatchPushEvent(event); });
+  try {
+    const session = new PiRpcSession();
+    session.cwd = '/one';
+    session.sessionId = 'one';
+    await h.send('/one', 'one', { type: 'agent_start' });
+    await h.widget('/one', 'one', 'running');
+    await h.send('/one', 'one', { type: 'agent_settled' });
+    session.kill();
+    assert.equal(events[events.length - 1]?.type, 'runtime_disconnected');
+    assert.equal(events[events.length - 1]?.sessionId, 'one');
+    await h.widget('/one', 'one', 'completed');
+    assert.equal(h.payloads.length, 0);
+  } finally {
+    unsubscribe();
+    h.push.dispose();
+    resetPiRpcForTest();
+  }
+});
+
+for (const transition of ['exit', 'replacement']) {
+  test(`S1.4 real subprocess ${transition} forwards disconnect and cannot release stale push`, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deferred-bridge-'));
+    setPiAgentDirForTest(root);
+    setStorageFilePathForTest(path.join(root, 'storage.json'));
+    resetPiRpcForTest();
+    const h = await deferredPushHarness();
+    const forwarded: any[] = [];
+    const unsubscribe = addPushNotificationHook(event => {
+      forwarded.push(event);
+      void h.push.dispatchPushEvent(event);
+    });
+    let child: ChildProcess;
+    setSubprocessSpawnerForTest(() => {
+      child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      return child;
+    });
+    const session = new PiRpcSession();
+    const originalLog = console.log;
+    try {
+      // Answer only the handshake; process creation, stdout event routing and exit remain real.
+      session.sendCommand = async () => ({ success: true, data: { sessionId: 'one', sessionFile: path.join(root, 'old') } });
+      await session.ensureRunning(root);
+      const cwd = session.cwd;
+      const emit = (event: unknown) => (child.stdout as PassThrough).emit('data', Buffer.from(JSON.stringify(event) + '\n'));
+      emit({ type: 'agent_start' });
+      emit({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status: 'running' } }] })] });
+      emit({ type: 'agent_end', willRetry: false });
+      assert.equal(h.payloads.length, 0);
+      const oldChild = child!;
+      const exited = new Promise<void>(resolve => oldChild.once('exit', () => resolve()));
+      console.log = () => {};
+      if (transition === 'exit') oldChild.kill();
+      else await session.ensureRunning(root, path.join(root, 'replacement'));
+      await exited;
+      assert.ok(forwarded.some(event => event.type === 'runtime_disconnected' && event.sessionId === 'one'));
+      await h.widget(cwd, 'one', 'completed');
+      assert.equal(h.payloads.length, 0);
+    } finally {
+      console.log = originalLog;
+      session.kill();
+      unsubscribe();
+      h.push.dispose();
+      setSubprocessSpawnerForTest(null);
+      setPiAgentDirForTest(null);
+      setStorageFilePathForTest(null);
+      resetPiRpcForTest();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('S1.2 bridge forwards activity to push hooks while preserving settled routing', () => {
+  resetPiRpcForTest();
+  const events: any[] = [];
+  const unsubscribe = addPushNotificationHook(event => events.push(event));
+  try {
+    const session = new PiRpcSession();
+    (session as any).handleStdoutLine({ type: 'tool_execution_end', toolCallId: 'start', toolName: 'bash_background', result: { details: { gentleJobs: { id: 'job' } } } });
+    (session as any).handleStdoutLine({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [] })] });
+    (session as any).handleStdoutLine({ type: 'agent_end', willRetry: false });
+    assert.deepEqual(events.map(event => event.type), ['tool_execution_end', 'extension_ui_request', 'agent_settled']);
+  } finally {
+    unsubscribe();
+    resetPiRpcForTest();
+  }
+});
+
+test('S2.1 WebPush classifies final outcomes without leaking response content and honors waiting preferences', async () => {
   const payloads: any[] = [];
   const push = createWebPush({
     webAuth: { isEnabled: () => true, authenticate: () => 'owner', validateOwnerLease: () => true } as any,

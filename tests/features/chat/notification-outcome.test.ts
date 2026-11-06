@@ -10,7 +10,7 @@ for (const [text, stopReason, expected] of [
   ['Done', 'stop', 'task_complete'],
   ['Cancelled', 'aborted', null],
 ] as const) {
-  test(`settled notification outcome: ${stopReason} / ${expected}`, () => {
+  test(`S2.1 settled notification outcome: ${stopReason} / ${expected}`, () => {
     const sent: NotifyAppEventParams[] = [];
     const controller = new SessionEventController({
       getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: '/pi.js', workingDirectory: '/repo' }),

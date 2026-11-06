@@ -6,10 +6,11 @@ function harness() {
   const attention: any[] = [];
   const actions: any[] = [];
   const notifications: any[] = [];
+  let selected = 'selected';
   const controller = new SessionEventController({
     getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: '/pi.js', workingDirectory: '/active' }),
     getCurrentSessionId: () => 'active-session',
-    getProjectSessionId: () => 'selected',
+    getProjectSessionId: (projectId: string) => projectId === 'other' ? selected : 'active-session',
     resolveTargetProjectId: (cwd: string | undefined) => cwd === '/other' ? 'other' : cwd === '/active' ? 'active' : undefined,
     dispatch: (action: Parameters<SessionEventControllerOptions['dispatch']>[0]) => actions.push(action),
     notifyAppEventFn: (event: Parameters<NonNullable<SessionEventControllerOptions['notifyAppEventFn']>>[0]) => notifications.push(event),
@@ -19,7 +20,7 @@ function harness() {
     sendExtensionUiResponseFn: async (payload: Parameters<NonNullable<SessionEventControllerOptions['sendExtensionUiResponseFn']>>[0]) => ({ id: payload.id, success: true }),
     onAttention: (event: any) => attention.push(event),
   } as any);
-  return { controller, attention, actions, notifications };
+  return { controller, attention, actions, notifications, select: (sessionId: string) => { selected = sessionId; } };
 }
 
 for (const sessionId of ['selected', 'background']) {
@@ -64,7 +65,7 @@ test('S1.2 background bridge error surfaces without active conversation dispatch
   assert.equal(attention.length, 1);
   assert.equal(attention[0].projectId, 'other');
   assert.equal(attention[0].type, 'error');
-  assert.deepEqual(actions, []);
+  assert.deepEqual(actions, [{ type: 'CLEAR_SESSION_JOBS', payload: { sessionId: 'background' }, targetProjectId: 'other' }]);
 });
 
 test('S2.2 repeated turn is deduplicated, new turn eligible, cancellation ignored', () => {
@@ -98,6 +99,37 @@ test('S1.1 unknown explicit origins do not emit attention', () => {
   controller.handleEvent({ type: 'agent_settled', cwd: '/unknown', sessionId: 'background' });
   controller.handleStatusChange({ state: 'error', label: 'Error', detail: 'failed', cwd: '/unknown', sessionId: 'background' });
   assert.deepEqual(attention, []);
+});
+
+for (const status of ['running', 'queued', 'waiting']) {
+  test(`S1.1 ${status} child defers completion attention until finished`, () => {
+    const { controller, attention } = harness();
+    const base = { cwd: '/other', sessionId: 'background' };
+    const widget = (childStatus: string) => controller.handleEvent({ ...base, type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status: childStatus } }] })] });
+    controller.handleEvent({ ...base, type: 'agent_start' });
+    widget(status);
+    controller.handleEvent({ ...base, type: 'agent_settled' });
+    assert.deepEqual(attention, [], status);
+    widget('completed');
+    assert.deepEqual(attention, [{ projectId: 'other', sessionId: 'background', type: 'task_complete' }]);
+  });
+}
+
+test('S1.3 concurrent sessions retain the original project when selection changes', () => {
+  const { controller, attention, select } = harness();
+  const child = (cwd: string, sessionId: string, status: string) => controller.handleEvent({ cwd, sessionId, type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status } }] })] });
+  for (const [cwd, sessionId] of [['/other', 'background'], ['/active', 'active-session']]) {
+    controller.handleEvent({ cwd, sessionId, type: 'agent_start' });
+    child(cwd, sessionId, 'running');
+    controller.handleEvent({ cwd, sessionId, type: 'agent_settled' });
+  }
+  assert.deepEqual(attention, []);
+  select('background');
+  controller.handleEvent({ type: 'runtime_snapshot', cwd: '/other', sessionId: 'background', sessionFile: '/background', messages: [], activity: 'idle' });
+  child('/other', 'background', 'completed');
+  assert.deepEqual(attention, [{ projectId: 'other', sessionId: 'background', type: 'task_complete' }]);
+  child('/active', 'active-session', 'completed');
+  assert.deepEqual(attention, [{ projectId: 'other', sessionId: 'background', type: 'task_complete' }, { projectId: 'active', sessionId: 'active-session', type: 'task_complete' }]);
 });
 
 test('S3.1 existing selected session completion, input and cancellation still route and notify', () => {

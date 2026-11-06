@@ -554,7 +554,10 @@ export function getProjectActivity(state: import('@core/types/chat-state').ChatS
     connectionState: state.connectionStatus,
     agentActivity: state.agentActivity,
     jobCount: Object.values(state.jobsBySession ?? {}).reduce((total, jobs) => total + jobs.length, 0),
-    isBusy: (state.connectionStatus === 'connected' && state.agentActivity === 'busy') || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0),
+    isBusy: (state.connectionStatus === 'connected' && (
+      state.agentActivity === 'busy'
+      || state.subagents.some(task => task.status === 'running' || task.status === 'queued' || task.status === 'waiting')
+    )) || Object.values(state.jobsBySession ?? {}).some(jobs => jobs.length > 0),
   };
 }
 

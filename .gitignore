@@ -51,6 +51,7 @@ server/config.json
 /.playwright-cli
 nul
 /.playwright-mcp
+/.verification/
 .workspace-*
 /.agents/skills
 /.claude/skills

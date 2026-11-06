@@ -4,7 +4,10 @@ import { INITIAL_STATE, chatReducer } from '@core/reducer';
 import { SessionEventController } from '@features/chat/session-events';
 import { deriveAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
 import { planPromptDispatch } from '@features/chat/hooks/usePromptState';
-import { getProjectStatusClass } from '@features/projects/ProjectDock';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { parseSubagentSnapshot } from '@core/agent-activity';
+import { ProjectDock, getProjectStatusClass } from '@features/projects/ProjectDock';
 import * as projects from '@features/projects/projects';
 
 function harness() {
@@ -29,6 +32,77 @@ function harness() {
   const notice = (id: string, sessionId = 'a') => emit({ type: 'message_end', sessionId, message: { role: 'custom', customType: 'gentle-jobs.notice', details: { gentleJobs: { id } }, content: '' } });
   const working = () => deriveAgentWorkingStatus(state).isWorking;
   return { controller, dispatch, selectSession, emit, start, stop, notice, working, notifications, get state() { return state; } };
+}
+
+test('project sidebar reflects live subagents after the main agent settles, including background projects', () => {
+  const idle = { ...INITIAL_STATE, connectionStatus: 'connected' as const, agentActivity: 'idle' as const };
+  const project = (id: string) => ({ id, path: `/repo/${id}`, createdAt: '', lastOpenedAt: '' });
+  for (const status of ['running', 'queued', 'waiting', 'completed', 'failed', 'cancelled']) {
+    const subagents = parseSubagentSnapshot({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'worker-1', agent: 'worker', status } }] });
+    assert.ok(subagents);
+    const live = ['running', 'queued', 'waiting'].includes(status);
+    const state = { ...idle, subagents };
+    const activity = projects.getProjectActivity(state);
+    assert.equal(activity.isBusy, live, status);
+    for (const activeProjectId of ['foreground', 'background']) {
+      const markup = renderToStaticMarkup(React.createElement(ProjectDock, {
+        projects: [project('foreground'), project('background')], activeProjectId,
+        connectionState: 'connected', agentActivity: 'idle', isBusy: false, locale: 'es',
+        projectStatusMap: { foreground: projects.getProjectActivity(idle), background: activity },
+        onSelectProject: () => {}, onRenameProject: () => {}, onRemoveProject: () => {},
+      }));
+      assert.equal((markup.match(/project-status-dot status-busy/g) ?? []).length, live ? 1 : 0, `${status}: only the working project is busy`);
+      assert.equal((markup.match(/project-status-dot status-ready/g) ?? []).length, live ? 1 : 2);
+      assert.equal(markup.includes('class="project-status-text">Agente trabajando...</span>'), live);
+      assert.ok(markup.includes('class="project-status-text">Listo</span>'));
+    }
+    assert.equal(projects.getProjectActivity({ ...state, connectionStatus: 'disconnected' }).isBusy, false, `${status}: disconnected telemetry is not live`);
+  }
+  assert.equal(projects.getProjectActivity({ ...idle, agentActivity: 'busy' }).isBusy, true, 'main agent activity still counts');
+});
+
+for (const settleFirst of [true, false]) {
+  test(`S1.2 jobs and children: ${settleFirst ? 'settlement first' : 'activity first'}, duplicates notify once`, () => {
+    const h = harness();
+    const widget = (status: string) => h.emit({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status } }] })] });
+    h.emit({ type: 'agent_start' });
+    h.start('job');
+    widget('running');
+    if (settleFirst) h.emit({ type: 'agent_settled' });
+    h.stop('job');
+    h.stop('job');
+    assert.deepEqual(h.notifications, []);
+    widget('completed');
+    if (!settleFirst) {
+      assert.deepEqual(h.notifications, []);
+      h.emit({ type: 'agent_settled' });
+    }
+    h.emit({ type: 'agent_settled' });
+    widget('completed');
+    assert.deepEqual(h.notifications, ['task_complete']);
+  });
+}
+
+for (const invalidation of ['new turn', 'cancel', 'disconnect', 'exit', 'replacement']) {
+  test(`S1.4 invalid snapshot and ${invalidation} never release stale success`, () => {
+    const h = harness();
+    const widget = (value: unknown) => h.emit({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify(value)] });
+    h.emit({ type: 'agent_start' });
+    widget({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', status: 'running' } }] });
+    h.emit({ type: 'agent_settled' });
+    widget({ schema: 'gentle-agents.activity/v1', tasks: null });
+    assert.deepEqual(h.notifications, [], invalidation);
+    if (invalidation === 'new turn') h.emit({ type: 'agent_start' });
+    if (invalidation === 'cancel') {
+      h.emit({ type: 'agent_start' });
+      h.emit({ type: 'message_end', message: { role: 'assistant', content: 'Cancelled', stopReason: 'aborted' } });
+      h.emit({ type: 'agent_settled' });
+    }
+    if (invalidation === 'disconnect' || invalidation === 'exit') h.controller.handleStatusChange({ state: invalidation === 'exit' ? 'error' : 'disconnected', cwd: '/repo', sessionId: 'a', label: 'Closed', detail: '' });
+    if (invalidation === 'replacement') h.emit({ type: 'runtime_snapshot', sessionId: 'a', sessionFile: '/repo/replacement', activity: 'idle', messages: [], activeJobs: [] });
+    widget({ schema: 'gentle-agents.activity/v1', tasks: [] });
+    assert.deepEqual(h.notifications, [], invalidation);
+  });
 }
 
 test('job counts follow starts, session switches, completion and stop', () => {
@@ -57,11 +131,12 @@ test('S2.1 successful background start survives settlement without streaming or 
   assert.equal(h.state.agentActivity, 'idle');
   assert.equal(h.state.isHydrated, true);
   assert.equal(h.state.connectionStatus, 'connected');
-  assert.deepEqual(h.notifications, ['task_complete']);
+  assert.deepEqual(h.notifications, []);
   assert.deepEqual(planPromptDispatch({ prompt: 'next prompt', hasAttachments: false, isReadyToSend: h.state.connectionStatus === 'connected' && h.state.isHydrated && !Boolean(h.state.agentActivity === ('busy' as string)) && !h.state.isResetting, canQueue: false }), { action: 'send_prompt' });
   assert.equal(h.working(), true, 'job contributes to visible working status');
   h.notice('one');
   assert.equal(h.working(), false);
+  assert.deepEqual(h.notifications, ['task_complete']);
 });
 
 test('S2.2 stop and exit remove only their own job and session contribution', () => {
