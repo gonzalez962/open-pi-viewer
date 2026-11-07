@@ -8,6 +8,8 @@ import {
 import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
+import { isWebShim } from '@infra/web-oauth-access';
+import { ProjectWorktrees } from './ProjectWorktrees';
 
 export interface ProjectDockProps {
   projects: ProjectItem[];
@@ -93,7 +95,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   locale,
   projectStatusMap,
   onSelectProject,
-  onAddProject: _onAddProject,
+  onAddProject,
   onRenameProject,
   onRemoveProject,
   isSettingsOpen,
@@ -207,8 +209,8 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             const isRowConfirming = confirmingRemoveId === project.id;
 
             return (
+              <React.Fragment key={project.id}>
               <div
-                key={project.id}
                 className={`project-row ${isActive ? 'is-active' : ''}`}
                 role="listitem"
                 onClick={() => handleRowClick(project)}
@@ -416,6 +418,8 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
                   )}
                 </div>
               </div>
+              {isWebShim() && onAddProject && <details className="project-worktrees-details"><summary>{translate(locale, 'worktrees.title')}</summary><ProjectWorktrees projectPath={project.path} locale={locale} onOpen={onAddProject} /></details>}
+              </React.Fragment>
             );
           })}
         </div>

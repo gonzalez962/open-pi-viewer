@@ -1,4 +1,12 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import type { ProjectWorktree, ListProjectWorktreesPayload, CreateProjectWorktreePayload } from '@core/types/workspace';
+
+export function listProjectWorktreesPi(payload: ListProjectWorktreesPayload, invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T> = invoke): Promise<ProjectWorktree[]> {
+  return invokeFn('list_project_worktrees', { payload });
+}
+export function createProjectWorktreePi(payload: CreateProjectWorktreePayload, invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T> = invoke): Promise<ProjectWorktree> {
+  return invokeFn('create_project_worktree', { payload });
+}
 import type { KanbanBoard } from '@core/types/kanban';
 
 export function getProjectKanbanPi(workingDirectory: string): Promise<KanbanBoard> {

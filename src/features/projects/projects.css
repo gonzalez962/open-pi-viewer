@@ -35,6 +35,17 @@
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
 }
 
+.project-worktrees-details { margin: 0 8px 4px 52px; color: var(--fg-muted); font-size: 12px; }
+.project-worktrees-details summary { cursor: pointer; }
+.project-worktrees { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
+.project-worktrees-path { display: block; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 11px; }
+.project-worktrees ul { list-style: none; padding: 0; margin: 0; }
+.project-worktrees li button { text-align: left; width: 100%; }
+.project-worktrees form, .project-worktrees label { display: flex; flex-direction: column; gap: 5px; }
+.project-worktrees input { min-width: 0; width: 100%; box-sizing: border-box; background: var(--bg-input); color: var(--fg-default); border: 1px solid var(--border-default); padding: 5px; }
+.project-worktrees-error { color: var(--status-red); overflow-wrap: anywhere; }
+.project-worktrees button:disabled { opacity: .5; }
+
 .project-dock-list {
   display: flex;
   flex-direction: column;

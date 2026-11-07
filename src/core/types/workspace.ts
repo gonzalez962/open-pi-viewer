@@ -1,3 +1,7 @@
+export interface ProjectWorktree { path: string; branch: string }
+export interface ListProjectWorktreesPayload { projectPath: string }
+export interface CreateProjectWorktreePayload extends ListProjectWorktreesPayload { branch: string; destinationPath: string }
+
 export interface WorkspaceEntry {
   name: string;
   relativePath: string;
