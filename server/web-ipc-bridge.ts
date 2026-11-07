@@ -84,6 +84,7 @@ export {
 } from './bridge/custom-providers';
 
 import { handleDeleteMcpServer, handleDeletePiResource } from './bridge/resource-deletion';
+import { listProjectWorktrees, createProjectWorktree } from './bridge/worktrees';
 
 import {
   handlePickDirectory,
@@ -337,6 +338,10 @@ export async function handleIpcCommand(cmd: string, args: any = {}, context: Web
       return handleGetProjectKanban(args);
     case 'save_project_kanban':
       return handleSaveProjectKanban(args);
+    case 'list_project_worktrees':
+      return listProjectWorktrees(args.payload);
+    case 'create_project_worktree':
+      return createProjectWorktree(args.payload);
     case 'list_workspace_dir':
       return handleListWorkspaceDir(args);
     case 'create_workspace_dir':
