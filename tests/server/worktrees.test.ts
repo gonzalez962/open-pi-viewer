@@ -104,6 +104,51 @@ test('S2.2 rejects invalid and option-like branches, occupied destinations, exis
   }
 });
 
+test('S6.1 omitted and blank destinations use a sanitized child of primary root from either checkout', async (t) => {
+  const f = fixture(t);
+  const linked = path.join(f.dir, 'caller');
+  f.git(f.repo, 'worktree', 'add', '-b', 'caller', linked);
+  const sourceHead = f.git(linked, 'rev-parse', 'HEAD');
+  const sourceBranch = f.git(linked, 'branch', '--show-current');
+  const before = f.snapshot();
+  for (const [projectPath, branch, destinationPath, label] of [
+    [f.repo, 'feature/primary', undefined, 'feature-primary'],
+    [linked, 'feature/linked', '  ', 'feature-linked'],
+  ] as const) {
+    const result = await handleIpcCommand('create_project_worktree', { payload: { projectPath, branch, ...(destinationPath === undefined ? {} : { destinationPath }) } });
+    const expected = path.join(f.repo, label);
+    assert.equal(fs.realpathSync(result.path), fs.realpathSync(expected));
+    assert.equal(f.git(expected, 'branch', '--show-current'), branch);
+    assert.equal(f.git(expected, 'rev-parse', 'HEAD'), sourceHead);
+    assert.equal(fs.existsSync(path.join(f.repo, 'feature')), false);
+  }
+  assert.equal(f.git(linked, 'rev-parse', 'HEAD'), sourceHead);
+  assert.equal(f.git(linked, 'branch', '--show-current'), sourceBranch);
+  const after = f.snapshot();
+  assert.deepEqual({ ...after, refs: before.refs, status: before.status }, before);
+});
+
+test('S6.2 collisions and reserved labels reject without mutation; explicit destination remains supported', async (t) => {
+  const f = fixture(t);
+  const occupied = path.join(f.repo, 'feature-collision');
+  fs.mkdirSync(occupied); fs.writeFileSync(path.join(occupied, 'keep.txt'), 'preserve');
+  for (const branch of ['feature/collision', 'CON', 'aux']) {
+    const before = f.snapshot();
+    await assert.rejects(handleIpcCommand('create_project_worktree', { payload: { projectPath: f.repo, branch } }), branch === 'feature/collision' ? /destination already exists/i : /reserved|unusable/i);
+    assert.deepEqual(f.snapshot(), before);
+    assert.equal(fs.readFileSync(path.join(occupied, 'keep.txt'), 'utf8'), 'preserve');
+    assert.equal(fs.existsSync(path.join(f.repo, 'feature')), false);
+  }
+  const before = f.snapshot();
+  const explicit = path.join(f.dir, 'explicit worktree');
+  const result = await f.create('feature/explicit', explicit);
+  assert.equal(fs.realpathSync(result.path), fs.realpathSync(explicit));
+  assert.equal(f.git(explicit, 'rev-parse', 'HEAD'), before.head);
+  assert.equal(f.git(explicit, 'branch', '--show-current'), 'feature/explicit');
+  const after = f.snapshot();
+  assert.deepEqual({ ...after, refs: before.refs }, before);
+});
+
 test('existing get_workspace_git_status IPC continues to report dirty source', async (t) => {
   const f = fixture(t);
   const before = f.snapshot();

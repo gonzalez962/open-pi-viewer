@@ -75,6 +75,12 @@
   border-color: var(--border-muted);
 }
 
+.btn-sidebar-icon.worktree-button.is-active {
+  color: var(--accent-primary);
+  background: var(--bg-subtle);
+  outline: 1px solid currentColor;
+}
+
 .btn-sidebar-icon:disabled {
   opacity: 0.5;
   cursor: not-allowed;

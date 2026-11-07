@@ -37,12 +37,23 @@
 
 .project-worktrees-details { margin: 0 8px 4px 52px; color: var(--fg-muted); font-size: 12px; }
 .project-worktrees-details summary { cursor: pointer; }
-.project-worktrees { display: flex; flex-direction: column; gap: 8px; padding: 8px 0; }
-.project-worktrees-path { display: block; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 11px; }
-.project-worktrees ul { list-style: none; padding: 0; margin: 0; }
-.project-worktrees li button { text-align: left; width: 100%; }
-.project-worktrees form, .project-worktrees label { display: flex; flex-direction: column; gap: 5px; }
-.project-worktrees input { min-width: 0; width: 100%; box-sizing: border-box; background: var(--bg-input); color: var(--fg-default); border: 1px solid var(--border-default); padding: 5px; }
+.worktrees-modal .project-worktrees {
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.project-worktrees { display: flex; flex-direction: column; gap: 12px; padding: 8px 0; min-width: 0; }
+.project-worktrees-path { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); font-family: var(--font-mono); font-size: 11px; }
+.project-worktrees-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.project-worktrees ul { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow-y: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-md, 8px); }
+.project-worktree-row { position: relative; display: flex; flex-direction: column; gap: 3px; text-align: left; width: 100%; min-width: 0; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--fg-default); cursor: pointer; }
+.project-worktree-row:hover, .project-worktree-row.is-current { background: var(--bg-subtle-hover); }
+.project-worktree-row.is-current { box-shadow: inset 3px 0 var(--accent-primary); }
+.project-worktree-row[style*="--repository-color"]::after { content: ''; position: absolute; left: 6px; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--repository-color); }
+.project-worktree-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.project-worktrees form, .project-worktrees label { display: flex; flex-direction: column; gap: 6px; }
+.project-worktrees form { border-top: 1px solid var(--border-muted); padding-top: 12px; gap: 10px; }
+.project-worktrees form button { align-self: flex-end; }
 .project-worktrees-error { color: var(--status-red); overflow-wrap: anywhere; }
 .project-worktrees button:disabled { opacity: .5; }
 
@@ -72,6 +83,16 @@
   transition: background-color 0.15s ease;
   user-select: none;
   min-height: 46px;
+}
+
+/* Keep rows flat and their vertical spacing unchanged; leave room for the dot. */
+.project-dock-row--worktree {
+  padding-left: 8px;
+}
+
+.project-dock:hover .project-dock-row--worktree,
+.project-dock.is-expanded .project-dock-row--worktree {
+  padding-left: 14px;
 }
 
 .project-row:hover {
@@ -108,6 +129,8 @@
   outline: none;
   flex-shrink: 0;
 }
+
+.project-tile[style*="--repository-color"]::before { content: ''; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--repository-color); }
 
 .project-tile:hover {
   background-color: var(--bg-subtle-hover);
@@ -1907,6 +1930,10 @@
 
   .project-dock {
     width: 48px;
+  }
+
+  .project-dock-row--worktree {
+    padding-left: 6px;
   }
 
   .project-dock:hover,

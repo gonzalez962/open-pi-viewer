@@ -7,6 +7,9 @@ import {
   deleteMcpServerPi,
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
+import { WorktreesModal } from '@features/projects/WorktreesModal';
+import { useProjectWorktrees } from '@features/projects/hooks/useProjectWorktrees';
+import { worktreeCache } from '@features/projects/worktree-cache';
 import type { ThinkingLevel } from '@core/types/models';
 import { mapProvidersToArray, resolveModelDefaultThinkingLevel } from '@features/providers/providers';
 import { isConfigReady, validateConnectConfig } from '@features/settings/config';
@@ -145,6 +148,7 @@ import { computeWallpaperStyles } from '@features/settings/wallpaper';
 import { useProjects } from '@features/projects/hooks/useProjects';
 import {
   findProjectByCwd,
+  isSameProjectPath,
   getProjectActivity,
   getProjectDisplayName,
   type ProjectItem,
@@ -446,6 +450,7 @@ export const App: React.FC = () => {
 
   const {
     projectsRegistry,
+    projectOrder,
     handleSelectProject,
     handleAddProject,
     handleRenameProject,
@@ -453,6 +458,7 @@ export const App: React.FC = () => {
     addProjectForPath,
   } = useProjects({
     workingDirectory: config.workingDirectory,
+    getPrimaryPath: worktreeCache.getPrimaryPath,
     isBusy,
     applyWorkingDirectory,
     onActivateProject: handleActivateProject,
@@ -1421,7 +1427,7 @@ export const App: React.FC = () => {
     const validConfig = validation.config;
 
     if (validConfig.workingDirectory !== config.workingDirectory) {
-      addProjectForPath(validConfig.workingDirectory);
+      addProjectForPath(validConfig.workingDirectory, { promote: true });
     }
 
     // Display storage failures honestly without crashing; apply configuration and
@@ -1437,6 +1443,22 @@ export const App: React.FC = () => {
   const activeProject = projectsRegistry.projects.find(
     (p) => p.id === projectsRegistry.activeProjectId
   );
+  const [worktreesOpen, setWorktreesOpen] = useState(false);
+  const { isSecondary, classify, getPrimaryPath } = useProjectWorktrees(projectsRegistry.projects, isWebShim(), 0);
+  const activeClassification = activeProject ? classify(activeProject.path) : { kind: 'unknown' as const };
+  const fallbackPath = activeClassification.kind === 'missing' ? activeClassification.primaryPath : undefined;
+  useEffect(() => {
+    if (!fallbackPath || isBusy) return;
+    const primary = projectsRegistry.projects.find(project => isSameProjectPath(project.path, fallbackPath));
+    if (primary) handleSelectProject(primary, { promote: false });
+  }, [fallbackPath, isBusy, projectsRegistry.projects, handleSelectProject]);
+  const closeWorktrees = useCallback(() => {
+    setWorktreesOpen(false);
+  }, []);
+  const openWorktree = useCallback((path: string) => {
+    handleAddProject(path);
+    closeWorktrees();
+  }, [handleAddProject, closeWorktrees]);
   const activeProjectName = activeProject ? getProjectDisplayName(activeProject) : undefined;
   const kanbanCwd = activeProject?.path ?? config.workingDirectory;
 
@@ -1651,7 +1673,9 @@ export const App: React.FC = () => {
           restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
           <ProjectDock
-            projects={projectsRegistry.projects}
+            projects={isWebShim() ? projectsRegistry.projects.filter(project => classify(project.path).kind !== 'missing') : projectsRegistry.projects}
+            isSecondaryWorktree={isWebShim() ? isSecondary : undefined}
+            getPrimaryPath={isWebShim() ? getPrimaryPath : undefined}
             activeProjectId={projectsRegistry.activeProjectId}
             connectionState={state.connectionStatus}
             agentActivity={state.agentActivity}
@@ -1662,6 +1686,7 @@ export const App: React.FC = () => {
             onRenameProject={handleRenameProject}
             onRemoveProject={handleRemoveProjectAndSync}
             projectStatusMap={projectStatusMap}
+            projectOrder={projectOrder}
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
             onOpenAddProject={handleOpenAddProject}
@@ -1672,6 +1697,8 @@ export const App: React.FC = () => {
           {(state.isSidebarOpen || isMobileNavOpen) && (
             <SessionSidebar
               projectName={activeProjectName}
+              isSecondaryWorktree={Boolean(activeProject && isSecondary(activeProject.path))}
+              onOpenWorktrees={() => setWorktreesOpen(true)}
               sessions={state.sessions}
               isLoading={state.isSessionsLoading}
               isSwitching={state.isSwitchingSession}
@@ -2557,6 +2584,7 @@ export const App: React.FC = () => {
         t={t}
       />
 
+      {isWebShim() && worktreesOpen && activeProject && <WorktreesModal projectPath={activeProject.path} locale={preferences.language} onClose={closeWorktrees} onOpen={openWorktree} />}
       <TerminalOverlay
         isOpen={terminal.isOpen}
         projectName={activeProjectName || 'Project'}

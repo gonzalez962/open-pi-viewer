@@ -1430,6 +1430,101 @@ test('projects: browseFilesystemPi provides safe fallback when invokeFn rejects'
   assert.ok(res.shortcuts.length > 0);
 });
 
+test('S12.1-S12.2: project hook persists explicit visits but not discovery or automatic selection', async (t) => {
+  const { loadProjectOrder } = await import('@features/projects/project-order');
+  const fakeStorage = createMockStorage();
+  const registry: ProjectsRegistry = {
+    activeProjectId: 'one',
+    projects: [
+      { id: 'one', path: '/one', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'two', path: '/two', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+  fakeStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(registry));
+  (globalThis as any).window = { localStorage: fakeStorage, __IS_WEB_IPC__: true };
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+  let hook!: UseProjectsResult;
+  function Harness() {
+    hook = useProjects({ workingDirectory: '/one', isBusy: false, applyWorkingDirectory: () => {} });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  hook.handleSelectProject(registry.projects[1]);
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['two']);
+  hook.addProjectForPath('/background', { activate: false });
+  hook.addProjectForPath('/automatic', { activate: true });
+  hook.handleSelectProject(registry.projects[0], { promote: false });
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['two']);
+  await hook.handleAddProject('/one');
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.deepEqual(hook.projectOrder, ['one', 'two']);
+});
+
+test('S12.3: ranked parent, existing child and newly opened child never change persisted rank', async (t) => {
+  const { loadProjectOrder, saveProjectOrder } = await import('@features/projects/project-order');
+  const store = createMockStorage();
+  const project = (id: string, path: string) => ({ id, path, createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' });
+  const parent = project('parent', '/s12-group/parent');
+  const child = project('child', '/s12-group/child');
+  const other = project('other', '/s12-group/other');
+  const newPath = '/s12-group/new-child';
+  const { createWorktreeCache } = await import('@features/projects/worktree-cache');
+  // Confirm relationships through the cache's public listing seam.
+  const cache = createWorktreeCache(async () => [parent, child, { path: newPath, branch: 'new' }].map(p => ({ path: p.path, branch: 'branch' })));
+  await cache.read(parent.path);
+  store.setItem(PROJECTS_STORAGE_KEY, JSON.stringify({ projects: [parent, child, other], activeProjectId: other.id }));
+  saveProjectOrder([other.id, child.id], store);
+  (globalThis as any).window = { localStorage: store, __IS_WEB_IPC__: true };
+  (globalThis as any).localStorage = store;
+  t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+  let hook!: UseProjectsResult;
+  function Harness() {
+    hook = useProjects({ workingDirectory: parent.path, isBusy: true, applyWorkingDirectory: () => {}, getPrimaryPath: cache.getPrimaryPath });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  hook.handleSelectProject(parent);
+  hook.handleSelectProject(child);
+  await hook.handleAddProject(newPath);
+  assert.deepEqual(loadProjectOrder(store), ['other', 'child']);
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.deepEqual(hook.projectOrder, ['other', 'child']);
+});
+
+test('S12.1: busy switching promotes the selected project and reselecting it remains a visit', async (t) => {
+  const { loadProjectOrder, saveProjectOrder } = await import('@features/projects/project-order');
+  const fakeStorage = createMockStorage();
+  const registry: ProjectsRegistry = {
+    activeProjectId: 'one',
+    projects: [
+      { id: 'one', path: '/one', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+      { id: 'two', path: '/two', createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' },
+    ],
+  };
+  fakeStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(registry));
+  saveProjectOrder(['one'], fakeStorage);
+  (globalThis as any).window = { localStorage: fakeStorage, __IS_WEB_IPC__: true };
+  (globalThis as any).localStorage = fakeStorage;
+  t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+  const applied: string[] = [], activated: string[] = [];
+  let hook!: UseProjectsResult;
+  function Harness() {
+    hook = useProjects({ workingDirectory: '/one', isBusy: true, applyWorkingDirectory: path => applied.push(path), onActivateProject: id => activated.push(id) });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  hook.handleSelectProject(registry.projects[1]);
+  assert.deepEqual(applied, ['/two']);
+  assert.deepEqual(activated, ['two']);
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['two', 'one']);
+  hook.handleSelectProject(registry.projects[1]);
+  assert.deepEqual(applied, ['/two']);
+  assert.deepEqual(activated, ['two']);
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['two', 'one']);
+});
+
 test('useProjects: handleSelectProject calls onActivateProject and applyWorkingDirectory when switching project', (t) => {
   const fakeStorage = createMockStorage();
   const initialRegistry: ProjectsRegistry = {
