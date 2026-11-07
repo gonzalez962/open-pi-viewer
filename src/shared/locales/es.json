@@ -75,6 +75,7 @@
   "sidebar.empty": "No se encontraron sesiones previas",
   "sidebar.no_search_results": "No hay sesiones que coincidan",
   "sidebar.loading": "Cargando sesiones...",
+  "sidebar.load_more": "Cargar más",
   "sidebar.status_working": "Trabajando",
   "sidebar.status_completed": "Terminada",
   "sidebar.status_waiting": "Pidiendo permiso",

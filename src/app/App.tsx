@@ -1696,6 +1696,7 @@ export const App: React.FC = () => {
 
           {(state.isSidebarOpen || isMobileNavOpen) && (
             <SessionSidebar
+              projectIdentity={JSON.stringify([projectsRegistry.activeProjectId, normalizeWorkspaceKey(config.workingDirectory || '')])}
               projectName={activeProjectName}
               isSecondaryWorktree={Boolean(activeProject && isSecondary(activeProject.path))}
               onOpenWorktrees={() => setWorktreesOpen(true)}

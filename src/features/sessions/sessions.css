@@ -242,6 +242,23 @@
   font-size: 11px;
 }
 
+.sidebar-load-more {
+  display: block;
+  margin: 12px auto 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--bg-subtle);
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sidebar-load-more:hover {
+  color: var(--fg-default);
+  background: var(--bg-subtle-hover);
+}
+
 .sidebar-groups {
   display: flex;
   flex-direction: column;
