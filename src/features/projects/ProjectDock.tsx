@@ -4,12 +4,12 @@ import {
   type ProjectStatusInfo,
   getProjectDisplayName,
   getProjectMonogram,
+  isSameProjectPath,
 } from './projects';
 import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
-import { isWebShim } from '@infra/web-oauth-access';
-import { ProjectWorktrees } from './ProjectWorktrees';
+import { getWorktreeRepositoryColor } from './worktree-colors';
 
 export interface ProjectDockProps {
   projects: ProjectItem[];
@@ -19,6 +19,9 @@ export interface ProjectDockProps {
   isBusy: boolean;
   locale: SupportedLocale;
   projectStatusMap?: Record<string, ProjectStatusInfo>;
+  projectOrder?: string[];
+  isSecondaryWorktree?: (path: string) => boolean;
+  getPrimaryPath?: (path: string) => string | undefined;
   onSelectProject: (project: ProjectItem) => void;
   onAddProject?: (customPath?: string, customName?: string) => void;
   onRenameProject: (projectId: string, newName: string) => void;
@@ -94,8 +97,10 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   isBusy,
   locale,
   projectStatusMap,
+  projectOrder = [],
+  isSecondaryWorktree,
+  getPrimaryPath,
   onSelectProject,
-  onAddProject,
   onRenameProject,
   onRemoveProject,
   isSettingsOpen,
@@ -159,6 +164,27 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
     setConfirmingRemoveId(null);
   }, []);
 
+  // Derive flat display groups only when the web lookup is available. A child
+  // belongs to a group only if its confirmed primary is registered here.
+  const children = new Map<string, ProjectItem[]>();
+  if (getPrimaryPath) {
+    for (const project of projects) {
+      const primaryPath = getPrimaryPath(project.path);
+      if (!primaryPath || isSameProjectPath(primaryPath, project.path)) continue;
+      const parent = projects.find((candidate) => isSameProjectPath(candidate.path, primaryPath));
+      if (parent) children.set(parent.id, [...(children.get(parent.id) ?? []), project]);
+    }
+  }
+  const childIds = new Set([...children.values()].flat().map((project) => project.id));
+  const groups = projects.filter((project) => !childIds.has(project.id))
+    .map((project) => [project, ...(children.get(project.id) ?? [])]);
+  if (getPrimaryPath) {
+    const ranks = new Map(projectOrder.map((id, index) => [id, index]));
+    const rank = (group: ProjectItem[]) => Math.min(...group.map(project => ranks.get(project.id) ?? Infinity));
+    groups.sort((a, b) => rank(a) - rank(b) || 0);
+  }
+  const displayProjects = groups.flat();
+
   return (
     <div className="project-dock-container">
       <aside
@@ -185,8 +211,9 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
         aria-label={translate(locale, 'projects.dock_label')}
       >
         <div className="project-dock-list" role="list">
-          {projects.map((project) => {
+          {displayProjects.map((project) => {
             const isActive = project.id === activeProjectId;
+            const primaryPath = getPrimaryPath?.(project.path);
             const displayName = getProjectDisplayName(project);
             const monogram = getProjectMonogram(displayName);
             const statusInfo: ProjectStatusInfo = projectStatusMap?.[project.id] ?? (isActive
@@ -211,13 +238,14 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             return (
               <React.Fragment key={project.id}>
               <div
-                className={`project-row ${isActive ? 'is-active' : ''}`}
+                className={`project-row ${childIds.has(project.id) ? 'project-dock-row--worktree' : ''} ${isActive ? 'is-active' : ''}`}
                 role="listitem"
                 onClick={() => handleRowClick(project)}
               >
                 <button
                   type="button"
                   className={`project-tile ${isActive ? 'is-active' : ''}`}
+                  style={primaryPath ? { '--repository-color': getWorktreeRepositoryColor(primaryPath) } as React.CSSProperties : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleRowClick(project);
@@ -226,9 +254,15 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
                   aria-current={isActive ? 'true' : undefined}
                   title={displayName}
                 >
-                  <span className="project-monogram" aria-hidden="true">
-                    {monogram}
-                  </span>
+                  {isSecondaryWorktree?.(project.path) ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                      <path d="M8 12h.5a3.5 3.5 0 013.5 3.5 3.5 3.5 0 003.5 3.5h.5" />
+                      <path d="M8.5 12A3.5 3.5 0 0012 8.5 3.5 3.5 0 0115.5 5h.5" />
+                      <rect x="16" y="16" width="6" height="6" rx="1" />
+                      <rect x="16" y="2" width="6" height="6" rx="1" />
+                      <rect x="2" y="9" width="6" height="6" rx="1" />
+                    </svg>
+                  ) : <span className="project-monogram" aria-hidden="true">{monogram}</span>}
                   <span
                     className={`project-status-dot ${statusClass}`}
                     aria-hidden="true"
@@ -418,7 +452,6 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
                   )}
                 </div>
               </div>
-              {isWebShim() && onAddProject && <details className="project-worktrees-details"><summary>{translate(locale, 'worktrees.title')}</summary><ProjectWorktrees projectPath={project.path} locale={locale} onOpen={onAddProject} /></details>}
               </React.Fragment>
             );
           })}

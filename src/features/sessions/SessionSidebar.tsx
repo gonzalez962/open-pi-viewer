@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { translate, type SupportedLocale, type TranslationKey } from '@shared/i18n';
 import type { SessionSummary } from '@core/types/sessions';
 import { SidebarSearchBar } from './components/SidebarSearchBar';
+import { isWebShim } from '@infra/web-oauth-access';
 
 export interface SessionSidebarProps {
   sessions: SessionSummary[];
@@ -19,6 +20,8 @@ export interface SessionSidebarProps {
   filesPanel: React.ReactNode;
   filesChangesCount?: number;
   projectName?: string;
+  isSecondaryWorktree?: boolean;
+  onOpenWorktrees?: () => void;
 }
 
 export type TimeGroup = 'today' | 'yesterday' | 'previous_days' | 'older';
@@ -125,6 +128,8 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   filesPanel,
   filesChangesCount,
   projectName,
+  isSecondaryWorktree,
+  onOpenWorktrees,
 }) => {
   const [activeTab, setActiveTab] = useState<'sessions' | 'files'>('sessions');
   const [searchTerm, setSearchTerm] = useState('');
@@ -199,6 +204,15 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
           </span>
         </div>
         <div className="sidebar-header-actions">
+          {isWebShim() && !isSecondaryWorktree && <button type="button" className="btn-sidebar-icon worktree-button" onClick={onOpenWorktrees} title={t('worktrees.title')} aria-label={t('worktrees.title')}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+              <path d="M8 12h.5a3.5 3.5 0 013.5 3.5 3.5 3.5 0 003.5 3.5h.5" />
+              <path d="M8.5 12A3.5 3.5 0 0012 8.5 3.5 3.5 0 0115.5 5h.5" />
+              <rect x="16" y="16" width="6" height="6" rx="1" />
+              <rect x="16" y="2" width="6" height="6" rx="1" />
+              <rect x="2" y="9" width="6" height="6" rx="1" />
+            </svg>
+          </button>}
           {activeTab === 'sessions' && (
             <button
               type="button"

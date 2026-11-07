@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pickDirectoryPi } from '@infra/bridge';
+import { isWebShim } from '@infra/web-oauth-access';
+import { loadProjectOrder, promoteProjectOrder, saveProjectOrder } from '@features/projects/project-order';
 import {
   addProject,
+  isSameProjectPath,
   decideRemoveProject,
   decideSelectProject,
   loadProjectsRegistry,
@@ -15,6 +18,7 @@ import {
 export interface UseProjectsOptions {
   /** config.workingDirectory, read to seed the initial registry and as pickDirectoryPi's default path. */
   workingDirectory: string;
+  getPrimaryPath?: (path: string) => string | undefined;
   isBusy: boolean;
   /** Inversion point: the connection cluster owns StartupManager; this hook only calls it. */
   applyWorkingDirectory: (workingDirectory: string) => void;
@@ -24,7 +28,8 @@ export interface UseProjectsOptions {
 
 export interface UseProjectsResult {
   projectsRegistry: ProjectsRegistry;
-  handleSelectProject: (project: ProjectItem) => void;
+  projectOrder: string[];
+  handleSelectProject: (project: ProjectItem, options?: { promote?: boolean }) => void;
   handleAddProject: (pickedPath?: string, customName?: string) => Promise<void>;
   handleRenameProject: (projectId: string, newName: string) => void;
   handleRemoveProject: (projectId: string) => void;
@@ -39,7 +44,7 @@ export interface UseProjectsResult {
    * Supports an optional `options.activate` flag (defaults to true) to prevent background
    * discovery/connection from hijacking the active project selection.
    */
-  addProjectForPath: (path: string, options?: { activate?: boolean }) => ProjectItem;
+  addProjectForPath: (path: string, options?: { activate?: boolean; promote?: boolean }) => ProjectItem;
 }
 
 /**
@@ -51,6 +56,7 @@ export interface UseProjectsResult {
  */
 export function useProjects({
   workingDirectory,
+  getPrimaryPath,
   isBusy,
   applyWorkingDirectory,
   onActivateProject,
@@ -58,6 +64,23 @@ export function useProjects({
   const [projectsRegistry, setProjectsRegistry] = useState<ProjectsRegistry>(
     () => loadProjectsRegistry(undefined, workingDirectory).registry
   );
+
+  const [projectOrder, setProjectOrder] = useState<string[]>(() => isWebShim() ? loadProjectOrder() : []);
+  const projectOrderRef = useRef(projectOrder);
+  const promote = useCallback((project: ProjectItem, projects: ProjectItem[]) => {
+    if (!isWebShim()) return;
+    const primary = getPrimaryPath?.(project.path);
+    if (primary && projects.some(member => {
+      if (!projectOrderRef.current.includes(member.id)) return false;
+      const memberPrimary = getPrimaryPath?.(member.path);
+      return isSameProjectPath(member.path, primary) || Boolean(memberPrimary && isSameProjectPath(memberPrimary, primary));
+    })) return;
+    const next = promoteProjectOrder(projectOrderRef.current, project.id);
+    if (next === projectOrderRef.current) return;
+    projectOrderRef.current = next;
+    setProjectOrder(next);
+    saveProjectOrder(next);
+  }, [getPrimaryPath]);
 
   const projectsRegistryRef = useRef(projectsRegistry);
   projectsRegistryRef.current = projectsRegistry;
@@ -103,8 +126,9 @@ export function useProjects({
   }, [workingDirectory, onActivateProject]);
 
   const handleSelectProject = useCallback(
-    (project: ProjectItem) => {
+    (project: ProjectItem, options?: { promote?: boolean }) => {
       const currentRegistry = projectsRegistryRef.current;
+      if (options?.promote !== false && currentRegistry.projects.some(p => p.id === project.id)) promote(project, currentRegistry.projects);
       const decision = decideSelectProject(currentRegistry, project, isBusy);
       if (decision.action === 'noop') {
         return;
@@ -116,7 +140,7 @@ export function useProjects({
       onActivateProject?.(decision.registry.activeProjectId!);
       applyWorkingDirectory(decision.path!);
     },
-    [isBusy, applyWorkingDirectory, onActivateProject]
+    [isBusy, applyWorkingDirectory, onActivateProject, promote]
   );
 
   const handleAddProject = useCallback(
@@ -143,10 +167,11 @@ export function useProjects({
       projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
 
+      promote(addedProj, nextRegistry.projects);
       onActivateProject?.(addedProj.id);
       applyWorkingDirectory(addedProj.path);
     },
-    [workingDirectory, applyWorkingDirectory, onActivateProject]
+    [workingDirectory, applyWorkingDirectory, onActivateProject, promote]
   );
 
   const handleRenameProject = useCallback(
@@ -177,7 +202,7 @@ export function useProjects({
   );
 
   const addProjectForPath = useCallback(
-    (path: string, options?: { activate?: boolean }) => {
+    (path: string, options?: { activate?: boolean; promote?: boolean }) => {
       const currentRegistry = projectsRegistryRef.current;
       const { registry: nextRegistry, project: addedProj } = addProject(
         currentRegistry,
@@ -188,13 +213,15 @@ export function useProjects({
       saveProjectsRegistry(nextRegistry);
       projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
+      if (options?.activate !== false && options?.promote) promote(addedProj, nextRegistry.projects);
       return addedProj;
     },
-    []
+    [promote]
   );
 
   return {
     projectsRegistry,
+    projectOrder,
     handleSelectProject,
     handleAddProject,
     handleRenameProject,

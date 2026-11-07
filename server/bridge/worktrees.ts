@@ -43,7 +43,7 @@ export function listProjectWorktrees(payload: { projectPath: string }): ProjectW
   return worktrees;
 }
 
-export function createProjectWorktree(payload: { projectPath: string; branch: string; destinationPath: string }): ProjectWorktree {
+export function createProjectWorktree(payload: { projectPath: string; branch: string; destinationPath?: string }): ProjectWorktree {
   const cwd = projectDirectory(payload?.projectPath);
   const branch = payload?.branch;
   if (typeof branch !== 'string' || !branch || branch.startsWith('-') || branch.includes('\0')) {
@@ -58,10 +58,21 @@ export function createProjectWorktree(payload: { projectPath: string; branch: st
   if (branch.startsWith('@{') || branch.includes('@{')) throw new Error('Invalid branch name');
 
   const destination = payload?.destinationPath;
-  if (typeof destination !== 'string' || !destination.trim() || destination.includes('\0')) {
-    throw new Error('A destination path is required');
+  if (destination !== undefined && (typeof destination !== 'string' || destination.includes('\0'))) {
+    throw new Error('Invalid destination path');
   }
-  const target = path.resolve(destination);
+  let target: string;
+  if (destination?.trim()) {
+    target = path.resolve(destination);
+  } else {
+    const label = branch.replace(/[\\/:*?"<>|\x00-\x1f]/g, '-');
+    if (!label || /^[. ]+$/.test(label) || /[. ]$/.test(label) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(label)) {
+      throw new Error('Reserved or unusable destination label');
+    }
+    const primary = listProjectWorktrees({ projectPath: cwd })[0];
+    if (!primary) throw new Error('Primary worktree is unavailable');
+    target = path.join(primary.path, label);
+  }
   try {
     fs.lstatSync(target);
     throw new Error('Destination already exists');
