@@ -1,4 +1,12 @@
 {
+  "worktrees.title": "Worktrees",
+  "worktrees.refresh": "Actualizar worktrees",
+  "worktrees.loading": "Procesando…",
+  "worktrees.detached": "HEAD separado",
+  "worktrees.branch": "Nueva rama",
+  "worktrees.destination": "Ruta de destino",
+  "worktrees.hint": "Ruta final; la carpeta superior debe existir. La rama parte del HEAD actual.",
+  "worktrees.create": "Crear worktree",
   "jobs.count_one": "{count} job activo",
   "jobs.count_many": "{count} jobs activos",
   "subagent.title": "Proceso de subagentes",

@@ -62,6 +62,10 @@ The existing authentication, IPC, OAuth, and SSE routes are shared with developm
 
 `npm run preview` remains a frontend-only preview, not the service startup command.
 
+### Git worktrees in web mode
+
+Expand **Worktrees** under a project and select **Refresh** to list its repository's worktrees by branch and path. Select a path to open it as an independent project. To create one, enter a new branch and final destination path; the destination's parent must already exist. The branch starts at the source checkout's HEAD; no fetch occurs. Refresh after external changes. Desktop does not provide these controls.
+
 ### Engram project remotes in web mode
 
 The web bridge recognizes optional per-project remotes reported by compatible Engram installations while continuing to support base Engram's global cloud status. Project authentication is independent of the global token; when CLI status is unavailable, enrollment is unknown rather than inferred from a token. This support is web-only; desktop follow-up is tracked in [#199](https://github.com/gonzalez962/open-pi-viewer/issues/199).

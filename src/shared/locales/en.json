@@ -1,4 +1,12 @@
 {
+  "worktrees.title": "Worktrees",
+  "worktrees.refresh": "Refresh worktrees",
+  "worktrees.loading": "Working…",
+  "worktrees.detached": "Detached HEAD",
+  "worktrees.branch": "New branch",
+  "worktrees.destination": "Destination path",
+  "worktrees.hint": "Final path; parent must exist. Branch starts at this checkout's HEAD.",
+  "worktrees.create": "Create worktree",
   "jobs.count_one": "{count} active job",
   "jobs.count_many": "{count} active jobs",
   "subagent.title": "Subagent process",
