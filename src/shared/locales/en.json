@@ -75,6 +75,7 @@
   "sidebar.empty": "No previous sessions found",
   "sidebar.no_search_results": "No matching sessions",
   "sidebar.loading": "Loading sessions...",
+  "sidebar.load_more": "Load more",
   "sidebar.status_working": "Working",
   "sidebar.status_completed": "Completed",
   "sidebar.status_waiting": "Needs Permission",

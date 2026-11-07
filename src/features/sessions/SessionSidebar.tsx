@@ -3,6 +3,8 @@ import { translate, type SupportedLocale, type TranslationKey } from '@shared/i1
 import type { SessionSummary } from '@core/types/sessions';
 import { SidebarSearchBar } from './components/SidebarSearchBar';
 import { isWebShim } from '@infra/web-oauth-access';
+import { pageSessions, updateSessionPage } from './session-list-pagination';
+export { matchesSessionSearch } from './session-list-pagination';
 
 export interface SessionSidebarProps {
   sessions: SessionSummary[];
@@ -20,6 +22,7 @@ export interface SessionSidebarProps {
   filesPanel: React.ReactNode;
   filesChangesCount?: number;
   projectName?: string;
+  projectIdentity?: string;
   isSecondaryWorktree?: boolean;
   onOpenWorktrees?: () => void;
 }
@@ -98,20 +101,6 @@ export function normalizeSessionName(name: string): string {
   return name.trim();
 }
 
-/**
- * True if `session` matches a (already normalized-by-caller) search query, checked
- * against its custom title, first message, and id. An empty/whitespace query matches
- * everything.
- */
-export function matchesSessionSearch(session: SessionSummary, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const title = session.customTitle?.toLowerCase() ?? '';
-  const msg = session.firstMessage?.toLowerCase() ?? '';
-  const id = session.id?.toLowerCase() ?? '';
-  return title.includes(q) || msg.includes(q) || id.includes(q);
-}
-
 export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   sessions,
   isLoading,
@@ -128,11 +117,15 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   filesPanel,
   filesChangesCount,
   projectName,
+  projectIdentity = '',
   isSecondaryWorktree,
   onOpenWorktrees,
 }) => {
   const [activeTab, setActiveTab] = useState<'sessions' | 'files'>('sessions');
   const [searchTerm, setSearchTerm] = useState('');
+  const [pageState, setPageState] = useState(() => ({ identity: projectIdentity, search: '', count: 10 }));
+  const currentPage = updateSessionPage(pageState, projectIdentity, searchTerm, false);
+  if (currentPage !== pageState) setPageState(currentPage);
   const [deletingPath, setDeletingPath] = useState<string | null>(null);
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -160,11 +153,10 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
     setEditValue('');
   };
 
-  // Filter sessions by search query
-  const filteredSessions = useMemo(() => {
-    if (!searchTerm.trim()) return sessions;
-    return sessions.filter((s) => matchesSessionSearch(s, searchTerm));
-  }, [sessions, searchTerm]);
+  const { filtered: filteredSessions, visible: visibleSessions, hasMore } = useMemo(
+    () => pageSessions(sessions, searchTerm, currentPage.count),
+    [sessions, searchTerm, currentPage.count],
+  );
 
   // Group filtered sessions chronologically
   const groupedSessions = useMemo(() => {
@@ -175,13 +167,13 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
       older: [],
     };
 
-    for (const session of filteredSessions) {
+    for (const session of visibleSessions) {
       const groupKey = categorizeSessionTime(session.modifiedAt || session.createdAt);
       groups[groupKey].push(session);
     }
 
     return groups;
-  }, [filteredSessions]);
+  }, [visibleSessions]);
 
   const groupOrder: TimeGroup[] = ['today', 'yesterday', 'previous_days', 'older'];
   const groupTitles: Record<TimeGroup, string> = {
@@ -520,6 +512,11 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
               );
             })}
           </div>
+        )}
+        {hasMore && (
+          <button type="button" className="sidebar-load-more" onClick={() => setPageState(state => updateSessionPage(state, projectIdentity, searchTerm, true))}>
+            {t('sidebar.load_more')}
+          </button>
         )}
       </div>
       </div>

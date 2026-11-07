@@ -18,6 +18,48 @@ import {
 } from '@features/sessions/session-actions';
 import type { SessionSummary } from '@core/types/sessions';
 
+test('SessionSidebar initially displays ten sessions and a localized load more button', () => {
+  const sessions: SessionSummary[] = Array.from({ length: 21 }, (_, i) => ({
+    id: `session-${i}`, path: `/session-${i}`, firstMessage: `Conversation ${i}`,
+    messageCount: 1, isActive: false,
+  }));
+  const html = renderToStaticMarkup(React.createElement(SessionSidebar, {
+    sessions, isLoading: false, isSwitching: false, error: null,
+    activeSessionId: null, activeSessionFile: null, onSelectSession: () => {},
+    onNewSession: () => {}, onDeleteSession: () => {}, onRenameSession: () => {},
+    onClose: () => {}, locale: 'es', filesPanel: null,
+  }));
+  assert.strictEqual((html.match(/class="sidebar-item /g) ?? []).length, 10);
+  assert.ok(html.includes('Conversation 9'));
+  assert.ok(!html.includes('Conversation 10'));
+  assert.ok(html.includes('Cargar más'));
+  assert.ok(html.includes('sidebar-tab-count">21'));
+});
+
+test('pagination transitions preserve refresh, reset on search or identity, and search all sessions', async () => {
+  const { pageSessions, updateSessionPage } = await import('@features/sessions/session-list-pagination');
+  const sessions: SessionSummary[] = Array.from({ length: 25 }, (_, i) => ({
+    id: `session-${i}`, path: `/${i}`, firstMessage: i === 24 ? 'hidden needle' : `conversation ${i}`,
+    messageCount: 1, isActive: false,
+  }));
+  let state = { identity: 'project/a', search: '', count: 10 };
+  let page = pageSessions(sessions, state.search, state.count);
+  assert.strictEqual(page.visible.length, 10);
+  assert.strictEqual(page.hasMore, true);
+  state = updateSessionPage(state, 'project/a', '', true);
+  page = pageSessions([...sessions], state.search, state.count);
+  assert.strictEqual(page.visible.length, 20);
+  state = updateSessionPage(state, 'project/a', '', true);
+  page = pageSessions(sessions, state.search, state.count);
+  assert.strictEqual(page.visible.length, 25);
+  assert.strictEqual(page.hasMore, false);
+  state = updateSessionPage(state, 'project/a', 'needle', false);
+  assert.strictEqual(state.count, 10);
+  assert.deepStrictEqual(pageSessions(sessions, state.search, state.count).visible.map(s => s.id), ['session-24']);
+  state = updateSessionPage({ ...state, count: 20 }, 'project/b', 'needle', false);
+  assert.strictEqual(state.count, 10);
+});
+
 test('categorizeSessionTime: classifies timestamps into today, yesterday, previous_days, and older', () => {
   const fixedNow = new Date('2026-09-19T16:00:00.000Z');
 
