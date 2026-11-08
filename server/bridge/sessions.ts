@@ -104,6 +104,43 @@ export function discoverAllProjectsWithSessions() {
   return list;
 }
 
+export function hasVisibleText(content: unknown): boolean {
+  if (typeof content === 'string') {
+    return content.trim().length > 0;
+  }
+  if (Array.isArray(content)) {
+    return content.some(
+      (block) =>
+        block &&
+        typeof block === 'object' &&
+        (block.type === 'text' || typeof block.text === 'string') &&
+        typeof block.text === 'string' &&
+        block.text.trim().length > 0
+    );
+  }
+  return false;
+}
+
+export function isConversationMessage(msg: any): boolean {
+  if (!msg || typeof msg !== 'object') return false;
+  const role = msg.role;
+  if (role === 'user') return true;
+  if (role === 'assistant') {
+    return hasVisibleText(msg.content);
+  }
+  return false;
+}
+
+export function isActivityMessage(msg: any): boolean {
+  if (!msg || typeof msg !== 'object') return false;
+  const role = msg.role;
+  if (role === 'toolResult') return true;
+  if (role === 'assistant') {
+    return !hasVisibleText(msg.content);
+  }
+  return false;
+}
+
 export function parseSessionFile(filePath: string) {
   if (!fs.existsSync(filePath)) return null;
   let stat: fs.Stats;
@@ -151,8 +188,10 @@ export function parseSessionFile(filePath: string) {
         customTitle = String(entry.data.title).trim() || undefined;
       }
       if (entry.type === 'message' && entry.message) {
-        messageCount++;
         const msg = entry.message;
+        if (isConversationMessage(msg)) {
+          messageCount++;
+        }
         const msgId = msg.id || entry.id || `msg-${i}`;
         const msgTimestamp = msg.timestamp || entry.timestamp;
         messages.push({
@@ -389,7 +428,7 @@ export async function handleConnect(args: any = {}) {
     model: piRpc.modelInfo || (getActiveCwd() === targetCwd ? getActiveModel() : null),
     sessionId: resolvedSessionId,
     sessionFile: resolvedSessionFile,
-    messageCount: messages?.length || 0,
+    messageCount: (snapshot?.messages ? snapshot.messages.filter(isConversationMessage).length : parsed?.messageCount) || 0,
     canonicalCwd: targetCwd,
     activity: snapshot?.activity ?? 'idle',
     activeJobs: snapshot?.activeJobs ?? [],
@@ -398,33 +437,6 @@ export async function handleConnect(args: any = {}) {
     ...(todo ? { todo } : {}),
     hasMore,
   };
-}
-
-function hasVisibleText(content: unknown): boolean {
-  if (typeof content === 'string') {
-    return content.trim().length > 0;
-  }
-  if (Array.isArray(content)) {
-    return content.some(
-      (block) =>
-        block &&
-        typeof block === 'object' &&
-        (block.type === 'text' || typeof block.text === 'string') &&
-        typeof block.text === 'string' &&
-        block.text.trim().length > 0
-    );
-  }
-  return false;
-}
-
-export function isActivityMessage(msg: any): boolean {
-  if (!msg || typeof msg !== 'object') return false;
-  const role = msg.role;
-  if (role === 'toolResult') return true;
-  if (role === 'assistant') {
-    return !hasVisibleText(msg.content);
-  }
-  return false;
 }
 
 export function windowMessages<T extends Record<string, any>>(
@@ -521,7 +533,7 @@ export async function handleSwitchSession(args: any = {}) {
   // Warm target session process in pool without killing or aborting other sessions!
   void getOrCreatePiRpc(getActiveCwd(), sessionPath).catch(() => {});
 
-  const totalCount = parsed.messageCount;
+  const totalCount = snapshot?.messages ? snapshot.messages.filter(isConversationMessage).length : parsed.messageCount;
   const allMsgs = snapshot?.messages ?? parsed.messages ?? [];
   const windowed = windowMessages(allMsgs, loadAll, limit, 60);
   const messagesToSend = windowed.messages;

@@ -21,6 +21,8 @@ export {
   parseSessionFile,
   listSessions,
   calculateSessionStats,
+  isConversationMessage,
+  isActivityMessage,
 } from './bridge/sessions';
 
 export type { PiChainStep, PiChain } from './bridge/sdd';
