@@ -234,7 +234,9 @@ export const App: React.FC = () => {
     pinAndJumpToBottom,
   } = useChatScroll({
     messages: state.messages,
+    projectId: multiProjectState.activeProjectId,
     sessionId: state.sessionId,
+    isHydrated: state.isHydrated && !state.isSwitchingSession,
     showSettings,
   });
 
@@ -336,9 +338,6 @@ export const App: React.FC = () => {
         },
       });
       restoreExtensionPrompts(res.pendingExtensionPrompts ?? []);
-      if (targetProjectId === projectsRegistryRef.current.activeProjectId) {
-        pinAndJumpToBottom();
-      }
     },
     onConnectError: (err: string, cfg?: ConnectConfig) => {
       const matched = cfg?.workingDirectory

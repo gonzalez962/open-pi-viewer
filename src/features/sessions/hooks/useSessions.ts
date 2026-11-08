@@ -85,7 +85,6 @@ export function useSessions({
   requestFileTreeRefresh,
   restoreExtensionPrompts,
   pinAndHide,
-  scrollToBottomNextFrame,
   startConnection,
 }: UseSessionsOptions): UseSessionsResult {
   const activeProjectIdRef = useRef(activeProjectId);
@@ -160,7 +159,6 @@ export function useSessions({
     const targetProjectId = activeProjectIdRef.current ?? undefined;
 
     try {
-      pinAndHide();
       dispatch({ type: 'SWITCH_SESSION_START', targetProjectId, payload: { sessionPath: session.path } });
       const result = await switchSessionPi(session.path);
 
@@ -179,7 +177,6 @@ export function useSessions({
       }
 
       const hydrated = hydrateChatMessages(result.messages || []);
-      pinAndHide();
       dispatch({
         type: 'SWITCH_SESSION_SUCCESS',
         targetProjectId,
@@ -211,8 +208,6 @@ export function useSessions({
       // Refresh session list
       void loadSessions();
       requestFileTreeRefresh();
-
-      scrollToBottomNextFrame();
 
       // SWITCH_SESSION_SUCCESS clears sessionStats; re-fetch them for the switched session.
       const stats = await fetchSwitchedSessionStats(() => getSessionStatsPi({ workingDirectory: config.workingDirectory, sessionId: result.sessionId, sessionFile: result.sessionFile }), result.sessionId);
