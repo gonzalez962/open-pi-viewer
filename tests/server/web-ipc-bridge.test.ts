@@ -24,6 +24,7 @@ import {
   sessionParseCache,
   invalidateSessionParseCache,
   parseSessionFile,
+  isConversationMessage,
   parseEngramProjectFromStats,
   parseEngramCloudStatus,
   clearEngramCacheForTest,
@@ -433,7 +434,7 @@ test('server/bridge: windowing ignores activity blocks so prior conversations ar
   });
 
   assert.strictEqual(res.cancelled, false);
-  assert.strictEqual(res.messageCount, 74);
+  assert.strictEqual(res.messageCount, 4);
   // All 74 messages must be returned because conversational count (4) <= limit (60)
   assert.strictEqual(res.messages.length, 74);
   assert.strictEqual(res.hasMore, false);
@@ -690,4 +691,109 @@ test('server/bridge: IPC preserves existing get_bridge_state dispatch', async ()
   assert.strictEqual(typeof state.cwd, 'string');
   assert.ok(state.cwd.length > 0);
   assert.ok(path.isAbsolute(state.cwd));
+});
+
+test('server/bridge: session messageCount excludes tool-only activity and toolResults while counting conversation messages', async (t) => {
+  setSubprocessSpawnerForTest(() => null);
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-session-count-test-'));
+  const filePath = path.join(tmpDir, 'dummy-session.jsonl');
+
+  t.after(() => {
+    setSubprocessSpawnerForTest(null);
+    resetPiRpcForTest();
+    invalidateSessionParseCache(filePath);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // Verify predicate semantics
+  assert.strictEqual(isConversationMessage({ role: 'user', content: 'hello' }), true);
+  assert.strictEqual(isConversationMessage({ role: 'assistant', content: [{ type: 'toolCall' }] }), false);
+  assert.strictEqual(isConversationMessage({ role: 'toolResult', content: 'ok' }), false);
+  assert.strictEqual(isConversationMessage({ role: 'assistant', content: 'text reply' }), true);
+  assert.strictEqual(isConversationMessage({ role: 'assistant', content: [{ type: 'text', text: 'hi' }] }), true);
+
+  const header = { type: 'session', version: 3, id: 'dummy-sess-1', timestamp: new Date().toISOString() };
+  let content = JSON.stringify(header) + '\n';
+
+  // 1. User text message (countable)
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'msg-user-1', role: 'user', content: 'What is the current status?' },
+  }) + '\n';
+
+  // 2. Assistant message containing only a toolCall (excluded from count)
+  content += JSON.stringify({
+    type: 'message',
+    message: {
+      id: 'msg-asst-toolcall',
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'call-1', name: 'status', arguments: {} }],
+    },
+  }) + '\n';
+
+  // 3. ToolResult message (excluded from count)
+  content += JSON.stringify({
+    type: 'message',
+    message: {
+      id: 'msg-toolresult-1',
+      role: 'toolResult',
+      toolCallId: 'call-1',
+      content: 'All systems green',
+    },
+  }) + '\n';
+
+  // 4. Assistant text reply (countable)
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'msg-asst-text', role: 'assistant', content: 'All systems are operating normally.' },
+  }) + '\n';
+
+  fs.writeFileSync(filePath, content, 'utf8');
+
+  // Step 1 check: 4 raw messages in history, exactly 2 conversation messages
+  const parsed = parseSessionFile(filePath);
+  assert.ok(parsed);
+  assert.strictEqual(parsed.messages.length, 4, 'Preserves all tool calls and results in history');
+  assert.strictEqual(parsed.messageCount, 2, 'Excludes tool-only assistant entry and toolResult from message count');
+
+  // Step 2: Mixed assistant content containing a conversation response + tool call (must be counted)
+  content += JSON.stringify({
+    type: 'message',
+    message: {
+      id: 'msg-asst-mixed',
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'Checking disk usage...' },
+        { type: 'toolCall', id: 'call-2', name: 'df', arguments: {} },
+      ],
+    },
+  }) + '\n';
+
+  // Followed by its toolResult (excluded)
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'msg-toolresult-2', role: 'toolResult', toolCallId: 'call-2', content: '/dev/sda1 40%' },
+  }) + '\n';
+
+  // Empty/whitespace assistant message (excluded)
+  content += JSON.stringify({
+    type: 'message',
+    message: { id: 'msg-asst-empty', role: 'assistant', content: '   ' },
+  }) + '\n';
+
+  invalidateSessionParseCache(filePath);
+  fs.writeFileSync(filePath, content, 'utf8');
+
+  const parsedWithMixed = parseSessionFile(filePath);
+  assert.ok(parsedWithMixed);
+  assert.strictEqual(parsedWithMixed.messages.length, 7, 'All 7 entries preserved in history');
+  assert.strictEqual(parsedWithMixed.messageCount, 3, 'User text (1) + assistant text (1) + mixed assistant (1) = 3');
+
+  // Verify switch_session command returns the same conversation-only count
+  const res: any = await handleIpcCommand('switch_session', {
+    payload: { sessionPath: filePath },
+  });
+  assert.strictEqual(res.cancelled, false);
+  assert.strictEqual(res.messageCount, 3);
+  assert.strictEqual(res.messages.length, 7);
 });
