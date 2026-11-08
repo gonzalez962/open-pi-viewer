@@ -786,6 +786,31 @@ test('ProjectDock: getProjectStatusLabel returns localized labels in en and es',
   assert.strictEqual(getProjectStatusLabel(false, 'disconnected', 'idle', false, 'es'), 'Inactivo');
 });
 
+test('ProjectDock list hides scrollbars without disabling scrolling', () => {
+  const css = readFileSync('src/features/projects/projects.css', 'utf8');
+  assert.match(css, /\.project-dock-list\s*\{[^}]*overflow-y: auto;[^}]*scrollbar-width: none;/);
+  assert.match(css, /\.project-dock-list::-webkit-scrollbar\s*\{[^}]*display: none;/);
+});
+
+test('ProjectDock groups settings and logout at the end', () => {
+  const markup = renderToStaticMarkup(React.createElement(ProjectDock, {
+    ...baseProjectDockProps,
+    footerControl: React.createElement('button', { 'aria-label': 'Log out' }),
+  }));
+  assert.match(markup, /class="project-footer-actions"/);
+  assert.match(markup, /project-footer-actions[\s\S]*project-footer-settings[\s\S]*aria-label="Log out"[\s\S]*<\/div><\/div><\/aside>/);
+});
+
+test('ProjectDock footer uses full-width settings and reveals matching logout only when expanded', () => {
+  const css = readFileSync('src/features/projects/projects.css', 'utf8');
+  assert.match(css, /\.project-footer-actions\s*\{[^}]*padding: 0 6px;/);
+  assert.match(css, /\.project-footer-actions > \.project-footer-settings\s*\{[^}]*width: 100%;/);
+  assert.match(css, /\.project-footer-actions > \.web-auth-logout-control\s*\{[^}]*display: none;/);
+  assert.match(css, /\.project-dock:hover \.project-footer-actions > \.web-auth-logout-control,[\s\S]*?\.project-dock\.is-expanded \.project-footer-actions > \.web-auth-logout-control\s*\{[^}]*display: block;/);
+  assert.match(css, /\.project-footer-actions \.project-tile-settings\s*\{[^}]*width: 100%;[^}]*height: 38px;[^}]*min-height: 38px;[^}]*transform: none;/);
+  assert.match(css, /\.project-footer-actions \.project-footer-row\s*\{[^}]*height: 38px;[^}]*padding: 0;/);
+});
+
 // 7. ProjectDock Settings button relocation tests
 
 function findElement(node: any, predicate: (n: any) => boolean): any {
@@ -861,8 +886,7 @@ test('ProjectDock footer: Settings button provides localized accessible labels a
   );
   assert.ok(enMarkup.includes('title="Settings"'), 'English title attribute must be Settings');
   assert.ok(enMarkup.includes('aria-label="Settings"'), 'English aria-label must be Settings');
-  assert.ok(enMarkup.includes('project-settings-label'), 'Settings label element must exist');
-  assert.ok(enMarkup.includes('>Settings</span>'), 'English text label must render Settings');
+  assert.ok(!enMarkup.includes('project-settings-label'), 'Settings must be icon-only');
 
   // Spanish
   const esMarkup = renderToStaticMarkup(
@@ -873,7 +897,7 @@ test('ProjectDock footer: Settings button provides localized accessible labels a
   );
   assert.ok(esMarkup.includes('title="Configuración"'), 'Spanish title attribute must be Configuración');
   assert.ok(esMarkup.includes('aria-label="Configuración"'), 'Spanish aria-label must be Configuración');
-  assert.ok(esMarkup.includes('>Configuración</span>'), 'Spanish text label must render Configuración');
+  assert.ok(!esMarkup.includes('>Configuración</span>'), 'Spanish Settings must be icon-only');
 });
 
 test('ProjectDock footer: Settings button reflects active state with is-active class', () => {

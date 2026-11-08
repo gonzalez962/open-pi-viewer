@@ -68,7 +68,11 @@
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+
+.project-dock-list::-webkit-scrollbar {
+  display: none;
 }
 
 .project-row {
@@ -508,7 +512,7 @@
   white-space: normal;
 }
 
-/* Footer (Add Project & Settings) */
+/* Footer (project actions and icon-only settings/logout controls) */
 .project-dock-footer {
   width: 100%;
   padding: 8px 0 5px;
@@ -516,6 +520,63 @@
   flex-direction: column;
   gap: 4px;
   flex-shrink: 0;
+}
+
+.project-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 0 6px;
+  box-sizing: border-box;
+}
+
+.project-footer-actions > .project-footer-settings {
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-footer-actions > .web-auth-logout-control {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.project-dock:hover .project-footer-actions > .web-auth-logout-control,
+.project-dock.is-expanded .project-footer-actions > .web-auth-logout-control {
+  display: block;
+}
+
+.project-footer-actions .project-footer-row {
+  height: 38px;
+  min-height: 38px;
+  padding: 0;
+  border-radius: var(--radius-md, 8px);
+}
+
+.project-footer-actions .project-tile-settings {
+  width: 100%;
+  height: 38px;
+  min-height: 38px;
+  min-width: 0;
+  box-sizing: border-box;
+  transform: none;
+}
+
+.project-footer-actions .web-auth-logout-control .web-auth-logout-btn {
+  border-radius: var(--radius-md, 8px);
+}
+
+.project-footer-actions .web-auth-logout-control .web-auth-logout-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.project-footer-actions .project-settings-label {
+  display: none;
 }
 
 .project-footer-row {
