@@ -20,6 +20,76 @@ import {
   MAX_MEDIA_FILE_BYTES,
 } from '@core/workspace/file-kind';
 
+test('home download S2.1 S3.2: home-relative, tilde and absolute paths preserve binary and empty files', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (paths as any).handleDownloadWorkspaceFile;
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-download-'));
+  const originalHome = os.homedir;
+  try {
+    os.homedir = () => fixture;
+    const bytes = Buffer.from([0, 255, 128, 42]);
+    fs.writeFileSync(path.join(fixture, '.env.example'), bytes);
+    fs.writeFileSync(path.join(fixture, 'empty.bin'), Buffer.alloc(0));
+    for (const sourcePath of ['.env.example', '~/.env.example', path.join(fixture, '.env.example')]) {
+      const result = await download({ payload: { sourcePath } });
+      assert.equal(result.name, '.env.example');
+      assert.deepEqual(Buffer.from(result.base64, 'base64'), bytes);
+    }
+    const empty = await download({ payload: { sourcePath: 'empty.bin' } });
+    assert.equal(empty.name, 'empty.bin');
+    assert.deepEqual(Buffer.from(empty.base64, 'base64'), Buffer.alloc(0));
+  } finally { os.homedir = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('home download S3.1: manual and listed paths cannot escape home, even via symlink or workspace root', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (paths as any).handleDownloadWorkspaceFile;
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-boundary-'));
+  const originalHome = os.homedir;
+  try {
+    const home = path.join(fixture, 'home');
+    const outside = path.join(fixture, 'outside');
+    fs.mkdirSync(home); fs.mkdirSync(outside);
+    const file = path.join(outside, 'data.bin');
+    const bytes = Buffer.from([0, 123, 255]);
+    fs.writeFileSync(file, bytes);
+    fs.symlinkSync(outside, path.join(home, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    os.homedir = () => home;
+    for (const payload of [
+      { sourcePath: file },
+      { sourcePath: '../outside/data.bin' },
+      { sourcePath: '~/link/data.bin' },
+      { workingDirectory: outside, relativePath: 'data.bin' },
+      { workingDirectory: home, relativePath: 'link/data.bin' },
+    ]) {
+      await assert.rejects(async () => download({ payload }));
+      assert.deepEqual(fs.readFileSync(file), bytes);
+    }
+  } finally { os.homedir = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('home download S3.2: rejects directories and files exceeding 25 MiB without modification', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (paths as any).handleDownloadWorkspaceFile;
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-limit-'));
+  const originalHome = os.homedir;
+  try {
+    os.homedir = () => fixture;
+    fs.mkdirSync(path.join(fixture, 'directory'));
+    const large = path.join(fixture, 'large.bin');
+    const fd = fs.openSync(large, 'w');
+    try { fs.ftruncateSync(fd, 25 * 1024 * 1024 + 1); } finally { fs.closeSync(fd); }
+    for (const sourcePath of ['directory', 'large.bin']) {
+      await assert.rejects(async () => download({ payload: { sourcePath } }));
+    }
+    assert.equal(fs.statSync(large).size, 25 * 1024 * 1024 + 1);
+    assert.equal(fs.statSync(path.join(fixture, 'directory')).isDirectory(), true);
+  } finally { os.homedir = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test('file editor S1.1: saves exact text and reads it back', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-'));
   try {
