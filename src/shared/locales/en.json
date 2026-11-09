@@ -1,4 +1,8 @@
 {
+  "file_tree.download": "Download",
+  "file_tree.download_path": "File path within home",
+  "file_tree.download_initiated": "Download initiated",
+  "file_tree.download_saved": "File saved",
   "worktrees.title": "Worktrees",
   "worktrees.close": "Close worktrees",
   "worktrees.refresh": "Refresh worktrees",

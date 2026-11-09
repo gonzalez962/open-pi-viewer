@@ -63,8 +63,9 @@ test('home download S2.1: general path download control is available in the file
   const markup = renderToStaticMarkup(React.createElement(FileTree, {
     workingDirectory: 'C:/home-download-fixture', locale: 'en', onOpenFile: () => {},
   }));
-  assert.match(markup, /<input[^>]*(?:aria-label|placeholder)="[^"]*(?:path|Path)/);
-  assert.match(markup, /<button[^>]*[Dd]ownload/);
+  assert.doesNotMatch(markup, /workspace-download-form/);
+  assert.match(markup, /class="btn-tree-refresh btn-tree-download"[^>]*aria-label="[^"]+"/);
+  assert.match(markup, /<svg class="download-icon"[^>]*>[\s\S]*?M12 13v8l-4-4/);
 });
 
 test('Bridge: listWorkspaceDirPi invokes list_workspace_dir command with payload', async () => {

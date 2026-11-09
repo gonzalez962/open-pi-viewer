@@ -592,6 +592,39 @@ export function handleSaveWorkspaceFile(args: any = {}): void {
   }
 }
 
+export function openDownloadWorkspaceFile(args: any = {}) {
+  const payload = args.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('File path is required');
+  const { sourcePath, workingDirectory, relativePath } = payload;
+  const keys = Object.keys(payload);
+  let requested: string;
+  let root: string;
+  if (keys.length === 1 && typeof sourcePath === 'string' && sourcePath.trim()) {
+    root = fs.realpathSync(getHomeDir());
+    requested = sourcePath === '~' ? root : sourcePath.startsWith('~/') || sourcePath.startsWith('~\\')
+      ? path.join(root, sourcePath.slice(2)) : path.resolve(root, sourcePath);
+  } else if (keys.length === 2 && typeof workingDirectory === 'string' && workingDirectory.trim() &&
+      typeof relativePath === 'string' && relativePath.trim() && !path.isAbsolute(relativePath) &&
+      !path.win32.isAbsolute(relativePath) && !/^[a-zA-Z]:/.test(relativePath) &&
+      !relativePath.replace(/\\/g, '/').split('/').includes('..')) {
+    root = fs.realpathSync(resolveCrossPlatformCwd(workingDirectory));
+    if (!fs.statSync(root).isDirectory()) throw new Error('Workspace root is not a directory');
+    requested = path.resolve(root, relativePath);
+  } else throw new Error('Invalid download payload');
+  const target = fs.realpathSync(requested);
+  const rel = path.relative(root, target);
+  if (!rel || path.isAbsolute(rel) || rel === '..' || rel.startsWith(`..${path.sep}`)) throw new Error('Access denied: outside download root');
+  const before = fs.statSync(target);
+  if (!before.isFile()) throw new Error('Not a regular file');
+  const fd = fs.openSync(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const opened = fs.fstatSync(fd);
+    const current = fs.statSync(target);
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.dev !== current.dev || opened.ino !== current.ino || fs.realpathSync(requested) !== target) throw new Error('File changed');
+    return { name: path.basename(requested), fd, size: opened.size };
+  } catch (error) { fs.closeSync(fd); throw error; }
+}
+
 export function handleReadWorkspaceFile(args: any = {}) {
   const payload = args.payload || {};
   const targetCwd = resolveCrossPlatformCwd(payload.workingDirectory || getActiveCwd());

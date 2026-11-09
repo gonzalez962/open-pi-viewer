@@ -10,7 +10,7 @@
  */
 
 export interface DownloadPayload {
-  content: string;
+  content: string | Uint8Array<ArrayBuffer>;
   filename: string;
   mimeType?: string;
 }
@@ -173,7 +173,7 @@ export function triggerDownload(
     };
   }
 
-  if (typeof content !== 'string') {
+  if (typeof content !== 'string' && !(content instanceof Uint8Array)) {
     return {
       success: false,
       initiated: false,

@@ -55,6 +55,179 @@ pub struct ReadWorkspaceFilePayload {
     pub relative_path: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DownloadWorkspaceFilePayload {
+    #[serde(default, deserialize_with = "download_optional_string")]
+    source_path: Option<String>,
+    #[serde(default, deserialize_with = "download_optional_string")]
+    working_directory: Option<String>,
+    #[serde(default, deserialize_with = "download_optional_string")]
+    relative_path: Option<String>,
+}
+
+fn download_optional_string<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
+}
+
+#[cfg(test)]
+#[test]
+fn download_payload_rejects_null_and_preserves_normal_variants() {
+    use serde_json::json;
+    for value in [json!({"sourcePath":"file"}), json!({"workingDirectory":"project","relativePath":"file"})] {
+        assert!(serde_json::from_value::<DownloadWorkspaceFilePayload>(value).is_ok());
+    }
+    for value in [
+        json!({"sourcePath":"file","workingDirectory":null}),
+        json!({"workingDirectory":"project","relativePath":"file","sourcePath":null}),
+        json!({"workingDirectory":"project","relativePath":null}),
+        json!({"sourcePath":null}), json!({"sourcePath":42}), json!({"sourcePath":"file","extra":true}),
+    ] {
+        assert!(serde_json::from_value::<DownloadWorkspaceFilePayload>(value).is_err());
+    }
+}
+
+#[cfg(windows)]
+fn download_identity(file: &std::fs::File) -> Result<(u32, u32, u32), String> {
+    use std::os::windows::io::AsRawHandle;
+    #[repr(C)]
+    struct Info { attributes: u32, creation: [u32; 2], access: [u32; 2], write: [u32; 2], volume: u32, size_high: u32, size_low: u32, links: u32, index_high: u32, index_low: u32 }
+    #[link(name = "kernel32")]
+    extern "system" { fn GetFileInformationByHandle(handle: *mut std::ffi::c_void, info: *mut Info) -> i32; }
+    let mut info = std::mem::MaybeUninit::<Info>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) } == 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    let info = unsafe { info.assume_init() };
+    Ok((info.volume, info.index_high, info.index_low))
+}
+
+fn copy_download(source: &mut std::fs::File, path: &Path) -> Result<(), String> {
+    let mut output = match std::fs::OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let file = std::fs::OpenOptions::new().write(true).open(path).map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let a = source.metadata().map_err(|e| e.to_string())?;
+                let b = file.metadata().map_err(|e| e.to_string())?;
+                if (a.dev(), a.ino()) == (b.dev(), b.ino()) { return Err("Destination is the source file".into()); }
+            }
+            #[cfg(windows)]
+            if download_identity(source)? == download_identity(&file)? { return Err("Destination is the source file".into()); }
+            #[cfg(not(any(unix, windows)))]
+            return Err("Destination identity unavailable".into());
+            file.set_len(0).map_err(|e| e.to_string())?;
+            file
+        }
+        Err(e) => return Err(e.to_string()),
+    };
+    std::io::copy(source, &mut output).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[test]
+fn download_rejects_source_aliases_without_truncation() {
+    let dir = std::env::temp_dir().join(format!("pi-download-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let source = dir.join("source");
+    let hardlink = dir.join("hardlink");
+    std::fs::write(&source, b"original").unwrap();
+    std::fs::hard_link(&source, &hardlink).unwrap();
+    for destination in [&source, &hardlink] {
+        let mut input = std::fs::File::open(&source).unwrap();
+        assert!(copy_download(&mut input, destination).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"original");
+    }
+    #[cfg(unix)]
+    {
+        let link = dir.join("symlink");
+        std::os::unix::fs::symlink(&source, &link).unwrap();
+        assert!(copy_download(&mut std::fs::File::open(&source).unwrap(), &link).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"original");
+    }
+    let dest = dir.join("destination");
+    copy_download(&mut std::fs::File::open(&source).unwrap(), &dest).unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), b"original");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tauri::command]
+pub async fn download_workspace_file(payload: DownloadWorkspaceFilePayload, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let (requested, target) = match (payload.source_path, payload.working_directory, payload.relative_path) {
+        (Some(source), None, None) if !source.trim().is_empty() => {
+            let home = super::external::get_user_home_dir().ok_or("Home directory unavailable")?;
+            let home = dunce::canonicalize(home).map_err(|e| e.to_string())?;
+            let requested = if source == "~" { home.clone() }
+                else if source.starts_with("~/") || source.starts_with("~\\") { home.join(&source[2..]) }
+                else { home.join(source) };
+            let target = dunce::canonicalize(&requested).map_err(|e| e.to_string())?;
+            if !target.starts_with(&home) || target == home { return Err("Access denied: outside home".into()); }
+            (requested, target)
+        }
+        (None, Some(root), Some(relative)) if !root.trim().is_empty() && !relative.trim().is_empty() => {
+            if Path::new(&relative).is_absolute() || relative.starts_with(['/', '\\']) ||
+                relative.as_bytes().get(1) == Some(&b':') || relative.split(['/', '\\']).any(|part| part == "..") {
+                return Err("Invalid workspace relative path".into());
+            }
+            let root = resolve_canonical_workspace_root(Some(&root), &state).await?;
+            let target = validate_and_resolve_child_path(&root, &relative)?;
+            if target == root { return Err("Not a regular file".into()); }
+            (root.join(relative), target)
+        }
+        _ => return Err("Invalid download payload".into()),
+    };
+    let metadata = std::fs::metadata(&target).map_err(|e| e.to_string())?;
+    if !metadata.is_file() { return Err("Not a regular file".into()); }
+    let mut file = std::fs::File::open(&target).map_err(|e| e.to_string())?;
+    let opened = file.metadata().map_err(|e| e.to_string())?;
+    if !opened.is_file() || dunce::canonicalize(&requested).map_err(|e| e.to_string())? != target { return Err("File changed".into()); }
+    let name = requested.file_name().ok_or("Filename missing")?.to_string_lossy().into_owned();
+    tokio::task::spawn_blocking(move || {
+        let Some(path) = rfd::FileDialog::new().set_file_name(&name).save_file() else { return Ok(None); };
+        copy_download(&mut file, &path)?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn download_command_rejects_project_escapes_and_mixed_payload_without_modification() {
+    use tauri::Manager;
+    use serde_json::json;
+    let dir = std::env::temp_dir().join(format!("pi-download-boundary-{}", uuid::Uuid::new_v4()));
+    let root = dir.join("project");
+    let sibling = dir.join("project-other");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir(&sibling).unwrap();
+    let file = sibling.join("data.bin");
+    std::fs::write(&file, b"original").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&sibling, root.join("escape")).unwrap();
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&sibling, root.join("escape")).ok();
+    let app = tauri::Builder::default().manage(AppState::default()).build(tauri::generate_context!()).unwrap();
+    let root_str = root.to_string_lossy().into_owned();
+    let file_str = file.to_string_lossy().into_owned();
+    let mut inputs = vec![
+        json!({"workingDirectory":root_str,"relativePath":"../project-other/data.bin"}),
+        json!({"workingDirectory":root_str,"relativePath":file_str}),
+        json!({"workingDirectory":root_str,"relativePath":"data.bin","sourcePath":file_str}),
+        json!({"sourcePath":file_str,"workingDirectory":root_str}),
+    ];
+    if root.join("escape").exists() {
+        inputs.push(json!({"workingDirectory":root_str,"relativePath":"escape/data.bin"}));
+    }
+    for value in inputs {
+        let payload = serde_json::from_value::<DownloadWorkspaceFilePayload>(value).unwrap();
+        assert!(download_workspace_file(payload, app.state::<AppState>()).await.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"original");
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Payload for saving an existing workspace text file.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
