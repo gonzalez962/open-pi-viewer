@@ -146,6 +146,12 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
                 key={card.id}
                 className={`kanban-card ${draggingCardId === card.id ? 'is-dragging' : ''}`}
                 aria-label={card.title}
+              >
+                <span
+                className="kanban-drag-handle"
+                role="img"
+                aria-label={t('kanban.drag')}
+                title={t('kanban.drag')}
                 draggable={ready && !busy}
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', card.id);
@@ -156,7 +162,7 @@ export function KanbanModal({ workingDirectory, locale, onClose }: Props) {
                   setDraggingCardId(null);
                   setDragOverColumn(null);
                 }}
-              >
+              >⠿</span>
                 <h4>{card.title}</h4>
                 {card.description && <p>{card.description}</p>}
                 <details className="kanban-card-details" onDragStart={(e) => e.stopPropagation()}>

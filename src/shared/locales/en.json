@@ -40,6 +40,7 @@
   "kanban.cancel": "Cancel",
   "kanban.saving": "Saving…",
   "kanban.move": "Move to",
+  "kanban.drag": "Drag card",
   "kanban.edit": "Edit",
   "kanban.delete": "Delete",
   "kanban.empty": "No cards",
