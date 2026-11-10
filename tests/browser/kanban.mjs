@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import net from 'node:net';
+import os from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const fixture = fs.mkdtempSync(path.join(root, '.workspace-kanban-browser-'));
+const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-kanban-browser-'));
 const projects = ['Project A', 'Project B'].map((customName, i) => {
   const directory = path.join(fixture, `project-${i}`);
   fs.mkdirSync(directory);
@@ -101,14 +102,34 @@ try {
   assert.match(await card().innerText(), /Edited description/);
   console.log('PASS S2.2 edit and reload');
 
-  // Desktop: move selector is hidden, card moves via drag and drop
+  // Text can be selected with the mouse, independently of the drag handle.
+  for (const selector of ['h4', 'p']) {
+    const text = card().locator(selector);
+    assert.equal(await text.evaluate((el) => getComputedStyle(el).cursor), 'text');
+    const box = await text.boundingBox();
+    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + Math.min(box.width - 2, 100), box.y + box.height / 2, { steps: 10 });
+    await page.mouse.up();
+    assert.notEqual(await page.evaluate(() => window.getSelection().toString()), '');
+  }
+  assert.equal(await card().evaluate((el) => el.draggable), false);
+  const handle = card().locator('.kanban-drag-handle');
+  assert.equal(await handle.isVisible(), true);
+  assert.equal(await handle.evaluate((el) => el.draggable), true);
+  assert.equal(await handle.getAttribute('aria-label'), 'Drag card');
+  const cardBox = await card().boundingBox();
+  const handleBox = await handle.boundingBox();
+  assert.ok(handleBox.x > cardBox.x + cardBox.width / 2 && handleBox.y < cardBox.y + cardBox.height / 2);
+
+  // Desktop: move selector is hidden, card moves via its drag handle.
   await card().locator('summary').click();
   assert.equal(await card().locator('.kanban-card-move').isVisible(), false);
   await card().locator('summary').click();
 
   for (const column of ['in_progress', 'done']) {
     const targetColumn = page.locator(`[data-column="${column}"]`);
-    await card().dragTo(targetColumn);
+    await handle.dragTo(targetColumn);
     await page.locator(`[data-column="${column}"] .kanban-card`).waitFor();
     await close(); await page.reload(); await open();
     assert.equal(await page.locator(`[data-column="${column}"] .kanban-card`).count(), 1);

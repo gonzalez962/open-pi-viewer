@@ -87,22 +87,30 @@
 .kanban-column h3 { margin: 0 0 12px; font-size: 15px; }
 .kanban-column h3 span, .kanban-empty { opacity: .65; }
 .kanban-card {
+  position: relative;
   margin: 12px 0;
   padding: 12px;
   background: var(--bg-primary, #171a21);
   border: 1px solid var(--border-color, #454545);
   border-radius: 6px;
-  cursor: grab;
   transition: opacity 0.15s ease, border-color 0.15s ease;
 }
-.kanban-card:active {
-  cursor: grabbing;
+.kanban-drag-handle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px;
+  color: var(--fg-muted, #8b949e);
+  cursor: grab;
+  user-select: none;
 }
+.kanban-drag-handle:active { cursor: grabbing; }
 .kanban-card.is-dragging {
   opacity: 0.4;
   border-style: dashed;
 }
-.kanban-card h4 { margin: 0; overflow-wrap: anywhere; }
+.kanban-card h4 { margin: 0; padding-right: 28px; overflow-wrap: anywhere; }
+.kanban-card h4, .kanban-card p { cursor: text; }
 .kanban-card p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; opacity: .85; }
 .kanban-card-details { margin-top: 8px; border-top: 1px solid var(--border-color, #454545); padding-top: 8px; cursor: default; }
 .kanban-card-details summary { cursor: pointer; font-size: 12px; color: var(--fg-muted, #8b949e); user-select: none; font-weight: 500; }

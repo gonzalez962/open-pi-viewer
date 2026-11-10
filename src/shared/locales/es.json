@@ -40,6 +40,7 @@
   "kanban.cancel": "Cancelar",
   "kanban.saving": "Guardando…",
   "kanban.move": "Mover a",
+  "kanban.drag": "Arrastrar tarjeta",
   "kanban.edit": "Editar",
   "kanban.delete": "Eliminar",
   "kanban.empty": "Sin tarjetas",
