@@ -1,3 +1,7 @@
+.attachment-preview-navigation { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 8px; }
+.attachment-preview-navigation button { cursor: pointer; color: var(--fg-default); background: var(--bg-surface); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: 4px 10px; }
+.attachment-preview-navigation button:disabled { opacity: .5; cursor: not-allowed; }
+
 .subagent-entry { margin: 8px; padding: 7px 12px; cursor: pointer; }
 .subagent-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; background: #0009; padding: 16px; }
 .subagent-modal { display: flex; flex-direction: column; background: var(--bg-surface); color: var(--fg-default); border: 1px solid var(--border-muted); border-radius: var(--radius-md); width: min(1200px, 100%); height: min(820px, calc(100dvh - 32px)); overflow: hidden; box-shadow: 0 16px 48px #0006; }
@@ -3001,6 +3005,25 @@
   color: var(--fg-default);
   max-width: 220px;
 }
+
+.attachment-preview-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.attachment-preview-trigger:hover { text-decoration: underline; }
+.attachment-preview-trigger:focus-visible, .btn-remove-attachment:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.attachment-preview-dialog { max-width: min(90vw, 900px); max-height: 90vh; }
+.attachment-preview-dialog audio { max-width: 100%; }
 
 .attachment-thumb {
   width: 16px;

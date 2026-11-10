@@ -29,6 +29,7 @@ import type { ThinkingBlock, ToolCallBlock } from '@core/types/messages';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
+import { PendingAttachments } from '@features/chat/components/PendingAttachments';
 import { UserMessageContent } from '@features/chat/components/UserMessageContent';
 import {
   MarkdownContent,
@@ -2297,43 +2298,7 @@ export const App: React.FC = () => {
               </span>
             </div>
 
-            {attachedFiles.length > 0 && (
-              <div className="prompt-attachments-list">
-                {attachedFiles.map((file) => (
-                  <div key={file.id} className="prompt-attachment-chip">
-                    {file.type === 'video' ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polygon points="23 7 16 12 23 17 23 7" />
-                        <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                      </svg>
-                    ) : file.type === 'audio' ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M9 18V5l12-2v13" />
-                        <circle cx="6" cy="18" r="3" />
-                        <circle cx="18" cy="16" r="3" />
-                      </svg>
-                    ) : file.type === 'image' && file.previewUrl ? (
-                      <img src={file.previewUrl} alt={file.name} className="attachment-thumb" />
-                    ) : (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                        <polyline points="13 2 13 9 20 9" />
-                      </svg>
-                    )}
-                    <span className="attachment-name" title={file.name}>{file.name}</span>
-                    <button
-                      type="button"
-                      className="btn-remove-attachment"
-                      onClick={() => removeAttachedFile(file.id)}
-                      title={t('prompt_controls.remove_attachment')}
-                      aria-label={t('prompt_controls.remove_attachment')}
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <PendingAttachments key={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} draftKey={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} files={attachedFiles} onRemove={removeAttachedFile} t={t} />
 
             <TodoPanel todo={state.todo} expanded={todoExpanded} onToggle={() => setTodoExpanded(value => !value)} t={t} />
             <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
