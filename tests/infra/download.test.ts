@@ -137,6 +137,21 @@ function createMockHost(overrides: {
   };
 }
 
+test('home download S1.1 S2.1 S3.2: host receives original filename and exact binary bytes', () => {
+  const ctx = createMockHost();
+  const bytes = new Uint8Array([0, 255, 128, 65]);
+  const result = triggerDownload(
+    { content: bytes, filename: 'sample.bin', mimeType: 'application/octet-stream' } as unknown as DownloadPayload,
+    { host: ctx.host }
+  );
+  assert.equal(result.success, true);
+  assert.equal(result.initiated, true);
+  assert.equal(result.filename, 'sample.bin');
+  assert.deepEqual(ctx.createdBlobs[0].parts, [bytes]);
+  assert.equal(ctx.createdAnchors[0].download, 'sample.bin');
+  assert.equal(ctx.createdAnchors[0].clickCalls, 1);
+});
+
 test('download: successfully initiates download via Blob and anchor click', () => {
   const ctx = createMockHost();
   const payload: DownloadPayload = {

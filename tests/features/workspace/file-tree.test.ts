@@ -42,6 +42,32 @@ import type {
   WorkspaceFileDiff,
 } from '@core/types/workspace';
 
+test('home download S1.1: listed files expose an accessible download action without opening preview', async () => {
+  const { updateWorkspaceSnapshot, deleteWorkspaceSnapshot } = await import('@features/workspace/workspace-cache');
+  const cwd = 'C:/home-download-fixture';
+  let previews = 0;
+  updateWorkspaceSnapshot(cwd, {
+    loaded: true,
+    rootEntries: [{ name: 'sample.bin', relativePath: 'sample.bin', isDir: false }],
+  });
+  try {
+    const markup = renderToStaticMarkup(React.createElement(FileTree, {
+      workingDirectory: cwd, locale: 'en', onOpenFile: () => { previews++; },
+    }));
+    assert.match(markup, /<button[^>]*aria-label="[^"]*[Dd]ownload[^"]*sample\.bin/);
+    assert.equal(previews, 0);
+  } finally { deleteWorkspaceSnapshot(cwd); }
+});
+
+test('home download S2.1: general path download control is available in the file listing', () => {
+  const markup = renderToStaticMarkup(React.createElement(FileTree, {
+    workingDirectory: 'C:/home-download-fixture', locale: 'en', onOpenFile: () => {},
+  }));
+  assert.doesNotMatch(markup, /workspace-download-form/);
+  assert.match(markup, /class="btn-tree-refresh btn-tree-download"[^>]*aria-label="[^"]+"/);
+  assert.match(markup, /<svg class="download-icon"[^>]*>[\s\S]*?M12 13v8l-4-4/);
+});
+
 test('Bridge: listWorkspaceDirPi invokes list_workspace_dir command with payload', async () => {
   const calls: { cmd: string; args?: Record<string, unknown> }[] = [];
   const mockEntries: WorkspaceEntry[] = [

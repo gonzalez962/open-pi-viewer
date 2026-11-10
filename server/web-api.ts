@@ -3,7 +3,9 @@ import type { EventEmitter } from 'node:events';
 import { handleIpcCommand, addSseClient, removeSseClient } from './web-ipc-bridge';
 import { createOAuthAccess } from './bridge/oauth-access';
 import { oauthManager } from './bridge/oauth';
-import { createWebAuth, type WebAuthConfig } from './bridge/web-auth';
+import { createWebAuth, validateSameOrigin, type WebAuthConfig } from './bridge/web-auth';
+import { openDownloadWorkspaceFile } from './bridge/paths';
+import fs from 'node:fs';
 import { createWebPush, resolveWebPushConfig, type WebPushConfig } from './bridge/web-push';
 import { addPushNotificationHook } from './bridge/rpc';
 import { isTerminalCommand, handleTerminalIpcCommand, validateTerminalAccess, getTerminalManager } from './terminal';
@@ -60,6 +62,40 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
 
   // Web authentication middleware must be wired BEFORE all API routes
   app.use(webAuth.middleware);
+
+  app.use("/api/download", (req, res) => {
+    if (req.method !== 'POST' || !req.headers['content-type']?.startsWith('application/json')) {
+      res.writeHead(405); res.end(); return;
+    }
+    // Unlike the general middleware, do not accept Sec-Fetch-Site alone here.
+    if ((!req.headers.origin && !req.headers.referer) || !validateSameOrigin(req)) {
+      res.writeHead(403); res.end('Origin validation failed'); return;
+    }
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (Buffer.byteLength(body) > 16384) { res.writeHead(413); res.end(); req.destroy(); }
+    });
+    req.on('end', () => {
+      if (res.writableEnded) return;
+      try {
+        const file = openDownloadWorkspaceFile({ payload: JSON.parse(body) });
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`,
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        const stream = fs.createReadStream('', { fd: file.fd, autoClose: true });
+        res.on('close', () => stream.destroy());
+        stream.on('error', () => res.destroy());
+        stream.pipe(res);
+      } catch (error: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: error?.message || 'Download failed' }));
+      }
+    });
+  });
 
   app.use("/api/push/config", (req, res) => {
     void webPush.handleConfig(req, res);

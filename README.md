@@ -15,6 +15,10 @@ The Pi Viewer MVP is fully functional and verified:
 - **Verified Codebase**: 368 frontend unit tests (`npm test`), 72 native Rust bridge tests (`cargo test`), frontend production build (`npm run build`), architectural boundary verification (`npm run check:arch`), and native typecheck (`cargo check`) all pass cleanly.
 - **Desktop Acceptance**: End-to-end desktop walkthrough (launch, chat, close/reopen with context, New conversation, empty-session reopening, and external link desktop opening) requires user confirmation on real desktop environment.
 
+## File downloads
+
+Download individual files using the icon in the workspace listing or search results, or use the download icon next to refresh to open a dialog and enter an absolute, home-relative, or `~/` path. Dialog paths must resolve to regular files within the server process account's home. Listing and search downloads instead resolve within the selected project root, including projects outside home. The existing workspace API accepts a supplied project root; the server does not prove registry membership. There is no configured download size limit. Web downloads report initiation only; desktop downloads use Save As and may be cancelled. No per-session OS-user isolation is implied. Containment checks do not provide an OS sandbox against concurrent filesystem changes by the same account. The server streams file data; the browser currently buffers the response before initiating its download.
+
 ## Quick Start
 
 ### Prerequisites

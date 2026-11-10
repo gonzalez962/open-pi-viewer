@@ -13,6 +13,8 @@ import {
 } from './workspace-cache';
 import { FileSearchBar } from './components/FileSearchBar';
 import { BranchManagerModal } from './components/BranchManagerModal';
+import { DownloadFileForm } from './components/DownloadFileForm';
+import { downloadWorkspaceFile } from '@infra/workspace-download';
 
 export {
   updateDirChildrenOnRefresh,
@@ -104,6 +106,10 @@ export function computeTotalGitChanges(gitStatus: WorkspaceGitStatus | null): nu
     (gitStatus.addedFiles?.length || 0) +
     (gitStatus.untrackedFiles?.length || 0)
   );
+}
+
+function DownloadIcon() {
+  return <svg className="download-icon" aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 13v8l-4-4" /><path d="m12 21 4-4" /><path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" /></svg>;
 }
 
 /**
@@ -215,6 +221,7 @@ interface TreeNodeItemProps {
   showOnlyModified?: boolean;
   onToggleDir: (path: string) => void;
   onSelectFile: (entry: WorkspaceEntry) => void;
+  onDownload: (entry: WorkspaceEntry) => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -232,6 +239,7 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
   showOnlyModified = false,
   onToggleDir,
   onSelectFile,
+  onDownload,
   t,
 }) => {
   const isExpanded = expandedDirs.has(entry.relativePath);
@@ -335,6 +343,7 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
           </span>
         )}
 
+        {!entry.isDir && <button type="button" className="btn-file-download" aria-label={`${t('file_tree.download')} ${entry.name}`} onKeyDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onDownload(entry); }}><DownloadIcon /></button>}
         {!entry.isDir && entry.size != null && (
           <span className="tree-node-size" aria-hidden="true">
             {formatFileSize(entry.size)}
@@ -360,6 +369,7 @@ const TreeNodeItem: React.FC<TreeNodeItemProps> = ({
               showOnlyModified={showOnlyModified}
               onToggleDir={onToggleDir}
               onSelectFile={onSelectFile}
+              onDownload={onDownload}
               t={t}
             />
           ))}
@@ -410,6 +420,8 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showOnlyModified, setShowOnlyModified] = useState<boolean>(false);
   const [isBranchModalOpen, setIsBranchModalOpen] = useState<boolean>(false);
+  const [isDownloadOpen, setIsDownloadOpen] = useState(false);
+  const downloadTriggerRef = useRef<HTMLButtonElement>(null);
 
   // Synchronous state adjustment when workingDirectory changes without remount
   const [prevCwd, setPrevCwd] = useState(workingDirectory);
@@ -652,6 +664,11 @@ export const FileTree: React.FC<FileTreeProps> = ({
     [workingDirectory, onOpenFile, onError]
   );
 
+  const handleDownload = useCallback((entry: WorkspaceEntry) => {
+    if (!workingDirectory) { onError?.('Working directory required'); return; }
+    void downloadWorkspaceFile({ workingDirectory, relativePath: entry.relativePath }).catch((err) => onError?.(err instanceof Error ? err.message : String(err)));
+  }, [workingDirectory, onError]);
+
   // Flatten all loaded entries for search filtering
   const allLoadedEntries = useMemo(() => {
     const list: WorkspaceEntry[] = [...rootEntries];
@@ -791,7 +808,12 @@ export const FileTree: React.FC<FileTreeProps> = ({
             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
           </svg>
         </button>
+        <button type="button" className="btn-tree-refresh btn-tree-download" ref={downloadTriggerRef} onClick={() => setIsDownloadOpen(true)} title={t('file_tree.download_path')} aria-label={t('file_tree.download_path')}>
+          <DownloadIcon />
+        </button>
       </div>
+
+      {isDownloadOpen && <DownloadFileForm locale={locale} onClose={() => { setIsDownloadOpen(false); downloadTriggerRef.current?.focus(); }} />}
 
       {/* Branch Management Modal */}
       {isBranchModalOpen && (
@@ -892,6 +914,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                       </span>
                     )}
 
+                    {!entry.isDir && <button type="button" className="btn-file-download" aria-label={`${t('file_tree.download')} ${entry.name}`} onKeyDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); handleDownload(entry); }}><DownloadIcon /></button>}
                     {!entry.isDir && entry.size != null && (
                       <span className="result-size">{formatFileSize(entry.size)}</span>
                     )}
@@ -927,6 +950,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
                 showOnlyModified={showOnlyModified}
                 onToggleDir={handleToggleDir}
                 onSelectFile={handleSelectFile}
+                onDownload={handleDownload}
                 t={t}
               />
             ))}

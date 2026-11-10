@@ -136,6 +136,15 @@ test('architecture: core/ layer imports only core/ (zero React, zero Tauri, zero
   assert.deepEqual(violations, [], `Core layer violations:\n${violations.join('\n')}`);
 });
 
+function sharedReactAllowed(file: string): boolean {
+  return file === path.join(SRC_DIR, 'shared', 'components', 'ResourceModalLayout.tsx');
+}
+
+test('architecture: shared React exception is limited to the modal layout', () => {
+  assert.equal(sharedReactAllowed(path.join(SRC_DIR, 'shared', 'components', 'ResourceModalLayout.tsx')), true);
+  assert.equal(sharedReactAllowed(path.join(SRC_DIR, 'shared', 'components', 'Other.tsx')), false);
+});
+
 test('architecture: shared/ layer does not import outer layers, React, or Tauri', () => {
   const sharedDir = path.join(SRC_DIR, 'shared');
   const sharedFiles = collectFiles(sharedDir, CODE_EXTENSIONS);
@@ -146,7 +155,7 @@ test('architecture: shared/ layer does not import outer layers, React, or Tauri'
     const imports = extractImports(file);
     for (const imp of imports) {
       const p = imp.importPath;
-      if (p === 'react' || p.startsWith('react/') || p === 'react-dom') {
+      if ((p === 'react' || p.startsWith('react/') || p === 'react-dom') && !sharedReactAllowed(file)) {
         violations.push(`${relFile}:${imp.line} imports React: "${p}"`);
       }
       if (p.startsWith('@tauri-apps/')) {

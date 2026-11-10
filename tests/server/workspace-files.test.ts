@@ -20,6 +20,98 @@ import {
   MAX_MEDIA_FILE_BYTES,
 } from '@core/workspace/file-kind';
 
+test('home download S2.1 S3.2: home-relative, tilde and absolute paths preserve binary and empty files', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (args: any) => { const result = paths.openDownloadWorkspaceFile(args); try { return { name: result.name, base64: fs.readFileSync(result.fd).toString('base64') }; } finally { fs.closeSync(result.fd); } };
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-download-'));
+  const originalHome = process.env.HOME;
+  try {
+    process.env.HOME = fixture;
+    const bytes = Buffer.from([0, 255, 128, 42]);
+    fs.writeFileSync(path.join(fixture, '.env.example'), bytes);
+    fs.writeFileSync(path.join(fixture, 'empty.bin'), Buffer.alloc(0));
+    for (const sourcePath of ['.env.example', '~/.env.example', path.join(fixture, '.env.example')]) {
+      const result = await download({ payload: { sourcePath } });
+      assert.equal(result.name, '.env.example');
+      assert.deepEqual(Buffer.from(result.base64, 'base64'), bytes);
+    }
+    const empty = await download({ payload: { sourcePath: 'empty.bin' } });
+    assert.equal(empty.name, 'empty.bin');
+    assert.deepEqual(Buffer.from(empty.base64, 'base64'), Buffer.alloc(0));
+  } finally { if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('home download S3.1 S3.3: manual home and project boundaries are distinct', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (args: any) => { const result = paths.openDownloadWorkspaceFile(args); try { return { name: result.name, base64: fs.readFileSync(result.fd).toString('base64') }; } finally { fs.closeSync(result.fd); } };
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-boundary-'));
+  const originalHome = process.env.HOME;
+  try {
+    const home = path.join(fixture, 'home');
+    const outside = path.join(fixture, 'outside');
+    fs.mkdirSync(home); fs.mkdirSync(outside);
+    const file = path.join(outside, 'data.bin');
+    const bytes = Buffer.from([0, 123, 255]);
+    fs.writeFileSync(file, bytes);
+    fs.symlinkSync(outside, path.join(home, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
+    process.env.HOME = home;
+    const projectDownload = download({ payload: { workingDirectory: outside, relativePath: 'data.bin' } });
+    assert.equal(projectDownload.name, 'data.bin');
+    assert.deepEqual(Buffer.from(projectDownload.base64, 'base64'), bytes);
+    for (const payload of [
+      { sourcePath: file },
+      { sourcePath: '../outside/data.bin' },
+      { sourcePath: '~/link/data.bin' },
+      { workingDirectory: home, relativePath: 'link/data.bin' },
+      { workingDirectory: home, relativePath: '../outside/data.bin' },
+      { workingDirectory: home, relativePath: file },
+      { sourcePath: file, workingDirectory: outside, relativePath: 'data.bin' },
+      { sourcePath: '', workingDirectory: outside, relativePath: 'data.bin' },
+      { workingDirectory: outside, relativePath: 3 },
+    ]) {
+      await assert.rejects(async () => download({ payload }));
+      assert.deepEqual(fs.readFileSync(file), bytes);
+    }
+  } finally { if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('home download S4.1: transfers exact bytes above 25 MiB', async () => {
+  const { openDownloadWorkspaceFile } = await import('@server/bridge/paths');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-large-'));
+  const originalHome = process.env.HOME;
+  try {
+    process.env.HOME = fixture;
+    const bytes = Buffer.alloc(25 * 1024 * 1024 + 1, 0xa5);
+    bytes[bytes.length - 1] = 0xff;
+    fs.writeFileSync(path.join(fixture, 'large.bin'), bytes);
+    const result = openDownloadWorkspaceFile({ payload: { sourcePath: 'large.bin' } });
+    try { assert.equal(result.name, 'large.bin'); assert.deepEqual(fs.readFileSync(result.fd), bytes); }
+    finally { fs.closeSync(result.fd); }
+  } finally { if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
+test('home download S3.2: rejects directories without modification', async () => {
+  const paths = await import('@server/bridge/paths');
+  const download = (args: any) => { const result = paths.openDownloadWorkspaceFile(args); try { return { name: result.name, base64: fs.readFileSync(result.fd).toString('base64') }; } finally { fs.closeSync(result.fd); } };
+  assert.equal(typeof download, 'function', 'download IPC handler must exist');
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-home-limit-'));
+  const originalHome = process.env.HOME;
+  try {
+    process.env.HOME = fixture;
+    fs.mkdirSync(path.join(fixture, 'directory'));
+    const large = path.join(fixture, 'large.bin');
+    const fd = fs.openSync(large, 'w');
+    try { fs.ftruncateSync(fd, 25 * 1024 * 1024 + 1); } finally { fs.closeSync(fd); }
+    for (const sourcePath of ['directory']) {
+      await assert.rejects(async () => download({ payload: { sourcePath } }));
+    }
+    assert.equal(fs.statSync(large).size, 25 * 1024 * 1024 + 1);
+    assert.equal(fs.statSync(path.join(fixture, 'directory')).isDirectory(), true);
+  } finally { if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome; fs.rmSync(fixture, { recursive: true, force: true }); }
+});
+
 test('file editor S1.1: saves exact text and reads it back', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-save-'));
   try {
