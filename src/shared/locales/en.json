@@ -331,6 +331,9 @@
   "message.attached_image": "Attached image {index}",
 
   "markdown.copy_code": "Copy",
+  "markdown.download_code": "Download",
+  "markdown.download_code_aria": "Download {lang} code",
+  "markdown.download_failed": "Failed to start download",
   "markdown.copy_url": "Copy URL",
   "markdown.copied": "Copied!",
   "markdown.copy_failed": "Failed to copy",
