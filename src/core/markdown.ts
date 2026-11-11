@@ -29,7 +29,7 @@ export interface ListItemNode {
   children: InlineNode[];
   subList?: ListBlockNode;
   /** Additional content following the first nested list, in source order. */
-  continuation?: (InlineNode[] | ListBlockNode)[];
+  continuation?: (InlineNode[] | ListBlockNode | CodeBlockNode)[];
 }
 
 export interface HeadingBlockNode {
@@ -712,11 +712,19 @@ function parseListBlock(
     if (itemMatch && itemMatch.indent === baseIndent) {
       let itemContent = itemMatch.content;
       const subLines: string[] = [];
+      let fence: { char: string; length: number } | undefined;
       i++;
 
       // Accumulate indented sub-lines belonging to this item
       while (i < lines.length) {
         const subLine = lines[i];
+        if (fence) {
+          const close = subLine.trim().match(/^(`{3,}|~{3,})\s*$/);
+          if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = undefined;
+          subLines.push(subLine);
+          i++;
+          continue;
+        }
         if (subLine.trim() === '') {
           let peek = i + 1;
           while (peek < lines.length && lines[peek].trim() === '') {
@@ -740,6 +748,8 @@ function parseListBlock(
 
         const subIndent = subLine.replace(/\t/g, '  ').match(/^( *)/)![1].length;
         if (subIndent > baseIndent) {
+          const opening = subLine.trim().match(/^(`{3,}|~{3,})/);
+          if (opening) fence = { char: opening[1][0], length: opening[1].length };
           subLines.push(subLine);
           i++;
         } else {
@@ -748,24 +758,37 @@ function parseListBlock(
       }
 
       let subList: ListBlockNode | undefined;
-      const continuation: (InlineNode[] | ListBlockNode)[] = [];
+      const continuation: (InlineNode[] | ListBlockNode | CodeBlockNode)[] = [];
       if (depth < MAX_LIST_NESTING_DEPTH) {
         let subIndex = 0;
         while (subIndex < subLines.length) {
           const line = subLines[subIndex].trim();
           if (!line) {
             subIndex++;
+          } else if (/^(`{3,}|~{3,})/.test(line)) {
+            const opening = line.match(/^(`{3,}|~{3,})(.*)$/)!;
+            const indent = subLines[subIndex].match(/^ */)![0].length;
+            const header = parseCodeFenceHeader(opening[2]);
+            const code: string[] = [];
+            subIndex++;
+            while (subIndex < subLines.length) {
+              const current = subLines[subIndex++];
+              const close = current.trim().match(/^(`{3,}|~{3,})\s*$/);
+              if (close && close[1][0] === opening[1][0] && close[1].length >= opening[1].length) break;
+              code.push(current.replace(new RegExp(`^ {0,${indent}}`), ''));
+            }
+            continuation.push({ type: 'code_block', language: header.language, code: code.join('\n'), ...(header.filename !== undefined ? { filename: header.filename } : {}) });
           } else if (matchListItem(subLines[subIndex])) {
             const parsed = parseListBlock(subLines, subIndex, depth + 1);
-            if (subList) continuation.push(parsed.listBlock);
+            if (subList || continuation.length) continuation.push(parsed.listBlock);
             else subList = parsed.listBlock;
             subIndex = parsed.nextIndex;
           } else {
             const text: string[] = [];
-            while (subIndex < subLines.length && subLines[subIndex].trim() && !matchListItem(subLines[subIndex])) {
+            while (subIndex < subLines.length && subLines[subIndex].trim() && !matchListItem(subLines[subIndex]) && !/^(`{3,}|~{3,})/.test(subLines[subIndex].trim())) {
               text.push(subLines[subIndex++].trim());
             }
-            if (subList) continuation.push(parseInline(text.join(' ')));
+            if (subList || continuation.length) continuation.push(parseInline(text.join(' ')));
             else itemContent += ` ${text.join(' ')}`;
           }
         }
@@ -1052,7 +1075,7 @@ export interface ExtractedCodeBlock {
 export function extractCodeBlocks(markdown: string): ExtractedCodeBlock[] {
   const ast = parseMarkdown(markdown);
   const result: ExtractedCodeBlock[] = [];
-  for (const block of ast.children) {
+  const visit = (block: BlockNode) => {
     if (block.type === 'code_block') {
       result.push({
         language: block.language,
@@ -1060,8 +1083,16 @@ export function extractCodeBlocks(markdown: string): ExtractedCodeBlock[] {
         code: block.code,
         isDiff: isDiff(block.language),
       });
+    } else if (block.type === 'list') {
+      for (const item of block.items) {
+        if (item.subList) visit(item.subList);
+        for (const part of item.continuation ?? []) {
+          if (!Array.isArray(part)) visit(part);
+        }
+      }
     }
-  }
+  };
+  for (const block of ast.children) visit(block);
   return result;
 }
 

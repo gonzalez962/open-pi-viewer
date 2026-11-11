@@ -13,7 +13,7 @@ test('S2.1 nested list fences are extracted in document order with indentation',
   assert.equal(buildCopyAllCodeText(blocks), 'root before\n\nfirst\n  indented\n\nroot after');
 });
 
-test('S2.3 ordinary list inline code and root fences retain parser output', () => {
+test('S3.1 ordinary list inline code and root fences retain parser output', () => {
   const ast = parseMarkdown('- Item `inline`\n- Next\n\n```text\nroot\n```');
   const list = ast.children[0];
   assert.equal(list.type, 'list');

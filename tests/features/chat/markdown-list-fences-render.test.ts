@@ -36,7 +36,7 @@ test('S2.2 unclosed streaming list fence renders a code card', () => {
   assert.doesNotMatch(html, /<code class="markdown-inline-code"><\/code>/);
 });
 
-test('S2.3 ordinary inline and root fence rendering keeps controls', () => {
+test('S3.1 ordinary inline and root fence rendering keeps controls', () => {
   const html = render('- Item `inline`\n- Next\n\n```text\nroot\n```');
   assert.match(html, /<li class="markdown-li">Item <code class="markdown-inline-code">inline<\/code><\/li><li class="markdown-li">Next<\/li>/);
   assert.match(html, /markdown-code-language">text<\/span>/);
