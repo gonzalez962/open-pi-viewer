@@ -4,8 +4,6 @@
 
 Desktop chat interface and session viewer for Pi built with Tauri 2, React 18, TypeScript, and Vite.
 
-[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
-
 ## Current MVP Status
 
 The Pi Viewer MVP is fully functional and verified:
@@ -383,3 +381,5 @@ These are limitations of the current web server, not features provided by the lo
 - Shared-key login is not per-user authorization or isolation. A person holding the key can access the privileged viewer API, including operations that act on the host through Pi.
 
 The login's approved code review is **not an audit of the deployed network, reverse proxy, or entire development server**. Verify those boundaries separately before public exposure.
+
+[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
