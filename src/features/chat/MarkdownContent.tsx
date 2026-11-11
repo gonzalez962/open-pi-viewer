@@ -18,6 +18,8 @@ import {
 } from '@infra/opener';
 import { triggerDownload } from '@infra/download';
 import { downloadWorkspaceFile } from '@infra/workspace-download';
+import { isDesktopTauriEnvironment } from '@infra/conversation-export';
+import { fileReferenceDownloadSource } from '@features/chat/file-reference-download';
 import { codeBlockDownloadPayload } from '@features/chat/code-block-download';
 import { useCopyFeedback } from '@features/chat/hooks/useCopyFeedback';
 import { useLinkOpener } from '@features/chat/hooks/useLinkOpener';
@@ -124,6 +126,7 @@ export function getCopyLiveStatusText(
 
 export interface MarkdownContentProps {
   content: string;
+  workingDirectory?: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   /**
    * Optional callback wired from the app shell: invoked with a code block's raw code and
@@ -369,10 +372,13 @@ function isAbsoluteFileReference(value: string): boolean {
   return /^\/(?!\/)[^\\]+$/.test(value) || /^[a-zA-Z]:[\\/][^\\/]+(?:[\\/][^\\/]+)*$/.test(value);
 }
 
+const WorkingDirectoryContext = React.createContext<string | undefined>(undefined);
+
 const InlineFileReference: React.FC<{
   path: string;
   t: MarkdownContentProps['t'];
 }> = ({ path, t }) => {
+  const workingDirectory = React.useContext(WorkingDirectoryContext);
   const [pending, setPending] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const label = t('markdown.download_file_aria');
@@ -383,7 +389,7 @@ const InlineFileReference: React.FC<{
         onClick={async () => {
           setPending(true);
           setFailed(false);
-          try { await downloadWorkspaceFile({ sourcePath: path }); }
+          try { await downloadWorkspaceFile(fileReferenceDownloadSource(path, workingDirectory, isDesktopTauriEnvironment())); }
           catch { setFailed(true); }
           finally { setPending(false); }
         }}>
@@ -572,12 +578,14 @@ function renderBlock(
  * Pure React component rendering a safe Markdown subset.
  * Raw HTML is escaped automatically by React JSX; no dangerouslySetInnerHTML is ever used.
  */
-export const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content, t, onInsertCode }) => {
+export const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content, t, onInsertCode, workingDirectory }) => {
   const ast = React.useMemo(() => parseMarkdown(content), [content]);
 
   return (
-    <div className="markdown-body">
-      {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
-    </div>
+    <WorkingDirectoryContext.Provider value={workingDirectory}>
+      <div className="markdown-body">
+        {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
+      </div>
+    </WorkingDirectoryContext.Provider>
   );
 });
