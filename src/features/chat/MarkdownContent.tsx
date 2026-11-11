@@ -16,6 +16,8 @@ import {
   getLinkModifierLabel,
   getLinkOpenLiveStatusText,
 } from '@infra/opener';
+import { triggerDownload } from '@infra/download';
+import { codeBlockDownloadPayload } from '@features/chat/code-block-download';
 import { useCopyFeedback } from '@features/chat/hooks/useCopyFeedback';
 import { useLinkOpener } from '@features/chat/hooks/useLinkOpener';
 
@@ -143,6 +145,7 @@ export const CodeBlock: React.FC<{
   onInsertCode?: (code: string, language?: string) => void;
 }> = React.memo(({ code, language, filename, t, onInsertCode }) => {
   const { status, triggerCopy } = useCopyFeedback();
+  const [downloadFailed, setDownloadFailed] = React.useState(false);
 
   const sanitizedLang = sanitizeLanguage(language);
   const displayLang = sanitizedLang || t('markdown.code_plain');
@@ -190,6 +193,18 @@ export const CodeBlock: React.FC<{
           )}
           <button
             type="button"
+            className="markdown-code-download-btn"
+            onClick={() => {
+              const result = triggerDownload(codeBlockDownloadPayload(code, sanitizedLang, filename));
+              setDownloadFailed(!result.initiated);
+            }}
+            aria-label={t('markdown.download_code_aria', { lang: displayLang })}
+            title={t('markdown.download_code')}
+          >
+            {t('markdown.download_code')}
+          </button>
+          <button
+            type="button"
             className="markdown-code-copy-btn"
             onClick={() => void triggerCopy(code)}
             aria-label={ariaLabel}
@@ -198,6 +213,7 @@ export const CodeBlock: React.FC<{
             {copyLabel}
           </button>
         </div>
+        {downloadFailed && <span role="status">{t('markdown.download_failed')}</span>}
         {liveStatus && (
           <span
             role="status"

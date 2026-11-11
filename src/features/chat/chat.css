@@ -603,6 +603,7 @@
 }
 
 .markdown-code-insert-btn,
+.markdown-code-download-btn,
 .markdown-code-copy-btn,
 .markdown-link-copy-btn {
   font-family: var(--font-sans);
@@ -619,6 +620,7 @@
 }
 
 .markdown-code-insert-btn:hover,
+.markdown-code-download-btn:hover,
 .markdown-code-copy-btn:hover,
 .markdown-link-copy-btn:hover {
   background-color: var(--bg-subtle-hover);
@@ -627,6 +629,7 @@
 }
 
 .markdown-code-insert-btn:focus-visible,
+.markdown-code-download-btn:focus-visible,
 .markdown-code-copy-btn:focus-visible,
 .markdown-link-copy-btn:focus-visible,
 .markdown-link:focus-visible {
@@ -642,7 +645,8 @@
   font-size: 12px;
   line-height: 1.5;
   color: var(--md-code-fg);
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Per-line wrapper produced by PiColor's highlighted line list. */
