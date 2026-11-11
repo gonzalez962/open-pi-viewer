@@ -879,6 +879,26 @@ export function parseTableDelimiter(line: string): TableAlign[] | null {
   return alignments;
 }
 
+// Recover only a sequence of explicitly tagged inner fences ending in adjacent closes.
+// The limit keeps ambiguous or streaming input from requiring unbounded lookahead.
+function findMarkdownWrapperClose(lines: string[], start: number): number | undefined {
+  const end = Math.min(lines.length, start + 10000);
+  let inInnerFence = false;
+  for (let i = start + 1; i < end; i++) {
+    if (inInnerFence) {
+      if (/^ {0,3}```\s*$/.test(lines[i])) {
+        if (i + 1 < end && /^ {0,3}```\s*$/.test(lines[i + 1])) return i + 1;
+        inInnerFence = false;
+      }
+    } else if (/^ {0,3}```[a-zA-Z][a-zA-Z0-9_#+.-]*\s*$/.test(lines[i])) {
+      inInnerFence = true;
+    } else if (/^ {0,3}```\s*$/.test(lines[i])) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Main parser entrypoint.
  * Converts raw Markdown text into a typed Abstract Syntax Tree (AST).
@@ -948,6 +968,14 @@ export function parseMarkdown(raw: string): MarkdownRoot {
     const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (fenceMatch) {
       flushParagraph();
+      if (/^ {0,3}```markdown\s*$/.test(line)) {
+        const closeIndex = findMarkdownWrapperClose(lines, i);
+        if (closeIndex !== undefined) {
+          blocks.push({ type: 'code_block', language: 'markdown', code: lines.slice(i + 1, closeIndex).join('\n') });
+          i = closeIndex + 1;
+          continue;
+        }
+      }
       inCodeBlock = true;
       codeFenceChar = fenceMatch[1][0];
       codeFenceLen = fenceMatch[1].length;
