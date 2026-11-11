@@ -1,5 +1,7 @@
 # Pi Viewer
 
+![Pi Viewer interface](images/open-pi-viewer.png)
+
 Desktop chat interface and session viewer for Pi built with Tauri 2, React 18, TypeScript, and Vite.
 
 [![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
