@@ -2158,6 +2158,7 @@ export const App: React.FC = () => {
                             <div key={g.key} style={{ display: 'flex', flexDirection: 'column' }}>
                               <MarkdownContent
                                 content={g.text}
+                                workingDirectory={config.workingDirectory}
                                 t={t}
                                 onInsertCode={insertCodeIntoPrompt}
                               />
@@ -2172,7 +2173,7 @@ export const App: React.FC = () => {
                       })()
                     ) : shouldRenderAsMarkdown(msg.role) ? (
                       <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <MarkdownContent content={msg.content} t={t} onInsertCode={insertCodeIntoPrompt} />
+                        <MarkdownContent content={msg.content} workingDirectory={config.workingDirectory} t={t} onInsertCode={insertCodeIntoPrompt} />
                         {preferences.speech?.ttsEnabled && msg.role !== 'user' && (
                           <div style={{ marginTop: '4px', alignSelf: 'flex-start' }}>
                             <MessageSpeechButton text={msg.content} preferences={preferences.speech} messageId={msg.id} />

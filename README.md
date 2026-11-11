@@ -1,8 +1,8 @@
 # Pi Viewer
 
-Desktop chat interface and session viewer for Pi built with Tauri 2, React 18, TypeScript, and Vite.
+![Pi Viewer interface](images/open-pi-viewer.png)
 
-[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)
+Desktop chat interface and session viewer for Pi built with Tauri 2, React 18, TypeScript, and Vite.
 
 ## Current MVP Status
 
@@ -17,7 +17,7 @@ The Pi Viewer MVP is fully functional and verified:
 
 ## File downloads
 
-Download individual files using the icon in the workspace listing or search results, or use the download icon next to refresh to open a dialog and enter an absolute, home-relative, or `~/` path. Dialog paths must resolve to regular files within the server process account's home. Listing and search downloads instead resolve within the selected project root, including projects outside home. The existing workspace API accepts a supplied project root; the server does not prove registry membership. There is no configured download size limit. Web downloads report initiation only; desktop downloads use Save As and may be cancelled. No per-session OS-user isolation is implied. Containment checks do not provide an OS sandbox against concurrent filesystem changes by the same account. The server streams file data; the browser currently buffers the response before initiating its download.
+Absolute file paths in inline code in assistant responses also have a download icon. On the web, clearly represented descendants of the current project use the project root; other paths fall back to the server process account's home. Ambiguous or differently formatted paths may use that fallback even when they refer to a project file. Download individual files using the icon in the workspace listing or search results, or use the download icon next to refresh to open a dialog and enter an absolute, home-relative, or `~/` path. Dialog paths must resolve to regular files within the server process account's home. Listing and search downloads instead resolve within the selected project root, including projects outside home. The existing workspace API accepts a supplied project root; the server does not prove registry membership. There is no configured download size limit. Web downloads report initiation only; desktop downloads use Save As and may be cancelled. No per-session OS-user isolation is implied. Containment checks do not provide an OS sandbox against concurrent filesystem changes by the same account. The server streams file data; the browser currently buffers the response before initiating its download.
 
 ## Quick Start
 
@@ -381,3 +381,5 @@ These are limitations of the current web server, not features provided by the lo
 - Shared-key login is not per-user authorization or isolation. A person holding the key can access the privileged viewer API, including operations that act on the host through Pi.
 
 The login's approved code review is **not an audit of the deployed network, reverse proxy, or entire development server**. Verify those boundaries separately before public exposure.
+
+[![Built with Gentle-AI](https://raw.githubusercontent.com/Gentleman-Programming/gentle-ai/main/docs/assets/brand/built-with-gentle-ai.png)](https://github.com/Gentleman-Programming/gentle-ai)

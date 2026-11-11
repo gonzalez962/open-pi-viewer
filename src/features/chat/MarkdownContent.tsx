@@ -17,6 +17,9 @@ import {
   getLinkOpenLiveStatusText,
 } from '@infra/opener';
 import { triggerDownload } from '@infra/download';
+import { downloadWorkspaceFile } from '@infra/workspace-download';
+import { isDesktopTauriEnvironment } from '@infra/conversation-export';
+import { fileReferenceDownloadSource } from '@features/chat/file-reference-download';
 import { codeBlockDownloadPayload } from '@features/chat/code-block-download';
 import { useCopyFeedback } from '@features/chat/hooks/useCopyFeedback';
 import { useLinkOpener } from '@features/chat/hooks/useLinkOpener';
@@ -123,6 +126,7 @@ export function getCopyLiveStatusText(
 
 export interface MarkdownContentProps {
   content: string;
+  workingDirectory?: string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   /**
    * Optional callback wired from the app shell: invoked with a code block's raw code and
@@ -362,6 +366,44 @@ export const MarkdownLink: React.FC<{
   );
 };
 
+// This only identifies likely file references; the download backend enforces access.
+function isAbsoluteFileReference(value: string): boolean {
+  if (/[\x00-\x1f\x7f]/.test(value) || /[\\/]$/.test(value) || /\s[+*=|<>]\s/.test(value)) return false;
+  return /^\/(?!\/)[^\\]+$/.test(value) || /^[a-zA-Z]:[\\/][^\\/]+(?:[\\/][^\\/]+)*$/.test(value);
+}
+
+const WorkingDirectoryContext = React.createContext<string | undefined>(undefined);
+
+const InlineFileReference: React.FC<{
+  path: string;
+  t: MarkdownContentProps['t'];
+}> = ({ path, t }) => {
+  const workingDirectory = React.useContext(WorkingDirectoryContext);
+  const [pending, setPending] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const label = t('markdown.download_file_aria');
+  return (
+    <span className="markdown-file-reference">
+      <code className="markdown-inline-code">{path}</code>
+      <button type="button" className="markdown-file-download-btn" aria-label={label} title={label} disabled={pending}
+        onClick={async () => {
+          setPending(true);
+          setFailed(false);
+          try { await downloadWorkspaceFile(fileReferenceDownloadSource(path, workingDirectory, isDesktopTauriEnvironment())); }
+          catch { setFailed(true); }
+          finally { setPending(false); }
+        }}>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 13v8l-4-4" />
+          <path d="m12 21 4-4" />
+          <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
+        </svg>
+      </button>
+      {failed && <span role="status">{t('markdown.download_failed')}</span>}
+    </span>
+  );
+};
+
 function renderInline(
   nodes: InlineNode[],
   keyPrefix: string,
@@ -374,6 +416,9 @@ function renderInline(
       case 'text':
         return <React.Fragment key={key}>{node.value}</React.Fragment>;
       case 'code_inline':
+        if (!insideLink && isAbsoluteFileReference(node.value)) {
+          return <InlineFileReference key={key} path={node.value} t={t} />;
+        }
         return (
           <code key={key} className="markdown-inline-code">
             {node.value}
@@ -533,12 +578,14 @@ function renderBlock(
  * Pure React component rendering a safe Markdown subset.
  * Raw HTML is escaped automatically by React JSX; no dangerouslySetInnerHTML is ever used.
  */
-export const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content, t, onInsertCode }) => {
+export const MarkdownContent: React.FC<MarkdownContentProps> = React.memo(({ content, t, onInsertCode, workingDirectory }) => {
   const ast = React.useMemo(() => parseMarkdown(content), [content]);
 
   return (
-    <div className="markdown-body">
-      {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
-    </div>
+    <WorkingDirectoryContext.Provider value={workingDirectory}>
+      <div className="markdown-body">
+        {ast.children.map((block, idx) => renderBlock(block, idx, 'md', t, onInsertCode))}
+      </div>
+    </WorkingDirectoryContext.Provider>
   );
 });

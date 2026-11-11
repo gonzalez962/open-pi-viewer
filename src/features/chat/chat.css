@@ -517,6 +517,20 @@
   border: 1px solid var(--md-inline-code-border);
 }
 
+.markdown-file-download-btn {
+  display: inline-flex;
+  vertical-align: middle;
+  padding: 3px;
+  margin-left: 3px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.markdown-file-download-btn:focus-visible { outline: 2px solid currentColor; }
+.markdown-file-download-btn:disabled { opacity: 0.5; cursor: wait; }
+
 /* Code Block Container */
 .markdown-code-block {
   margin: 6px 0;
