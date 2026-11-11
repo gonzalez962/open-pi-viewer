@@ -331,6 +331,7 @@
   "message.attached_image": "Imagen adjunta {index}",
 
   "markdown.copy_code": "Copiar",
+  "markdown.download_file_aria": "Descargar archivo referenciado",
   "markdown.download_code": "Descargar",
   "markdown.download_code_aria": "Descargar código {lang}",
   "markdown.download_failed": "No se pudo iniciar la descarga",
