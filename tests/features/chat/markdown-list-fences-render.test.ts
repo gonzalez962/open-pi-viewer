@@ -8,13 +8,13 @@ const render = (content: string) => renderToStaticMarkup(React.createElement(Mar
   content, t: (key: string) => key, onInsertCode: () => {}, workingDirectory: '/workspace',
 }));
 
-const reported = 'Listo, el archivo fue creado:\n\n- **Archivo:** `test.md`\n- **Ruta absoluta:** `C:/xampp/htdocs/trabajosgithub/gonzalez96pi/test.md`\n- **Contenido:**\n  ```text\n  hola\n  ```';
+const reported = 'Listo, el archivo fue creado:\n\n- **Archivo:** `test.md`\n- **Ruta absoluta:** `C:/projects/example/test.md`\n- **Contenido:**\n  ```text\n  hola\n  ```';
 
 test('S1.1 reported list renders its code card without empty inline code', () => {
   const html = render(reported);
   assert.match(html, /Listo, el archivo fue creado:/);
   assert.match(html, /<strong>Archivo:<\/strong> <code class="markdown-inline-code">test\.md<\/code>/);
-  assert.match(html, /<strong>Ruta absoluta:<\/strong>.*C:\/xampp\/htdocs\/trabajosgithub\/gonzalez96pi\/test\.md/);
+  assert.match(html, /<strong>Ruta absoluta:<\/strong>.*C:\/projects\/example\/test\.md/);
   assert.match(html, /markdown-file-download-btn/);
   assert.match(html, /<li class="markdown-li"><strong>Contenido:<\/strong>[\s\S]*markdown-code-block[\s\S]*markdown-code-language">text<\/span>[\s\S]*hola[\s\S]*<\/li>/);
   assert.doesNotMatch(html, /<code class="markdown-inline-code"><\/code>/);
