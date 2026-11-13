@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { manageDockerFiles } from './docker-files';
 
 export type DockerRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
 export const DOCKER_OUTPUT_LIMIT = 256 * 1024;
@@ -45,8 +46,9 @@ export class DockerRequestError extends Error {}
 export async function manageDocker(input: any, runner: DockerRunner = runDocker, authorized: () => boolean = () => true): Promise<unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DockerRequestError('Invalid Docker request');
   const { action, containerId, confirmed } = input;
-  if (!['list', 'start', 'stop', 'restart', 'remove', 'logs'].includes(action)) throw new DockerRequestError('Unsupported Docker action');
+  if (!['list', 'start', 'stop', 'restart', 'remove', 'logs', 'files', 'readFile', 'saveFile'].includes(action)) throw new DockerRequestError('Unsupported Docker action');
   if (action !== 'list' && (typeof containerId !== 'string' || !/^[a-f0-9]{12,64}$/.test(containerId))) throw new DockerRequestError('Invalid container ID');
+  if (['files', 'readFile', 'saveFile'].includes(action)) return manageDockerFiles(input, runner, authorized);
   if (action === 'remove' && confirmed !== true) throw new DockerRequestError('Removal requires confirmation');
   const execute = async (args: string[]) => {
     if (!authorized()) throw new DockerRequestError('Web session expired');
