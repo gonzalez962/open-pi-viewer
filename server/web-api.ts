@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import { createWebPush, resolveWebPushConfig, type WebPushConfig } from './bridge/web-push';
 import { addPushNotificationHook } from './bridge/rpc';
 import { isTerminalCommand, handleTerminalIpcCommand, validateTerminalAccess, getTerminalManager } from './terminal';
+import { manageDocker, DockerRequestError, type DockerRunner } from './bridge/docker';
 
 export type Middleware = (req: IncomingMessage, res: ServerResponse, next: (error?: unknown) => void) => void | Promise<void>;
 export interface MiddlewareApp {
@@ -16,7 +17,7 @@ export interface MiddlewareApp {
   use(route: string, handler: Middleware): void;
 }
 
-export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, authConfig: WebAuthConfig, pushConfig: WebPushConfig = resolveWebPushConfig()) {
+export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, authConfig: WebAuthConfig, pushConfig: WebPushConfig = resolveWebPushConfig(), options: { dockerRunner?: DockerRunner } = {}) {
   const webAuth = createWebAuth(authConfig);
   const oauthAccess = createOAuthAccess();
   const activeWebAuthSseClients = new Map<string, Set<ServerResponse>>();
@@ -62,6 +63,41 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
 
   // Web authentication middleware must be wired BEFORE all API routes
   app.use(webAuth.middleware);
+
+  app.use("/api/docker", (req, res) => {
+    const reply = (status: number, body: unknown) => {
+      if (res.writableEnded) return;
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      res.end(JSON.stringify(body));
+    };
+    if (!webAuth.isEnabled()) { reply(403, { error: 'Web authentication required' }); return; }
+    const owner = webAuth.authenticate(req);
+    if (!owner || !webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
+    if (!validateSameOrigin(req)) { reply(403, { error: 'Origin validation failed' }); return; }
+    if (req.method !== 'POST' || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) {
+      reply(405, { error: 'JSON POST required' }); return;
+    }
+    let body = '';
+    let size = 0;
+    let tooLarge = false;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 8192) { tooLarge = true; reply(413, { error: 'Request body too large' }); return; }
+      if (!tooLarge) body += chunk.toString('utf8');
+    });
+    req.on('end', async () => {
+      if (tooLarge) return;
+      let input: unknown;
+      try { input = JSON.parse(body); } catch { reply(400, { error: 'Invalid JSON request body' }); return; }
+      try {
+        const result = await manageDocker(input, options.dockerRunner, () => webAuth.validateOwnerLease(owner));
+        if (!webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
+        reply(200, result);
+      } catch (error) {
+        reply(error instanceof DockerRequestError ? 400 : 502, { error: error instanceof Error ? error.message : 'Docker command failed' });
+      }
+    });
+  });
 
   app.use("/api/download", (req, res) => {
     if (req.method !== 'POST' || !req.headers['content-type']?.startsWith('application/json')) {
