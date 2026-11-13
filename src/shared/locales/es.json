@@ -22,6 +22,8 @@
   "docker.saved": "Archivo guardado. No se reinició ningún contenedor.",
   "docker.action_done": "Acción del contenedor completada.",
   "docker.update": "Actualizar imagen",
+  "docker.update_console": "Salida de actualización",
+  "docker.phase": "Fase",
   "docker.update_pending": "Actualizando imagen y recreando el servicio…",
   "docker.update_done": "Imagen actualizada y servicio recreado.",
   "docker.update_error": "Error al actualizar la imagen",

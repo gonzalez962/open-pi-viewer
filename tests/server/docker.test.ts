@@ -16,7 +16,8 @@ async function fixture(enabled = true, sessionTtlMs = 60_000) {
   const calls: string[][] = [];
   let fail = false;
   let running = false;
-  const runner = async (args: string[]) => {
+  let stream: ((args: string[], onOutput?: (stream: string, text: string) => void) => Promise<void>) | undefined;
+  const runner = async (args: string[], onOutput?: (stream: string, text: string) => void) => {
     calls.push([...args]);
     if (fail) return { stdout: '', stderr: 'daemon unavailable', code: 1 };
     if (args[0] === 'ps') return { stdout: [
@@ -25,13 +26,17 @@ async function fixture(enabled = true, sessionTtlMs = 60_000) {
       JSON.stringify({ ID: 'cccccccccccc', Names: 'standalone', State: 'exited', Status: 'Exited', Labels: '' }),
     ].join('\n'), stderr: '', code: 0 };
     if (args[0] === 'inspect') return { stdout: args[2] === '{{json .Config.Labels}}' ? JSON.stringify(labels) : args[2] === '{{.Config.Image}}' ? 'app:latest\n' : running ? 'running' : 'exited', stderr: '', code: 0 };
+    if (args[0] === 'compose' && stream) await stream(args, onOutput);
     if (args[0] === 'compose' && failedCompose && args.includes(failedCompose)) return { stdout: '', stderr: `${failedCompose} failed`, code: 1 };
     if (args[0] === 'logs') return { stdout: 'bounded log', stderr: '', code: 0 };
     return { stdout: 'ok', stderr: '', code: 0 };
   };
   const layers: { route?: string; handler: Middleware }[] = [];
   const app = { use(route: string | Middleware, handler?: Middleware) { layers.push(typeof route === 'string' ? { route, handler: handler! } : { handler: route }); } };
+  let maxQueued = 0;
   const server = http.createServer((req, res) => {
+    const write = res.write.bind(res);
+    (res as any).write = (...args: any[]) => { const result = (write as any)(...args); maxQueued = Math.max(maxQueued, res.writableLength); return result; };
     let i = 0;
     const next = () => { const layer = layers[i++]; if (!layer) { res.writeHead(404); res.end(); return; } if (layer.route && req.url !== layer.route) return next(); void layer.handler(req, res, next); };
     next();
@@ -48,14 +53,102 @@ async function fixture(enabled = true, sessionTtlMs = 60_000) {
   };
   const request = (body: unknown, cookie = '', origin = base) => fetch(`${base}/api/docker`, { method: 'POST', headers: { ...headers, origin, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
   const logout = (cookie: string) => fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { ...headers, cookie } });
-  return { calls, login, logout, request, dir, config, setLabels(value: Record<string, string>) { labels = value; }, setFailedCompose(value: string) { failedCompose = value; }, setFail(value: boolean) { fail = value; }, setRunning(value: boolean) { running = value; }, close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(dir, { recursive: true, force: true }); } };
+  return { calls, login, logout, request, dir, config, maxQueued: () => maxQueued, setStream(value: typeof stream) { stream = value; }, setLabels(value: Record<string, string>) { labels = value; }, setFailedCompose(value: string) { failedCompose = value; }, setFail(value: boolean) { fail = value; }, setRunning(value: boolean) { running = value; }, close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(dir, { recursive: true, force: true }); } };
 }
+
+test('S6.1 HTTP sends output before pull finishes and then recreates', async () => {
+  const f = await fixture(false);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.setStream(async (args, output) => {
+    if (args.includes('pull')) { output?.('stdout', 'pull-live\n'); await gate; }
+    else output?.('stderr', 'recreate-live\n');
+  });
+  try {
+    const request = f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true });
+    const early = await Promise.race([request, new Promise<null>(resolve => setTimeout(() => resolve(null), 500))]);
+    assert.ok(early, 'response must start before pull completes');
+    assert.match(early.headers.get('content-type') ?? '', /ndjson/i);
+    const reader = early.body!.getReader();
+    const first = await Promise.race([reader.read(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error('no live output')), 500))]);
+    assert.match(new TextDecoder().decode(first.value), /pull/);
+    release();
+    let rest = ''; while (true) { const part = await reader.read(); if (part.done) break; rest += new TextDecoder().decode(part.value); }
+    assert.match(rest, /recreate-live/); assert.match(rest, /"ok":true/);
+    assert.equal(f.calls.length, 3);
+  } finally { release(); await f.close(); }
+});
+
+async function liveResponse(promise: Promise<Response>): Promise<Response> {
+  let timer: ReturnType<typeof setTimeout>;
+  try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('no live response')), 1000); })]); }
+  finally { clearTimeout(timer!); }
+}
+
+test('S4 S6 live revocation suppresses later output and prevents recreation', { timeout: 5000 }, async () => {
+  const f = await fixture(true);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.setStream(async (args, output) => {
+    if (args.includes('pull')) { output?.('stdout', 'before-revocation'); await gate; output?.('stderr', 'secret-after-revocation'); }
+  });
+  try {
+    const cookie = await f.login();
+    const response = await liveResponse(f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true }, cookie));
+    const reader = response.body!.getReader();
+    let text = '';
+    while (!text.includes('before-revocation')) { const item = await reader.read(); if (item.done) break; text += new TextDecoder().decode(item.value); }
+    assert.match(text, /before-revocation/);
+    assert.equal((await f.logout(cookie)).status, 200);
+    release();
+    while (true) { const item = await reader.read(); if (item.done) break; text += new TextDecoder().decode(item.value); }
+    assert.doesNotMatch(text, /secret-after-revocation|"ok":true/);
+    assert.equal(f.calls.length, 2); assert.ok(f.calls[1].includes('pull'));
+  } finally { release(); await f.close(); }
+});
+
+test('S6 disconnect does not cancel an already started deployment', { timeout: 5000 }, async () => {
+  const f = await fixture(false);
+  let release!: () => void; let completed!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const done = new Promise<void>(resolve => { completed = resolve; });
+  f.setStream(async (args, output) => {
+    if (args.includes('pull')) { output?.('stdout', 'started'); await gate; }
+    else { output?.('stdout', 'recreated'); completed(); }
+  });
+  try {
+    const response = await liveResponse(f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true }));
+    const reader = response.body!.getReader();
+    const first = await reader.read(); assert.equal(first.done, false);
+    await reader.cancel(); release(); await done;
+    assert.equal(f.calls.length, 3); assert.ok(f.calls[2].includes('up'));
+  } finally { release(); await f.close(); }
+});
+
+test('S6 transport remains bounded for a slow reader and large producer output', { timeout: 5000 }, async () => {
+  const f = await fixture(false);
+  let completed!: () => void; let callbacks = 0;
+  const done = new Promise<void>(resolve => { completed = resolve; });
+  f.setStream(async (args, output) => {
+    if (args.includes('pull')) { assert.equal(typeof output, 'function'); for (let i = 0; i < 128; i++) { output!('stdout', 'x'.repeat(65536)); callbacks++; } }
+    else completed();
+  });
+  try {
+    const response = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true });
+    await done;
+    assert.equal(callbacks, 128);
+    assert.ok(f.maxQueued() > 0 && f.maxQueued() <= 1024 * 1024, `queued ${f.maxQueued()} bytes`);
+    await response.body?.cancel();
+    assert.equal(f.calls.length, 3);
+  } finally { await f.close(); }
+});
 
 test('S5.1 confirmed update uses inspected original Compose context for only selected service', async () => {
   const f = await fixture(false);
   try {
     const response = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true, project: 'evil', service: '--help', image: '--help', path: 'evil' });
-    assert.equal(response.status, 200); assert.deepEqual(await response.json(), { ok: true });
+    assert.equal(response.status, 200); assert.match(response.headers.get('content-type') ?? '', /ndjson/i);
+    assert.match(await response.text(), /"ok":true/);
     const prefix = ['compose', '-p', 'project-one', '--project-directory', f.dir, '-f', f.config];
     assert.deepEqual(f.calls, [['inspect', '--format', '{{json .Config.Labels}}', 'bbbbbbbbbbbb'], [...prefix, 'pull', 'web'], [...prefix, 'up', '-d', '--no-deps', '--force-recreate', 'web']]);
   } finally { await f.close(); }
@@ -82,8 +175,9 @@ test('S5.2 pull failure stops before up; up failure reports partial update witho
     for (const failure of ['pull', 'up']) {
       f.calls.length = 0; f.setFailedCompose(failure);
       const response = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true });
-      assert.notEqual(response.status, 200);
-      const error = JSON.stringify(await response.json());
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type') ?? '', /ndjson/i);
+      const error = await response.text();
       assert.match(error, new RegExp(`${failure} failed`, 'i'));
       if (failure === 'up') assert.match(error, /partial|downloaded|pulled/i);
       assert.deepEqual(f.calls, [['inspect', '--format', '{{json .Config.Labels}}', 'bbbbbbbbbbbb'], [...prefix, 'pull', 'web'], ...(failure === 'up' ? [[...prefix, 'up', '-d', '--no-deps', '--force-recreate', 'web']] : [])]);

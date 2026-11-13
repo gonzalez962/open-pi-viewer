@@ -89,13 +89,27 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
       if (tooLarge) return;
       let input: unknown;
       try { input = JSON.parse(body); } catch { reply(400, { error: 'Invalid JSON request body' }); return; }
+      const streaming = (input as any)?.action === 'updateImage';
+      let dropped = false;
+      const sendEvent = (event: unknown, terminal = false) => {
+        if (!authorized() || res.destroyed || res.writableEnded) return;
+        if (!res.headersSent) res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' });
+        if (res.writableLength > 256 * 1024) { dropped = true; if (!terminal) return; }
+        if (terminal && dropped && res.writableLength <= 256 * 1024) res.write(JSON.stringify({ type: 'truncated' }) + '\n');
+        const line = JSON.stringify(event) + '\n';
+        if (Buffer.byteLength(line) > 256 * 1024 || res.writableLength + Buffer.byteLength(line) > 512 * 1024) { dropped = true; return; }
+        res.write(line);
+      };
       try {
-        const result = await manageDocker(input, options.dockerRunner, authorized);
-        if (!authorized()) { reply(401, { error: 'Web login session required' }); return; }
-        reply(200, result);
+        const result = await manageDocker(input, options.dockerRunner, authorized, streaming ? sendEvent : undefined);
+        if (!authorized()) { if (res.headersSent) res.end(); else reply(401, { error: 'Web login session required' }); return; }
+        if (streaming) { sendEvent({ type: 'result', ok: true }, true); res.end(); }
+        else reply(200, result);
       } catch (error) {
-        if (!authorized()) { reply(401, { error: 'Web login session required' }); return; }
-        reply(error instanceof DockerRequestError ? 400 : 502, { error: error instanceof Error ? error.message : 'Docker command failed' });
+        if (!authorized()) { if (res.headersSent) res.end(); else reply(401, { error: 'Web login session required' }); return; }
+        const message = error instanceof Error ? error.message : 'Docker command failed';
+        if (res.headersSent) { sendEvent({ type: 'result', ok: false, error: message }, true); res.end(); }
+        else reply(error instanceof DockerRequestError ? 400 : 502, { error: message });
       }
     });
   });

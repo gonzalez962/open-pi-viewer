@@ -22,6 +22,8 @@
   "docker.saved": "File saved. No container was restarted.",
   "docker.action_done": "Container action completed.",
   "docker.update": "Update image",
+  "docker.update_console": "Update output",
+  "docker.phase": "Phase",
   "docker.update_pending": "Updating image and recreating service…",
   "docker.update_done": "Image updated and service recreated.",
   "docker.update_error": "Image update failed",

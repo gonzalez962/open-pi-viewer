@@ -18,6 +18,49 @@ const stopped = { id: 'bbbbbbbbbbbb', name: 'job', state: 'exited', status: 'Exi
 const yaml = { path: '/example/compose.yml', kind: 'yaml' as const, identity: 'yaml-id' };
 const env = { path: '/example/.env', kind: 'env' as const, identity: 'env-id' };
 
+test('S6.1 S6.3 controller retains bounded incremental console across selection and replacement', async () => {
+  let emit!: (event: any) => void;
+  let finish!: (result: unknown) => void;
+  let lists = 0;
+  const replacement = { ...running, id: 'cccccccccccc' };
+  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const controller = createDockerController((async (payload: any, onEvent: any) => {
+    if (payload.action === 'list') return { containers: ++lists === 1 ? [running, stopped] : [replacement, stopped] };
+    emit = onEvent;
+    return new Promise(resolve => { finish = resolve; });
+  }) as any);
+  await controller.refresh(); await controller.select(running.id);
+  const pending = controller.updateImage(true);
+  assert.equal(controller.getState().updating, true);
+  assert.equal(typeof emit, 'function');
+  emit({ type: 'phase', phase: 'pull' }); emit({ type: 'output', stream: 'stdout', text: 'live' });
+  assert.match(JSON.stringify(controller.getState()), /live/);
+  await controller.select(stopped.id);
+  emit({ type: 'phase', phase: 'recreate' }); emit({ type: 'output', stream: 'stderr', text: 'x'.repeat(1024 * 1024) });
+  assert.equal(controller.getState().selected, stopped.id);
+  assert.equal(controller.getState().notice, '');
+  assert.ok(JSON.stringify(controller.getState()).length < 512 * 1024);
+  emit({ type: 'result', ok: true }); finish({ ok: true }); await pending;
+  assert.match(JSON.stringify(controller.getState()), /recreate/);
+  assert.equal(controller.getState().selected, stopped.id);
+});
+
+test('S6.3 completed console remains after selected container is replaced', async () => {
+  let lists = 0;
+  const replacement = { ...running, id: 'cccccccccccc' };
+  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const controller = createDockerController((async (payload: any, onEvent: any) => {
+    if (payload.action === 'list') return { containers: ++lists === 1 ? [running] : [replacement] };
+    if (onEvent) { onEvent({ type: 'phase', phase: 'pull' }); onEvent({ type: 'output', stream: 'stdout', text: 'original-container-output' }); onEvent({ type: 'result', ok: true }); }
+    return { ok: true };
+  }) as any);
+  await controller.refresh(); await controller.select(running.id); await controller.updateImage(true);
+  assert.equal(controller.getState().selected, null);
+  assert.deepEqual(controller.getState().containers, [replacement]);
+  assert.match(JSON.stringify(controller.getState()), /original-container-output/);
+  assert.match(JSON.stringify(controller.getState()), /aaaaaaaaaaaa/);
+});
+
 test('S5.3 pull exposes pending and success for the selected container', async () => {
   let finish!: (value: unknown) => void;
   let lists = 0;

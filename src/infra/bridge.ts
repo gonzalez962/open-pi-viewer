@@ -1,11 +1,49 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
 /** Docker is a web-only HTTP API, independent of the Tauri bridge and workspace. */
-export async function dockerRequest(payload: Record<string, unknown>, fetchFn: typeof fetch = fetch): Promise<any> {
+export async function dockerRequest(payload: Record<string, unknown>, fetchFn: typeof fetch = fetch, onEvent?: (event: any) => void): Promise<any> {
+  if (payload.action === 'updateImage') return dockerUpdateRequest(payload, onEvent, fetchFn);
   const response = await fetchFn('/api/docker', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(`${response.status === 401 || response.status === 403 ? 'Authentication required or access denied. ' : ''}${data.error || `Docker request failed (${response.status})`}`);
   return data;
+}
+export async function dockerUpdateRequest(payload: Record<string, unknown>, onEvent?: (event: any) => void, fetchFn: typeof fetch = fetch): Promise<any> {
+  const response = await fetchFn('/api/docker', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Docker request failed (${response.status})`);
+  }
+  if (!response.body || !response.headers.get('content-type')?.includes('application/x-ndjson')) throw new Error('Unknown update outcome: invalid stream');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = ''; let terminal: any = null;
+  try {
+    while (true) {
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try { part = await reader.read(); }
+      catch {
+        if (terminal && !buffer) break;
+        throw new Error('Unknown update outcome: connection lost; deployment may continue');
+      }
+      buffer += decoder.decode(part.value, { stream: !part.done });
+      let index: number;
+      while ((index = buffer.indexOf('\n')) !== -1) {
+        if (index > 256 * 1024) throw new Error('Docker stream record too large');
+        const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+        if (!line) continue;
+        const event = JSON.parse(line);
+        if (terminal) throw new Error('Invalid Docker stream after result');
+        onEvent?.(event);
+        if (event.type === 'result') terminal = event;
+      }
+      if (buffer.length > 256 * 1024) throw new Error('Docker stream record too large');
+      if (part.done) break;
+    }
+  } finally { reader.releaseLock(); }
+  if (buffer || !terminal) throw new Error('Unknown update outcome: stream ended without result');
+  if (terminal.ok !== true) throw new Error(terminal.error || 'Docker update failed');
+  return { ok: true };
 }
 import type { ProjectWorktree, ListProjectWorktreesPayload, CreateProjectWorktreePayload } from '@core/types/workspace';
 

@@ -37,6 +37,23 @@ test('S5 update stops after inspect or pull when authority is revoked', async ()
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
 
+test('S6 runner streams split UTF-8 separately and retains the spawnFn seam', async () => {
+  const child = new EventEmitter() as any;
+  child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => true;
+  const seen: [string, string][] = [];
+  let spawned = 0;
+  const result = (runDocker as any)(['compose', '-p', 'project', 'pull', 'web'], (...args: any[]) => { spawned++; assert.equal(args[0], 'docker'); return child; }, (stream: string, text: string) => seen.push([stream, text]));
+  const bytes = Buffer.from('línea');
+  child.stdout.emit('data', bytes.subarray(0, 2));
+  child.stderr.emit('data', Buffer.from('warning'));
+  child.stdout.emit('data', bytes.subarray(2));
+  const beforeClose = [...seen];
+  child.emit('close', 0);
+  assert.equal((await result).code, 0); assert.equal(spawned, 1);
+  assert.equal(beforeClose.filter(([stream]) => stream === 'stdout').map(([, text]) => text).join(''), 'línea');
+  assert.equal(beforeClose.filter(([stream]) => stream === 'stderr').map(([, text]) => text).join(''), 'warning');
+});
+
 test('S5 pull runner retains bounded output without killing a noisy download', async () => {
   const child = new EventEmitter() as any;
   child.stdout = new EventEmitter(); child.stderr = new EventEmitter();

@@ -1,9 +1,9 @@
 export interface DockerContainer { id: string; name: string; state: string; status: string }
 export interface DockerFile { path: string; kind: 'yaml' | 'env'; identity: string }
-export type DockerRequest = (payload: Record<string, unknown>) => Promise<any>;
+export type DockerRequest = (payload: Record<string, unknown>, onEvent?: (event: any) => void) => Promise<any>;
 export function dockerNavigation(existing: string[], web: boolean): string[] { return web ? [...existing, 'docker'] : existing; }
 export function createDockerController(request: DockerRequest) {
-  let state = { containers: [] as DockerContainer[], selected: null as string | null, files: [] as DockerFile[], file: null as DockerFile | null, content: '', version: '', logs: null as { stdout: string; stderr: string } | null, error: '', notice: '', updating: false, updateBusy: false, updateFailed: false };
+  let state = { containers: [] as DockerContainer[], selected: null as string | null, files: [] as DockerFile[], file: null as DockerFile | null, content: '', version: '', logs: null as { stdout: string; stderr: string } | null, error: '', notice: '', updating: false, updateBusy: false, updateFailed: false, updateConsole: null as null | { id: string; phase: string; phases: string[]; text: string } };
   let updatingId: string | null = null;
   const listeners = new Set<() => void>();
   const set = (patch: Partial<typeof state>) => { state = { ...state, ...patch }; listeners.forEach(fn => fn()); };
@@ -20,9 +20,15 @@ export function createDockerController(request: DockerRequest) {
       const id = state.selected;
       if (!confirmed || !id || updatingId) return;
       updatingId = id;
-      set({ updating: true, updateBusy: true, updateFailed: false, error: '', notice: '' });
+      set({ updating: true, updateBusy: true, updateFailed: false, error: '', notice: '', updateConsole: { id, phase: 'pull', phases: ['pull'], text: '' } });
       try {
-        await request({ action: 'updateImage', containerId: id, confirmed: true });
+        await request({ action: 'updateImage', containerId: id, confirmed: true }, event => {
+          const current = state.updateConsole;
+          if (!current || current.id !== id) return;
+          const phase = event.type === 'phase' ? event.phase : event.type === 'result' ? (event.ok ? 'success' : 'error') : current.phase;
+          const text = event.type === 'output' ? `${current.text}[${event.stream}] ${event.text}` : event.type === 'truncated' ? `${current.text}\n[output truncated]\n` : current.text;
+          set({ updateConsole: { id, phase, phases: event.type === 'phase' && !current.phases.includes(phase) ? [...current.phases, phase] : current.phases, text: text.slice(-128 * 1024) } });
+        });
         if (state.selected === id) set({ notice: 'updateImage', error: '' });
         try {
           const result = await request({ action: 'list' });
@@ -32,6 +38,7 @@ export function createDockerController(request: DockerRequest) {
           if (state.selected === id) set({ error: e instanceof Error ? e.message : String(e) });
         }
       } catch (e) {
+        if (state.updateConsole?.id === id) set({ updateConsole: { ...state.updateConsole, phase: /unknown/i.test(String(e)) ? 'unknown' : 'error' } });
         if (state.selected === id) set({ error: e instanceof Error ? e.message : String(e), notice: '', updateFailed: true });
       } finally {
         updatingId = null;
