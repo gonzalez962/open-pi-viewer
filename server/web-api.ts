@@ -70,9 +70,9 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
       res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(body));
     };
-    if (!webAuth.isEnabled()) { reply(403, { error: 'Web authentication required' }); return; }
     const owner = webAuth.authenticate(req);
-    if (!owner || !webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
+    const authorized = () => !webAuth.isEnabled() || (owner !== null && webAuth.validateOwnerLease(owner));
+    if (!authorized()) { reply(401, { error: 'Web login session required' }); return; }
     if (!validateSameOrigin(req)) { reply(403, { error: 'Origin validation failed' }); return; }
     if (req.method !== 'POST' || !req.headers['content-type']?.toLowerCase().startsWith('application/json')) {
       reply(405, { error: 'JSON POST required' }); return;
@@ -90,11 +90,11 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
       let input: unknown;
       try { input = JSON.parse(body); } catch { reply(400, { error: 'Invalid JSON request body' }); return; }
       try {
-        const result = await manageDocker(input, options.dockerRunner, () => webAuth.validateOwnerLease(owner));
-        if (!webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
+        const result = await manageDocker(input, options.dockerRunner, authorized);
+        if (!authorized()) { reply(401, { error: 'Web login session required' }); return; }
         reply(200, result);
       } catch (error) {
-        if (!webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
+        if (!authorized()) { reply(401, { error: 'Web login session required' }); return; }
         reply(error instanceof DockerRequestError ? 400 : 502, { error: error instanceof Error ? error.message : 'Docker command failed' });
       }
     });

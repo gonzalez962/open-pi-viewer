@@ -2,9 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { installWebApi, type Middleware } from '@server/web-api';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 // The injected runner is the only Docker boundary: these tests never invoke Docker.
 async function fixture(enabled = true, sessionTtlMs = 60_000) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-update-test-'));
+  const config = path.join(dir, 'compose.yml');
+  await fs.writeFile(config, 'services:\n  web:\n    image: app:latest\n');
+  let labels: Record<string, string> = { 'com.docker.compose.project': 'project-one', 'com.docker.compose.service': 'web', 'com.docker.compose.project.working_dir': dir, 'com.docker.compose.project.config_files': config };
+  let failedCompose = '';
   const calls: string[][] = [];
   let fail = false;
   let running = false;
@@ -16,7 +24,8 @@ async function fixture(enabled = true, sessionTtlMs = 60_000) {
       JSON.stringify({ ID: 'bbbbbbbbbbbb', Names: 'beta', State: 'exited', Status: 'Exited', Labels: 'com.docker.compose.project=two' }),
       JSON.stringify({ ID: 'cccccccccccc', Names: 'standalone', State: 'exited', Status: 'Exited', Labels: '' }),
     ].join('\n'), stderr: '', code: 0 };
-    if (args[0] === 'inspect') return { stdout: running ? 'running' : 'exited', stderr: '', code: 0 };
+    if (args[0] === 'inspect') return { stdout: args[2] === '{{json .Config.Labels}}' ? JSON.stringify(labels) : args[2] === '{{.Config.Image}}' ? 'app:latest\n' : running ? 'running' : 'exited', stderr: '', code: 0 };
+    if (args[0] === 'compose' && failedCompose && args.includes(failedCompose)) return { stdout: '', stderr: `${failedCompose} failed`, code: 1 };
     if (args[0] === 'logs') return { stdout: 'bounded log', stderr: '', code: 0 };
     return { stdout: 'ok', stderr: '', code: 0 };
   };
@@ -39,8 +48,62 @@ async function fixture(enabled = true, sessionTtlMs = 60_000) {
   };
   const request = (body: unknown, cookie = '', origin = base) => fetch(`${base}/api/docker`, { method: 'POST', headers: { ...headers, origin, ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
   const logout = (cookie: string) => fetch(`${base}/api/auth/logout`, { method: 'POST', headers: { ...headers, cookie } });
-  return { calls, login, logout, request, setFail(value: boolean) { fail = value; }, setRunning(value: boolean) { running = value; }, close: () => new Promise<void>(resolve => server.close(() => resolve())) };
+  return { calls, login, logout, request, dir, config, setLabels(value: Record<string, string>) { labels = value; }, setFailedCompose(value: string) { failedCompose = value; }, setFail(value: boolean) { fail = value; }, setRunning(value: boolean) { running = value; }, close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); await fs.rm(dir, { recursive: true, force: true }); } };
 }
+
+test('S5.1 confirmed update uses inspected original Compose context for only selected service', async () => {
+  const f = await fixture(false);
+  try {
+    const response = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true, project: 'evil', service: '--help', image: '--help', path: 'evil' });
+    assert.equal(response.status, 200); assert.deepEqual(await response.json(), { ok: true });
+    const prefix = ['compose', '-p', 'project-one', '--project-directory', f.dir, '-f', f.config];
+    assert.deepEqual(f.calls, [['inspect', '--format', '{{json .Config.Labels}}', 'bbbbbbbbbbbb'], [...prefix, 'pull', 'web'], [...prefix, 'up', '-d', '--no-deps', '--force-recreate', 'web']]);
+  } finally { await f.close(); }
+});
+
+test('S5.2 cancellation, missing metadata and inaccessible original files cannot update', async () => {
+  const f = await fixture(false);
+  try {
+    const cancelled = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: false });
+    assert.notEqual(cancelled.status, 200); assert.deepEqual(f.calls, []);
+    for (const labels of [{}, { 'com.docker.compose.project': 'project-one' }, { 'com.docker.compose.project': 'project-one', 'com.docker.compose.service': 'web', 'com.docker.compose.project.working_dir': f.dir, 'com.docker.compose.project.config_files': path.join(f.dir, 'missing.yml') }] as Record<string, string>[]) {
+      f.setLabels(labels); f.calls.length = 0;
+      const result = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true });
+      assert.notEqual(result.status, 200); assert.match(JSON.stringify(await result.json()), /compose|unavailable|configuration/i);
+      assert.deepEqual(f.calls, [['inspect', '--format', '{{json .Config.Labels}}', 'bbbbbbbbbbbb']]);
+    }
+  } finally { await f.close(); }
+});
+
+test('S5.2 pull failure stops before up; up failure reports partial update without rollback', async () => {
+  const f = await fixture(false);
+  try {
+    const prefix = ['compose', '-p', 'project-one', '--project-directory', f.dir, '-f', f.config];
+    for (const failure of ['pull', 'up']) {
+      f.calls.length = 0; f.setFailedCompose(failure);
+      const response = await f.request({ action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true });
+      assert.notEqual(response.status, 200);
+      const error = JSON.stringify(await response.json());
+      assert.match(error, new RegExp(`${failure} failed`, 'i'));
+      if (failure === 'up') assert.match(error, /partial|downloaded|pulled/i);
+      assert.deepEqual(f.calls, [['inspect', '--format', '{{json .Config.Labels}}', 'bbbbbbbbbbbb'], [...prefix, 'pull', 'web'], ...(failure === 'up' ? [[...prefix, 'up', '-d', '--no-deps', '--force-recreate', 'web']] : [])]);
+    }
+  } finally { await f.close(); }
+});
+
+test('S5 update HTTP requires enabled authentication and same origin', async () => {
+  for (const enabled of [false, true]) {
+    const f = await fixture(enabled);
+    try {
+      const body = { action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true };
+      if (enabled) { assert.equal((await f.request(body)).status, 401); assert.deepEqual(f.calls, []); }
+      const cookie = enabled ? await f.login() : '';
+      assert.equal((await f.request(body, cookie, 'http://evil.invalid')).status, 403); assert.deepEqual(f.calls, []);
+      assert.equal((await f.request(body, cookie)).status, 200);
+      assert.equal(f.calls.length, 3);
+    } finally { await f.close(); }
+  }
+});
 
 test('S1.1 lists all existing containers without a project filter; errors are explicit', async () => {
   const f = await fixture();
@@ -110,17 +173,15 @@ test('S1.4 logs are bounded and failures are explicit', async () => {
   } finally { await f.close(); }
 });
 
-test('S4.1 disabled auth and anonymous requests never execute Docker', async () => {
-  for (const enabled of [false, true]) {
-    const f = await fixture(enabled);
-    try {
-      for (const action of ['list', 'start', 'stop', 'restart', 'remove', 'logs']) {
-        const response = await f.request({ action, containerId: 'bbbbbbbbbbbb', confirmed: true });
-        assert.notEqual(response.status, 200);
-      }
-      assert.deepEqual(f.calls, []);
-    } finally { await f.close(); }
-  }
+test('S4.1 enabled auth denies anonymous requests before executing Docker', async () => {
+  const f = await fixture();
+  try {
+    for (const action of ['list', 'start', 'stop', 'restart', 'remove', 'logs']) {
+      const response = await f.request({ action, containerId: 'bbbbbbbbbbbb', confirmed: true });
+      assert.equal(response.status, 401);
+    }
+    assert.deepEqual(f.calls, []);
+  } finally { await f.close(); }
 });
 
 test('S4.2 authenticated owner and same origin required, logout revokes access', async () => {

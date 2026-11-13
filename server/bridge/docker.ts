@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { manageDockerFiles } from './docker-files';
 
 export type DockerRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
@@ -21,10 +23,17 @@ export function runDocker(args: string[], spawnFn: typeof spawn = spawn): Promis
       child.kill();
       reject(error);
     };
-    const timer = setTimeout(() => finish(new Error('Docker command timed out')), 30_000);
+    const isPull = args[0] === 'compose' && (args[args.length - 2] === 'pull' || (args[args.length - 5] === 'up' && args.slice(-4, -1).join(' ') === '-d --no-deps --force-recreate'));
+    const timer = setTimeout(() => finish(new Error('Docker command timed out')), isPull ? 15 * 60_000 : 30_000);
     const collect = (target: Buffer[]) => (chunk: Buffer) => {
       if (done) return;
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      if (isPull) {
+        const remaining = Math.max(0, DOCKER_OUTPUT_LIMIT - bytes);
+        if (remaining) target.push(data.subarray(0, remaining));
+        bytes += Math.min(data.length, remaining);
+        return;
+      }
       bytes += data.length;
       if (bytes > DOCKER_OUTPUT_LIMIT) { finish(new Error('Docker output limit exceeded')); return; }
       target.push(data);
@@ -46,10 +55,11 @@ export class DockerRequestError extends Error {}
 export async function manageDocker(input: any, runner: DockerRunner = runDocker, authorized: () => boolean = () => true): Promise<unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DockerRequestError('Invalid Docker request');
   const { action, containerId, confirmed } = input;
-  if (!['list', 'start', 'stop', 'restart', 'remove', 'logs', 'files', 'readFile', 'saveFile'].includes(action)) throw new DockerRequestError('Unsupported Docker action');
+  if (!['list', 'start', 'stop', 'restart', 'remove', 'logs', 'updateImage', 'files', 'readFile', 'saveFile'].includes(action)) throw new DockerRequestError('Unsupported Docker action');
   if (action !== 'list' && (typeof containerId !== 'string' || !/^[a-f0-9]{12,64}$/.test(containerId))) throw new DockerRequestError('Invalid container ID');
   if (['files', 'readFile', 'saveFile'].includes(action)) return manageDockerFiles(input, runner, authorized);
   if (action === 'remove' && confirmed !== true) throw new DockerRequestError('Removal requires confirmation');
+  if (action === 'updateImage' && confirmed !== true) throw new DockerRequestError('Update requires confirmation');
   const execute = async (args: string[]) => {
     if (!authorized()) throw new DockerRequestError('Web session expired');
     const result = await runner(args);
@@ -68,6 +78,32 @@ export async function manageDocker(input: any, runner: DockerRunner = runDocker,
     const state = await execute(['inspect', '--format', '{{.State.Status}}', containerId]);
     if (!['exited', 'created', 'dead'].includes(state.stdout.trim())) throw new DockerRequestError('Container must be stopped');
     await execute(['rm', containerId]);
+    return { ok: true };
+  }
+  if (action === 'updateImage') {
+    const inspected = await execute(['inspect', '--format', '{{json .Config.Labels}}', containerId]);
+    let labels: any;
+    try { labels = JSON.parse(inspected.stdout); } catch { throw new DockerRequestError('Compose metadata unavailable'); }
+    const project = labels?.['com.docker.compose.project'];
+    const service = labels?.['com.docker.compose.service'];
+    const working = labels?.['com.docker.compose.project.working_dir'];
+    const config = labels?.['com.docker.compose.project.config_files'];
+    if (typeof project !== 'string' || !/^[a-z0-9][a-z0-9_-]*$/.test(project) || typeof service !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service) || typeof working !== 'string' || !path.isAbsolute(working) || typeof config !== 'string' || !config) throw new DockerRequestError('Compose metadata unavailable');
+    const names = config.split(',');
+    if (names.length > 32 || names.some((name: string) => !name || !/\.ya?ml$/i.test(name))) throw new DockerRequestError('Compose metadata unavailable');
+    const files = names.map((name: string) => path.resolve(working, name));
+    try {
+      if (!(await fs.stat(working)).isDirectory()) throw new Error();
+      for (const file of files) {
+        const handle = await fs.open(file, 'r');
+        try { if (!(await handle.stat()).isFile()) throw new Error(); } finally { await handle.close(); }
+      }
+    } catch { throw new DockerRequestError('Compose configuration unavailable'); }
+    const args = ['compose', '-p', project, '--project-directory', working];
+    for (const file of files) args.push('-f', file);
+    await execute([...args, 'pull', service]);
+    try { await execute([...args, 'up', '-d', '--no-deps', '--force-recreate', service]); }
+    catch (error) { throw new Error(`Image downloaded; recreation failed: ${error instanceof Error ? error.message : String(error)}`); }
     return { ok: true };
   }
   if (action === 'logs') {

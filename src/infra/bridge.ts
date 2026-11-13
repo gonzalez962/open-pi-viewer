@@ -1,4 +1,12 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+
+/** Docker is a web-only HTTP API, independent of the Tauri bridge and workspace. */
+export async function dockerRequest(payload: Record<string, unknown>, fetchFn: typeof fetch = fetch): Promise<any> {
+  const response = await fetchFn('/api/docker', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`${response.status === 401 || response.status === 403 ? 'Authentication required or access denied. ' : ''}${data.error || `Docker request failed (${response.status})`}`);
+  return data;
+}
 import type { ProjectWorktree, ListProjectWorktreesPayload, CreateProjectWorktreePayload } from '@core/types/workspace';
 
 export function listProjectWorktreesPi(payload: ListProjectWorktreesPayload, invokeFn: <T>(command: string, args?: Record<string, unknown>) => Promise<T> = invoke): Promise<ProjectWorktree[]> {

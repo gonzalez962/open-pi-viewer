@@ -41,7 +41,7 @@ async function fixture() {
     const next = () => { const layer = layers[i++]; if (!layer) { res.writeHead(404); res.end(); return; } if (layer.route && req.url !== layer.route) return next(); void layer.handler(req, res, next); };
     next();
   });
-  installWebApi(app, server, { enabled: true, key: 'fixture-key', sessionTtlMs: 60_000 }, { enabled: false }, { dockerRunner: runner });
+  installWebApi(app, server, { enabled: true, key: 'fixture-key', sessionTtlMs: 60_000 }, { available: false }, { dockerRunner: runner });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as any).port}`;
   const headers = { origin: base, 'content-type': 'application/json' };
