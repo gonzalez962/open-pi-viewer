@@ -1,5 +1,62 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { registerHooks } from 'node:module';
+
+registerHooks({ load(url, context, nextLoad) {
+  if (url.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
+  return nextLoad(url, context);
+} });
+
+// Exercise the real presentation component, not the controller as a proxy for the UI.
+// A browser is still needed to verify showModal, focus, Escape, and scrolling.
+const updateConsole = { id: 'aaaaaaaaaaaa', phase: 'recreate', phases: ['pull', 'recreate'], text: 'live output\n' };
+
+test('S7.1 update output renders in a named native dialog with phase and live log', async () => {
+  const { UpdateLogModal } = await import('../../../src/features/docker/DockerView');
+  const html = renderToStaticMarkup(React.createElement(UpdateLogModal, {
+    isOpen: true, console: updateConsole, locale: 'en', onClose: () => {},
+  }));
+  assert.match(html, /<dialog\b/);
+  assert.match(html, /aria-labelledby="([^"]+)"/);
+  const titleId = html.match(/aria-labelledby="([^"]+)"/)![1];
+  assert.ok(html.includes(`id="${titleId}"`));
+  assert.match(html, /recreate/);
+  assert.match(html, /live output/);
+  assert.match(html, /aaaaaaaaaaaa/);
+  assert.match(html, /<button\b[^>]*>[^<]*close/i);
+  assert.match(html, /<pre\b[^>]*>[^<]*live output/);
+});
+
+test('S7.2 closed output is hidden and retained output renders again without a selected container', async () => {
+  const { UpdateLogModal } = await import('../../../src/features/docker/DockerView');
+  const props = { console: updateConsole, locale: 'en' as const, onClose: () => {} };
+  assert.equal(renderToStaticMarkup(React.createElement(UpdateLogModal, { ...props, isOpen: false })), '');
+  const reopened = renderToStaticMarkup(React.createElement(UpdateLogModal, { ...props, isOpen: true }));
+  assert.match(reopened, /<dialog\b/);
+  assert.match(reopened, /aaaaaaaaaaaa/);
+  assert.match(reopened, /live output/);
+});
+
+test('S8.1 retained update output offers no reopen control in the production view', async () => {
+  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const controller = createDockerController((async (payload: any, onEvent: any) => {
+    if (payload.action === 'list') return { containers: [{ id: 'aaaaaaaaaaaa', name: 'web', state: 'running', status: 'Up' }] };
+    onEvent?.({ type: 'output', stream: 'stdout', text: 'retained output' });
+    onEvent?.({ type: 'result', ok: true });
+    return { ok: true };
+  }) as any);
+  await controller.refresh();
+  await controller.select('aaaaaaaaaaaa');
+  await controller.updateImage(true);
+  assert.match(controller.getState().updateConsole?.text ?? '', /retained output/);
+  const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller } as any));
+  // Confirm SSR actually consumed the populated controller before checking absence.
+  assert.match(html, /web/);
+  assert.doesNotMatch(html, /<button\b[^>]*>\s*View update log\s*<\/button>/i);
+});
 
 // The controller is the production interaction boundary used by the Docker view.
 // The injected transport avoids Docker and real host configuration access.
@@ -17,6 +74,27 @@ const running = { id: 'aaaaaaaaaaaa', name: 'web', state: 'running', status: 'Up
 const stopped = { id: 'bbbbbbbbbbbb', name: 'job', state: 'exited', status: 'Exited' };
 const yaml = { path: '/example/compose.yml', kind: 'yaml' as const, identity: 'yaml-id' };
 const env = { path: '/example/.env', kind: 'env' as const, identity: 'env-id' };
+
+for (const [state, expected] of [
+  ['running', 'Stop'], ['exited', 'Start'], ['created', 'Start'], ['dead', 'Start'],
+  ['unknown', null], ['restarting', null],
+] as const) {
+  test(`S9 selected ${state} container exposes only its applicable lifecycle action`, async () => {
+    const container = { ...running, state };
+    const { controller } = await setup(p => p.action === 'list' ? { containers: [container] } : {});
+    await controller.refresh();
+    await controller.select(container.id);
+    const { DockerView } = await import('../../../src/features/docker/DockerView');
+    const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
+    assert.match(html, /web/);
+    const labels = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/g)].map(match => match[1].trim());
+    assert.equal(labels.includes('Start'), expected === 'Start');
+    assert.equal(labels.includes('Stop'), expected === 'Stop');
+    for (const label of ['Restart', 'Update image', 'Remove', 'Configuration', 'Logs']) {
+      assert.ok(labels.includes(label), `missing existing ${label} action`);
+    }
+  });
+}
 
 test('S6.1 S6.3 controller retains bounded incremental console across selection and replacement', async () => {
   let emit!: (event: any) => void;
