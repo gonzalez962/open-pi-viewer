@@ -7,6 +7,8 @@ import {
   deleteMcpServerPi,
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
+import { DockerView } from '@features/docker/DockerView';
+import { DockerNavigation } from '@features/docker/DockerNavigation';
 import { WorktreesModal } from '@features/projects/WorktreesModal';
 import { useProjectWorktrees } from '@features/projects/hooks/useProjectWorktrees';
 import { worktreeCache } from '@features/projects/worktree-cache';
@@ -215,6 +217,7 @@ export const App: React.FC = () => {
   // declaration moves there too; the other settings-panel state is independent and stays.
   const [todoExpanded, setTodoExpanded] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showDocker, setShowDocker] = useState(false);
   const [showKanban, setShowKanban] = useState(false);
   const [isZenMode, setIsZenMode] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -519,6 +522,7 @@ export const App: React.FC = () => {
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
       setIsMobileNavOpen(false);
+      setShowDocker(false);
       handleSelectProject(project);
     },
     [handleSelectProject]
@@ -1227,6 +1231,7 @@ export const App: React.FC = () => {
 
   const handleToggleSettings = () => {
     setIsMobileNavOpen(false);
+    if (showDocker) { setShowDocker(false); handleOpenSettings(); return; }
     if (showSettings) {
       handleCancelSettings();
     } else {
@@ -1672,6 +1677,7 @@ export const App: React.FC = () => {
           triggerRef={mobileMenuToggleRef}
           restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
+          <DockerNavigation web={isWebShim()} active={showDocker} locale={preferences.language} onSelect={() => { setShowDocker(true); setShowSettings(false); setIsMobileNavOpen(false); }} />
           <ProjectDock
             projects={isWebShim() ? projectsRegistry.projects.filter(project => classify(project.path).kind !== 'missing') : projectsRegistry.projects}
             isSecondaryWorktree={isWebShim() ? isSecondary : undefined}
@@ -1707,10 +1713,12 @@ export const App: React.FC = () => {
               activeSessionId={state.sessionId}
               activeSessionFile={state.sessionFile}
               onSelectSession={(session) => {
+                setShowDocker(false);
                 handleCloseMobileNav();
                 handleSelectSession(session);
               }}
               onNewSession={() => {
+                setShowDocker(false);
                 handleCloseMobileNav();
                 handleNewConversation();
               }}
@@ -1767,7 +1775,7 @@ export const App: React.FC = () => {
               <span>{t('zen.exit_button')}</span>
             </button>
           )}
-          {showSettings ? (
+          {showDocker && isWebShim() ? <DockerView locale={preferences.language} /> : showSettings ? (
             <React.Suspense fallback={<div className="settings-loading-pane">{t('settings.loading')}</div>}>
               <SettingsView
                 config={config}
