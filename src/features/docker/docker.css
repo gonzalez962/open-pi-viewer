@@ -45,11 +45,14 @@
 .docker-view h2, .docker-view h3 { font-size: 15px; line-height: 1.3; margin: 0; }
 .docker-list { padding: 0; margin: 0; list-style: none; }
 .docker-list li + li { border-top: 1px solid var(--border-muted); }
-.docker-list-item { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; text-align: left; padding: 12px 18px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--fg-default); font: inherit; cursor: pointer; }
+.docker-list-item { width: 100%; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; text-align: left; padding: 12px 18px; border: 0; border-left: 3px solid transparent; background: transparent; color: var(--fg-default); font: inherit; cursor: pointer; }
 .docker-list-item:hover { background: var(--bg-subtle); }
 .docker-list-item[aria-pressed=true] { background: var(--bg-elevated); border-left-color: var(--border-active); }
-.docker-container-name { flex: 1 1 100px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.docker-container-name { flex: 1 1 0; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
 .docker-container-status { color: var(--fg-muted); font-size: 12px; overflow-wrap: anywhere; }
+.docker-list-item .docker-container-status { flex: 1 1 100px; min-width: 0; }
+.docker-list-item .docker-state { flex: 0 0 auto; margin-left: auto; white-space: nowrap; }
+.docker-metadata { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .docker-state { display: inline-block; padding: 2px 8px; border: 1px solid var(--border-muted); border-radius: 10px; background: var(--bg-subtle); color: var(--fg-muted); font-size: 12px; overflow-wrap: anywhere; }
 .docker-state.running { background: var(--status-green-bg); border-color: var(--status-green-border); color: var(--status-green); }
 .docker-actions { margin: 12px 0; }
