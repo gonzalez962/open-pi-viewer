@@ -82,7 +82,7 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     let tooLarge = false;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > 8192) { tooLarge = true; reply(413, { error: 'Request body too large' }); return; }
+      if (size > 2 * 1024 * 1024) { tooLarge = true; reply(413, { error: 'Request body too large' }); return; }
       if (!tooLarge) body += chunk.toString('utf8');
     });
     req.on('end', async () => {
@@ -94,6 +94,7 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
         if (!webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
         reply(200, result);
       } catch (error) {
+        if (!webAuth.validateOwnerLease(owner)) { reply(401, { error: 'Web login session required' }); return; }
         reply(error instanceof DockerRequestError ? 400 : 502, { error: error instanceof Error ? error.message : 'Docker command failed' });
       }
     });
