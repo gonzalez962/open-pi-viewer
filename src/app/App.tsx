@@ -8,7 +8,7 @@ import {
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
 import { DockerView } from '@features/docker/DockerView';
-import { DockerNavigation } from '@features/docker/DockerNavigation';
+import { ToolsMenu } from './components/ToolsMenu';
 import { WorktreesModal } from '@features/projects/WorktreesModal';
 import { useProjectWorktrees } from '@features/projects/hooks/useProjectWorktrees';
 import { worktreeCache } from '@features/projects/worktree-cache';
@@ -1640,30 +1640,15 @@ export const App: React.FC = () => {
             <span className="terminal-toggle-text">{t('terminal.title')}</span>
           </button>
 
-          <button
-            ref={zenToggleRef}
-            type="button"
-            className="btn-zen-toggle"
-            onClick={handleToggleZenMode}
-            title={isZenMode ? t('zen.exit_title') : t('zen.enter_title')}
-            aria-label={isZenMode ? t('zen.exit_title') : t('zen.enter_title')}
-            aria-pressed={isZenMode}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
-            </svg>
-            <span className="zen-toggle-text">{t('zen.toggle_button')}</span>
-          </button>
+          <ToolsMenu
+            buttonRef={zenToggleRef}
+            web={isWebShim()}
+            locale={preferences.language}
+            isZenMode={isZenMode}
+            dockerActive={showDocker}
+            onToggleZen={handleToggleZenMode}
+            onSelectDocker={() => { setShowDocker(true); setShowSettings(false); setIsMobileNavOpen(false); }}
+          />
         </div>
       </header>
 
@@ -1677,7 +1662,6 @@ export const App: React.FC = () => {
           triggerRef={mobileMenuToggleRef}
           restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
-          <DockerNavigation web={isWebShim()} active={showDocker} locale={preferences.language} onSelect={() => { setShowDocker(true); setShowSettings(false); setIsMobileNavOpen(false); }} />
           <ProjectDock
             projects={isWebShim() ? projectsRegistry.projects.filter(project => classify(project.path).kind !== 'missing') : projectsRegistry.projects}
             isSecondaryWorktree={isWebShim() ? isSecondary : undefined}
