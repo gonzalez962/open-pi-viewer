@@ -20,6 +20,13 @@ import {
   type MobileNavKeyboardEvent,
 } from '@app/mobile-navigation';
 import { MobileNavigation } from '@app/MobileNavigation';
+test('S13: drawer preserves existing navigation without an injected Docker entry', () => {
+  const html = renderToStaticMarkup(React.createElement(MobileNavigation, { isOpen: true, isMobile: true, onClose: () => {}, locale: 'en' },
+    React.createElement('button', null, 'Existing navigation')));
+  assert.match(html, /Existing navigation/);
+  assert.doesNotMatch(html, />Docker<\/button>/);
+  assert.match(html, /role="dialog"/);
+});
 
 test('mobile-navigation: MOBILE_BREAKPOINT is 768px', () => {
   assert.equal(MOBILE_BREAKPOINT, 768);
