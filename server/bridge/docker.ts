@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { manageDockerFiles } from './docker-files';
 
-export type DockerRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
+export type DockerOutput = (stream: 'stdout' | 'stderr', text: string) => void;
+export type DockerRunner = (args: string[], onOutput?: DockerOutput) => Promise<{ stdout: string; stderr: string; code: number }>;
 export const DOCKER_OUTPUT_LIMIT = 256 * 1024;
 
 // Limit both streams together, including stderr, before buffering more data.
-export function runDocker(args: string[], spawnFn: typeof spawn = spawn): Promise<{ stdout: string; stderr: string; code: number }> {
+export function runDocker(args: string[], spawnFn: typeof spawn = spawn, onOutput?: DockerOutput): Promise<{ stdout: string; stderr: string; code: number }> {
   return new Promise((resolve, reject) => {
     let child: ReturnType<typeof spawn>;
     try { child = spawnFn('docker', args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); }
@@ -25,10 +27,14 @@ export function runDocker(args: string[], spawnFn: typeof spawn = spawn): Promis
     };
     const isPull = args[0] === 'compose' && (args[args.length - 2] === 'pull' || (args[args.length - 5] === 'up' && args.slice(-4, -1).join(' ') === '-d --no-deps --force-recreate'));
     const timer = setTimeout(() => finish(new Error('Docker command timed out')), isPull ? 15 * 60_000 : 30_000);
-    const collect = (target: Buffer[]) => (chunk: Buffer) => {
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
+    const collect = (target: Buffer[], stream: 'stdout' | 'stderr', decoder: StringDecoder) => (chunk: Buffer) => {
       if (done) return;
       const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       if (isPull) {
+        const text = decoder.write(data);
+        if (text) onOutput?.(stream, text);
         const remaining = Math.max(0, DOCKER_OUTPUT_LIMIT - bytes);
         if (remaining) target.push(data.subarray(0, remaining));
         bytes += Math.min(data.length, remaining);
@@ -38,13 +44,15 @@ export function runDocker(args: string[], spawnFn: typeof spawn = spawn): Promis
       if (bytes > DOCKER_OUTPUT_LIMIT) { finish(new Error('Docker output limit exceeded')); return; }
       target.push(data);
     };
-    child.stdout?.on('data', collect(stdout));
-    child.stderr?.on('data', collect(stderr));
+    child.stdout?.on('data', collect(stdout, 'stdout', outDecoder));
+    child.stderr?.on('data', collect(stderr, 'stderr', errDecoder));
     child.on('error', () => finish(new Error('Docker unavailable')));
     child.on('close', code => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      const out = outDecoder.end(); const err = errDecoder.end();
+      if (out) onOutput?.('stdout', out); if (err) onOutput?.('stderr', err);
       resolve({ stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), code: code ?? 1 });
     });
   });
@@ -52,7 +60,7 @@ export function runDocker(args: string[], spawnFn: typeof spawn = spawn): Promis
 
 export class DockerRequestError extends Error {}
 
-export async function manageDocker(input: any, runner: DockerRunner = runDocker, authorized: () => boolean = () => true): Promise<unknown> {
+export async function manageDocker(input: any, runner: DockerRunner = (args, output) => runDocker(args, spawn, output), authorized: () => boolean = () => true, emit?: (event: any) => void): Promise<unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DockerRequestError('Invalid Docker request');
   const { action, containerId, confirmed } = input;
   if (!['list', 'start', 'stop', 'restart', 'remove', 'logs', 'updateImage', 'files', 'readFile', 'saveFile'].includes(action)) throw new DockerRequestError('Unsupported Docker action');
@@ -60,9 +68,9 @@ export async function manageDocker(input: any, runner: DockerRunner = runDocker,
   if (['files', 'readFile', 'saveFile'].includes(action)) return manageDockerFiles(input, runner, authorized);
   if (action === 'remove' && confirmed !== true) throw new DockerRequestError('Removal requires confirmation');
   if (action === 'updateImage' && confirmed !== true) throw new DockerRequestError('Update requires confirmation');
-  const execute = async (args: string[]) => {
+  const execute = async (args: string[], output?: DockerOutput) => {
     if (!authorized()) throw new DockerRequestError('Web session expired');
-    const result = await runner(args);
+    const result = await runner(args, output);
     if (result.code !== 0) throw new Error(result.stderr.trim() || `Docker command failed (${result.code})`);
     return result;
   };
@@ -101,8 +109,12 @@ export async function manageDocker(input: any, runner: DockerRunner = runDocker,
     } catch { throw new DockerRequestError('Compose configuration unavailable'); }
     const args = ['compose', '-p', project, '--project-directory', working];
     for (const file of files) args.push('-f', file);
-    await execute([...args, 'pull', service]);
-    try { await execute([...args, 'up', '-d', '--no-deps', '--force-recreate', service]); }
+    const phase = (name: string) => { if (!authorized()) throw new DockerRequestError('Web session expired'); emit?.({ type: 'phase', phase: name }); };
+    const output: DockerOutput = (stream, text) => { if (authorized()) emit?.({ type: 'output', stream, text }); };
+    phase('pull');
+    await execute([...args, 'pull', service], output);
+    phase('recreate');
+    try { await execute([...args, 'up', '-d', '--no-deps', '--force-recreate', service], output); }
     catch (error) { throw new Error(`Image downloaded; recreation failed: ${error instanceof Error ? error.message : String(error)}`); }
     return { ok: true };
   }

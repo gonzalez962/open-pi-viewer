@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { dockerRequest } from '@infra/bridge';
 import { ConfirmationModal } from '@app/components/ConfirmationModal';
 import { translate, type SupportedLocale } from '@shared/i18n';
@@ -6,7 +6,8 @@ import { createDockerController } from './docker-controller';
 import './docker.css';
 
 export function DockerView({ locale }: { locale: SupportedLocale }) {
-  const controller = useMemo(() => createDockerController(dockerRequest), []);
+  const controller = useMemo(() => createDockerController((payload, onEvent) => dockerRequest(payload, fetch, onEvent)), []);
+  const consoleRef = useRef<HTMLPreElement>(null);
   const [state, setState] = useState(controller.getState());
   const [tab, setTab] = useState<'files' | 'logs'>('files');
   const [confirm, setConfirm] = useState(false);
@@ -15,6 +16,7 @@ export function DockerView({ locale }: { locale: SupportedLocale }) {
   const [pending, setPending] = useState(false);
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
   useEffect(() => { const unsubscribe = controller.subscribe(() => setState(controller.getState())); void controller.refresh(); return unsubscribe; }, [controller]);
+  useEffect(() => { if (consoleRef.current) consoleRef.current.scrollTop = consoleRef.current.scrollHeight; }, [state.updateConsole]);
   const run = async (fn: () => Promise<void>) => { setPending(true); try { await fn(); } finally { setPending(false); } };
   const selected = state.containers.find(c => c.id === state.selected);
   const stopped = selected && ['exited', 'created', 'dead'].includes(selected.state);
@@ -23,6 +25,7 @@ export function DockerView({ locale }: { locale: SupportedLocale }) {
     {state.error && <div className="docker-error" role="alert">{state.updateFailed && <>{t('docker.update_error')}: </>}{state.error}</div>}
     {state.updating && <div role="status" className="docker-notice">{t('docker.update_pending')}</div>}
     {state.notice && <div role="status" className="docker-notice">{state.notice === 'saved' ? t('docker.saved') : state.notice === 'updateImage' ? t('docker.update_done') : t('docker.action_done')}</div>}
+    {state.updateConsole && <section className="docker-panel docker-content" aria-label={t('docker.update_console')}><h2>{t('docker.update_console')} · {state.updateConsole.id}</h2><p>{t('docker.phase')}: {state.updateConsole.phase}</p><pre ref={consoleRef} className="docker-update-console">{state.updateConsole.text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')}</pre></section>}
     <div className="docker-layout"><section className="docker-panel"><div className="docker-panel-head"><h2>{t('docker.containers')}</h2><p>{t('docker.all')}</p></div>
       <div className="docker-content"><label htmlFor="docker-search">{t('docker.search')}</label><input id="docker-search" value={query} onChange={e => setQuery(e.target.value)} /></div>
       <ul className="docker-list">{state.containers.filter(c => c.name.toLowerCase().includes(query.toLowerCase())).map(c => <li key={c.id} className={c.id === state.selected ? 'selected' : ''}><button aria-pressed={c.id === state.selected} onClick={() => void run(async () => { await controller.select(c.id); setTab('files'); await controller.loadFiles(); })}>{c.name}</button><span>{c.state} · {c.status}</span></li>)}</ul>
