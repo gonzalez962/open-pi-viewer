@@ -23,6 +23,8 @@
   "docker.action_done": "Acción del contenedor completada.",
   "docker.update": "Actualizar imagen",
   "docker.update_console": "Salida de actualización",
+  "docker.update_close": "Cerrar",
+  "docker.update_view_log": "Ver registro de actualización",
   "docker.phase": "Fase",
   "docker.update_pending": "Actualizando imagen y recreando el servicio…",
   "docker.update_done": "Imagen actualizada y servicio recreado.",
