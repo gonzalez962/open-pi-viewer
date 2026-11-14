@@ -364,10 +364,52 @@
 }
 
 .btn-terminal-toggle.is-active,
+.btn-zen-toggle.is-active,
 .btn-zen-toggle[aria-pressed="true"] {
   background-color: rgba(88, 166, 255, 0.15);
   border-color: rgba(88, 166, 255, 0.4);
   color: #58a6ff;
+}
+
+.app-header:has(.tools-menu-popover) {
+  z-index: 2;
+}
+
+.tools-menu {
+  position: relative;
+}
+
+.tools-menu-popover {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--border-muted);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.tools-menu-popover button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--fg-default);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tools-menu-popover button:hover,
+.tools-menu-popover button:focus-visible {
+  background: var(--bg-subtle-hover);
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 /* Floating Accessible Exit Control */
