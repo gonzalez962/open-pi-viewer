@@ -2,6 +2,8 @@
 
 The standalone web view uses `POST /api/docker` with JSON. When web authentication is enabled, a live web-auth session is required; when disabled, no login is required. **With authentication disabled, anyone who can reach the viewer has trusted host Docker and discovered-file control.** Supply a same-origin Origin or Referer (the existing same-origin policy also supports `Sec-Fetch-Site: same-origin`). Responses are JSON with `Cache-Control: no-store`, except confirmed image updates, which stream NDJSON on their own HTTP response. This endpoint is independent of viewer projects and is not available through desktop IPC.
 
+The Docker view uses the existing Settings toast manager and container for localized operation success and error feedback, rather than inline result banners. Update progress and live output remain in the view and modal.
+
 - `{ "action": "list" }` returns `{ "containers": [{ "id", "name", "state", "status" }] }` for all existing containers.
 - `{ "action": "start" | "stop" | "restart", "containerId": "<id>" }` returns `{ "ok": true }`.
 - `{ "action": "remove", "containerId": "<id>", "confirmed": true }` removes a stopped container only, without force or volume deletion. The UI must explicitly confirm before sending it.
