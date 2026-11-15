@@ -67,6 +67,22 @@ async function fixture(success: boolean) {
   return { result, stored, localList, get otherList() { return otherList; }, notifications, window, cleanups, eventName };
 }
 
+test('S3.1 web save callback sends its explicit current cwd', async () => {
+  const { save } = expressions();
+  let payload: any;
+  const run = compile(save, {
+    formData: { id: 'chosen', name: 'Chosen', description: '', default_model: '', default_effort: '', model_profiles: { worker: { model: 'vendor/new', effort: 'high' } } },
+    cwd: '/worktree', window: { __IS_WEB_IPC__: true, dispatchEvent: () => true }, Event,
+    setIsSaving: () => {}, setModalError: () => {}, setIsModalOpen: () => {}, setSuccessNotice: () => {},
+    saveSddProfilePi: async (value: any) => { payload = value; return { success: true }; },
+    refreshProfiles: async () => {}, PROFILE_LIST_CHANGED_EVENT: 'pi:profiles-changed',
+  });
+  assert.equal(await run({ preventDefault() {} }), true);
+  assert.equal(payload.cwd, '/worktree');
+  assert.equal(payload.profile.id, 'chosen');
+  assert.deepEqual(payload.profile.model_profiles.worker, { model: 'vendor/new', effort: 'high' });
+});
+
 test('saving a profile refreshes another mounted profile list without activation', async () => {
   const f = await fixture(true);
   assert.equal(f.result, true);

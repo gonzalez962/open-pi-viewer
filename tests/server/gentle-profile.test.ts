@@ -244,6 +244,89 @@ test('S2.1 project result describes declaration and existing-session limitation'
   assert.match(result.message, /session|sesión/i);
 });
 
+test('S2.2 missing project cwd rejects activation without changing stored selection or Gentle files', async () => {
+  const root = path.join(home, 'missing-cwd'); fs.mkdirSync(root);
+  const state = await import('@server/bridge/state');
+  const previous = state.getActiveCwd();
+  state.setActiveCwd(root);
+  profile('missing-cwd'); resetStore();
+  const store = fs.readFileSync(storePath, 'utf8');
+  const selected = JSON.stringify({ [root]: 'previous' }); put(selectionPath, selected);
+  try {
+    let result: any;
+    try { result = await handleIpcCommand('set_active_sdd_profile', { name: 'missing-cwd', scope: 'project' }); }
+    catch (error) { result = { success: false, message: String(error) }; }
+    assert.equal(result?.success, false);
+    assert.match(result.message, /cwd|directory|project/i);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+    assert.equal(fs.readFileSync(storePath, 'utf8'), store);
+    assert.equal(fs.existsSync(declarationPath(root)), false);
+  } finally { state.setActiveCwd(previous); }
+});
+
+test('S3.1 saving selected stable ID and renamed profile republishes only current project', async () => {
+  resetStore(); profile('edit', 'vendor/old', 'low');
+  const a = path.join(home, 'edit-a'); const b = path.join(home, 'edit-b');
+  fs.mkdirSync(a); fs.mkdirSync(b);
+  await activate('edit', a); await activate('edit', b);
+  const oldB = fs.readFileSync(declarationPath(b), 'utf8');
+  const oldNameB = declaration(b); const oldRouting = readJson(storePath).profiles[oldNameB];
+  const selection = fs.readFileSync(selectionPath, 'utf8');
+  const result: any = await handleIpcCommand('save_sdd_profile', { cwd: a, scope: 'global', profile: { id: 'edit', name: 'Renamed', model_profiles: { worker: { model: 'vendor/new', effort: 'max' } } } });
+  assert.equal(result.success, true);
+  assert.equal(result.profile.id, 'edit');
+  assert.equal(result.profile.name, 'Renamed');
+  const store = readJson(storePath);
+  assert.deepEqual(store.profiles[declaration(a)].worker, { model: 'vendor/new', thinking: 'max' });
+  assert.equal(fs.readFileSync(declarationPath(b), 'utf8'), oldB);
+  assert.deepEqual(store.profiles[oldNameB], oldRouting);
+  assert.equal(store.active, 'existing');
+  assert.deepEqual(store.profiles.existing, initialStore.profiles.existing);
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+});
+
+test('S3.2 inactive, new, duplicate and no project selection or cwd do not publish', async () => {
+  resetStore(); profile('selected-save'); profile('inactive-save');
+  const a = path.join(home, 'save-inactive'); const b = path.join(home, 'save-unselected');
+  fs.mkdirSync(a); fs.mkdirSync(b); await activate('selected-save', a);
+  const store = fs.readFileSync(storePath, 'utf8');
+  const pin = fs.readFileSync(declarationPath(a), 'utf8');
+  const selection = fs.readFileSync(selectionPath, 'utf8');
+  for (const args of [
+    { cwd: a, profile: { id: 'inactive-save', name: 'inactive-save', model_profiles: { worker: { model: 'vendor/inactive' } } } },
+    { cwd: a, profile: { name: 'new-profile', model_profiles: { worker: { model: 'vendor/new' } } } },
+    { cwd: a, profile: { name: 'selected-save-copy', model_profiles: { worker: { model: 'vendor/copy' } } } },
+    { cwd: b, profile: { id: 'selected-save', name: 'selected-save', model_profiles: { worker: { model: 'vendor/b' } } } },
+    { profile: { id: 'selected-save', name: 'selected-save', model_profiles: { worker: { model: 'vendor/no-cwd' } } } },
+  ]) {
+    const result: any = await handleIpcCommand('save_sdd_profile', { scope: 'global', ...args });
+    assert.equal(result.success, true);
+    assert.equal(fs.readFileSync(storePath, 'utf8'), store);
+    assert.equal(fs.readFileSync(declarationPath(a), 'utf8'), pin);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+    assert.equal(fs.existsSync(declarationPath(b)), false);
+  }
+});
+
+test('S3.3 publication failure reports saved profile and unchanged declaration', async () => {
+  resetStore(); profile('save-fail'); const root = path.join(home, 'save-fail'); fs.mkdirSync(root);
+  await activate('save-fail', root);
+  const pin = fs.readFileSync(declarationPath(root), 'utf8');
+  const selection = fs.readFileSync(selectionPath, 'utf8');
+  const malformed = '{invalid'; put(storePath, malformed);
+  let result: any;
+  try {
+    result = await handleIpcCommand('save_sdd_profile', { cwd: root, scope: 'global', profile: { id: 'save-fail', name: 'save-fail', model_profiles: { worker: { model: 'vendor/new', effort: 'low' } } } });
+  } catch (error) { result = { success: false, message: String(error) }; }
+  assert.equal(result.success, false);
+  assert.match(result.message, /sav|persist/i);
+  assert.match(result.message, /publish|sync|gentle/i);
+  assert.equal(readJson(path.join(profiles, 'save-fail.json')).model_profiles.worker.model, 'vendor/new');
+  assert.equal(fs.readFileSync(storePath, 'utf8'), malformed);
+  assert.equal(fs.readFileSync(declarationPath(root), 'utf8'), pin);
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+});
+
 test('S2.1 global activation retains its original storage and response', async () => {
   resetStore(); const before = fs.readFileSync(storePath, 'utf8');
   const result = await handleIpcCommand('set_active_sdd_profile', { name: ' global ', scope: 'global' });
