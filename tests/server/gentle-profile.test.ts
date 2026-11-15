@@ -54,6 +54,41 @@ function declaration(root: string) {
   return pin.profile as string;
 }
 
+test('S1.5 discovery uses requested cwd and quoted frontmatter identity for activation', async () => {
+  const requested = path.join(home, 'discovery-requested');
+  const active = path.join(home, 'discovery-active');
+  fs.mkdirSync(requested); fs.mkdirSync(active);
+  put(path.join(active, '.pi', 'agents', 'active-only.md'), '---\nname: active-only\n---\nActive instructions');
+  put(path.join(requested, '.pi', 'agents', 'filename.md'), '---\nname: "actual-worker"\ndescription: Requested agent\n---\nInstructions');
+  const state = await import('@server/bridge/state');
+  const original = state.getActiveCwd();
+  state.setActiveCwd(active);
+  try {
+    const result: any = await handleIpcCommand('get_sdd_profiles', { cwd: requested });
+    assert.ok(result.allAgents.includes('actual-worker'));
+    assert.equal(result.agentMeta['actual-worker'].id, 'actual-worker');
+    assert.equal(result.allAgents.includes('filename'), false);
+    assert.equal(result.allAgents.includes('active-only'), false);
+    resetStore();
+    put(path.join(profiles, 'discovery.json'), { id: 'discovery', name: 'discovery', model_profiles: { 'actual-worker': { model: 'vendor/model', effort: 'high' } } });
+    assert.equal((await activate('discovery', requested)).success, true);
+    assert.deepEqual(readJson(storePath).profiles[declaration(requested)]['actual-worker'], { model: 'vendor/model', thinking: 'high' });
+  } finally { state.setActiveCwd(original); }
+});
+
+test('S1.5 consumer directory precedence and filename fallback preserve discovery', async () => {
+  const root = path.join(home, 'discovery-precedence'); fs.mkdirSync(root);
+  put(path.join(agent, 'agents', 'one.md'), '---\nname: shared-agent\ndescription: global agent\n---\nInstructions');
+  put(path.join(agent, 'subagents', 'two.md'), '---\nname: shared-agent\ndescription: global subagent\n---\nInstructions');
+  put(path.join(root, '.pi', 'agents', 'three.md'), '---\nname: shared-agent\ndescription: project agent\n---\nInstructions');
+  put(path.join(root, '.pi', 'subagents', 'four.md'), "---\nname: 'shared-agent'\ndescription: project subagent\n---\nInstructions");
+  put(path.join(root, '.pi', 'agents', 'fallback.md'), 'Instructions without frontmatter');
+  const result: any = await handleIpcCommand('get_sdd_profiles', { cwd: root });
+  assert.equal(result.agentMeta['shared-agent'].description, 'project subagent');
+  assert.equal(result.agentMeta.fallback.id, 'fallback');
+  assert.equal(result.allAgents.filter((name: string) => name === 'shared-agent').length, 1);
+});
+
 test('S1.1 project activation publishes routing without changing existing selection', async () => {
   resetStore(); profile('first');
   const root = path.join(home, 'project-one'); fs.mkdirSync(root);
@@ -100,6 +135,21 @@ for (const [label, badStore] of [
   });
 }
 
+test('S1.3 ambiguous bundled prefix fails before any publication or selection write', async () => {
+  const root = path.join(home, 'ambiguous-prefix'); fs.mkdirSync(root);
+  profile('prefix'); resetStore();
+  const before = fs.readFileSync(storePath, 'utf8');
+  const selected = JSON.stringify({ [root]: 'previous' }); put(selectionPath, selected);
+  process.env.GENTLE_SHELL_PREFIX = path.join(home, 'unverified-prefix');
+  try {
+    const message = await failure('prefix', root);
+    assert.match(message, /bundled|prefix/i);
+    assert.equal(fs.readFileSync(storePath, 'utf8'), before);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+    assert.equal(fs.existsSync(declarationPath(root)), false);
+  } finally { delete process.env.GENTLE_SHELL_PREFIX; }
+});
+
 test('S1.3 invalid routing fails without changing files or viewer selection', async () => {
   const root = path.join(home, 'invalid-routing'); fs.mkdirSync(root); profile('bad', 'bad model');
   const pin = declarationPath(root); const oldPin = '{"foreign":true}'; put(pin, oldPin);
@@ -109,6 +159,50 @@ test('S1.3 invalid routing fails without changing files or viewer selection', as
   assert.equal(fs.readFileSync(storePath, 'utf8'), before);
   assert.equal(fs.readFileSync(pin, 'utf8'), oldPin);
   assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+});
+
+for (const [label, value] of [['null', null], ['false', false], ['zero', 0], ['empty-string', '']] as const) {
+  test(`S1.3 ${label} raw routing is rejected without writes`, async () => {
+    const root = path.join(home, `raw-${label}`); fs.mkdirSync(root);
+    const source = path.join(profiles, `raw-${label}.json`);
+    put(source, { id: `raw-${label}`, name: `raw-${label}`, model_profiles: value });
+    resetStore(); const store = fs.readFileSync(storePath, 'utf8');
+    const selected = JSON.stringify({ [root]: 'previous' }); put(selectionPath, selected);
+    const pin = declarationPath(root); put(pin, '{"old":true}');
+    await failure(`raw-${label}`, root);
+    assert.equal(fs.readFileSync(storePath, 'utf8'), store);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+    assert.equal(fs.readFileSync(pin, 'utf8'), '{"old":true}');
+  });
+}
+
+for (const [label, invalid] of [
+  ['profile', { existing: null }],
+  ['agent', { existing: { worker: false } }],
+  ['active', { existing: { worker: 'vendor/model' } }],
+] as const) {
+  test(`S1.3 invalid nested store ${label} is rejected without writes`, async () => {
+    const root = path.join(home, `store-${label}`); fs.mkdirSync(root); profile(`store-${label}`);
+    const store = JSON.stringify({ ...initialStore, active: label === 'active' ? 'missing' : 'existing', profiles: invalid });
+    put(storePath, store);
+    const selected = JSON.stringify({ [root]: 'previous' }); put(selectionPath, selected);
+    const pin = declarationPath(root); put(pin, '{"old":true}');
+    await failure(`store-${label}`, root);
+    assert.equal(fs.readFileSync(storePath, 'utf8'), store);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+    assert.equal(fs.readFileSync(pin, 'utf8'), '{"old":true}');
+  });
+}
+
+test('S1.3 valid Gentle routing and unknown store fields survive publication', async () => {
+  const root = path.join(home, 'store-valid'); fs.mkdirSync(root); profile('store-valid');
+  const store = { ...initialStore, extra: { keep: true }, profiles: { existing: { worker: { effort: 'max', tier: 'fast', extra: 42 }, other: 'vendor/model', inherit: {} } } };
+  put(storePath, store);
+  assert.equal((await activate('store-valid', root)).success, true);
+  const after = readJson(storePath);
+  assert.equal(after.active, 'existing');
+  assert.deepEqual(after.extra, store.extra);
+  assert.deepEqual(after.profiles.existing, store.profiles.existing);
 });
 
 test('S1.3 declaration write failure reports partial publication rather than success', async () => {

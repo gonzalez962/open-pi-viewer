@@ -16,7 +16,7 @@ test('S2.1 web shim forwards project activation and declaration feedback via IPC
   try {
     initWebIpcClient();
     const args = { name: 'selected', scope: 'project', cwd: '/worktree' };
-    assert.deepEqual(await fakeWindow.__TAURI_INTERNALS__.invoke('set_active_sdd_profile', args), result);
+    assert.deepEqual(await setActiveSddProfilePi(args as any, fakeWindow.__TAURI_INTERNALS__.invoke), result);
     assert.deepEqual(calls, [{ url: '/api/ipc', method: 'POST', body: { cmd: 'set_active_sdd_profile', args } }]);
   } finally {
     Object.assign(globalThis, originals);
