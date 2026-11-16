@@ -2173,7 +2173,7 @@ test('ExtensionUiPromptBar: renders summary view with answered questions, curren
   assert.ok(markup.includes('btn-extension-prompt-modify'));
   assert.ok(markup.includes('Modificar'));
   assert.ok(markup.includes('Confirmar y enviar al agente'));
-  assert.ok(markup.includes('Modificar selección'));
+  assert.ok(!markup.includes('Modificar selección'));
   assert.ok(markup.includes('Cancelar'));
 });
 
@@ -2774,11 +2774,11 @@ test('ExtensionUiPromptBar: multi-step questionnaire renders Revisar respuestas 
   assert.ok(previewMarkup.includes('Choose database'));
   assert.ok(previewMarkup.includes('PostgreSQL'));
   assert.ok(previewMarkup.includes('Confirmar y enviar al agente'));
-  assert.ok(previewMarkup.includes('Modificar selección'));
+  assert.ok(!previewMarkup.includes('Modificar selección'));
   assert.ok(previewMarkup.includes('Cancelar'));
 });
 
-test('ExtensionUiPromptBar: clicking Modificar selección in preview returns to the options view', () => {
+test('ExtensionUiPromptBar: preview omits redundant modify-selection action and question view remains available', () => {
   const finalDialog: QueuedExtensionUiDialog = {
     id: 'test-modify-return',
     itemKey: createDialogItemKey('test-modify-return'),
@@ -2829,11 +2829,7 @@ test('ExtensionUiPromptBar: clicking Modificar selección in preview returns to 
       el.props?.children === 'Modificar selección'
   );
 
-  assert.ok(modifyBtn, 'Modificar selección button should be found in preview');
-  assert.strictEqual(typeof modifyBtn.props.onClick, 'function');
-
-  // Calling onClick executes without throwing and triggers setIsReviewingSummary(false)
-  modifyBtn.props.onClick();
+  assert.strictEqual(modifyBtn, null, 'Redundant modify-selection action must be absent');
 
   // Rendering with initialReviewingSummary false reflects the options view
   const optionsMarkup = renderToStaticMarkup(
@@ -5056,7 +5052,7 @@ test('ExtensionUiPromptBar: review view preserves header cancel, footer cancel, 
   modifyBtnStep1.props.onClick();
   assert.strictEqual(backStepCalled, 1, 'Modificar step 1 should call onBack with step 1');
 
-  // 4. Modificar selección button exits review mode
+  // 4. Review has no redundant global modification button
   const modifySelectionBtn = findElement(
     capturedTree,
     (el) =>
@@ -5064,8 +5060,7 @@ test('ExtensionUiPromptBar: review view preserves header cancel, footer cancel, 
       el.props?.className?.includes('btn-extension-prompt-secondary') &&
       el.props?.children === 'Modificar selección'
   );
-  assert.ok(modifySelectionBtn, 'Modificar selección button must be present');
-  modifySelectionBtn.props.onClick();
+  assert.strictEqual(modifySelectionBtn, null, 'Redundant modify-selection action must be absent');
 
   // Rendering without review mode restores question view
   const normalMarkup = renderToStaticMarkup(React.createElement(Host, { reviewing: false }));

@@ -29,6 +29,7 @@ import {
 } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
 import { hydrateChatMessages, normalizeWorkingDirectory, updateSessionHasMessages } from '@core/session';
+import { parseQuestionStepInfo } from '@features/chat/hooks/useExtensionUiDialog';
 import type {
   AssistantMessageDelta,
   AuthoritativeMessage,
@@ -71,6 +72,13 @@ export interface SessionEventControllerOptions {
   onAttention?: (event: ProjectAttentionEvent) => void;
 }
 
+interface QuestionTool {
+  cwd: string;
+  sessionId: string;
+  toolCallId: string;
+  args: unknown;
+}
+
 interface PendingDialogRequest {
   id: string;
   cwd?: string;
@@ -99,6 +107,7 @@ export class SessionEventController {
   ) => Promise<SendExtensionUiResponseResult>;
   private readonly notifyAppEventFn: (params: NotifyAppEventParams) => void;
   private readonly pendingDialogRequests = new Map<string, PendingDialogRequest>();
+  private readonly questionTools: QuestionTool[] = [];
   private readonly outcomeTracker = new AgentOutcomeTracker();
   private readonly completions = new CompletionNotifications();
   private readonly attentionTurns = new Map<string, Set<string>>();
@@ -116,6 +125,51 @@ export class SessionEventController {
     return this.options.resolveTargetProjectId
       ? this.options.resolveTargetProjectId(cwd)
       : undefined;
+  }
+
+  private observeQuestionTool(event: RpcEventBase): void {
+    if (event.type !== 'tool_execution_start' && event.type !== 'tool_execution_end') return;
+    if (typeof event.cwd !== 'string' || !event.cwd.trim() || typeof event.sessionId !== 'string' || !event.sessionId.trim() || typeof event.toolCallId !== 'string' || !event.toolCallId) return;
+    const cwd = normalizeWorkingDirectory(event.cwd);
+    const index = this.questionTools.findIndex(tool => tool.cwd === cwd && tool.sessionId === event.sessionId && tool.toolCallId === event.toolCallId);
+    if (index !== -1) this.questionTools.splice(index, 1);
+    if (event.type === 'tool_execution_start' && (event.toolName === 'ask_user_question' || event.toolName === 'ask_user_choice')) {
+      this.questionTools.push({ cwd, sessionId: event.sessionId, toolCallId: event.toolCallId, args: event.args });
+    }
+  }
+
+  private descriptionsFor(request: ExtensionUiRequest): Array<string | undefined> | undefined {
+    if (!request.cwd || typeof request.sessionId !== 'string' || !request.sessionId || request.method !== 'select' || !request.options?.length || !request.title) return undefined;
+    const cwd = normalizeWorkingDirectory(request.cwd);
+    const step = parseQuestionStepInfo(request.title);
+    const rawOptions = [...request.options];
+    if (rawOptions[rawOptions.length - 1] === '← Back' || rawOptions[rawOptions.length - 1] === 'Back') rawOptions.pop();
+    const multi = rawOptions[rawOptions.length - 1] === 'Done' && rawOptions.slice(0, -1).every(option => /^\[[ xX]\] /.test(option));
+    if (multi) rawOptions.pop();
+    const labels = multi ? rawOptions.map(option => option.slice(4)) : rawOptions;
+    const matches: Array<Array<string | undefined>> = [];
+    for (const tool of this.questionTools) {
+      if (tool.cwd !== cwd || tool.sessionId !== request.sessionId || !tool.args || typeof tool.args !== 'object') continue;
+      const args = tool.args as Record<string, unknown>;
+      const questions = Array.isArray(args.questions) ? args.questions : [args];
+      questions.forEach((value, index) => {
+        if (!value || typeof value !== 'object') return;
+        const question = value as Record<string, unknown>;
+        if (step.isMultiStep && (index + 1 !== step.currentStep || questions.length !== step.totalSteps)) return;
+        if (typeof question.question !== 'string' || !Array.isArray(question.options)) return;
+        const titles = [question.question];
+        if (typeof question.header === 'string' && question.header) titles.push(`${question.header}: ${question.question}`);
+        if (step.isMultiStep) {
+          titles.push(`${step.currentStep}/${step.totalSteps}: ${question.question}`);
+          if (typeof question.header === 'string' && question.header) titles.push(`${step.currentStep}/${step.totalSteps}: ${question.header}: ${question.question}`);
+        }
+        if (!titles.includes(request.title!)) return;
+        const options = question.options;
+        if (options.length !== labels.length || options.some((option, i) => !option || typeof option !== 'object' || (option as Record<string, unknown>).label !== labels[i])) return;
+        matches.push(options.map(option => typeof option.description === 'string' ? option.description : undefined));
+      });
+    }
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   private emitAttention(projectId: string | undefined, sessionId: string | undefined, sessionKey: string, type: NotificationEventType | null, identity: string): void {
@@ -137,6 +191,7 @@ export class SessionEventController {
    */
   public handleEvent(event: RpcEventBase): void {
     const eventType = event.type;
+    this.observeQuestionTool(event);
     const notificationCwd = typeof event.cwd === 'string' && event.cwd.trim()
       ? event.cwd.trim()
       : this.options.getCurrentConfig().workingDirectory;
@@ -425,6 +480,11 @@ export class SessionEventController {
    */
   public handleStatusChange(status: BridgeStatusPayload): void {
     if (status.state === 'disconnected' || status.state === 'error') {
+      const cwd = status.cwd ? normalizeWorkingDirectory(status.cwd) : undefined;
+      for (let i = this.questionTools.length - 1; i >= 0; i--) {
+        const tool = this.questionTools[i];
+        if ((!cwd || tool.cwd === cwd) && (!status.sessionId || tool.sessionId === status.sessionId)) this.questionTools.splice(i, 1);
+      }
       this.completions.clear({ type: 'disconnect', cwd: status.cwd ?? this.options.getCurrentConfig().workingDirectory, sessionId: status.sessionId, sessionFile: status.sessionFile });
     }
     const targetProjectId = this.resolveTargetProjectId(status.cwd ?? undefined);
@@ -478,6 +538,7 @@ export class SessionEventController {
    * Handle incoming bridge error.
    */
   public handleError(error: string): void {
+    this.questionTools.length = 0;
     this.cancelPendingDialogRequests();
     const targetProjectId = this.resolveTargetProjectId(undefined);
     this.options.dispatch({
@@ -552,7 +613,9 @@ export class SessionEventController {
       ? this.options.getProjectSessionId(targetProjectId)
       : (!reqCwd || (activeCwd && normalizeWorkingDirectory(reqCwd) === normalizeWorkingDirectory(activeCwd)) ? this.options.getCurrentSessionId() : null);
     const originSessionId = request.sessionId ?? (!request.sessionFile ? currentSession ?? undefined : undefined);
-    const dialogRequest = { ...request, cwd: originCwd, sessionId: originSessionId };
+    const descriptions = this.descriptionsFor(request);
+    const { optionDescriptions: _untrustedDescriptions, ...trustedRequest } = request;
+    const dialogRequest = { ...trustedRequest, cwd: originCwd, sessionId: originSessionId, ...(descriptions ? { optionDescriptions: descriptions } : {}) };
     const normCwd = reqCwd ? normalizeWorkingDirectory(reqCwd) : '';
     const key = `${normCwd}\0${request.sessionId ?? request.sessionFile ?? ""}\0${id}`;
 

@@ -123,6 +123,7 @@ export interface ExtensionUiRequest extends RpcEventBase {
   title?: string;
   message?: string;
   options?: string[];
+  optionDescriptions?: Array<string | undefined>;
   placeholder?: string;
   prefill?: string;
   timeout?: number;

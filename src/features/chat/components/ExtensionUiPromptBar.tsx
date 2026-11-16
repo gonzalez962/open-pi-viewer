@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type {
   AnsweredQuestionRecord,
   QueuedExtensionUiDialog,
@@ -70,6 +70,7 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   initialModifyingStep,
   initialIsNavigatingBack,
 }) => {
+  const descriptionId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const negativeBtnRef = useRef<HTMLButtonElement>(null);
@@ -1038,14 +1039,6 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                 type="button"
                 className="btn-extension-prompt-secondary"
                 disabled={modifyingStep !== null || isSubmittingFinal}
-                onClick={() => setIsReviewingSummary(false)}
-              >
-                Modificar selección
-              </button>
-              <button
-                type="button"
-                className="btn-extension-prompt-secondary"
-                disabled={modifyingStep !== null || isSubmittingFinal}
                 onClick={() => onCancel(itemKey)}
               >
                 Cancelar
@@ -1067,14 +1060,15 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                     const isFocused = focusedChoiceIndex === idx;
                     const shortcutNum = idx < 9 ? idx + 1 : null;
                     return (
+                      <div key={`${idx}-${choice.raw}`} className="extension-prompt-choice-item">
                       <button
-                        key={`${idx}-${choice.raw}`}
                         ref={(el) => {
                           checkboxRefs.current[idx] = el;
                         }}
                         type="button"
                         role="checkbox"
                         aria-checked={isChecked}
+                        aria-describedby={request.optionDescriptions?.[idx] ? `${descriptionId}-${idx}` : undefined}
                         className={`extension-prompt-checkbox-item ${
                           isChecked ? 'is-checked' : ''
                         } ${isFocused ? 'is-focused' : ''}`}
@@ -1099,6 +1093,8 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                           {choice.label}
                         </span>
                       </button>
+                      {request.optionDescriptions?.[idx] && <span id={`${descriptionId}-${idx}`} className="extension-prompt-choice-description">{request.optionDescriptions[idx]}</span>}
+                      </div>
                     );
                   })}
                 </div>
@@ -1173,14 +1169,15 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                     const shortcutNum = idx < 9 ? idx + 1 : null;
                     const isOtherOrCustom = isOptionCustom(opt, idx, singleSelectOptions.length);
                     return (
+                      <div key={`${idx}-${opt}`} className="extension-prompt-choice-item" role="presentation">
                       <button
-                        key={`${idx}-${opt}`}
                         ref={(el) => {
                           optionRefs.current[idx] = el;
                         }}
                         type="button"
                         role="option"
                         aria-selected={isSelected}
+                        aria-describedby={request.optionDescriptions?.[idx] ? `${descriptionId}-${idx}` : undefined}
                         className={`extension-prompt-option-btn ${
                           isSelected ? 'is-selected' : ''
                         } ${isOtherOrCustom ? 'is-custom-choice' : ''}`}
@@ -1200,6 +1197,8 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                         )}
                         <span className="extension-prompt-choice-label">{opt}</span>
                       </button>
+                      {request.optionDescriptions?.[idx] && <span id={`${descriptionId}-${idx}`} className="extension-prompt-choice-description">{request.optionDescriptions[idx]}</span>}
+                      </div>
                     );
                   })}
                 </div>
@@ -1207,9 +1206,10 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
                 {/* Inline Custom Input when user picks the custom/other option */}
                 {isTypingCustomOption && (
                   <div className="extension-prompt-custom-input-box">
-                    <input
-                      type="text"
-                      className="extension-prompt-input-field"
+                    <textarea
+                      rows={3}
+                      wrap="soft"
+                      className="extension-prompt-input-field extension-prompt-custom-textarea"
                       placeholder="Escriba su respuesta personalizada..."
                       value={customOptionText}
                       onChange={(e) => setCustomOptionText(e.target.value)}
