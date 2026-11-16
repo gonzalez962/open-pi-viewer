@@ -181,6 +181,11 @@
   box-shadow: 0 0 4px rgba(63, 185, 80, 0.4);
 }
 
+.project-status-dot.status-pending {
+  background-color: orange;
+  animation: project-pulse-busy 1s infinite ease-in-out;
+}
+
 .project-status-dot.status-busy {
   background-color: var(--accent-primary);
   animation: project-pulse-busy 1.6s infinite ease-in-out;

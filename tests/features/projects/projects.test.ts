@@ -844,6 +844,18 @@ const baseProjectDockProps: ProjectDockProps = {
   onRemoveProject: () => {},
 };
 
+test('S2.1: pending question dot takes precedence over busy and clears on resolution', () => {
+  const render = (hasPendingQuestion: boolean) => renderToStaticMarkup(React.createElement(ProjectDock, {
+    ...baseProjectDockProps,
+    projectStatusMap: { 'proj-1': { connectionState: 'connected', agentActivity: 'busy', isBusy: true, hasPendingQuestion } },
+  }));
+  assert.match(render(true), /project-status-dot status-pending/);
+  assert.match(render(false), /project-status-dot status-busy/);
+  const css = readFileSync('src/features/projects/projects.css', 'utf8');
+  assert.match(css, /\.project-status-dot\.status-pending\s*\{[^}]*animation\s*:/);
+  assert.match(css, /\.project-status-dot\.status-pending\s*\{[^}]*(?:orange|#[fF][0-9a-fA-F]{2,7}|rgb\()/);
+});
+
 test('ProjectDock renders localized project job counts and hides zero', () => {
   const render = (locale: 'en' | 'es', jobCount: number) => renderToStaticMarkup(React.createElement(ProjectDock, {
     ...baseProjectDockProps, locale,

@@ -341,7 +341,10 @@ export const App: React.FC = () => {
               : 'Connected to fresh session',
         },
       });
-      restoreExtensionPrompts(res.pendingExtensionPrompts ?? []);
+      restoreExtensionPrompts((res.pendingExtensionPrompts ?? []).map(request => ({
+        ...request, cwd: request.cwd ?? res.canonicalCwd,
+        sessionId: request.sessionId ?? res.sessionId, sessionFile: request.sessionFile ?? res.sessionFile,
+      })));
     },
     onConnectError: (err: string, cfg?: ConnectConfig) => {
       const matched = cfg?.workingDirectory
@@ -700,7 +703,23 @@ export const App: React.FC = () => {
     [handleAddProject, handleCloseFolderPicker]
   );
 
-  const projectStatusMap: Record<string, ProjectStatusInfo> = useMemo(() => {
+  const activeDialogCwd = projectsRegistry.projects.find(project => project.id === projectsRegistry.activeProjectId)?.path;
+  const {
+    activeDialog,
+    pendingCount: dialogPendingCount,
+    pendingForProject,
+    dialogAdapter,
+    canGoBack,
+    flowAnswers,
+    handleSelect: handleDialogSelect,
+    handleMultiSelectSubmit: handleDialogMultiSelectSubmit,
+    handleInput: handleDialogInput,
+    handleConfirm: handleDialogConfirm,
+    handleCancel: handleDialogCancel,
+    handleBack,
+  } = useExtensionUiDialog({ cwd: activeDialogCwd, sessionId: state.sessionId, sessionFile: state.sessionFile });
+
+  const projectStatusMap: Record<string, ProjectStatusInfo & { hasPendingQuestion?: boolean }> = (() => {
     const map: Record<string, ProjectStatusInfo> = {};
     for (const project of projectsRegistry.projects) {
       const projState = multiProjectState.projects[project.id];
@@ -714,23 +733,10 @@ export const App: React.FC = () => {
         };
       }
     }
-    return map;
-  }, [projectsRegistry.projects, multiProjectState.projects]);
-
-  // Global extension UI dialog queue visible across project switches
-  const {
-    activeDialog,
-    pendingCount: dialogPendingCount,
-    dialogAdapter,
-    canGoBack,
-    flowAnswers,
-    handleSelect: handleDialogSelect,
-    handleMultiSelectSubmit: handleDialogMultiSelectSubmit,
-    handleInput: handleDialogInput,
-    handleConfirm: handleDialogConfirm,
-    handleCancel: handleDialogCancel,
-    handleBack,
-  } = useExtensionUiDialog();
+    return Object.fromEntries(Object.entries(map).map(([id, status]) => [id, {
+      ...status, hasPendingQuestion: pendingForProject(projectsRegistry.projects.find(project => project.id === id)?.path) > 0,
+    }]));
+  })();
 
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState('');
