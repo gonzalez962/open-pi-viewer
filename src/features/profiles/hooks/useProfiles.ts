@@ -384,7 +384,8 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         const res = await setActiveSddProfilePi(payload);
         if (res.success) {
           const scopeLabel = scope === 'project' ? 'para el proyecto actual' : 'globalmente';
-          setSuccessNotice(`Perfil "${profile.name}" activado ${scopeLabel}`);
+          const webProject = scope === 'project' && typeof window !== 'undefined' && (window as any).__IS_WEB_IPC__ === true;
+          setSuccessNotice(webProject ? res.message : `Perfil "${profile.name}" activado ${scopeLabel}`);
           if (typeof window !== 'undefined') {
             window.dispatchEvent(
               new CustomEvent<ProfileActivationEventDetail>(PROFILE_ACTIVATED_EVENT, {
@@ -628,6 +629,7 @@ export function useProfiles(options?: UseProfilesOptions): UseProfilesResult {
         };
 
         const saveRes = await saveSddProfilePi({
+          ...(typeof window !== 'undefined' && (window as any).__IS_WEB_IPC__ === true ? { cwd } : {}),
           scope: 'global',
           profile: profilePayload,
         });
