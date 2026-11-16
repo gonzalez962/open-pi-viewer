@@ -4,6 +4,14 @@
 
 When reloading the application view or switching between projects, the active profile's model and reasoning effort were previously not restored to the runtime session. Instead, connect-time defaults or stale session state prevailed, or late asynchronous completions from previous projects could overwrite newly selected destination project state.
 
+## Web project declarations
+
+In web mode, selecting a project profile publishes its agent overrides to the Gentle profile store and writes `.pi/gentle-ai/profile.json` at the worktree root (or the selected directory outside Git). Desktop is not updated for now. Global activation and preview keep their existing behavior.
+
+Gentle profile names are stable hashes of Open Pi profile IDs, so projects selecting the same profile share its routing. Saving an already published profile updates that shared entry even from another project or without a cwd; declarations are not rewritten and existing sessions are not rebound. Never-published profiles do not implicitly activate or publish. Ownership metadata in the Gentle store prevents overwriting foreign entries; a publication marker in the Open Pi profile lets later saves distinguish published profiles without consulting optional Gentle configuration for inactive profiles. Selecting a legacy profile migrates only that project's declaration. Saving an already-selected pre-marker profile also migrates that declaration without reselection, after verifying its old content hash and stored routing against the profile before the edit. If the explicitly selected project's declaration is missing, saving creates it (and its parent directories) using the stable profile identity, while still checking Gentle store ownership before publication. Existing declarations with mismatched evidence produce an explicit partial-save error instead of claiming synchronization. Old content-hash entries and other declarations remain untouched. If synchronization fails after saving, the error reports the partial save.
+
+Gentle's clone-local pin takes precedence over this declaration. Existing session bindings and persisted or frozen session routing are not rebound; a new session may be needed. Publication is serialized within this server process, not across processes. If `GENTLE_SHELL_PREFIX` is set, the server currently cannot prove the bundled runtime's config destination and fails before writing; bundled use requires a supported verified runtime/config-destination integration rather than a silent fallback.
+
 ## Architecture & Core Components
 
 ### 1. Production Coordinator (`src/features/profiles/lib/profileRuntime.ts`)
