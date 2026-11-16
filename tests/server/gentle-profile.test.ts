@@ -101,7 +101,7 @@ test('S1.1 project activation publishes routing without changing existing select
   assert.deepEqual(store.profiles[name].worker, { model: 'vendor/model', thinking: 'high' });
 });
 
-test('S1.2 worktree roots and non-Git cwd isolate published routing', async () => {
+test('S1.2 worktree roots and non-Git cwd share identities by profile ID', async () => {
   resetStore(); profile('a', 'vendor/a', 'low'); profile('b', 'vendor/b', 'medium');
   const repo = path.join(home, 'repo'); const worktree = path.join(home, 'worktree');
   fs.mkdirSync(repo); execFileSync('git', ['init', '-q', repo]);
@@ -112,7 +112,8 @@ test('S1.2 worktree roots and non-Git cwd isolate published routing', async () =
   await activate('a', repo); await activate('b', nested); await activate('a', plain);
   const a = declaration(repo); const b = declaration(worktree); const c = declaration(plain);
   assert.equal(fs.existsSync(declarationPath(nested)), false);
-  assert.equal(new Set([a, b, c]).size, 3);
+  assert.equal(a, c);
+  assert.notEqual(a, b);
   const store = readJson(storePath);
   assert.deepEqual(store.profiles[a].worker, { model: 'vendor/a', thinking: 'low' });
   assert.deepEqual(store.profiles[b].worker, { model: 'vendor/b', thinking: 'medium' });
@@ -264,28 +265,46 @@ test('S2.2 missing project cwd rejects activation without changing stored select
   } finally { state.setActiveCwd(previous); }
 });
 
-test('S3.1 saving selected stable ID and renamed profile republishes only current project', async () => {
+test('S3.1 S4.1 saving renamed stable ID updates the shared entry without rewriting declarations', async () => {
   resetStore(); profile('edit', 'vendor/old', 'low');
   const a = path.join(home, 'edit-a'); const b = path.join(home, 'edit-b');
   fs.mkdirSync(a); fs.mkdirSync(b);
   await activate('edit', a); await activate('edit', b);
+  const oldA = fs.readFileSync(declarationPath(a), 'utf8');
   const oldB = fs.readFileSync(declarationPath(b), 'utf8');
-  const oldNameB = declaration(b); const oldRouting = readJson(storePath).profiles[oldNameB];
+  const oldNameA = declaration(a); const oldNameB = declaration(b);
   const selection = fs.readFileSync(selectionPath, 'utf8');
   const result: any = await handleIpcCommand('save_sdd_profile', { cwd: a, scope: 'global', profile: { id: 'edit', name: 'Renamed', model_profiles: { worker: { model: 'vendor/new', effort: 'max' } } } });
   assert.equal(result.success, true);
   assert.equal(result.profile.id, 'edit');
   assert.equal(result.profile.name, 'Renamed');
   const store = readJson(storePath);
-  assert.deepEqual(store.profiles[declaration(a)].worker, { model: 'vendor/new', thinking: 'max' });
+  assert.equal(declaration(a), oldNameA);
+  assert.equal(oldNameA, oldNameB);
+  assert.deepEqual(store.profiles[oldNameB].worker, { model: 'vendor/new', thinking: 'max' });
+  assert.equal(fs.readFileSync(declarationPath(a), 'utf8'), oldA);
   assert.equal(fs.readFileSync(declarationPath(b), 'utf8'), oldB);
-  assert.deepEqual(store.profiles[oldNameB], oldRouting);
   assert.equal(store.active, 'existing');
   assert.deepEqual(store.profiles.existing, initialStore.profiles.existing);
   assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
 });
 
-test('S3.2 inactive, new, duplicate and no project selection or cwd do not publish', async () => {
+test('S3.1 legacy name selection follows a stable ID rename without reselection', async () => {
+  resetStore(); profile('legacy-id');
+  const root = path.join(home, 'legacy-edit'); fs.mkdirSync(root);
+  await activate('legacy-id', root);
+  put(selectionPath, JSON.stringify({ [root]: 'legacy-id' }));
+  const source = path.join(profiles, 'legacy-id.json');
+  put(source, { id: 'legacy-id', name: 'Old Name', model_profiles: { worker: { model: 'vendor/old' } } });
+  put(selectionPath, JSON.stringify({ [root]: 'Old Name' }));
+  const result: any = await handleIpcCommand('save_sdd_profile', { cwd: root, profile: { id: 'legacy-id', name: 'New Name', model_profiles: { worker: { model: 'vendor/renamed', effort: 'medium' } } } });
+  assert.equal(result.success, true);
+  assert.deepEqual(readJson(storePath).profiles[declaration(root)].worker, { model: 'vendor/renamed', thinking: 'medium' });
+  const listed: any = await handleIpcCommand('get_sdd_profiles', { cwd: root });
+  assert.equal(listed.projectActiveProfile, 'legacy-id');
+});
+
+test('S3.2 never-published inactive, new and duplicate profiles do not publish', async () => {
   resetStore(); profile('selected-save'); profile('inactive-save');
   const a = path.join(home, 'save-inactive'); const b = path.join(home, 'save-unselected');
   fs.mkdirSync(a); fs.mkdirSync(b); await activate('selected-save', a);
@@ -296,8 +315,6 @@ test('S3.2 inactive, new, duplicate and no project selection or cwd do not publi
     { cwd: a, profile: { id: 'inactive-save', name: 'inactive-save', model_profiles: { worker: { model: 'vendor/inactive' } } } },
     { cwd: a, profile: { name: 'new-profile', model_profiles: { worker: { model: 'vendor/new' } } } },
     { cwd: a, profile: { name: 'selected-save-copy', model_profiles: { worker: { model: 'vendor/copy' } } } },
-    { cwd: b, profile: { id: 'selected-save', name: 'selected-save', model_profiles: { worker: { model: 'vendor/b' } } } },
-    { profile: { id: 'selected-save', name: 'selected-save', model_profiles: { worker: { model: 'vendor/no-cwd' } } } },
   ]) {
     const result: any = await handleIpcCommand('save_sdd_profile', { scope: 'global', ...args });
     assert.equal(result.success, true);
@@ -306,6 +323,55 @@ test('S3.2 inactive, new, duplicate and no project selection or cwd do not publi
     assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
     assert.equal(fs.existsSync(declarationPath(b)), false);
   }
+});
+
+for (const withCwd of [true, false]) {
+  test(`S3.1 S3.2 previously published profile updates from ${withCwd ? 'unrelated cwd' : 'no cwd'}`, async () => {
+    resetStore(); profile(`shared-${withCwd}`, 'vendor/old', 'low');
+    const a = path.join(home, `shared-a-${withCwd}`); const b = path.join(home, `shared-b-${withCwd}`);
+    fs.mkdirSync(a); fs.mkdirSync(b); await activate(`shared-${withCwd}`, a);
+    const pin = fs.readFileSync(declarationPath(a), 'utf8'); const name = declaration(a);
+    const selection = fs.readFileSync(selectionPath, 'utf8');
+    const result: any = await handleIpcCommand('save_sdd_profile', { ...(withCwd ? { cwd: b } : {}), profile: { id: `shared-${withCwd}`, name: 'Renamed', model_profiles: { worker: { model: 'vendor/updated', effort: 'high' } } } });
+    assert.equal(result.success, true);
+    assert.deepEqual(readJson(storePath).profiles[name].worker, { model: 'vendor/updated', thinking: 'high' });
+    assert.equal(fs.readFileSync(declarationPath(a), 'utf8'), pin);
+    assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+    assert.equal(fs.existsSync(declarationPath(b)), false);
+  });
+}
+
+test('S4.2 unowned collision refuses overwrite even when routing initially matches', async () => {
+  resetStore(); profile('collision');
+  const a = path.join(home, 'collision-a'); const b = path.join(home, 'collision-b'); fs.mkdirSync(a); fs.mkdirSync(b);
+  await activate('collision', a);
+  const name = declaration(a); const current = readJson(storePath);
+  // Rebuild a valid foreign store with the observed entry but no ownership metadata.
+  const foreign = { kind: current.kind, version: current.version, active: current.active, profiles: current.profiles };
+  put(storePath, foreign);
+  const before = fs.readFileSync(storePath, 'utf8');
+  const selected = fs.readFileSync(selectionPath, 'utf8');
+  await failure('collision', b);
+  assert.equal(fs.readFileSync(storePath, 'utf8'), before);
+  assert.ok(readJson(storePath).profiles[name]);
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selected);
+  assert.equal(fs.existsSync(declarationPath(b)), false);
+});
+
+test('S4.2 legacy file identity migrates only selected declaration and keeps old entry', async () => {
+  resetStore(); const a = path.join(home, 'legacy-migrate-a'); const b = path.join(home, 'legacy-migrate-b'); fs.mkdirSync(a); fs.mkdirSync(b);
+  put(path.join(profiles, 'legacy-file.json'), { name: 'Legacy Profile', model_profiles: { worker: { model: 'vendor/legacy', effort: 'low' } } });
+  const oldStore = { ...initialStore, profiles: { ...initialStore.profiles, 'old-content-hash': { worker: { model: 'vendor/legacy', thinking: 'low' } } } };
+  put(storePath, oldStore);
+  const oldPin = JSON.stringify({ kind: 'gentle-pi.agent_model_profile_pin', version: 1, profile: 'old-content-hash' });
+  put(declarationPath(a), oldPin); put(declarationPath(b), oldPin);
+  await activate('legacy-file', a);
+  const name = declaration(a);
+  assert.notEqual(name, 'old-content-hash');
+  assert.equal(fs.readFileSync(declarationPath(b), 'utf8'), oldPin);
+  assert.deepEqual(readJson(storePath).profiles['old-content-hash'], oldStore.profiles['old-content-hash']);
+  await activate('legacy-file', b);
+  assert.equal(declaration(b), name);
 });
 
 test('S3.3 publication failure reports saved profile and unchanged declaration', async () => {
