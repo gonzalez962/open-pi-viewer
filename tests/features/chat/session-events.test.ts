@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { ExtensionUiPromptBar } from '@features/chat/components/ExtensionUiPromptBar';
 
 import {
   SessionEventController,
   shouldRefreshWorkspaceOnEvent,
 } from '@features/chat/session-events';
 import { executeAutoStart } from '@features/chat/hooks/useSessionEvents';
+import { ScopedExtensionUiDialogs } from '@features/chat/hooks/useExtensionUiDialog';
 import type { ChatAction } from '@core/reducer';
 import type { ConnectConfig } from '@core/types/connection';
 import type { DiscoveredEnvironment } from '@infra/bridge';
@@ -27,6 +31,173 @@ import type { ExtensionUiDialogAdapter } from '@core/protocol';
  * `handleEventDispatch` (odd/tasks/architecture-restructure.md, T5d) that has no prior
  * coverage anywhere.
  */
+
+test('S1.1: legacy request captures its project and session before switching and responds to its origin', async () => {
+  let cwd = '/a';
+  let session = 'one';
+  const router = new ScopedExtensionUiDialogs();
+  const responses: ExtensionUiResponsePayload[] = [];
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: cwd }),
+    getCurrentSessionId: () => session,
+    dispatch: () => {}, dialogAdapter: router.asAdapter(),
+    sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+  });
+  const pending = controller.handleExtensionUiRequest({ type: 'extension_ui_request', id: 'legacy', method: 'select', options: ['A'] });
+  cwd = '/b'; session = 'two';
+  const a = router.forOwner({ cwd: '/a', sessionId: 'one' });
+  const dialog = a.getActiveDialog();
+  if (dialog) a.resolveByItemKey(dialog.itemKey, 'A');
+  else router.cancelPending();
+  await pending;
+  assert.ok(dialog);
+  assert.deepStrictEqual(responses, [{ id: 'legacy', method: 'select', value: 'A' }]);
+  assert.strictEqual(router.forOwner({ cwd: '/b', sessionId: 'two' }).getActiveDialog(), null);
+});
+
+test('S1.2: snapshot restoration retains session identity and response owner', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const responses: ExtensionUiResponsePayload[] = [];
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: '/repo' }),
+    getCurrentSessionId: () => 'other', dispatch: () => {}, dialogAdapter: router.asAdapter(),
+    sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+  });
+  controller.handleEvent({ type: 'runtime_snapshot', cwd: '/repo', sessionId: 'restored', sessionFile: '/repo/s.jsonl', pendingExtensionPrompts: [{ type: 'extension_ui_request', id: 'restored', method: 'input' }] });
+  const queue = router.forOwner({ cwd: '/repo', sessionId: 'restored' });
+  const dialog = queue.getActiveDialog();
+  assert.ok(dialog);
+  queue.resolveByItemKey(dialog.itemKey, 'value');
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepStrictEqual(responses, [{ id: 'restored', method: 'input', value: 'value', cwd: '/repo', sessionFile: '/repo/s.jsonl' }]);
+});
+
+const questionnaire = { questions: [{
+  header: 'Tipo de Prueba',
+  options: [
+    {
+      preview: "En las plantillas de laboratorio actuales existen dos campos de texto libre:\n1. **Categoría** (ej. Hematología, Bioquímica, Inmunología).\n2. **Tipo de Muestra** (`sampleType`, ej. Sangre venosa, Orina, Suero).\n\nCon esta opción:\n- 'Categoría' pasa a ser un catálogo en Settings y selector en plantillas.\n- 'Tipo de Prueba' pasa a ser el catálogo administrable que alimenta y valida el tipo de muestra/prueba (`sampleType`).",
+      description: 'Reemplaza el texto libre actual de muestra (sangre, orina, etc.) por este catálogo seleccionable.',
+      label: 'Mapear al campo existente de Tipo de Muestra (sampleType)',
+    },
+    {
+      label: "Crear nuevo campo 'Tipo de Prueba' (testType) independiente",
+      description: "Crea un catálogo 'Tipo de Prueba' y añade un nuevo campo en plantillas además de la muestra.",
+      preview: "Con esta opción:\n- Se crea el catálogo 'Categoría' (ej. Hematología, Bioquímica).\n- Se crea el catálogo 'Tipo de Prueba' (ej. Perfil, Análisis Clínico, Cultivo, Prueba Rápida).\n- Se mantiene aparte el tipo de muestra si fuera necesario, añadiendo `test_type` a las plantillas y base de datos.",
+    },
+  ],
+  question: "Actualmente en el módulo de laboratorio los exámenes tienen 'Categoría' y 'Tipo de Muestra' como texto libre. ¿Cómo deseas que se relacione 'Tipo de prueba'?",
+}] };
+
+test('S3.1: observed background tool descriptions render with options and preserve wire response', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const responses: ExtensionUiResponsePayload[] = [];
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: '/repo' }),
+    getCurrentSessionId: () => 'active', dispatch: () => {}, dialogAdapter: router.asAdapter(),
+    sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+  });
+  const owner = { cwd: '/repo', sessionId: 'background', sessionFile: '/repo/background.jsonl' };
+  controller.handleEvent({ type: 'tool_execution_start', ...owner, toolCallId: 'tool-a', toolName: 'ask_user_question', args: questionnaire });
+  const labels = questionnaire.questions[0].options.map(option => option.label);
+  controller.handleEvent({ type: 'extension_ui_request', ...owner, id: 'q', method: 'select', title: questionnaire.questions[0].question, options: labels });
+  const queue = router.forOwner(owner);
+  const dialog = queue.getActiveDialog();
+  assert.ok(dialog);
+  const markup = renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, {
+    dialog, onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {}, onConfirm: () => {}, onCancel: () => {},
+  }));
+  queue.resolveByItemKey(dialog.itemKey, labels[0]);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepStrictEqual(responses, [{ id: 'q', method: 'select', value: labels[0], cwd: '/repo', sessionFile: '/repo/background.jsonl' }]);
+  for (const option of questionnaire.questions[0].options) {
+    const escaped = option.description.replace(/'/g, '&#x27;');
+    assert.ok(markup.includes(escaped), `missing description: ${option.description}`);
+  }
+});
+
+test('S3.2: unrelated sessions, finished tools, ambiguous calls and missing metadata preserve labels only', async () => {
+  for (const mode of ['unrelated-session', 'finished', 'ambiguous', 'missing'] as const) {
+    const router = new ScopedExtensionUiDialogs();
+    const responses: ExtensionUiResponsePayload[] = [];
+    const controller = new SessionEventController({
+      getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: '/repo' }),
+      getCurrentSessionId: () => 'active', dispatch: () => {}, dialogAdapter: router.asAdapter(),
+      sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+    });
+    const owner = { cwd: '/repo', sessionId: 'active' };
+    const source = { ...owner, sessionId: mode === 'unrelated-session' ? 'other' : 'active' };
+    if (mode !== 'missing') controller.handleEvent({ type: 'tool_execution_start', ...source, toolCallId: 'one', toolName: 'ask_user_question', args: questionnaire });
+    if (mode === 'ambiguous') controller.handleEvent({ type: 'tool_execution_start', ...source, toolCallId: 'two', toolName: 'ask_user_question', args: questionnaire });
+    if (mode === 'finished') controller.handleEvent({ type: 'tool_execution_end', ...source, toolCallId: 'one', toolName: 'ask_user_question' });
+    const labels = questionnaire.questions[0].options.map(option => option.label);
+    const request: ExtensionUiRequest = { type: 'extension_ui_request', ...owner, id: `q-${mode}`, method: 'select', title: questionnaire.questions[0].question, options: labels };
+    const pending = controller.handleExtensionUiRequest(request);
+    const queue = router.forOwner(owner);
+    const dialog = queue.getActiveDialog();
+    assert.ok(dialog);
+    const markup = renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, {
+      dialog, onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {}, onConfirm: () => {}, onCancel: () => {},
+    }));
+    queue.resolveByItemKey(dialog.itemKey, labels[1]);
+    await pending;
+    assert.deepStrictEqual(responses, [{ id: `q-${mode}`, method: 'select', value: labels[1], cwd: '/repo' }]);
+    assert.ok(markup.includes('Mapear al campo existente'));
+    assert.ok(!markup.includes('Reemplaza el texto libre actual'));
+    assert.ok(!markup.includes('Crea un catálogo'));
+  }
+});
+
+test('S3.2: untrusted descriptions, mismatches, missing owner and disconnect fail closed', async () => {
+  for (const mode of ['question', 'inbound', 'labels', 'owner', 'disconnect'] as const) {
+    const router = new ScopedExtensionUiDialogs();
+    const responses: ExtensionUiResponsePayload[] = [];
+    const controller = new SessionEventController({
+      getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: '/repo' }),
+      getCurrentSessionId: () => 's', dispatch: () => {}, dialogAdapter: router.asAdapter(),
+      sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+    });
+    const owner = { cwd: '/repo', sessionId: 's' };
+    if (mode !== 'inbound') controller.handleEvent({ type: 'tool_execution_start', ...owner, toolCallId: 't', toolName: 'ask_user_question', args: questionnaire });
+    if (mode === 'disconnect') controller.handleStatusChange({ state: 'disconnected', label: '', detail: '', cwd: '/repo', sessionId: 's' });
+    const labels = questionnaire.questions[0].options.map(option => option.label);
+    if (mode === 'labels') labels[0] = 'Different option';
+    const request: ExtensionUiRequest = { type: 'extension_ui_request', id: mode, method: 'select', cwd: '/repo', ...(mode === 'owner' ? {} : { sessionId: 's' }), title: questionnaire.questions[0].question + (mode === 'question' ? '\nOptions:\nExtra' : ''), options: labels, ...(mode === 'inbound' ? { optionDescriptions: ['INJECTED', 'INJECTED'] } : {}) };
+    const pending = controller.handleExtensionUiRequest(request);
+    const queue = router.forOwner(owner);
+    const dialog = queue.getActiveDialog()!;
+    const markup = renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, { dialog, onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {}, onConfirm: () => {}, onCancel: () => {} }));
+    queue.resolveByItemKey(dialog.itemKey, labels[0]);
+    await pending;
+    assert.deepStrictEqual(responses, [{ id: mode, method: 'select', value: labels[0], cwd: '/repo' }]);
+    assert.ok(!markup.includes('INJECTED'), mode);
+    assert.ok(!markup.includes('Reemplaza el texto libre actual'), mode);
+  }
+});
+
+test('S3.1: explicit step and checkbox labels recover descriptions without altering toggle tokens', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const responses: ExtensionUiResponsePayload[] = [];
+  const controller = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: 'pi.js', workingDirectory: '/repo' }),
+    getCurrentSessionId: () => 's', dispatch: () => {}, dialogAdapter: router.asAdapter(),
+    sendExtensionUiResponseFn: async payload => { responses.push(payload); return { id: payload.id, success: true }; },
+  });
+  const owner = { cwd: '/repo', sessionId: 's' };
+  const questions = [{ question: 'First', options: [{ label: 'X', description: 'Wrong step description' }] }, { question: 'Second', options: [{ label: 'X', description: 'Correct step description' }, { label: 'Y', description: 'Other description' }] }];
+  controller.handleEvent({ type: 'tool_execution_start', ...owner, toolCallId: 'choice', toolName: 'ask_user_choice', args: { questions } });
+  const request: ExtensionUiRequest = { type: 'extension_ui_request', ...owner, id: 'q', method: 'select', title: '2/2: Second', options: ['[ ] X', '[x] Y', 'Done', '← Back'] };
+  const pending = controller.handleExtensionUiRequest(request);
+  const queue = router.forOwner(owner);
+  const dialog = queue.getActiveDialog()!;
+  const markup = renderToStaticMarkup(React.createElement(ExtensionUiPromptBar, { dialog, onSelect: () => {}, onMultiSelectSubmit: () => {}, onInput: () => {}, onConfirm: () => {}, onCancel: () => {} }));
+  queue.resolveByItemKey(dialog.itemKey, '[ ] X');
+  await pending;
+  assert.deepStrictEqual(responses, [{ id: 'q', method: 'select', value: '[ ] X', cwd: '/repo' }]);
+  assert.ok(markup.includes('Correct step description'));
+  assert.ok(markup.includes('Other description'));
+  assert.ok(!markup.includes('Wrong step description'));
+});
 
 test('shouldRefreshWorkspaceOnEvent: true for a completed tool execution', () => {
   const action = { type: 'EVENT_TOOL_EXECUTION_END' } as unknown as ChatAction;
@@ -878,7 +1049,11 @@ test('SessionEventController: scoped disconnect cancels legacy missing-cwd pendi
   const adapter: ExtensionUiDialogAdapter = {
     select: (req) => {
       return new Promise<string | null>((res) => {
-        if (!req.cwd) resolveActiveLegacy = res;
+        if (req.id === 'dlg-legacy') {
+          assert.strictEqual(req.cwd, '/path/project-a');
+          assert.strictEqual(req.sessionId, 'session-1');
+          resolveActiveLegacy = res;
+        }
         if (req.cwd === '/path/project-b') resolveExplicitB = res;
       });
     },
