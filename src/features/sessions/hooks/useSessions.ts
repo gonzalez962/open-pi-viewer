@@ -157,6 +157,7 @@ export function useSessions({
 
     setShowSettings(false);
     const targetProjectId = activeProjectIdRef.current ?? undefined;
+    const targetCwd = config.workingDirectory;
 
     try {
       dispatch({ type: 'SWITCH_SESSION_START', targetProjectId, payload: { sessionPath: session.path } });
@@ -194,8 +195,13 @@ export function useSessions({
           type: 'SESSION_READY', targetProjectId,
           payload: { sessionId: result.sessionId, sessionFile: result.sessionFile, messages: hydrated, activity: result.activity, activeJobs: result.activeJobs, hasMore: result.hasMore, todo: parseTodo((result as typeof result & { todo?: unknown }).todo) ?? todoFromHistory(result.messages || []) },
         });
-        restoreExtensionPrompts?.(result.pendingExtensionPrompts ?? []);
       }
+      restoreExtensionPrompts?.((result.pendingExtensionPrompts ?? []).map(request => ({
+        ...request,
+        cwd: request.cwd ?? targetCwd,
+        sessionId: request.sessionId ?? result.sessionId,
+        sessionFile: request.sessionFile ?? result.sessionFile,
+      })));
 
       // Synchronize persistence record
       recordSessionSwitched(

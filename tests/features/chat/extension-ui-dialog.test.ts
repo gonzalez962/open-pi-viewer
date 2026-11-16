@@ -8,6 +8,7 @@ import {
   cleanQuestionText,
   createDialogItemKey,
   ExtensionUiDialogQueue,
+  ScopedExtensionUiDialogs,
   extractQuestionIdentity,
   isMultiQuestionTitle,
   isSamePath,
@@ -121,7 +122,7 @@ test('ExtensionUiDialogQueue: enqueues select, input, and confirm requests retur
   assert.strictEqual(queue.getActiveDialog(), null);
 });
 
-test('ExtensionUiDialogQueue: FIFO queueing and sequential resolution across projects', async () => {
+test('ExtensionUiDialogQueue: legacy global queue supports item-key resolution across projects', async () => {
   const queue = new ExtensionUiDialogQueue();
   const adapter = queue.asAdapter();
 
@@ -184,6 +185,64 @@ test('ExtensionUiDialogQueue: FIFO queueing and sequential resolution across pro
 
   assert.strictEqual(queue.getPendingCount(), 0);
   assert.strictEqual(queue.getActiveDialog(), null);
+});
+
+test('S1.1: background project cannot interrupt another project multiselect', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const queue = router.forOwner({ cwd: '/a' });
+  const adapter = router.asAdapter();
+  const first = adapter.select({ type: 'extension_ui_request', id: 'a1', method: 'select', cwd: '/a', title: '1/2: Features', options: ['[ ] A', '[ ] B', 'Done'] });
+  queue.submitMultiSelect(queue.getActiveDialog()!.itemKey, [true, true]);
+  assert.strictEqual(await first, '[ ] A');
+  const background = adapter.input({ type: 'extension_ui_request', id: 'b', method: 'input', cwd: '/b', title: 'Project B' });
+  const next = adapter.select({ type: 'extension_ui_request', id: 'a2', method: 'select', cwd: '/a', title: '1/2: Features', options: ['[x] A', '[ ] B', 'Done'] });
+  const nextItem = queue.getQueue().find(item => item.id === 'a2');
+  if (nextItem) queue.resolveByItemKey(nextItem.itemKey, 'incorrectly queued');
+  const projectB = router.forOwner({ cwd: '/b' });
+  assert.strictEqual(projectB.getActiveDialog()?.id, 'b');
+  projectB.resolveByItemKey(projectB.getActiveDialog()!.itemKey, 'answer B');
+  assert.strictEqual(await background, 'answer B');
+  assert.strictEqual(await next, '[ ] B');
+  queue.cancelPending();
+});
+
+test('S1.2: simultaneous sessions retain independent questionnaire history', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const queue = router.forOwner({ cwd: '/repo', sessionId: 'session-a' });
+  const adapter = router.asAdapter();
+  const a = adapter.select({ type: 'extension_ui_request', id: 'a', method: 'select', cwd: '/repo', sessionId: 'session-a', title: '1/2: A', options: ['answer A'] } as ExtensionUiRequest);
+  queue.resolveByItemKey(queue.getActiveDialog()!.itemKey, 'answer A');
+  assert.strictEqual(await a, 'answer A');
+  const b = adapter.select({ type: 'extension_ui_request', id: 'b', method: 'select', cwd: '/repo', sessionId: 'session-b', title: '1/2: B', options: ['answer B'] } as ExtensionUiRequest);
+  const aNext = adapter.select({ type: 'extension_ui_request', id: 'a2', method: 'select', cwd: '/repo', sessionId: 'session-a', title: '2/2: A next', options: ['next'] } as ExtensionUiRequest);
+  const answer = queue.getFlowAnswers().find(entry => entry.answerText === 'answer A');
+  assert.strictEqual(queue.getActiveDialog()?.id, 'a2');
+  assert.strictEqual(router.forOwner({ cwd: '/repo', sessionId: 'session-b' }).getActiveDialog()?.id, 'b');
+  router.cancelPending();
+  await Promise.all([b, aNext]);
+  assert.ok(answer, 'session B starting must not erase session A history');
+});
+
+test('S1.1: scoped selection switches projects without exposing unknown origins', async () => {
+  const router = new ScopedExtensionUiDialogs();
+  const adapter = router.asAdapter();
+  const a = adapter.input({ type: 'extension_ui_request', id: 'a', method: 'input', cwd: '/a', sessionId: 'one' });
+  const b = adapter.input({ type: 'extension_ui_request', id: 'b', method: 'input', cwd: '/b', sessionId: 'two' });
+  const unknown = adapter.input({ type: 'extension_ui_request', id: 'unknown', method: 'input' });
+  const qa = router.forOwner({ cwd: '/a', sessionId: 'one' });
+  const qb = router.forOwner({ cwd: '/b', sessionId: 'two' });
+  assert.strictEqual(qa.getActiveDialog()?.id, 'a');
+  assert.strictEqual(qb.getActiveDialog()?.id, 'b');
+  assert.strictEqual(router.forOwner({ cwd: '/c', sessionId: 'three' }).getActiveDialog(), null);
+  assert.strictEqual(router.pendingForProject('/a'), 1);
+  qb.resolveByItemKey(qb.getActiveDialog()!.itemKey, 'B');
+  assert.strictEqual(await b, 'B');
+  assert.strictEqual(qa.getActiveDialog()?.id, 'a');
+  qa.resolveByItemKey(qa.getActiveDialog()!.itemKey, 'A');
+  assert.strictEqual(await a, 'A');
+  assert.strictEqual(router.pendingForProject('/a'), 0);
+  router.cancelPending();
+  assert.strictEqual(await unknown, null);
 });
 
 test('ExtensionUiDialogQueue: same-id cross-cwd does not collide timer expiry or resolution', async () => {

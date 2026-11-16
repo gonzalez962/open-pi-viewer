@@ -1018,8 +1018,64 @@ export class ExtensionUiDialogQueue {
   }
 }
 
+export interface DialogOwner { cwd?: string; sessionId?: string | null; sessionFile?: string | null }
+
+function ownerForRequest(request: ExtensionUiRequest): DialogOwner {
+  return {
+    cwd: request.cwd,
+    sessionId: typeof request.sessionId === 'string' ? request.sessionId : undefined,
+    sessionFile: typeof request.sessionFile === 'string' ? request.sessionFile : undefined,
+  };
+}
+
+/** Each origin owns its entire questionnaire state, not merely its queue head. */
+export class ScopedExtensionUiDialogs {
+  private entries: Array<{ owner: DialogOwner; queue: ExtensionUiDialogQueue }> = [];
+  private listeners = new Set<() => void>();
+
+  public forOwner(owner: DialogOwner): ExtensionUiDialogQueue {
+    const found = this.entries.find(entry => isSamePath(entry.owner.cwd, owner.cwd) &&
+      (entry.owner.sessionId || '') === (owner.sessionId || '') &&
+      (entry.owner.sessionId ? true : (entry.owner.sessionFile || '') === (owner.sessionFile || '')));
+    if (found) return found.queue;
+    const queue = new ExtensionUiDialogQueue();
+    this.entries.push({ owner: { ...owner }, queue });
+    queue.subscribe(() => { for (const listener of this.listeners) listener(); });
+    return queue;
+  }
+
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  public pendingForProject(cwd?: string): number {
+    if (!cwd) return 0;
+    return this.entries.filter(entry => entry.owner.cwd && isSamePath(entry.owner.cwd, cwd))
+      .reduce((count, entry) => count + entry.queue.getPendingCount(), 0);
+  }
+
+  public cancelPending(cwd?: string, activeCwd?: string): void {
+    for (const entry of this.entries) {
+      if (!cwd || (entry.owner.cwd ? isSamePath(entry.owner.cwd, cwd) : isSamePath(cwd, activeCwd))) {
+        entry.queue.cancelPending();
+      }
+    }
+  }
+
+  public asAdapter(): ExtensionUiDialogAdapter {
+    return {
+      select: request => this.forOwner(ownerForRequest(request)).asAdapter().select(request),
+      input: request => this.forOwner(ownerForRequest(request)).asAdapter().input(request),
+      confirm: request => this.forOwner(ownerForRequest(request)).asAdapter().confirm(request),
+      cancelPending: (cwd, activeCwd) => this.cancelPending(cwd, activeCwd),
+    };
+  }
+}
+
 export interface UseExtensionUiDialogResult {
   dialogQueue: QueuedExtensionUiDialog[];
+  pendingForProject: (cwd?: string) => number;
   activeDialog: QueuedExtensionUiDialog | null;
   pendingCount: number;
   dialogAdapter: ExtensionUiDialogAdapter;
@@ -1042,16 +1098,19 @@ export interface UseExtensionUiDialogResult {
  * Hook managing the global FIFO extension UI dialog queue and providing the
  * async React-backed ExtensionUiDialogAdapter.
  */
-export function useExtensionUiDialog(): UseExtensionUiDialogResult {
-  const queueManagerRef = useRef<ExtensionUiDialogQueue | null>(null);
-  if (!queueManagerRef.current) {
-    queueManagerRef.current = new ExtensionUiDialogQueue();
-  }
-  const queueManager = queueManagerRef.current;
+export function useExtensionUiDialog(owner: DialogOwner = {}): UseExtensionUiDialogResult {
+  const routerRef = useRef<ScopedExtensionUiDialogs | null>(null);
+  if (!routerRef.current) routerRef.current = new ScopedExtensionUiDialogs();
+  const router = routerRef.current;
+  const queueManager = router.forOwner(owner);
+  const [, setRevision] = useState(0);
+  useEffect(() => router.subscribe(() => setRevision(value => value + 1)), [router]);
+  useEffect(() => () => router.cancelPending(), [router]);
 
   const [queue, setQueue] = useState<QueuedExtensionUiDialog[]>([]);
   const [activeDialog, setActiveDialog] = useState<QueuedExtensionUiDialog | null>(null);
-  const [flowAnswers, setFlowAnswers] = useState<AnsweredQuestionRecord[]>([]);
+  const activeDialogOwnerRef = useRef(queueManager);
+  const [, setFlowAnswers] = useState<AnsweredQuestionRecord[]>([]);
   const activeDialogRef = useRef<QueuedExtensionUiDialog | null>(null);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1066,6 +1125,7 @@ export function useExtensionUiDialog(): UseExtensionUiDialogResult {
           clearTimeout(graceTimerRef.current);
           graceTimerRef.current = null;
         }
+        activeDialogOwnerRef.current = queueManager;
         activeDialogRef.current = nextActive;
         setActiveDialog(nextActive);
       } else {
@@ -1104,15 +1164,16 @@ export function useExtensionUiDialog(): UseExtensionUiDialogResult {
         graceTimerRef.current = null;
       }
       unsubscribe();
-      // On unmount: cancel all pending dialogs so promises resolve
-      queueManager.cancelPending();
+      activeDialogRef.current = null;
     };
   }, [queueManager]);
 
-  const dialogAdapter = useMemo(() => queueManager.asAdapter(), [queueManager]);
+  const dialogAdapter = useMemo(() => router.asAdapter(), [router]);
 
-  const pendingCount = queue.length;
-  const canGoBack = activeDialog ? queueManager.canGoBack(activeDialog.itemKey) : false;
+  const selectedDialog = queueManager.getActiveDialog() ??
+    (activeDialogOwnerRef.current === queueManager ? activeDialog : null);
+  const pendingCount = queueManager.getPendingCount();
+  const canGoBack = selectedDialog ? queueManager.canGoBack(selectedDialog.itemKey) : false;
 
   const handleSelect = useCallback(
     (itemKey: string, choice: string) => {
@@ -1206,11 +1267,12 @@ export function useExtensionUiDialog(): UseExtensionUiDialogResult {
 
   return {
     dialogQueue: queue,
-    activeDialog,
+    pendingForProject: (cwd?: string) => router.pendingForProject(cwd),
+    activeDialog: selectedDialog,
     pendingCount,
     dialogAdapter,
     canGoBack,
-    flowAnswers,
+    flowAnswers: queueManager.getFlowAnswers(),
     handleSelect,
     handleMultiSelectSubmit,
     handleInput,

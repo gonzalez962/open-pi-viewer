@@ -18,7 +18,7 @@ export interface ProjectDockProps {
   agentActivity: AgentActivity;
   isBusy: boolean;
   locale: SupportedLocale;
-  projectStatusMap?: Record<string, ProjectStatusInfo>;
+  projectStatusMap?: Record<string, ProjectStatusInfo & { hasPendingQuestion?: boolean }>;
   projectOrder?: string[];
   isSecondaryWorktree?: (path: string) => boolean;
   getPrimaryPath?: (path: string) => string | undefined;
@@ -216,10 +216,10 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             const primaryPath = getPrimaryPath?.(project.path);
             const displayName = getProjectDisplayName(project);
             const monogram = getProjectMonogram(displayName);
-            const statusInfo: ProjectStatusInfo = projectStatusMap?.[project.id] ?? (isActive
+            const statusInfo: ProjectStatusInfo & { hasPendingQuestion?: boolean } = projectStatusMap?.[project.id] ?? (isActive
               ? { connectionState, agentActivity, isBusy }
               : { connectionState: 'disconnected', agentActivity: 'idle', isBusy: false });
-            const statusClass = getProjectStatusClass(
+            const statusClass = statusInfo.hasPendingQuestion ? 'status-pending' : getProjectStatusClass(
               isActive,
               statusInfo.connectionState,
               statusInfo.agentActivity,

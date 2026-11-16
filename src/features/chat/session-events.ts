@@ -187,8 +187,12 @@ export class SessionEventController {
       if (typeof event.sessionId === 'string' && Array.isArray(event.activeJobs)) {
         this.options.dispatch({ type: 'JOB_SNAPSHOT', payload: { sessionId: event.sessionId, jobs: event.activeJobs as string[] }, targetProjectId });
       }
+      const restoredRequests = (event.pendingExtensionPrompts as ExtensionUiRequest[] ?? []).map(request => ({
+        ...request, cwd: request.cwd ?? event.cwd,
+        sessionId: request.sessionId ?? event.sessionId, sessionFile: request.sessionFile ?? event.sessionFile,
+      }));
       if (selected && event.sessionId && selected !== event.sessionId) {
-        for (const request of (event.pendingExtensionPrompts as ExtensionUiRequest[] ?? [])) void this.handleExtensionUiRequest(request);
+        for (const request of restoredRequests) void this.handleExtensionUiRequest(request);
         return;
       }
       this.options.dispatch({
@@ -203,7 +207,7 @@ export class SessionEventController {
           hasMore: Boolean(event.hasMore),
         },
       });
-      for (const request of (event.pendingExtensionPrompts as ExtensionUiRequest[] ?? [])) void this.handleExtensionUiRequest(request);
+      for (const request of restoredRequests) void this.handleExtensionUiRequest(request);
       return;
     }
 
@@ -262,6 +266,7 @@ export class SessionEventController {
             },
             targetProjectId,
           });
+          void this.handleExtensionUiRequest(req);
         }
       }
       return;
@@ -540,8 +545,16 @@ export class SessionEventController {
       typeof request.cwd === 'string' && request.cwd.trim()
         ? request.cwd.trim()
         : undefined;
+    const activeCwd = this.options.getCurrentConfig().workingDirectory;
+    const originCwd = reqCwd ?? (activeCwd?.trim() || undefined);
+    const targetProjectId = reqCwd ? this.resolveTargetProjectId(reqCwd) : undefined;
+    const currentSession = targetProjectId && this.options.getProjectSessionId
+      ? this.options.getProjectSessionId(targetProjectId)
+      : (!reqCwd || (activeCwd && normalizeWorkingDirectory(reqCwd) === normalizeWorkingDirectory(activeCwd)) ? this.options.getCurrentSessionId() : null);
+    const originSessionId = request.sessionId ?? (!request.sessionFile ? currentSession ?? undefined : undefined);
+    const dialogRequest = { ...request, cwd: originCwd, sessionId: originSessionId };
     const normCwd = reqCwd ? normalizeWorkingDirectory(reqCwd) : '';
-    const key = `${normCwd}\0${request.sessionFile ?? ""}\0${id}`;
+    const key = `${normCwd}\0${request.sessionId ?? request.sessionFile ?? ""}\0${id}`;
 
     if (this.pendingDialogRequests.has(key)) {
       return;
@@ -552,7 +565,7 @@ export class SessionEventController {
       let responsePayload: ExtensionUiResponsePayload;
 
       if (request.method === 'select') {
-        const choice = await this.dialogAdapter.select(request);
+        const choice = await this.dialogAdapter.select(dialogRequest);
         if (choice === null || choice === undefined) {
           responsePayload = {
             id,
@@ -569,7 +582,7 @@ export class SessionEventController {
           };
         }
       } else if (request.method === 'input') {
-        const val = await this.dialogAdapter.input(request);
+        const val = await this.dialogAdapter.input(dialogRequest);
         if (val === null || val === undefined) {
           responsePayload = {
             id,
@@ -586,7 +599,7 @@ export class SessionEventController {
           };
         }
       } else if (request.method === 'confirm') {
-        const conf = await this.dialogAdapter.confirm(request);
+        const conf = await this.dialogAdapter.confirm(dialogRequest);
         if (conf === null || conf === undefined) {
           responsePayload = {
             id,
