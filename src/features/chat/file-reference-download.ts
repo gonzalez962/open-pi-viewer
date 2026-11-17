@@ -14,7 +14,13 @@ export function fileReferenceDownloadSource(sourcePath: string, workingDirectory
     return { windows, parts };
   };
   const root = parse(workingDirectory), file = parse(sourcePath);
-  if (!root || !file || root.windows !== file.windows || file.parts.length <= root.parts.length) return fallback;
-  if (!root.parts.every((part, i) => root.windows ? part.toLowerCase() === file.parts[i].toLowerCase() : part === file.parts[i])) return fallback;
-  return { workingDirectory, relativePath: file.parts.slice(root.parts.length).join('/') };
+  if (!root) return fallback;
+  if (file && root.windows === file.windows && file.parts.length > root.parts.length &&
+      root.parts.every((part, i) => root.windows ? part.toLowerCase() === file.parts[i].toLowerCase() : part === file.parts[i])) {
+    return { workingDirectory, relativePath: file.parts.slice(root.parts.length).join('/') };
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(sourcePath) || /^\/home\/[^/]+(?:\/|$)/.test(sourcePath)) return fallback;
+  const relativePath = sourcePath.startsWith('/') ? sourcePath.slice(1) : sourcePath;
+  if (!relativePath || /[\\\x00-\x1f\x7f]/.test(relativePath) || relativePath.split('/').some(part => !part || part === '.' || part === '..')) return fallback;
+  return { workingDirectory, relativePath };
 }

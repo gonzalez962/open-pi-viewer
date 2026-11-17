@@ -372,6 +372,17 @@ function isAbsoluteFileReference(value: string): boolean {
   return /^\/(?!\/)[^\\]+$/.test(value) || /^[a-zA-Z]:[\\/][^\\/]+(?:[\\/][^\\/]+)*$/.test(value);
 }
 
+function isWebFileReference(value: string): boolean {
+  if (/[\x00-\x1f\x7f]/.test(value) || /[\\/]$/.test(value) || /\s[+*=|<>]\s/.test(value) ||
+      /^[a-zA-Z][a-zA-Z0-9+.-]*:(?![\\/][^\\/])/.test(value) || value.startsWith('//')) return false;
+  const windows = /^[a-zA-Z]:[\\/]/.test(value);
+  if (!windows && (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(value) || value.includes('\\'))) return false;
+  const parts = (windows ? value.slice(3) : value.replace(/^\//, '')).split(windows ? /[\\/]/ : '/');
+  if (parts.some(part => !part || part === '.' || part === '..')) return false;
+  const name = parts[parts.length - 1];
+  return name.includes('.') || name === 'Makefile';
+}
+
 const WorkingDirectoryContext = React.createContext<string | undefined>(undefined);
 
 const InlineFileReference: React.FC<{
@@ -385,8 +396,10 @@ const InlineFileReference: React.FC<{
   const [availability, setAvailability] = React.useState<{ path: string; workingDirectory: string | undefined; available: boolean } | null>(null);
   React.useEffect(() => {
     if (desktop) return;
+    const source = fileReferenceDownloadSource(path, workingDirectory, false);
+    if ('sourcePath' in source && !/^(?:\/home\/[^/]+\/|[a-zA-Z]:[\\/])/.test(path)) return;
     let current = true;
-    void isWorkspaceFileAvailable(fileReferenceDownloadSource(path, workingDirectory, false)).then(available => {
+    void isWorkspaceFileAvailable(source).then(available => {
       if (current) setAvailability({ path, workingDirectory, available });
     });
     return () => { current = false; };
@@ -427,7 +440,7 @@ function renderInline(
       case 'text':
         return <React.Fragment key={key}>{node.value}</React.Fragment>;
       case 'code_inline':
-        if (!insideLink && isAbsoluteFileReference(node.value)) {
+        if (!insideLink && (isDesktopTauriEnvironment() ? isAbsoluteFileReference(node.value) : isWebFileReference(node.value))) {
           return <InlineFileReference key={key} path={node.value} t={t} />;
         }
         return (

@@ -12,11 +12,11 @@ const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
 const project2 = path.join(fixture, 'project2');
 fs.mkdirSync(home); fs.mkdirSync(project); fs.mkdirSync(project2);
-const file = path.join(home, 'binary file.bin');
+const file = path.join(project, 'binary file.bin');
 const projectFile = path.join(project, 'project file.bin');
 const outside = path.join(fixture, 'outside.bin');
 const missing = path.join(home, 'missing.bin');
-const directory = path.join(home, 'directory');
+const directory = path.join(home, 'directory.bin');
 fs.mkdirSync(directory);
 const bytes = Buffer.from([0, 255, 1, 2, 128]);
 fs.writeFileSync(file, bytes); fs.writeFileSync(projectFile, bytes); fs.writeFileSync(outside, bytes);
@@ -169,7 +169,9 @@ try {
   await page.waitForFunction(() => document.querySelector('[aria-label="Second Fixture"][aria-current="true"]'));
   await page.waitForFunction(text => { try { window.emitFixture(text); return true; } catch { return false; } }, `\`${projectFile}\``);
   const newWorkspaceRoute = await check;
-  assert.deepEqual(newWorkspaceRoute.request().postDataJSON(), { sourcePath: projectFile });
+  assert.deepEqual(newWorkspaceRoute.request().postDataJSON(), /^[a-zA-Z]:[\\/]/.test(projectFile)
+    ? { sourcePath: projectFile }
+    : { workingDirectory: project2, relativePath: projectFile.replace(/^\//, '') });
   assert.equal(await page.locator('.markdown-file-reference code').innerText(), projectFile);
   assert.equal(await actions.count(), 0);
   const oldWorkspaceFinished = page.waitForEvent('requestfinished', request => request === oldWorkspaceRoute.request());
