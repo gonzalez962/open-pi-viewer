@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PI_AGENT_DIR, getActiveCwd } from './state';
 import { generateProfileId } from '../../src/core/types/profiles';
-import { publishGentleProfile, updatePublishedGentleProfile, verifyHistoricalGentlePublication, writeGentleJsonAtomic } from './gentle-profile';
+import { publishGentleProfile, publishGentleCatalogProfile, writeGentleJsonAtomic } from './gentle-profile';
 import { getAgnosticExecEnv } from '../config';
 
 export function slugify(text: string): string {
@@ -415,14 +415,11 @@ export function handleSaveSddProfile(args: any = {}) {
 
   const profilePath = path.join(dir, `${id}.json`);
   const existing = fs.existsSync(profilePath);
-  let published = false;
-  let previous: any;
   if (existing) {
-    previous = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    const previous = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
     const marker = previous.openPiGentlePublication;
     if (marker !== undefined) {
       if (!marker || marker.version !== 1 || marker.id !== id) throw new Error('Invalid Gentle publication marker');
-      published = true;
       profile.openPiGentlePublication = marker;
     } else {
       delete profile.openPiGentlePublication;
@@ -430,17 +427,6 @@ export function handleSaveSddProfile(args: any = {}) {
   } else {
     delete profile.openPiGentlePublication;
   }
-  let synchronize = false;
-  if (typeof args.cwd === 'string' && args.cwd.trim() && existing) {
-    const listing = getSddProfilesImpl(args.cwd);
-    const active = listing.projectActiveProfile;
-    if (active) {
-      const exactIds = listing.profiles.filter((item) => item.id.toLowerCase() === active.toLowerCase());
-      const matches = exactIds.length ? exactIds : listing.profiles.filter((item) => item.name.toLowerCase() === active.toLowerCase() || slugify(item.name) === slugify(active));
-      synchronize = matches.length === 1 && path.resolve(matches[0].path) === path.resolve(profilePath);
-    }
-  }
-
   const now = new Date().toISOString();
   profile.id = id;
   profile.name = cleanName;
@@ -450,24 +436,12 @@ export function handleSaveSddProfile(args: any = {}) {
   profile.updated_at = now;
 
   fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2) + '\n', 'utf8');
-  if (published || synchronize) {
-    try {
-      if (!published) {
-        verifyHistoricalGentlePublication(args.cwd, previous);
-        publishGentleProfile(args.cwd, id, profile, () => {
-          profile.openPiGentlePublication = { version: 1, id };
-          writeGentleJsonAtomic(profilePath, profile);
-        });
-      } else if (!updatePublishedGentleProfile(id, profile)) {
-        throw new Error('Published Gentle profile is missing');
-      }
-      if (synchronize) {
-        const active = getSddProfilesImpl(args.cwd).projectActiveProfile;
-        if (active && active.toLowerCase() !== id.toLowerCase()) setActiveSddProfileImpl(id, 'project', args.cwd);
-      }
-    } catch (error) {
-      return { success: false, profile, path: profilePath, message: `Profile saved but Gentle synchronization failed: ${String(error)}` };
-    }
+  try {
+    publishGentleCatalogProfile(id, profile, !!profile.openPiGentlePublication);
+    profile.openPiGentlePublication = { version: 1, id };
+    writeGentleJsonAtomic(profilePath, profile);
+  } catch (error) {
+    return { success: false, profile, path: profilePath, message: `Profile saved but Gentle synchronization failed: ${String(error)}` };
   }
   return { success: true, profile, path: profilePath, message: `Profile '${cleanName}' saved` };
 }
