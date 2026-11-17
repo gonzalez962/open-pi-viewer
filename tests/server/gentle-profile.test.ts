@@ -266,6 +266,60 @@ test('S2.2 missing project cwd rejects activation without changing stored select
   } finally { state.setActiveCwd(previous); }
 });
 
+test('S1.1 no-project creation and inactive edit publish distinct stable identities', async () => {
+  resetStore();
+  const activeFile = path.join(profiles, '.active'); put(activeFile, 'existing-selection\n');
+  const selection = JSON.stringify({ untouched: 'selected' }); put(selectionPath, selection);
+  const save = (profile: any) => handleIpcCommand('save_sdd_profile', { scope: 'global', profile }) as Promise<any>;
+  const first = await save({ name: 'Global One', model_profiles: { worker: { model: 'vendor/one' } } });
+  const second = await save({ name: 'Global Two', model_profiles: { worker: { model: 'vendor/two' } } });
+  assert.equal(first.success, true); assert.equal(second.success, true);
+  assert.notEqual(first.profile.id, second.profile.id);
+  const edited = await save({ id: first.profile.id, name: 'Renamed One', model_profiles: { worker: { model: 'vendor/edited' } } });
+  assert.equal(edited.success, true); assert.equal(edited.profile.id, first.profile.id);
+  const key = (id: string) => `openpi-${createHash('sha256').update(id).digest('hex').slice(0, 56)}`;
+  const store = readJson(storePath);
+  assert.equal(store.profiles[key(first.profile.id)].worker.model, 'vendor/edited');
+  assert.equal(store.profiles[key(second.profile.id)].worker.model, 'vendor/two');
+  assert.equal(readJson(path.join(profiles, `${first.profile.id}.json`)).name, 'Renamed One');
+  assert.equal(readJson(path.join(profiles, `${second.profile.id}.json`)).name, 'Global Two');
+  assert.equal(store.active, 'existing'); assert.deepEqual(store.profiles.existing, initialStore.profiles.existing);
+  assert.equal(fs.readFileSync(activeFile, 'utf8'), 'existing-selection\n');
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+});
+
+test('S1.3 explicit selection after save changes only the selected project', async () => {
+  resetStore();
+  const a = path.join(home, 'global-activation-a'); const b = path.join(home, 'global-activation-b');
+  fs.mkdirSync(a); fs.mkdirSync(b);
+  const saved: any = await handleIpcCommand('save_sdd_profile', { profile: { name: 'Global Activation', model_profiles: { worker: { model: 'vendor/activation' } } } });
+  assert.equal(saved.success, true);
+  const pin = JSON.stringify({ kind: 'gentle-pi.agent_model_profile_pin', version: 1, profile: 'existing' });
+  put(declarationPath(b), pin); put(selectionPath, { [b]: 'other' });
+  assert.equal((await activate(saved.profile.id, a)).success, true);
+  const name = declaration(a);
+  assert.equal(name, `openpi-${createHash('sha256').update(saved.profile.id).digest('hex').slice(0, 56)}`);
+  assert.equal(fs.readFileSync(declarationPath(b), 'utf8'), pin);
+  assert.equal(readJson(selectionPath)[b], 'other');
+  assert.equal(readJson(selectionPath)[a], saved.profile.id);
+  assert.equal(readJson(storePath).profiles[name].worker.model, 'vendor/activation');
+});
+
+test('S1.4 foreign stable identity collision leaves project state intact and reports saved definition', async () => {
+  const id = 'global-collision'; const root = path.join(home, id); fs.mkdirSync(root);
+  const name = `openpi-${createHash('sha256').update(id).digest('hex').slice(0, 56)}`;
+  put(storePath, { ...initialStore, profiles: { ...initialStore.profiles, [name]: { worker: { model: 'vendor/foreign' } } } });
+  const before = fs.readFileSync(storePath, 'utf8');
+  const pin = '{"foreign":true}'; put(declarationPath(root), pin);
+  const selection = JSON.stringify({ [root]: 'other' }); put(selectionPath, selection);
+  const result: any = await handleIpcCommand('save_sdd_profile', { cwd: root, profile: { id, name: id, model_profiles: { worker: { model: 'vendor/new' } } } });
+  assert.equal(result.success, false); assert.match(result.message, /saved.*Gentle.*failed/i);
+  assert.equal(readJson(path.join(profiles, `${id}.json`)).model_profiles.worker.model, 'vendor/new');
+  assert.equal(fs.readFileSync(storePath, 'utf8'), before);
+  assert.equal(fs.readFileSync(declarationPath(root), 'utf8'), pin);
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
+});
+
 test('S3.1 S4.1 saving renamed stable ID updates the shared entry without rewriting declarations', async () => {
   resetStore(); profile('edit', 'vendor/old', 'low');
   const a = path.join(home, 'edit-a'); const b = path.join(home, 'edit-b');
@@ -290,7 +344,7 @@ test('S3.1 S4.1 saving renamed stable ID updates the shared entry without rewrit
   assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
 });
 
-test('S3.1 legacy name selection follows a stable ID rename without reselection', async () => {
+test('S1.2 legacy name selection remains byte-identical after rename', async () => {
   resetStore(); profile('legacy-id');
   const root = path.join(home, 'legacy-edit'); fs.mkdirSync(root);
   await activate('legacy-id', root);
@@ -298,18 +352,18 @@ test('S3.1 legacy name selection follows a stable ID rename without reselection'
   const source = path.join(profiles, 'legacy-id.json');
   put(source, { ...readJson(source), id: 'legacy-id', name: 'Old Name', model_profiles: { worker: { model: 'vendor/old' } } });
   put(selectionPath, JSON.stringify({ [root]: 'Old Name' }));
+  const selection = fs.readFileSync(selectionPath, 'utf8');
   const result: any = await handleIpcCommand('save_sdd_profile', { cwd: root, profile: { id: 'legacy-id', name: 'New Name', model_profiles: { worker: { model: 'vendor/renamed', effort: 'medium' } } } });
   assert.equal(result.success, true);
   assert.deepEqual(readJson(storePath).profiles[declaration(root)].worker, { model: 'vendor/renamed', thinking: 'medium' });
-  const listed: any = await handleIpcCommand('get_sdd_profiles', { cwd: root });
-  assert.equal(listed.projectActiveProfile, 'legacy-id');
+  assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
 });
 
-test('S3.2 never-published inactive, new and duplicate profiles do not publish', async () => {
+test('S1.2 inactive, new and duplicate profiles publish without project side effects', async () => {
   resetStore(); profile('selected-save'); profile('inactive-save');
   const a = path.join(home, 'save-inactive'); const b = path.join(home, 'save-unselected');
   fs.mkdirSync(a); fs.mkdirSync(b); await activate('selected-save', a);
-  const store = fs.readFileSync(storePath, 'utf8');
+  const existing = readJson(storePath).profiles.existing;
   const pin = fs.readFileSync(declarationPath(a), 'utf8');
   const selection = fs.readFileSync(selectionPath, 'utf8');
   for (const args of [
@@ -319,7 +373,9 @@ test('S3.2 never-published inactive, new and duplicate profiles do not publish',
   ]) {
     const result: any = await handleIpcCommand('save_sdd_profile', { scope: 'global', ...args });
     assert.equal(result.success, true);
-    assert.equal(fs.readFileSync(storePath, 'utf8'), store);
+    const name = `openpi-${createHash('sha256').update(result.profile.id).digest('hex').slice(0, 56)}`;
+    assert.equal(readJson(storePath).profiles[name].worker.model, args.profile.model_profiles.worker.model);
+    assert.deepEqual(readJson(storePath).profiles.existing, existing);
     assert.equal(fs.readFileSync(declarationPath(a), 'utf8'), pin);
     assert.equal(fs.readFileSync(selectionPath, 'utf8'), selection);
     assert.equal(fs.existsSync(declarationPath(b)), false);
@@ -375,24 +431,25 @@ test('S4.2 legacy file identity migrates only selected declaration and keeps old
   assert.equal(declaration(b), name);
 });
 
-test('S4.4 saving selected unmarked profile creates missing project declaration', async () => {
+test('S1.2 saving selected unmarked profile does not create a missing declaration', async () => {
   resetStore(); profile('missing-declaration', 'vendor/old', 'low');
   const root = path.join(home, 'save-missing-declaration'); fs.mkdirSync(root);
   put(selectionPath, { [root]: 'missing-declaration' });
   const save = (model: string) => handleIpcCommand('save_sdd_profile', { cwd: root, profile: { id: 'missing-declaration', name: 'Missing declaration', model_profiles: { worker: { model, effort: 'high' } } } }) as Promise<any>;
   const result = await save('vendor/new');
   assert.equal(result.success, true, result.message);
-  const name = declaration(root);
+  const name = `openpi-${createHash('sha256').update('missing-declaration').digest('hex').slice(0, 56)}`;
+  assert.equal(fs.existsSync(declarationPath(root)), false);
   assert.equal(readJson(storePath).profiles[name].worker.model, 'vendor/new');
   assert.deepEqual(readJson(storePath).profiles.existing, initialStore.profiles.existing);
   assert.equal(readJson(storePath).active, 'existing');
   assert.equal((await save('vendor/newer')).success, true);
-  assert.equal(declaration(root), name);
+  assert.equal(fs.existsSync(declarationPath(root)), false);
   assert.equal(readJson(storePath).profiles[name].worker.model, 'vendor/newer');
 });
 
 for (const mismatch of [false, true]) {
-  test(`S4.3 direct save ${mismatch ? 'rejects mismatched' : 'migrates verified'} unmarked historical publication`, async () => {
+  test(`S1.2 direct save preserves ${mismatch ? 'foreign' : 'verified'} historical declaration`, async () => {
     resetStore();
     const id = `historical-${mismatch}`;
     profile(id, 'vendor/old', 'low');
@@ -407,33 +464,28 @@ for (const mismatch of [false, true]) {
     const beforePin = fs.readFileSync(declarationPath(root), 'utf8');
     const save = (model: string) => handleIpcCommand('save_sdd_profile', { cwd: root, profile: { id, name: id, model_profiles: { worker: { model, effort: 'high' } } } }) as Promise<any>;
     const result = await save('vendor/new');
-    if (mismatch) {
-      assert.equal(result.success, false);
-      assert.match(result.message, /saved.*Gentle.*failed/i);
-      assert.equal(fs.readFileSync(storePath, 'utf8'), beforeStore);
-      assert.equal(fs.readFileSync(declarationPath(root), 'utf8'), beforePin);
-      return;
-    }
-    assert.equal(result.success, true);
-    const fixedName = declaration(root);
+    assert.equal(result.success, true, result.message);
+    assert.equal(fs.readFileSync(declarationPath(root), 'utf8'), beforePin);
+    const fixedName = `openpi-${createHash('sha256').update(id).digest('hex').slice(0, 56)}`;
     assert.notEqual(fixedName, oldName);
     assert.deepEqual(readJson(storePath).profiles[fixedName].worker, { model: 'vendor/new', thinking: 'high' });
-    assert.deepEqual(readJson(storePath).profiles[oldName], oldRouting);
+    assert.deepEqual(readJson(storePath).profiles[oldName], JSON.parse(beforeStore).profiles[oldName]);
     assert.deepEqual(readJson(storePath).profiles.existing, initialStore.profiles.existing);
     assert.equal(readJson(path.join(profiles, `${id}.json`)).openPiGentlePublication.id, id);
     assert.equal((await save('vendor/newer')).success, true);
-    assert.equal(declaration(root), fixedName);
+    assert.equal(fs.readFileSync(declarationPath(root), 'utf8'), beforePin);
     assert.equal(readJson(storePath).profiles[fixedName].worker.model, 'vendor/newer');
   });
 }
 
 for (const reason of ['malformed', 'prefix'] as const) {
-  test(`S3.2 never-published save ignores ${reason} Gentle destination`, async () => {
+  test(`S1.4 never-published save reports ${reason} Gentle destination failure`, async () => {
     profile(`never-${reason}`); const bad = '{invalid'; put(storePath, bad);
     if (reason === 'prefix') process.env.GENTLE_SHELL_PREFIX = path.join(home, 'unknown-prefix');
     try {
       const result: any = await handleIpcCommand('save_sdd_profile', { profile: { id: `never-${reason}`, name: 'Inactive', model_profiles: { worker: { model: 'vendor/new' } } } });
-      assert.equal(result.success, true);
+      assert.equal(result.success, false);
+      assert.match(result.message, /saved.*Gentle.*failed/i);
       assert.equal(readJson(path.join(profiles, `never-${reason}.json`)).model_profiles.worker.model, 'vendor/new');
       assert.equal(fs.readFileSync(storePath, 'utf8'), bad);
     } finally { delete process.env.GENTLE_SHELL_PREFIX; }

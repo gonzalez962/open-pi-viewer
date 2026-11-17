@@ -132,8 +132,8 @@ export function verifyHistoricalGentlePublication(cwd: string, previous: { model
 }
 
 /** Synchronous read/merge/write serializes calls within this server process only. */
-export function updatePublishedGentleProfile(id: string, profile: { model_profiles?: unknown }): boolean {
-  return updateStore(id, profile, false) !== undefined;
+export function publishGentleCatalogProfile(id: string, profile: { model_profiles?: unknown }, previouslyPublished: boolean): void {
+  if (!updateStore(id, profile, !previouslyPublished)) throw new Error('Published Gentle profile is missing');
 }
 
 export function publishGentleProfile(cwd: string, id: string, profile: { model_profiles?: unknown }, markPublished: () => void): void {
