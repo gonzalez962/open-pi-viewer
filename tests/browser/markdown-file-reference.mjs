@@ -66,7 +66,32 @@ try {
   const page = await context.newPage();
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#prompt-input').waitFor({ timeout: 15000 });
-  await page.waitForFunction(() => { try { window.emitFixture(); return true; } catch { return false; } });
+  await page.waitForFunction(() => { try { window.emitFixture('ready'); return true; } catch { return false; } });
+  // S2.1: rejected route-like references and URIs remain visible without a probe.
+  const probes = [];
+  const collectProbe = request => { if (request.url().endsWith('/api/download/availability')) probes.push(request); };
+  page.on('request', collectProbe);
+  await page.evaluate(() => window.emitFixture('`/admin/settings` `https://example.com/file` `file:///tmp/a`'));
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(probes.length, 0, 'S2.1 rejected candidates must not request availability');
+  for (const text of ['/admin/settings', 'https://example.com/file', 'file:///tmp/a']) assert.match(await page.locator('.markdown-body').innerText(), new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  page.off('request', collectProbe);
+
+  // S2.2: hold confirmation and verify that probe and click use identical project payloads.
+  let confirmProbe;
+  const pendingProbe = new Promise(resolve => { confirmProbe = resolve; });
+  await page.route('**/api/download/availability', route => confirmProbe(route), { times: 1 });
+  await page.evaluate(() => window.emitFixture('`/frontend/src/components/menu.ts`'));
+  const projectProbe = await pendingProbe;
+  const payload = { workingDirectory: project, relativePath: 'frontend/src/components/menu.ts' };
+  assert.deepEqual(projectProbe.request().postDataJSON(), payload);
+  assert.equal(await page.locator('.markdown-file-download-btn').count(), 0);
+  await projectProbe.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
+  await page.locator('.markdown-file-download-btn').waitFor({ state: 'visible' });
+  const projectRequest = page.waitForRequest(req => req.url().endsWith('/api/download') && req.method() === 'POST');
+  await page.locator('.markdown-file-download-btn').click();
+  assert.deepEqual((await projectRequest).postDataJSON(), payload);
+  await page.evaluate(() => window.emitFixture());
   const actions = page.locator('.markdown-file-download-btn');
   await page.waitForFunction(() => document.querySelectorAll('.markdown-file-download-btn').length === 3);
   assert.equal(await actions.count(), 3);
