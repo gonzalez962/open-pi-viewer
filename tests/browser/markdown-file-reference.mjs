@@ -14,6 +14,9 @@ fs.mkdirSync(home); fs.mkdirSync(project);
 const file = path.join(home, 'binary file.bin');
 const projectFile = path.join(project, 'project file.bin');
 const outside = path.join(fixture, 'outside.bin');
+const missing = path.join(home, 'missing.bin');
+const directory = path.join(home, 'directory');
+fs.mkdirSync(directory);
 const bytes = Buffer.from([0, 255, 1, 2, 128]);
 fs.writeFileSync(file, bytes); fs.writeFileSync(projectFile, bytes); fs.writeFileSync(outside, bytes);
 let server, browser;
@@ -36,7 +39,7 @@ try {
   const oldRouting = await context.request.post(`${base}/api/download`, { headers: { origin: base }, data: { sourcePath: projectFile } });
   assert.equal(oldRouting.status(), 400);
   assert.deepEqual(await oldRouting.json(), { error: 'Access denied: outside download root' });
-  const content = `File: \`${file}\`\n\n- Project: \`${projectFile}\`\n\n| File |\n| --- |\n| \`${projectFile}\` |\n\nOutside: \`${outside}\`\n\n\`https://example.com/file\`\n\n\`\`\`text\n${file}\n\`\`\``;
+  const content = `File: \`${file}\`\n\n- Project: \`${projectFile}\`\n\n| File |\n| --- |\n| \`${projectFile}\` |\n\nOutside: \`${outside}\`\n\nMissing: \`${missing}\`\n\nDirectory: \`${directory}\`\n\n\`https://example.com/file\`\n\n\`\`\`text\n${file}\n\`\`\``;
   await context.addInitScript(({ project, content }) => {
     const callbacks = new Map(), listeners = new Map(); let next = 1;
     window.isTauri = true; window.__IS_WEB_IPC__ = true;
@@ -55,7 +58,7 @@ try {
       },
     };
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
-    window.emitFixture = () => { const ids = listeners.get('pi://event'); if (!ids?.size) throw new Error('not ready'); for (const id of ids) callbacks.get(id)?.({ event: 'pi://event', id, payload: { type: 'runtime_snapshot', sessionId: 's1', sessionFile: '/fixture/s1', messages: [{ id: 'message1', role: 'assistant', content, timestamp: new Date().toISOString() }], activity: 'idle' } }); };
+    window.emitFixture = (text = content) => { const ids = listeners.get('pi://event'); if (!ids?.size) throw new Error('not ready'); for (const id of ids) callbacks.get(id)?.({ event: 'pi://event', id, payload: { type: 'runtime_snapshot', sessionId: 's1', sessionFile: '/fixture/s1', messages: [{ id: 'message1', role: 'assistant', content: text, timestamp: new Date().toISOString() }], activity: 'idle' } }); };
     localStorage.setItem('pi_viewer_projects', JSON.stringify({ projects: [{ id: 'p1', path: project, customName: 'Fixture', createdAt: '2024-01-01', lastOpenedAt: '2024-01-01' }], activeProjectId: 'p1' }));
     localStorage.setItem('pi_viewer_connect_config', JSON.stringify({ nodePath: '/node', piEntrypoint: '/pi.js', workingDirectory: project }));
   }, { project, content });
@@ -64,8 +67,13 @@ try {
   await page.locator('#prompt-input').waitFor({ timeout: 15000 });
   await page.waitForFunction(() => { try { window.emitFixture(); return true; } catch { return false; } });
   const actions = page.locator('.markdown-file-download-btn');
-  await actions.first().waitFor();
-  assert.equal(await actions.count(), 4);
+  await page.waitForFunction(() => document.querySelectorAll('.markdown-file-download-btn').length === 3);
+  assert.equal(await actions.count(), 3);
+  for (const rejected of [outside, missing, directory]) {
+    const reference = page.locator('.markdown-file-reference').filter({ hasText: rejected });
+    assert.equal(await reference.locator('code').innerText(), rejected);
+    assert.equal(await reference.locator('.markdown-file-download-btn').count(), 0);
+  }
   assert.equal(await actions.first().innerText(), '');
   const icon = actions.first().locator('svg[aria-hidden=true][stroke=currentColor]');
   assert.equal(await icon.count(), 1);
@@ -86,25 +94,45 @@ try {
     const projectChunks = []; for await (const chunk of await projectDownload.createReadStream()) projectChunks.push(chunk);
     assert.deepEqual(Buffer.concat(projectChunks), bytes);
   }
-  let unexpectedDownloads = 0;
-  const onUnexpectedDownload = () => { unexpectedDownloads++; };
-  page.on('download', onUnexpectedDownload);
-  const [outsideRequest, outsideResponse] = await Promise.all([
-    page.waitForRequest(req => req.url().endsWith('/api/download') && req.method() === 'POST'),
+  // Availability is not an authorization grant: deletion after confirmation must fail on download.
+  fs.unlinkSync(file);
+  const [response] = await Promise.all([
     page.waitForResponse(response => response.url().endsWith('/api/download') && response.request().method() === 'POST'),
-    actions.nth(3).click(),
+    actions.first().click(),
   ]);
-  assert.deepEqual(outsideRequest.postDataJSON(), { sourcePath: outside });
-  assert.equal(outsideResponse.status(), 400);
-  assert.deepEqual(await outsideResponse.json(), { error: 'Access denied: outside download root' });
-  await actions.nth(3).locator('..').getByRole('status').waitFor({ state: 'visible' });
-  assert.equal(unexpectedDownloads, 0);
-  page.off('download', onUnexpectedDownload);
+  assert.equal(response.status(), 400);
+  await actions.first().locator('..').getByRole('status').waitFor({ state: 'visible' });
   const block = page.locator('.markdown-code-block');
   assert.equal(await block.locator('.markdown-file-download-btn').count(), 0);
   assert.equal(await block.locator('.markdown-code-copy-btn').count(), 1);
   assert.equal(await block.locator('.markdown-code-insert-btn').count(), 1);
   assert.equal(await block.locator('.markdown-code-download-btn').count(), 1);
+  // Hold both checks while the same reference changes path, then resolve the old one first.
+  let resolveCheck;
+  const nextCheck = () => new Promise(resolve => { resolveCheck = resolve; });
+  await page.route('**/api/download/availability', route => resolveCheck(route));
+  const oldPath = path.join(home, 'stale-old.bin');
+  const newPath = path.join(home, 'stale-new.bin');
+  let check = nextCheck();
+  await page.evaluate(text => window.emitFixture(text), `\`${oldPath}\``);
+  const oldRoute = await check;
+  assert.equal(await actions.count(), 0);
+  check = nextCheck();
+  await page.evaluate(text => window.emitFixture(text), `\`${newPath}\``);
+  const newRoute = await check;
+  assert.equal(await page.locator('.markdown-file-reference code').innerText(), newPath);
+  assert.equal(await actions.count(), 0);
+  const oldFinished = page.waitForEvent('requestfinished', request => request === oldRoute.request());
+  await oldRoute.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
+  await oldFinished;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await actions.count(), 0);
+  const newFinished = page.waitForEvent('requestfinished', request => request === newRoute.request());
+  await newRoute.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) });
+  await newFinished;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await actions.count(), 0);
+  assert.equal(await page.locator('.markdown-file-reference code').innerText(), newPath);
   await context.close();
   console.log('PASS inline binary download, outside-home failure, fenced controls');
 } finally {

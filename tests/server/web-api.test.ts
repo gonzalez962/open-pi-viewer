@@ -6,6 +6,56 @@ import os from 'node:os';
 import path from 'node:path';
 import { installWebApi, type Middleware } from '@server/web-api';
 
+async function withAvailabilityServer(run: (request: (sourcePath: string, extra?: Record<string, string>) => Promise<Response>, cookie: string) => Promise<void>) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-availability-api-'));
+  const oldHome = process.env.HOME;
+  process.env.HOME = home;
+  fs.writeFileSync(path.join(home, 'available.bin'), 'private file content');
+  fs.mkdirSync(path.join(home, 'directory'));
+  const layers: { route?: string; handler: Middleware }[] = [];
+  const app = { use(route: string | Middleware, handler?: Middleware) { layers.push(typeof route === 'string' ? { route, handler: handler! } : { handler: route }); } };
+  const server = http.createServer((req, res) => {
+    let i = 0;
+    const next = () => { const layer = layers[i++]; if (!layer) { res.writeHead(404); res.end(); return; } if (layer.route && req.url !== layer.route) return next(); void layer.handler(req, res, next); };
+    next();
+  });
+  installWebApi(app, server, { enabled: true, key: 'fixture-key' }, { enabled: false } as any);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as any).port}`;
+  try {
+    const headers = { origin: base, 'content-type': 'application/json' };
+    const request = (sourcePath: string, extra: Record<string, string> = {}) => fetch(`${base}/api/download/availability`, { method: 'POST', headers: { ...headers, ...extra }, body: JSON.stringify({ sourcePath }) });
+    const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers, body: JSON.stringify({ key: 'fixture-key' }) });
+    assert.equal(login.status, 200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    await run(request, cookie);
+    assert.equal(fs.readFileSync(path.join(home, 'available.bin'), 'utf8'), 'private file content');
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+test('S1.1 availability returns JSON without file content', () => withAvailabilityServer(async (request, cookie) => {
+  const response = await request('available.bin', { cookie });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { available: true });
+}));
+
+test('S1.2 availability rejects missing files and directories', () => withAvailabilityServer(async (request, cookie) => {
+  for (const sourcePath of ['missing.bin', 'directory']) {
+    const response = await request(sourcePath, { cookie });
+    assert.equal(response.status, 400, sourcePath);
+  }
+}));
+
+test('S1.3 availability rejects unauthenticated, cross-origin and outside-root requests', () => withAvailabilityServer(async (request, cookie) => {
+  assert.equal((await request('available.bin')).status, 401);
+  assert.equal((await request('available.bin', { cookie, origin: 'http://evil.invalid' })).status, 403);
+  assert.equal((await request('../outside.bin', { cookie })).status, 400);
+}));
+
 test('download HTTP S3 confines project and manual variants and preserves rejected sources', async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-download-http-boundary-'));
   const home = path.join(fixture, 'home');
