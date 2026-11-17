@@ -8,7 +8,15 @@ import es from '@shared/locales/es.json';
 
 const render = (content: string, locale = en) => renderToStaticMarkup(React.createElement(MarkdownContent, { content, t: (key: string) => (locale as Record<string, string>)[key] ?? key }));
 
-test('absolute inline file references retain text and expose localized icon actions', () => {
+test('S3.1 native inline file references retain localized icon actions without a web request', () => {
+  const previous = globalThis.window;
+  const previousIsTauri = (globalThis as any).isTauri;
+  let requests = 0;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => { requests++; throw new Error('unexpected web request'); };
+  (globalThis as any).isTauri = true;
+  (globalThis as any).window = { isTauri: true, __TAURI_INTERNALS__: { ipc() {} } };
+  try {
   for (const locale of [en, es]) {
     const html = render('`/home/a file` `C:\\Users\\name\\file` `/extensionless`', locale);
     assert.equal((html.match(/markdown-file-download-btn/g) ?? []).length, 3);
@@ -20,6 +28,33 @@ test('absolute inline file references retain text and expose localized icon acti
     for (const icon of icons) assert.equal((icon[1].match(/<path\b/g) ?? []).length, 3);
     assert.doesNotMatch(html, /<button[^>]*>[^<]+/);
   }
+  assert.equal(requests, 0);
+  } finally {
+    (globalThis as any).window = previous;
+    if (previousIsTauri === undefined) delete (globalThis as any).isTauri;
+    else (globalThis as any).isTauri = previousIsTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('S2.1 web rejects route-like candidates and URIs while retaining text', () => {
+  const html = render('`/admin/settings` `https://example.com/file` `file:///tmp/a`');
+  assert.match(html, /\/admin\/settings/);
+  assert.match(html, /https:\/\/example.com\/file/);
+  assert.match(html, /file:\/\/\/tmp\/a/);
+  assert.doesNotMatch(html, /markdown-file-reference/);
+});
+
+test('S2.2 web recognizes project file candidates pending confirmation', () => {
+  const html = render('`/frontend/src/components/menu.ts` `frontend/src/components/menu.ts` `/frontend/.env` `/frontend/Makefile`');
+  assert.equal((html.match(/markdown-file-reference/g) ?? []).length, 4);
+  assert.doesNotMatch(html, /markdown-file-download-btn/);
+});
+
+test('S1.4 web references retain text without an action before availability confirmation', () => {
+  const html = render('`/tmp/pending-file`');
+  assert.match(html, /\/tmp\/pending-file/);
+  assert.doesNotMatch(html, /markdown-file-download-btn/);
 });
 
 test('non-paths, link labels and fenced code do not get file actions', () => {

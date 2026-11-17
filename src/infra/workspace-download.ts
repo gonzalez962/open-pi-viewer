@@ -9,6 +9,17 @@ export interface WorkspaceDownloadOptions {
   initiate?: (blob: Blob, filename: string) => void;
 }
 
+export async function isWorkspaceFileAvailable(source: WorkspaceDownloadSource): Promise<boolean> {
+  try {
+    const response = await fetch('/api/download/availability', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(source), credentials: 'same-origin',
+    });
+    return response.ok && (await response.json()).available === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Browser success means initiation only; native success means the copy completed. */
 export async function downloadWorkspaceFile(source: WorkspaceDownloadSource, options: WorkspaceDownloadOptions = {}) {
   if (options.desktop ?? isDesktopTauriEnvironment()) {
