@@ -10,7 +10,8 @@ const root = process.cwd();
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-inline-download-'));
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
-fs.mkdirSync(home); fs.mkdirSync(project);
+const project2 = path.join(fixture, 'project2');
+fs.mkdirSync(home); fs.mkdirSync(project); fs.mkdirSync(project2);
 const file = path.join(home, 'binary file.bin');
 const projectFile = path.join(project, 'project file.bin');
 const outside = path.join(fixture, 'outside.bin');
@@ -40,7 +41,7 @@ try {
   assert.equal(oldRouting.status(), 400);
   assert.deepEqual(await oldRouting.json(), { error: 'Access denied: outside download root' });
   const content = `File: \`${file}\`\n\n- Project: \`${projectFile}\`\n\n| File |\n| --- |\n| \`${projectFile}\` |\n\nOutside: \`${outside}\`\n\nMissing: \`${missing}\`\n\nDirectory: \`${directory}\`\n\n\`https://example.com/file\`\n\n\`\`\`text\n${file}\n\`\`\``;
-  await context.addInitScript(({ project, content }) => {
+  await context.addInitScript(({ project, project2, content }) => {
     const callbacks = new Map(), listeners = new Map(); let next = 1;
     window.isTauri = true; window.__IS_WEB_IPC__ = true;
     window.__TAURI_INTERNALS__ = {
@@ -50,7 +51,7 @@ try {
       async invoke(cmd, args) {
         if (cmd === 'plugin:event|listen') { if (!listeners.has(args.event)) listeners.set(args.event, new Set()); listeners.get(args.event).add(args.handler); return args.handler; }
         if (cmd === 'plugin:event|unlisten') { listeners.get(args.event)?.delete(args.eventId); return null; }
-        if (cmd === 'connect') return { sessionId: 's1', sessionFile: '/fixture/s1', canonicalCwd: project, messages: [], activity: 'idle', model: null };
+        if (cmd === 'connect') return { sessionId: 's1', sessionFile: '/fixture/s1', canonicalCwd: args?.payload?.workingDirectory || project, messages: [], activity: 'idle', model: null };
         if (cmd === 'get_custom_providers') return { providers: {} };
         if (cmd === 'get_mcp_servers') return { servers: [] };
         if (cmd === 'get_sdd_profiles') return { profiles: [] };
@@ -59,9 +60,9 @@ try {
     };
     window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
     window.emitFixture = (text = content) => { const ids = listeners.get('pi://event'); if (!ids?.size) throw new Error('not ready'); for (const id of ids) callbacks.get(id)?.({ event: 'pi://event', id, payload: { type: 'runtime_snapshot', sessionId: 's1', sessionFile: '/fixture/s1', messages: [{ id: 'message1', role: 'assistant', content: text, timestamp: new Date().toISOString() }], activity: 'idle' } }); };
-    localStorage.setItem('pi_viewer_projects', JSON.stringify({ projects: [{ id: 'p1', path: project, customName: 'Fixture', createdAt: '2024-01-01', lastOpenedAt: '2024-01-01' }], activeProjectId: 'p1' }));
+    localStorage.setItem('pi_viewer_projects', JSON.stringify({ projects: [{ id: 'p1', path: project, customName: 'Fixture', createdAt: '2024-01-01', lastOpenedAt: '2024-01-01' }, { id: 'p2', path: project2, customName: 'Second Fixture', createdAt: '2024-01-01', lastOpenedAt: '2024-01-01' }], activeProjectId: 'p1' }));
     localStorage.setItem('pi_viewer_connect_config', JSON.stringify({ nodePath: '/node', piEntrypoint: '/pi.js', workingDirectory: project }));
-  }, { project, content });
+  }, { project, project2, content });
   const page = await context.newPage();
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#prompt-input').waitFor({ timeout: 15000 });
@@ -133,8 +134,32 @@ try {
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   assert.equal(await actions.count(), 0);
   assert.equal(await page.locator('.markdown-file-reference code').innerText(), newPath);
+  // Keep the same path while switching the actual active project and hold both checks.
+  check = nextCheck();
+  await page.evaluate(text => window.emitFixture(text), `\`${projectFile}\``);
+  const oldWorkspaceRoute = await check;
+  assert.deepEqual(oldWorkspaceRoute.request().postDataJSON(), { workingDirectory: project, relativePath: 'project file.bin' });
+  check = nextCheck();
+  await page.getByRole('button', { name: 'Second Fixture', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Second Fixture"][aria-current="true"]'));
+  await page.waitForFunction(text => { try { window.emitFixture(text); return true; } catch { return false; } }, `\`${projectFile}\``);
+  const newWorkspaceRoute = await check;
+  assert.deepEqual(newWorkspaceRoute.request().postDataJSON(), { sourcePath: projectFile });
+  assert.equal(await page.locator('.markdown-file-reference code').innerText(), projectFile);
+  assert.equal(await actions.count(), 0);
+  const oldWorkspaceFinished = page.waitForEvent('requestfinished', request => request === oldWorkspaceRoute.request());
+  await oldWorkspaceRoute.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
+  await oldWorkspaceFinished;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await actions.count(), 0);
+  const newWorkspaceFinished = page.waitForEvent('requestfinished', request => request === newWorkspaceRoute.request());
+  await newWorkspaceRoute.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) });
+  await newWorkspaceFinished;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await actions.count(), 0);
+  assert.equal(await page.locator('.markdown-file-reference code').innerText(), projectFile);
   await context.close();
-  console.log('PASS inline binary download, outside-home failure, fenced controls');
+  console.log('PASS inline binary download, outside-home failure, fenced controls, stale path and workspace');
 } finally {
   if (browser) await browser.close();
   if (server) { server.kill(); await new Promise(resolve => { if (server.exitCode !== null) resolve(); else server.once('exit', resolve); }); }

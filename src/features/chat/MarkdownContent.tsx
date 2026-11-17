@@ -17,7 +17,7 @@ import {
   getLinkOpenLiveStatusText,
 } from '@infra/opener';
 import { triggerDownload } from '@infra/download';
-import { downloadWorkspaceFile } from '@infra/workspace-download';
+import { downloadWorkspaceFile, isWorkspaceFileAvailable } from '@infra/workspace-download';
 import { isDesktopTauriEnvironment } from '@infra/conversation-export';
 import { fileReferenceDownloadSource } from '@features/chat/file-reference-download';
 import { codeBlockDownloadPayload } from '@features/chat/code-block-download';
@@ -381,11 +381,22 @@ const InlineFileReference: React.FC<{
   const workingDirectory = React.useContext(WorkingDirectoryContext);
   const [pending, setPending] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
+  const desktop = isDesktopTauriEnvironment();
+  const [availability, setAvailability] = React.useState<{ path: string; workingDirectory: string | undefined; available: boolean } | null>(null);
+  React.useEffect(() => {
+    if (desktop) return;
+    let current = true;
+    void isWorkspaceFileAvailable(fileReferenceDownloadSource(path, workingDirectory, false)).then(available => {
+      if (current) setAvailability({ path, workingDirectory, available });
+    });
+    return () => { current = false; };
+  }, [path, workingDirectory, desktop]);
+  const available = desktop || (availability?.path === path && availability.workingDirectory === workingDirectory && availability.available);
   const label = t('markdown.download_file_aria');
   return (
     <span className="markdown-file-reference">
       <code className="markdown-inline-code">{path}</code>
-      <button type="button" className="markdown-file-download-btn" aria-label={label} title={label} disabled={pending}
+      {available && <button type="button" className="markdown-file-download-btn" aria-label={label} title={label} disabled={pending}
         onClick={async () => {
           setPending(true);
           setFailed(false);
@@ -398,7 +409,7 @@ const InlineFileReference: React.FC<{
           <path d="m12 21 4-4" />
           <path d="M4.393 15.269A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.436 8.284" />
         </svg>
-      </button>
+      </button>}
       {failed && <span role="status">{t('markdown.download_failed')}</span>}
     </span>
   );

@@ -10,10 +10,12 @@ const render = (content: string, locale = en) => renderToStaticMarkup(React.crea
 
 test('S2.1 native inline file references retain localized icon actions without a web request', () => {
   const previous = globalThis.window;
+  const previousIsTauri = (globalThis as any).isTauri;
   let requests = 0;
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async () => { requests++; throw new Error('unexpected web request'); };
-  (globalThis as any).window = { __TAURI_INTERNALS__: { ipc() {} } };
+  (globalThis as any).isTauri = true;
+  (globalThis as any).window = { isTauri: true, __TAURI_INTERNALS__: { ipc() {} } };
   try {
   for (const locale of [en, es]) {
     const html = render('`/home/a file` `C:\\Users\\name\\file` `/extensionless`', locale);
@@ -29,6 +31,8 @@ test('S2.1 native inline file references retain localized icon actions without a
   assert.equal(requests, 0);
   } finally {
     (globalThis as any).window = previous;
+    if (previousIsTauri === undefined) delete (globalThis as any).isTauri;
+    else (globalThis as any).isTauri = previousIsTauri;
     globalThis.fetch = previousFetch;
   }
 });

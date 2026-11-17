@@ -114,6 +114,32 @@ export function installWebApi(app: MiddlewareApp, server: EventEmitter | null, a
     });
   });
 
+  app.use("/api/download/availability", (req, res) => {
+    if (req.method !== 'POST' || !req.headers['content-type']?.startsWith('application/json')) {
+      res.writeHead(405); res.end(); return;
+    }
+    if ((!req.headers.origin && !req.headers.referer) || !validateSameOrigin(req)) {
+      res.writeHead(403); res.end('Origin validation failed'); return;
+    }
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (Buffer.byteLength(body) > 16384) { res.writeHead(413); res.end(); req.destroy(); }
+    });
+    req.on('end', () => {
+      if (res.writableEnded) return;
+      try {
+        const file = openDownloadWorkspaceFile({ payload: JSON.parse(body) });
+        fs.closeSync(file.fd);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ available: true }));
+      } catch (error: any) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ error: error?.message || 'Download failed' }));
+      }
+    });
+  });
+
   app.use("/api/download", (req, res) => {
     if (req.method !== 'POST' || !req.headers['content-type']?.startsWith('application/json')) {
       res.writeHead(405); res.end(); return;
