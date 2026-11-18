@@ -5,7 +5,7 @@ import {
   parseMessageBlocks,
 } from './protocol';
 import type { AuthoritativeMessage } from './types/events';
-import type { ChatMessage, ToolCallBlock } from './types/messages';
+import type { ChatMessage, ReportedAssistantModel, ToolCallBlock } from './types/messages';
 import type { ViewerSessionRecord } from './types/sessions';
 
 /** Key in localStorage for Pi Viewer owned session records */
@@ -337,6 +337,15 @@ export function resolveSessionResumePlan(
   return { type: 'resume_existing', record };
 }
 
+/** Only top-level model metadata on Pi assistant messages identifies a response model. */
+export function readReportedAssistantModels(message: AuthoritativeMessage | Record<string, unknown>): ReportedAssistantModel[] | undefined {
+  if (message.role !== 'assistant' || typeof message.model !== 'string') return;
+  const model = message.model.trim();
+  if (!model) return;
+  const provider = typeof message.provider === 'string' ? message.provider.trim() : '';
+  return [{ provider, model }];
+}
+
 /**
  * Convert an authoritative Pi RPC message into a ChatMessage representation.
  * Extracts plain text from string or content blocks (filtering out thinking and tool calls for fallback text),
@@ -372,6 +381,7 @@ export function convertRpcMessageToChatMessage(
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
   if (errorText && blocks) blocks.push({ type: 'text', text: errorText });
   const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
+  const reportedModels = readReportedAssistantModels(msg);
 
   return {
     id,
@@ -379,6 +389,7 @@ export function convertRpcMessageToChatMessage(
     content: visibleText,
     timestamp,
     isStreaming: false,
+    ...(reportedModels ? { reportedModels } : {}),
     blocks: blocks && blocks.length > 0 ? blocks : undefined,
     images: images && images.length > 0 ? images : undefined,
   };

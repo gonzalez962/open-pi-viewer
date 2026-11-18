@@ -40,6 +40,8 @@ export interface AuthoritativeMessage {
   role: string;
   content: string | MessageContentBlock[];
   timestamp?: number;
+  provider?: string;
+  model?: string;
 }
 
 export interface SendPromptPayload {

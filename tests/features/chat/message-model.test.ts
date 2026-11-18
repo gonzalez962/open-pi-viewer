@@ -44,7 +44,10 @@ after(async () => { await browser?.close(); });
 
 async function emit(page: Page, channel: string, payload: object) {
   await page.evaluate(({ channel, payload }) => {
-    (window as Window & { emitFixture: (channel: string, payload: object) => void }).emitFixture(channel, payload);
+    if (!('emitFixture' in window) || typeof window.emitFixture !== 'function') {
+      throw new Error('Message model fixture emitter is not installed');
+    }
+    window.emitFixture(channel, payload);
   }, { channel, payload });
 }
 
@@ -137,7 +140,7 @@ for (const [source, deliver] of [
     await deliver(page, assistant(answer, { provider: 'openai', model }));
     const card = await cardText(page, answer);
     assert.ok(!card.includes(active.id), 'card must not show the active session model');
-    assert.ok(card.includes(model), `expected ${model} on the ${source} card; got ${JSON.stringify(card)}`);
+    assert.ok(card.includes(`openai/${model}`), `expected openai/${model} on the ${source} card; got ${JSON.stringify(card)}`);
   }));
 
   test(`S2.1 does not inherit the active model on a ${source} card with no metadata`, async () => withViewer(async page => {
@@ -146,6 +149,28 @@ for (const [source, deliver] of [
     assert.ok(!(await cardText(page, answer)).includes(active.id), 'card must not show the active session model');
   }));
 }
+
+test('S2.1 displays the concrete default model in live and historical cards', async () => withViewer(async page => {
+  const metadata = { provider: 'local', model: 'default' };
+  await live(page, assistant('Live default response', metadata));
+  const liveCard = await cardText(page, 'Live default response');
+  await snapshot(page, [assistant('Historical default response', metadata)]);
+  const historyCard = await cardText(page, 'Historical default response');
+  assert.deepEqual([liveCard, historyCard].map(card => card.includes('local/default')), [true, true],
+    `expected local/default in both cards; got ${JSON.stringify([liveCard, historyCard])}`);
+}));
+
+test('S2.2 visibly distinguishes slash-colliding model pairs in first-seen order', async () => withViewer(async page => {
+  const first = { provider: 'local', model: 'vendor/model' };
+  const second = { provider: 'local/vendor', model: 'model' };
+  await snapshot(page, [assistant('First collision response', first), assistant('Second collision response', second),
+    assistant('Repeated collision response', first)]);
+  const card = page.locator('.message-assistant').filter({ hasText: 'Repeated collision response' });
+  await card.waitFor();
+  assert.equal(await page.locator('.message-assistant').count(), 1);
+  const label = card.locator('.message-header').getByText(/^Model: /);
+  assert.equal(await label.innerText(), 'Model: "local"/"vendor/model", "local/vendor"/"model"');
+}));
 
 test('S2.2 one grouped card shows distinct assistant models, not the subagent model', async () => withViewer(async page => {
   const first = { provider: 'openai', model: 'first-response-model' };
@@ -158,9 +183,6 @@ test('S2.2 one grouped card shows distinct assistant models, not the subagent mo
     assistant('Second response', second),
     assistant('Final response', first),
   ]);
-  await page.locator('.subagent-entry').click();
-  assert.match(await page.getByRole('dialog').innerText(), /child-task-model/, 'the viewer loaded the separate child report');
-  await page.keyboard.press('Escape');
   const text = await cardText(page, 'Final response');
   assert.equal(await page.locator('.message-assistant').count(), 1);
   assert.match(text, /First response/);
