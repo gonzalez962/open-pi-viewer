@@ -4,8 +4,10 @@ import {
   extractToolOutput,
   parseMessageBlocks,
 } from './protocol';
+import { parseSubagentCompletion, parseSubagentReport } from './agent-activity';
+import type { SubagentReport } from './types/agent-activity';
 import type { AuthoritativeMessage } from './types/events';
-import type { ChatMessage, ToolCallBlock } from './types/messages';
+import type { ChatMessage, ChatTranscript, ToolCallBlock } from './types/messages';
 import type { ViewerSessionRecord } from './types/sessions';
 
 /** Key in localStorage for Pi Viewer owned session records */
@@ -388,19 +390,33 @@ export function convertRpcMessageToChatMessage(
  * Hydrate an array of raw RPC messages into user-visible ChatMessage items.
  * Matches historical toolResult messages to preceding assistant toolCall blocks.
  */
-export function hydrateChatMessages(rawMessages: unknown[]): ChatMessage[] {
+export function hydrateChatMessages(rawMessages: unknown[]): ChatTranscript {
   if (!Array.isArray(rawMessages)) {
     return [];
   }
 
   const hydrated: ChatMessage[] = [];
+  let leadingReports: SubagentReport[] = [];
+  const rememberReport = (report?: SubagentReport) => {
+    if (!report) return;
+    // Keep the report in result order, independently of where its tool call started.
+    const latest = hydrated[hydrated.length - 1];
+    if (latest) (latest.subagentReports ??= []).push(report);
+    else leadingReports.push(report);
+  };
   for (let i = 0; i < rawMessages.length; i++) {
     const raw = rawMessages[i];
     if (raw && typeof raw === 'object') {
       const rawObj = raw as Record<string, unknown>;
 
+      if (rawObj.role === 'custom') {
+        rememberReport(parseSubagentCompletion(rawObj));
+        continue;
+      }
+
       // Match historical toolResult to preceding assistant toolCall block
       if (rawObj.role === 'toolResult') {
+        rememberReport(parseSubagentReport(rawObj.toolName, rawObj, rawObj.isError));
         const toolCallId =
           typeof rawObj.toolCallId === 'string' ? rawObj.toolCallId : undefined;
         if (toolCallId) {
@@ -430,10 +446,18 @@ export function hydrateChatMessages(rawMessages: unknown[]): ChatMessage[] {
           (converted.images && converted.images.length > 0) ||
           converted.role === 'assistant')
       ) {
+        if (leadingReports.length) {
+          converted.subagentReports = leadingReports;
+          leadingReports = [];
+        }
         hydrated.push(converted);
       }
     }
   }
 
+  if (leadingReports.length) {
+    // Metadata only: don't create a message or expose the result in transcript JSON.
+    Object.defineProperty(hydrated, 'unattachedSubagentReports', { value: leadingReports });
+  }
   return hydrated;
 }

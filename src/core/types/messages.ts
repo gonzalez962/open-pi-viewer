@@ -1,3 +1,5 @@
+import type { SubagentReport } from './agent-activity';
+
 export type AgentActivity = 'idle' | 'busy';
 
 export interface TextBlock {
@@ -46,4 +48,9 @@ export interface ChatMessage {
   isQueued?: boolean;
   images?: ImageContent[];
   blocks?: MessageBlock[];
+  /** Structured historical reports at this point in the transcript, in result order. */
+  subagentReports?: SubagentReport[];
 }
+
+/** An empty transcript can still carry structured results for the subagent modal. */
+export type ChatTranscript = ChatMessage[] & { readonly unattachedSubagentReports?: readonly SubagentReport[] };

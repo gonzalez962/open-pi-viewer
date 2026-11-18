@@ -1,16 +1,16 @@
 import React from 'react';
-import type { SubagentTask } from '@core/types/agent-activity';
+import type { SubagentDetail } from '@core/types/agent-activity';
 import type { TranslationKey } from '@shared/i18n';
 
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
-export function SubagentActivityEntry({ tasks, onClick, t }: { tasks?: SubagentTask[] | null; onClick: () => void; t: Translate }) {
+export function SubagentActivityEntry({ tasks, onClick, t }: { tasks?: SubagentDetail[] | null; onClick: () => void; t: Translate }) {
   if (!tasks?.length) return null;
   return React.createElement('button', { type: 'button', className: 'subagent-entry', onClick }, `${t('subagent.title')} (${tasks.length})`);
 }
 
 export function createSubagentActivityController(options: {
-  getTasks: () => SubagentTask[] | null | undefined;
+  getTasks: () => SubagentDetail[] | null | undefined;
   getOtherDialogOpen: () => boolean;
   getActiveElement: () => { focus: () => void } | null;
   setOpen: (value: boolean) => void;

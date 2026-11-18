@@ -1,11 +1,13 @@
 import type { TodoSnapshot } from '../types/todo';
 import { applyJobChange, type JobChange } from '../job-activity';
 import { getModelStatsKey } from '../prompt-controls-utils';
-import type { SubagentTask } from '../types/agent-activity';
+import { rememberSubagentReport, subagentReportOwner, subagentReportsFromHistory } from '../agent-activity';
+import type { SubagentReport, SubagentTask } from '../types/agent-activity';
 import type { ChatMessage } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
 import type { ModelInfo } from '../types/models';
 import type { ChatAction } from './index';
+import { sessionsReducer } from './sessions';
 
 export type ConnectionAction =
   | { type: 'CONNECT_START'; payload?: { detail?: string } }
@@ -36,7 +38,19 @@ export type ConnectionAction =
   | { type: 'UPDATE_TODO'; payload: { todo: TodoSnapshot } }
   | { type: 'PROCESS_EXIT'; payload: { error?: string; sessionId?: string } }
   | { type: 'CLEAR_ERROR' }
-  | { type: 'UPDATE_SUBAGENT_ACTIVITY'; payload: { tasks: SubagentTask[] } };
+  | { type: 'UPDATE_SUBAGENT_ACTIVITY'; payload: { tasks: SubagentTask[]; sessionFile?: string } }
+  | { type: 'REPORT_SUBAGENT_TASK'; payload: { sessionId: string; sessionFile: string; report: SubagentReport } };
+
+function applySubagentReports(state: ChatSessionState, owner: string | undefined, incoming: Iterable<SubagentReport>): ChatSessionState['subagentReportsBySession'] {
+  if (!owner) return state.subagentReportsBySession;
+  let reports: Map<string, SubagentReport> | undefined;
+  for (const report of incoming) {
+    reports ??= new Map(state.subagentReportsBySession?.get(owner));
+    rememberSubagentReport(reports, report);
+  }
+  if (!reports) return state.subagentReportsBySession;
+  return new Map(state.subagentReportsBySession).set(owner, reports);
+}
 
 /**
  * Finalize any in-flight streaming messages by clearing their isStreaming flag.
@@ -146,8 +160,11 @@ export function connectionReducer(
     }
 
     case 'SESSION_READY': {
+      const sessionId = action.payload.sessionId ?? state.sessionId;
+      const sessionFile = action.payload.sessionFile ?? state.sessionFile;
       const isNewSession = Boolean(
-        action.payload.sessionId && state.sessionId && action.payload.sessionId !== state.sessionId
+        (state.sessionId && sessionId !== state.sessionId) ||
+        (state.sessionFile && sessionFile !== state.sessionFile)
       );
       return {
         ...state,
@@ -158,9 +175,12 @@ export function connectionReducer(
         isHydrated: true,
         isResetting: false,
         agentActivity: action.payload.activity === 'busy' || action.payload.activity === 'waiting' ? 'busy' : 'idle',
-        sessionId: action.payload.sessionId ?? state.sessionId,
-        sessionFile: action.payload.sessionFile ?? state.sessionFile,
+        sessionId,
+        sessionFile,
         messages: action.payload.messages,
+        // A ready snapshot supersedes earlier concrete reports for its owner;
+        // subsequent live events use the same fold and can replace them again.
+        subagentReportsBySession: applySubagentReports(state, subagentReportOwner(sessionId, sessionFile), subagentReportsFromHistory(action.payload.messages)),
         hasMoreMessages: action.payload.hasMore ?? false,
         isLoadingOlderMessages: false,
         modelInfo: action.payload.model ?? state.modelInfo,
@@ -170,6 +190,14 @@ export function connectionReducer(
         subagents: isNewSession ? [] : (state.subagents ?? []),
         todo: action.payload.todo ?? null,
       };
+    }
+
+    case 'SWITCH_SESSION_SUCCESS': {
+      const next = sessionsReducer(state, action);
+      if (!next) return undefined;
+      const { sessionId, sessionFile, messages } = next;
+      const reports = applySubagentReports(state, subagentReportOwner(sessionId, sessionFile), subagentReportsFromHistory(messages));
+      return reports === state.subagentReportsBySession ? next : { ...next, subagentReportsBySession: reports };
     }
 
     case 'PROCESS_EXIT': {
@@ -232,7 +260,13 @@ export function connectionReducer(
       return state.connectionStatus === 'connected' ? { ...state, todo: action.payload.todo } : state;
     }
 
+    case 'REPORT_SUBAGENT_TASK': {
+      const { sessionId, sessionFile, report } = action.payload;
+      return { ...state, subagentReportsBySession: applySubagentReports(state, subagentReportOwner(sessionId, sessionFile), [report]) };
+    }
+
     case 'UPDATE_SUBAGENT_ACTIVITY': {
+      if (action.payload.sessionFile && state.sessionFile && action.payload.sessionFile !== state.sessionFile) return state;
       return {
         ...state,
         subagents: action.payload.tasks,

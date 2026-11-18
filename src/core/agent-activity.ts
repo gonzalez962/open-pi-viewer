@@ -1,4 +1,81 @@
-import type { SubagentTask, AgentActivitySnapshot, SubagentThread, SubagentThreadItem } from './types/agent-activity';
+import type { SubagentTask, AgentActivitySnapshot, SubagentDetail, SubagentReport, SubagentThread, SubagentThreadItem } from './types/agent-activity';
+import type { ChatSessionState } from './types/chat-state';
+import type { ChatTranscript } from './types/messages';
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function boundedString(value: unknown, limit: number): string | undefined {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text && text.length <= limit ? text : undefined;
+}
+
+/** Read only Pi-owned structured task metadata; output text and tool args are not evidence. */
+export function parseSubagentReport(toolName: unknown, value: unknown, isError?: unknown): SubagentReport | undefined {
+  if (toolName !== 'subagent_run' && toolName !== 'subagent_continue' && toolName !== 'subagent_status' && toolName !== 'subagent_result') return;
+  if (isError || asRecord(value)?.isError) return;
+  return readTaskReport(asRecord(value)?.details);
+}
+
+export function parseSubagentCompletion(value: unknown): SubagentReport | undefined {
+  const message = asRecord(value);
+  if (message?.role !== 'custom' || message.customType !== 'gentle-agents.result') return;
+  return readTaskReport(message.details);
+}
+
+function readTaskReport(value: unknown): SubagentReport | undefined {
+  const details = asRecord(value);
+  if (details?.error) return;
+  const task = asRecord(details?.gentleAgents);
+  const id = boundedString(task?.taskId, 120);
+  if (!id) return;
+  const model = boundedString(task?.model, 500);
+  const label = boundedString(task?.label, 500);
+  const completed = task?.status === 'completed';
+  const concrete = model && model.toLowerCase() !== 'default' && !/[\x00-\x1f\x7f]/.test(model) ? model : undefined;
+  if (!concrete && !completed) return;
+  return { id, agent: boundedString(task?.agent, 120) ?? 'subagent', label, completed, model: concrete };
+}
+
+/** Fold reports in observation order without letting placeholders erase concrete evidence. */
+export function rememberSubagentReport(reports: Map<string, SubagentReport>, report: SubagentReport): void {
+  const previous = reports.get(report.id);
+  reports.set(report.id, previous ? {
+    ...report,
+    label: report.label ?? previous.label,
+    completed: previous.completed || report.completed,
+    model: report.model ?? previous.model,
+  } : report);
+}
+
+export function subagentReportOwner(sessionId?: string | null, sessionFile?: string | null): string | undefined {
+  return sessionId && sessionFile ? JSON.stringify([sessionId, sessionFile]) : undefined;
+}
+
+export function* subagentReportsFromHistory(messages: ChatTranscript): Iterable<SubagentReport> {
+  yield* messages.unattachedSubagentReports ?? [];
+  for (const message of messages) yield* message.subagentReports ?? [];
+}
+
+/** The modal includes finished reports; the live widget list remains unchanged. */
+export function getSubagentDetails({ subagents, messages, sessionId, sessionFile, subagentReportsBySession }: Pick<ChatSessionState, 'subagents' | 'messages' | 'sessionId' | 'sessionFile' | 'subagentReportsBySession'>): SubagentDetail[] {
+  const reports = new Map<string, SubagentReport>();
+  for (const report of subagentReportsFromHistory(messages)) rememberSubagentReport(reports, report);
+  const owner = subagentReportOwner(sessionId, sessionFile);
+  if (owner) {
+    for (const report of subagentReportsBySession?.get(owner)?.values() ?? []) rememberSubagentReport(reports, report);
+  }
+  const tasks: SubagentDetail[] = subagents.map(task => {
+    const report = reports.get(task.id);
+    reports.delete(task.id);
+    return report ? { ...task, status: report.completed ? 'completed' : task.status, reportedModel: report.model } : task;
+  });
+  for (const report of reports.values()) {
+    if (report.completed) tasks.push({ id: report.id, agent: report.agent, label: report.label, status: 'completed', reportedModel: report.model });
+  }
+  return tasks;
+}
 
 function parseThread(raw: unknown): SubagentThread | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
