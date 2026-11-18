@@ -1,0 +1,161 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { chatReducer, INITIAL_STATE, type ChatSessionState } from '@core/reducer';
+import { SessionEventController } from '@features/chat/session-events';
+import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
+import { createSubagentActivityController, SubagentActivityEntry } from '@features/chat/subagent-activity-modal';
+import { translate } from '@shared/i18n';
+
+const cwd = '/project';
+const taskId = 't_shared';
+const label = 'Inspect source';
+const agent = 'explore';
+const parentModel = { provider: 'test', id: 'parent-only-model' };
+const t: React.ComponentProps<typeof SubagentActivityModal>['t'] = (key, params) => translate('en', key, params);
+
+function result({ id = taskId, model, status = 'running', mode = 'background', title = label }: {
+  id?: string; model?: string; status?: 'running' | 'completed'; mode?: 'background' | 'task'; title?: string;
+}) {
+  return {
+    content: [{ type: 'text', text: 'Subagent task report' }],
+    details: { gentleAgents: { taskId: id, agent, label: title, status, mode, ...(model === undefined ? {} : { model }) } },
+  };
+}
+
+function viewer() {
+  let state: ChatSessionState = INITIAL_STATE;
+  let current = 'parent-a';
+  let open = false;
+  let callNumber = 0;
+  const events = new SessionEventController({
+    getCurrentConfig: () => ({ nodePath: 'node', piEntrypoint: '/pi.js', workingDirectory: cwd }),
+    getCurrentSessionId: () => current,
+    dispatch: action => { state = chatReducer(state, action); },
+  });
+  const activity = createSubagentActivityController({
+    getTasks: () => state.subagents,
+    getActiveElement: () => null,
+    getOtherDialogOpen: () => false,
+    setOpen: value => { open = value; },
+  });
+  const selectSession = (sessionId: string, messages: unknown[] = []) => {
+    activity.close(false);
+    current = sessionId;
+    const owner = { cwd, sessionId: current, sessionFile: `${cwd}/${current}.jsonl` };
+    events.handleStatusChange({ state: 'connected', label: 'Connected', detail: '', model: parentModel, ...owner });
+    events.handleEvent({ type: 'runtime_snapshot', ...owner, messages, activity: 'idle' });
+  };
+  selectSession(current);
+  return {
+    selectSession,
+    widget(status?: 'running' | 'completed') {
+      const tasks = status ? [{ summary: { id: taskId, agent, label, status } }] : [];
+      events.handleEvent({
+        type: 'extension_ui_request', id: 'widget', method: 'setWidget', widgetKey: 'gentle-agents',
+        cwd, sessionId: current, widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks })],
+      });
+    },
+    report(value: ReturnType<typeof result>, toolName: 'subagent_run' | 'subagent_status' = 'subagent_status') {
+      const owner = { cwd, sessionId: current, sessionFile: `${cwd}/${current}.jsonl` };
+      const toolCallId = `call-${++callNumber}`;
+      events.handleEvent({ type: 'tool_execution_start', ...owner, toolName, toolCallId });
+      events.handleEvent({ type: 'tool_execution_end', ...owner, toolName, toolCallId, result: value, isError: false });
+    },
+    settle() {
+      events.handleEvent({ type: 'agent_end', cwd, sessionId: current });
+    },
+    openDetail() {
+      activity.close(false);
+      const entry = { tasks: state.subagents, onClick: activity.onClick, t };
+      assert.match(renderToStaticMarkup(React.createElement(SubagentActivityEntry, entry)), /<button\b/, 'subagent entry must remain visible');
+      entry.onClick();
+      assert.equal(open, true, 'subagent entry opens the detail dialog');
+      const html = renderToStaticMarkup(React.createElement(SubagentActivityModal, {
+        tasks: state.subagents, selectedId: taskId, onSelect: () => {}, onClose: () => activity.close(), t,
+      }));
+      assert.match(html, /role="dialog"/);
+      assert.match(html, /<h3>Inspect source<\/h3>/);
+      return html;
+    },
+  };
+}
+
+test('S1.1 modal shows the reported model for the selected task in its parent session only', () => {
+  const ui = viewer();
+  // Both sessions have the same task ID, and another task reports in parent A.
+  ui.selectSession('parent-b');
+  ui.widget('running');
+  ui.report(result({ model: 'test/other-session-model' }), 'subagent_run');
+  ui.selectSession('parent-a');
+  ui.widget('running');
+  ui.report(result({ model: 'test/selected-child-model' }), 'subagent_run');
+  ui.report(result({ id: 't_sibling', model: 'test/sibling-task-model', title: 'Inspect tests' }));
+  const html = ui.openDetail();
+  assert.doesNotMatch(html, /parent-only-model|other-session-model|sibling-task-model|live model|current model/i);
+  assert.match(html, /test\/selected-child-model/, 'show Pi’s structured report, not the parent or another task’s model');
+  assert.match(html, /reported model|model (?:last )?reported/i, 'label the model as reported rather than live');
+});
+
+test('S1.1 a sister session’s same-ID report does not supply a model to an unreported task', () => {
+  const ui = viewer();
+  ui.selectSession('parent-b');
+  ui.widget('running');
+  ui.report(result({ model: 'test/other-session-model' }), 'subagent_run');
+  ui.selectSession('parent-a');
+  ui.widget('running');
+  ui.report(result({ id: 't_sibling', model: 'test/sibling-task-model', title: 'Inspect tests' }));
+  assert.doesNotMatch(ui.openDetail(), /other-session-model|sibling-task-model|parent-only-model/);
+});
+
+test('S1.2 reopening the modal reflects the newest concrete Pi report', () => {
+  const ui = viewer();
+  ui.widget('running');
+  ui.report(result({ model: 'test/first-report' }), 'subagent_run');
+  const first = ui.openDetail();
+  ui.report(result({ model: 'test/newest-report' }));
+  const latest = ui.openDetail();
+  assert.doesNotMatch(latest, /first-report/);
+  assert.match(latest, /test\/newest-report/, 'show the newer report on reopen');
+  assert.match(first, /test\/first-report/, 'the first view showed the report available then');
+});
+
+for (const model of [undefined, 'default']) {
+  test(`S1.2 ${model ?? 'missing'} model is not concrete and does not erase the last concrete report`, () => {
+    const ui = viewer();
+    ui.widget('running');
+    ui.report(result({ model }), 'subagent_run');
+    assert.doesNotMatch(ui.openDetail(), /\bdefault\b|parent-only-model/i);
+    ui.report(result({ model: 'test/last-concrete-model' }));
+    ui.report(result({ model }));
+    const html = ui.openDetail();
+    assert.doesNotMatch(html, /\bdefault\b|parent-only-model/i);
+    assert.match(html, /test\/last-concrete-model/, 'keep the last concrete Pi report');
+  });
+}
+
+test('S1.3 a fresh runtime reattach recovers a finished foreground task’s model from loaded Pi history', () => {
+  const ui = viewer();
+  const saved = result({ model: 'test/persisted-child-model', status: 'completed', mode: 'task' });
+  ui.selectSession('reopened-parent', [
+    { role: 'assistant', content: [{ type: 'toolCall', id: 'persisted-call', name: 'subagent_run', arguments: { agent, task: label, mode: 'task' } }] },
+    { role: 'toolResult', toolCallId: 'persisted-call', toolName: 'subagent_run', ...saved, isError: false },
+  ]);
+  const html = ui.openDetail();
+  assert.match(html, /completed/i);
+  assert.match(html, /test\/persisted-child-model/, 'recover the structured model without a live report or widget');
+});
+
+test('S1.3 live foreground completion keeps its modal entry and reported model after the widget empties', () => {
+  const ui = viewer();
+  ui.widget('running');
+  assert.doesNotMatch(ui.openDetail(), /foreground-finished-model/);
+  ui.widget('completed');
+  ui.report(result({ model: 'test/foreground-finished-model', status: 'completed', mode: 'task' }), 'subagent_run');
+  ui.widget();
+  ui.settle();
+  const html = ui.openDetail();
+  assert.match(html, /completed/i);
+  assert.match(html, /test\/foreground-finished-model/);
+});
