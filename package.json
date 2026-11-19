@@ -28,7 +28,7 @@
     "ws": "8.22.0"
   },
   "devDependencies": {
-    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/api": "2.12.4",
     "@tauri-apps/cli": "2.11.4",
     "@types/node": "26.6.2",
     "@types/react": "18.3.31",
