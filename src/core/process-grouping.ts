@@ -16,7 +16,7 @@
  * Pure core module: no React, no Tauri, no outer-layer imports.
  */
 
-import type { ChatMessage, MessageBlock, ThinkingBlock, ToolCallBlock } from './types/messages';
+import type { ChatMessage, MessageBlock, ReportedAssistantModel, ThinkingBlock, ToolCallBlock } from './types/messages';
 
 export type ProcessCategory =
   | 'bash'
@@ -208,8 +208,8 @@ function toMergeableBlocks(message: ChatMessage): MessageBlock[] {
  * N single-item groups. The merged message keeps the first message's id and timestamp
  * (stable React key while the run grows), concatenates blocks in order (block-less
  * content becomes a `text` block, which still breaks process groups), and carries the
- * run's streaming/cancelled state. Non-assistant messages break runs and single
- * messages are returned by reference.
+ * run's streaming/cancelled state and distinct reported models. Non-assistant messages
+ * break runs and single messages are returned by reference.
  */
 export function mergeConsecutiveAssistantMessages(
   messages: ReadonlyArray<ChatMessage>
@@ -222,8 +222,15 @@ export function mergeConsecutiveAssistantMessages(
       result.push(run[0]);
     } else if (run.length > 1) {
       const blocks = run.flatMap(toMergeableBlocks);
+      const reportedModels = new Map<string, ReportedAssistantModel>();
+      for (const message of run) {
+        for (const model of message.reportedModels ?? []) {
+          reportedModels.set(JSON.stringify([model.provider, model.model]), model);
+        }
+      }
       result.push({
         ...run[0],
+        ...(reportedModels.size > 0 ? { reportedModels: [...reportedModels.values()] } : {}),
         content: run
           .map((m) => m.content)
           .filter((c) => c.length > 0)

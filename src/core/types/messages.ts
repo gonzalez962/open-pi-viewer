@@ -31,6 +31,11 @@ export interface ImageContent {
   mimeType: string;
 }
 
+export interface ReportedAssistantModel {
+  provider: string;
+  model: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -46,4 +51,6 @@ export interface ChatMessage {
   isQueued?: boolean;
   images?: ImageContent[];
   blocks?: MessageBlock[];
+  /** Pi-reported assistant model pairs, in first-seen order for a grouped card. */
+  reportedModels?: ReportedAssistantModel[];
 }
