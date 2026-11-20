@@ -1669,6 +1669,7 @@ export const App: React.FC = () => {
           restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
           <ProjectDock
+            mobileDrawerOpen={isMobileNavOpen}
             projects={isWebShim() ? projectsRegistry.projects.filter(project => classify(project.path).kind !== 'missing') : projectsRegistry.projects}
             isSecondaryWorktree={isWebShim() ? isSecondary : undefined}
             getPrimaryPath={isWebShim() ? getPrimaryPath : undefined}
