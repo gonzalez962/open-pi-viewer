@@ -204,7 +204,7 @@
 /* Footer & Prompt Input Form */
 .app-footer {
   flex-shrink: 0;
-  padding: 14px 20px;
+  padding: 5px 20px 14px;
   background-color: var(--custom-bg-prompt, var(--bg-surface));
   border-top: 1px solid var(--border-muted);
 }
@@ -754,4 +754,3 @@
     flex: 1;
   }
 }
-
