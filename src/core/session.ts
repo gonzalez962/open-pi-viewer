@@ -337,6 +337,13 @@ export function resolveSessionResumePlan(
   return { type: 'resume_existing', record };
 }
 
+export function readMessageInstant(value: unknown): number | undefined {
+  const ms = typeof value === 'number' ? value
+    : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? Date.parse(value)
+    : NaN;
+  return Number.isFinite(new Date(ms).getTime()) ? ms : undefined;
+}
+
 /**
  * Convert an authoritative Pi RPC message into a ChatMessage representation.
  * Extracts plain text from string or content blocks (filtering out thinking and tool calls for fallback text),
@@ -372,12 +379,15 @@ export function convertRpcMessageToChatMessage(
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
   if (errorText && blocks) blocks.push({ type: 'text', text: errorText });
   const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
+  const sentAtMs = readMessageInstant(msg.timestamp);
+  const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
 
   return {
     id,
     role,
     content: visibleText,
     timestamp,
+    ...messageInstant,
     isStreaming: false,
     blocks: blocks && blocks.length > 0 ? blocks : undefined,
     images: images && images.length > 0 ? images : undefined,

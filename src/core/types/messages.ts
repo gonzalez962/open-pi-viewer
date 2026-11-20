@@ -36,6 +36,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: string;
+  sentAtMs?: number;
   isStreaming?: boolean;
   isCancelled?: boolean;
   /**
