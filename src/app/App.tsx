@@ -2110,7 +2110,33 @@ export const App: React.FC = () => {
                         {t('message.status_queued')}
                       </span>
                     )}
-                    <span className="message-time">{msg.timestamp}</span>
+                    <span className="message-time">
+                      {msg.timestamp}
+                      {msg.role === 'assistant' && (
+                        Boolean(msg.reportedModels?.length) ||
+                        (msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming)
+                      ) && (
+                        <span className="message-metadata">
+                          <button
+                            type="button"
+                            className="message-metadata-trigger"
+                            aria-label={t('message.response_details')}
+                            aria-describedby={`response-details-${msg.id}`}
+                            onClick={event => event.currentTarget.focus()}
+                          >
+                            <span className="message-metadata-icon" aria-hidden="true" />
+                          </button>
+                          <span id={`response-details-${msg.id}`} role="tooltip" className="message-metadata-tooltip">
+                            {msg.reportedModels?.length ? (
+                              <span>{t('message.reported_models', { models: formatReportedModels(msg.reportedModels) })}</span>
+                            ) : null}
+                            {msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming ? (
+                              <span>{t('message.turn_duration', { seconds: Math.round(msg.turnDurationMs / 100) / 10 })}</span>
+                            ) : null}
+                          </span>
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
                     {msg.role === 'assistant' && msg.blocks && msg.blocks.length > 0 ? (
@@ -2221,19 +2247,7 @@ export const App: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  {msg.role === 'assistant' && (
-                    Boolean(msg.reportedModels?.length) ||
-                    (msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming)
-                  ) && (
-                    <div className="message-footer">
-                      {msg.reportedModels?.length ? (
-                        <span>{t('message.reported_models', { models: formatReportedModels(msg.reportedModels) })}</span>
-                      ) : null}
-                      {msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming ? (
-                        <span>{t('message.turn_duration', { seconds: Math.round(msg.turnDurationMs / 100) / 10 })}</span>
-                      ) : null}
-                    </div>
-                  )}
+
                 </li>
               ))}
               <li className="scroll-anchor" aria-hidden="true" />

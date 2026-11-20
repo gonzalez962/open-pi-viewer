@@ -168,7 +168,7 @@ async function lowLevelEnd(page: Page, messages: object[] = history, transport: 
 
 async function metadata(page: Page, response = answer) {
   const card = page.locator('.message-assistant').filter({ has: page.getByText(response, { exact: true }) });
-  return card.locator('.message-footer').evaluateAll(nodes => nodes.flatMap(node => Array.from(node.children, child => child.textContent ?? '')).join(' '));
+  return card.locator('[role="tooltip"]').evaluateAll(nodes => nodes.flatMap(node => Array.from(node.children, child => child.textContent ?? '')).join(' '));
 }
 
 const twelveSeconds = /\b(?:12(?:[.,]0+)?\s*(?:s\b|sec(?:ond)?s?\b)|00:12)(?!:\d)/i;
@@ -185,40 +185,26 @@ test('S3.1 measures the whole observed turn, including tools, only at Pi settlem
   assert.match(await metadata(page), twelveSeconds, 'expected 12 s from browser-observed start to Pi settle, not 7 s of tool execution or the message timestamps');
 }));
 
-test('S4.1 places reported model and turn duration together in the bottom-right footer', () => withViewer(async page => {
+test('S4.1 reveals model and duration together beside the timestamp', () => withViewer(async page => {
   await page.addStyleTag({ path: 'src/features/chat/chat.css' });
   await start(page);
   await throughTools(page);
   await lowLevelEnd(page);
   await emit(page, 13000, 'agent_settled', { aborted: false });
   const card = page.locator('.message-assistant').filter({ has: page.getByText(answer, { exact: true }) });
-  const headerText = await card.locator('.message-header').innerText();
-  assert.doesNotMatch(headerText, duration, 'duration must not appear in .message-header');
-  assert.ok(!headerText.includes(model.id), 'reported model must not appear in .message-header');
-  const footer = card.locator('.message-footer');
-  const items = footer.locator(':scope > span');
-  assert.equal(await items.count(), 2, 'footer should group model and duration spans together');
-  const layout = await card.evaluate(el => {
-    const content = el.querySelector('.message-content')?.getBoundingClientRect();
-    const footerEl = el.querySelector('.message-footer') as HTMLElement | null;
-    const footerRect = footerEl?.getBoundingClientRect();
-    const spans = footerEl ? Array.from(footerEl.children).map(child => child.getBoundingClientRect()) : [];
-    const style = footerEl ? getComputedStyle(footerEl) : null;
-    return {
-      contentBottom: content?.bottom ?? 0,
-      contentRight: content?.right ?? 0,
-      footerTop: footerRect?.top ?? 0,
-      footerRight: footerRect?.right ?? 0,
-      justifyContent: style?.justifyContent ?? '',
-      spans: spans.map(r => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom })),
-    };
-  });
-  assert.equal(layout.justifyContent, 'flex-end', 'footer should align metadata to the right');
-  assert.ok(layout.footerTop >= layout.contentBottom - 1, `footer should sit below message content; got ${JSON.stringify(layout)}`);
-  assert.ok(Math.abs(layout.contentRight - layout.footerRight) <= 2, `footer should align with card right edge; got ${JSON.stringify(layout)}`);
-  assert.equal(layout.spans.length, 2);
-  const gap = layout.spans[1].left - layout.spans[0].right;
-  assert.ok(gap >= 0 && gap <= 16, `model and duration should sit closely together; got gap=${gap}px`);
+  const trigger = card.locator('.message-header .message-time').getByRole('button', { name: 'Response details' });
+  const iconMask = await trigger.locator('[aria-hidden="true"]').evaluate(icon => getComputedStyle(icon).maskImage);
+  assert.match(iconMask, /\/icons\/info\.svg/);
+  const tooltip = card.getByRole('tooltip', { includeHidden: true });
+  assert.equal(await tooltip.isVisible(), false);
+  assert.equal(await card.locator('.message-footer').count(), 0);
+  await trigger.hover();
+  assert.equal(await tooltip.isVisible(), true);
+  assert.deepEqual(await tooltip.locator(':scope > span').allTextContents(), ['openai/fixture-model', '12s']);
+  await page.mouse.move(0, 0);
+  assert.equal(await tooltip.isVisible(), false);
+  await trigger.focus();
+  assert.equal(await tooltip.isVisible(), true);
 }));
 
 test('S3.2 restores the idless Pi response duration on page reload only for its owner', () => withViewer(async page => {
@@ -241,7 +227,7 @@ test('S3.2 restores the idless Pi response duration on page reload only for its 
   await reopen(page, owner, [...history, ...history]);
   const duplicateCards = page.locator('.message-assistant').filter({ has: page.getByText(answer, { exact: true }) });
   assert.equal(await duplicateCards.count(), 2);
-  for (const card of await duplicateCards.all()) assert.doesNotMatch(await card.locator('.message-footer').evaluateAll(nodes => nodes.map(n => n.textContent ?? '').join(' ')), duration);
+  for (const card of await duplicateCards.all()) assert.doesNotMatch(await card.locator('[role="tooltip"]').evaluateAll(nodes => nodes.map(n => n.textContent ?? '').join(' ')), duration);
   assert.deepEqual([sameOwner, diskHistory].map(value => twelveSeconds.test(value)), [true, true],
     `expected the saved 12 s in raw RPC and disk-backed history; got ${JSON.stringify([sameOwner, diskHistory])}`);
 }));

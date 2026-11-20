@@ -334,20 +334,54 @@
   color: var(--fg-subtle);
 }
 
-.message-footer {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.message-time:has(.message-metadata) {
+  display: inline-flex;
   align-items: center;
-  gap: 2px 8px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--fg-subtle);
+  gap: 4px;
 }
 
-.message-footer > span {
-  min-width: 0;
+.message-metadata {
+  position: relative;
+}
+
+.message-metadata-trigger {
+  border: 0;
+  padding: 2px 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.message-metadata-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask: url("/icons/info.svg") center / contain no-repeat;
+}
+
+.message-metadata-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  width: max-content;
+  max-width: min(20rem, 65vw);
+  padding: 4px 8px;
+  gap: 2px 8px;
+  flex-wrap: wrap;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-default);
   overflow-wrap: anywhere;
+}
+
+.message-metadata:hover .message-metadata-tooltip,
+.message-metadata:focus-within .message-metadata-tooltip {
+  display: flex;
 }
 
 .message-role {

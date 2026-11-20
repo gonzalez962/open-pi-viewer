@@ -377,6 +377,7 @@
   "message.role_user": "usuario",
   "message.role_assistant": "asistente",
   "message.role_system": "sistema",
+  "message.response_details": "Detalles de la respuesta",
   "message.reported_models": "{models}",
   "message.turn_duration": "{seconds}s",
   "message.generating": "Generando respuesta...",
