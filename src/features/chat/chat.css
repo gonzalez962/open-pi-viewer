@@ -338,15 +338,20 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  line-height: 1;
 }
 
 .message-metadata {
   position: relative;
+  display: flex;
+  align-items: center;
 }
 
 .message-metadata-trigger {
+  display: flex;
+  align-items: center;
   border: 0;
-  padding: 2px 4px;
+  padding: 0;
   background: transparent;
   color: inherit;
   font: inherit;

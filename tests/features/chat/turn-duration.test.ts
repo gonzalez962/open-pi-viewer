@@ -193,8 +193,17 @@ test('S4.1 reveals model and duration together beside the timestamp', () => with
   await emit(page, 13000, 'agent_settled', { aborted: false });
   const card = page.locator('.message-assistant').filter({ has: page.getByText(answer, { exact: true }) });
   const trigger = card.locator('.message-header .message-time').getByRole('button', { name: 'Response details' });
-  const iconMask = await trigger.locator('[aria-hidden="true"]').evaluate(icon => getComputedStyle(icon).maskImage);
-  assert.match(iconMask, /\/icons\/info\.svg/);
+  const icon = trigger.locator('[aria-hidden="true"]');
+  assert.match(await icon.evaluate(el => getComputedStyle(el).maskImage), /\/icons\/info\.svg/);
+  assert.deepEqual(await trigger.evaluate(button => {
+    const style = getComputedStyle(button);
+    return [style.paddingLeft, style.paddingRight];
+  }), ['0px', '0px']);
+  const centerY = ({ y, height }: { y: number; height: number }) => y + height / 2;
+  const timeBounds = await card.locator('.message-time').boundingBox();
+  const iconBounds = await icon.boundingBox();
+  assert.ok(timeBounds && iconBounds);
+  assert.ok(Math.abs(centerY(timeBounds) - centerY(iconBounds)) <= 1, 'the timestamp and icon share a center line');
   const tooltip = card.getByRole('tooltip', { includeHidden: true });
   assert.equal(await tooltip.isVisible(), false);
   assert.equal(await card.locator('.message-footer').count(), 0);
