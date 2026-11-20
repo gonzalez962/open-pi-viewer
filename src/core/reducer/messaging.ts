@@ -4,7 +4,7 @@ import {
   parseMessageBlocks,
 } from '../protocol';
 import { isMessageEmpty } from '../prompt-controls-utils';
-import { readReportedAssistantModels } from '../session';
+import { readMessageInstant, readReportedAssistantModels } from '../session';
 import type { AuthoritativeMessage } from '../types/events';
 import type { ChatMessage, ImageContent, ToolCallBlock } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
@@ -70,11 +70,13 @@ export function messagingReducer(
 ): ChatSessionState | undefined {
   switch (action.type) {
     case 'PROMPT_SUBMIT': {
+      const sentAtMs = Date.now();
       const userMessage: ChatMessage = {
         id: action.payload.id,
         role: 'user',
         content: action.payload.message,
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: new Date(sentAtMs).toLocaleTimeString(),
+        sentAtMs,
         images:
           action.payload.images && action.payload.images.length > 0
             ? action.payload.images
@@ -180,6 +182,8 @@ export function messagingReducer(
       }
 
       const msg = action.payload.message;
+      const sentAtMs = readMessageInstant(msg.timestamp);
+      const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
 
       if (msg.role === 'user') {
         // Pi emits a user-role message_start when it begins processing a queued
@@ -218,6 +222,7 @@ export function messagingReducer(
             ? {
                 ...m,
                 isQueued: false,
+                ...messageInstant,
                 images:
                   m.images && m.images.length > 0
                     ? m.images
@@ -247,6 +252,7 @@ export function messagingReducer(
         content: initialText,
         timestamp: new Date().toLocaleTimeString(),
         isStreaming: true,
+        ...messageInstant,
         ...(reportedModels ? { reportedModels } : {}),
         blocks: initialBlocks.length > 0 ? initialBlocks : undefined,
       };
@@ -365,6 +371,8 @@ export function messagingReducer(
       const errorText = typeof msg.errorMessage === 'string' ? msg.errorMessage.trim() : '';
       const authoritativeText = errorText ? [text, errorText].filter(Boolean).join('\n\n') : text;
       const parsedBlocks = parseMessageBlocks(msg.content);
+      const sentAtMs = readMessageInstant(msg.timestamp);
+      const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
       const reportedModels = readReportedAssistantModels(msg);
       if (errorText) parsedBlocks.push({ type: 'text', text: errorText });
 
@@ -422,6 +430,7 @@ export function messagingReducer(
             ...m,
             content: authoritativeText, // authoritative replacement
             isStreaming: false,
+            ...messageInstant,
             ...(reportedModels ? { reportedModels } : {}),
             blocks: reconciledBlocks.length > 0 ? reconciledBlocks : undefined,
           };
@@ -440,6 +449,7 @@ export function messagingReducer(
           content: authoritativeText,
           timestamp: new Date().toLocaleTimeString(),
           isStreaming: false,
+          ...messageInstant,
           ...(reportedModels ? { reportedModels } : {}),
           blocks: parsedBlocks.length > 0 ? parsedBlocks : undefined,
         });

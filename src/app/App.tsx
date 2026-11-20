@@ -37,7 +37,7 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import { groupMessagesByDay } from '@features/chat/message-days';
 import { PromptControls } from '@features/chat/PromptControls';
 import { TodoPanel } from '@features/chat/TodoPanel';
 import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
@@ -2082,11 +2082,18 @@ export const App: React.FC = () => {
                   </button>
                 </li>
               )}
-              {mergeConsecutiveAssistantMessages(
+              {groupMessagesByDay(
                 state.messages.filter((msg) => !isMessageEmpty(msg))
-              ).map((msg) => (
+              ).map(({ message: msg, divider }) => (
+                <React.Fragment key={msg.id}>
+                {divider && (
+                  <li className="message-date-divider">
+                    <time dateTime={divider.day}>
+                      {divider.date.toLocaleDateString(preferences.language, { dateStyle: 'long' })}
+                    </time>
+                  </li>
+                )}
                 <li
-                  key={msg.id}
                   className={`message-item message-${msg.role}${msg.isCancelled ? ' message-cancelled' : ''}`}
                 >
                   <div className="message-header">
@@ -2224,6 +2231,7 @@ export const App: React.FC = () => {
                     )}
                   </div>
                 </li>
+                </React.Fragment>
               ))}
               <li className="scroll-anchor" aria-hidden="true" />
             </ul>

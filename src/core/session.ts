@@ -337,6 +337,13 @@ export function resolveSessionResumePlan(
   return { type: 'resume_existing', record };
 }
 
+export function readMessageInstant(value: unknown): number | undefined {
+  const ms = typeof value === 'number' ? value
+    : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? Date.parse(value)
+    : NaN;
+  return Number.isFinite(new Date(ms).getTime()) ? ms : undefined;
+}
+
 /** Only top-level model metadata on Pi assistant messages identifies a response model. */
 export function readReportedAssistantModels(message: AuthoritativeMessage | Record<string, unknown>): ReportedAssistantModel[] | undefined {
   if (message.role !== 'assistant' || typeof message.model !== 'string') return;
@@ -381,6 +388,8 @@ export function convertRpcMessageToChatMessage(
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
   if (errorText && blocks) blocks.push({ type: 'text', text: errorText });
   const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
+  const sentAtMs = readMessageInstant(msg.timestamp);
+  const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
   const reportedModels = readReportedAssistantModels(msg);
 
   return {
@@ -388,6 +397,7 @@ export function convertRpcMessageToChatMessage(
     role,
     content: visibleText,
     timestamp,
+    ...messageInstant,
     isStreaming: false,
     ...(reportedModels ? { reportedModels } : {}),
     blocks: blocks && blocks.length > 0 ? blocks : undefined,

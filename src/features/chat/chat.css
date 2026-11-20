@@ -247,6 +247,22 @@
   animation: spin 0.8s linear infinite;
 }
 
+.message-date-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-block: 4px;
+  color: var(--fg-subtle);
+  font-size: 11px;
+}
+
+.message-date-divider::before,
+.message-date-divider::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--border-muted);
+}
+
 .message-item {
   padding: 12px 16px;
   border-radius: var(--radius-md);
