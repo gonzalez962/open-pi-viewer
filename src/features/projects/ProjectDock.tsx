@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   type ProjectItem,
   type ProjectStatusInfo,
@@ -14,6 +14,7 @@ import { getWorktreeRepositoryColor } from './worktree-colors';
 export interface ProjectDockProps {
   projects: ProjectItem[];
   activeProjectId: string | null;
+  mobileDrawerOpen?: boolean;
   connectionState: ConnectionState;
   agentActivity: AgentActivity;
   isBusy: boolean;
@@ -92,6 +93,7 @@ export function getProjectStatusLabel(
 export const ProjectDock: React.FC<ProjectDockProps> = ({
   projects,
   activeProjectId,
+  mobileDrawerOpen = false,
   connectionState,
   agentActivity,
   isBusy,
@@ -111,13 +113,22 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 }) => {
   const isSettingsActive = Boolean(isSettingsOpen);
   const [isHovered, setIsHovered] = useState(false);
+  const [expandedByTap, setExpandedByTap] = useState(false);
+  const expandOnClick = useRef(false);
+
+  useEffect(() => {
+    if (!mobileDrawerOpen) {
+      setExpandedByTap(false);
+      expandOnClick.current = false;
+    }
+  }, [mobileDrawerOpen]);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState<string>('');
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
 
   const isEditing = editingProjectId !== null;
   const isConfirmingRemove = confirmingRemoveId !== null;
-  const isExpanded = isHovered || isEditing || isConfirmingRemove;
+  const isExpanded = isHovered || isEditing || isConfirmingRemove || (mobileDrawerOpen && expandedByTap);
 
   const handleRowClick = useCallback(
     (project: ProjectItem) => {
@@ -189,6 +200,19 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
     <div className="project-dock-container">
       <aside
         className={`project-dock ${isExpanded ? 'is-expanded' : ''}`}
+        onPointerDownCapture={(event) => {
+          // Read expansion before touch can synthesize hover or focus for this click.
+          expandOnClick.current = mobileDrawerOpen && event.pointerType === 'touch' && !isExpanded;
+        }}
+        onPointerCancelCapture={() => { expandOnClick.current = false; }}
+        onClickCapture={(event) => {
+          const shouldExpand = expandOnClick.current;
+          expandOnClick.current = false;
+          if (!shouldExpand || !mobileDrawerOpen || event.detail === 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setExpandedByTap(true);
+        }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         onFocus={() => setIsHovered(true)}

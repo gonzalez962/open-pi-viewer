@@ -175,6 +175,7 @@ export function parseSessionFile(filePath: string) {
   const createdAt = header.timestamp;
   let customTitle: string | undefined = undefined;
   let messageCount = 0;
+  let lastConversationTime = -Infinity;
   let firstMessage = '';
   const messages: any[] = [];
 
@@ -191,6 +192,14 @@ export function parseSessionFile(filePath: string) {
         const msg = entry.message;
         if (isConversationMessage(msg)) {
           messageCount++;
+          for (const value of [msg.timestamp, entry.timestamp]) {
+            const time = typeof value === 'string' || typeof value === 'number'
+              ? new Date(value).getTime() : NaN;
+            if (Number.isFinite(time)) {
+              lastConversationTime = Math.max(lastConversationTime, time);
+              break;
+            }
+          }
         }
         const msgId = msg.id || entry.id || `msg-${i}`;
         const msgTimestamp = msg.timestamp || entry.timestamp;
@@ -220,7 +229,9 @@ export function parseSessionFile(filePath: string) {
     }
   }
 
-  const modifiedAt = stat.mtime.toISOString();
+  // File mtime invalidates the cache, but is not conversation activity.
+  const modifiedAt = Number.isFinite(lastConversationTime)
+    ? new Date(lastConversationTime).toISOString() : createdAt;
 
   const parsed = {
     id,

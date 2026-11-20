@@ -378,6 +378,7 @@
   "message.role_user": "user",
   "message.role_assistant": "assistant",
   "message.role_system": "system",
+  "message.reported_models": "Model: {models}",
   "message.generating": "Generating response...",
   "message.status_cancelled": "Cancelled",
   "message.cancelled_note": "Generation cancelled",

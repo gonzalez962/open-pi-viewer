@@ -7,7 +7,7 @@ import {
 import { parseSubagentCompletion, parseSubagentReport } from './agent-activity';
 import type { SubagentReport } from './types/agent-activity';
 import type { AuthoritativeMessage } from './types/events';
-import type { ChatMessage, ChatTranscript, ToolCallBlock } from './types/messages';
+import type { ChatMessage, ChatTranscript, ReportedAssistantModel, ToolCallBlock } from './types/messages';
 import type { ViewerSessionRecord } from './types/sessions';
 
 /** Key in localStorage for Pi Viewer owned session records */
@@ -339,6 +339,22 @@ export function resolveSessionResumePlan(
   return { type: 'resume_existing', record };
 }
 
+export function readMessageInstant(value: unknown): number | undefined {
+  const ms = typeof value === 'number' ? value
+    : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? Date.parse(value)
+    : NaN;
+  return Number.isFinite(new Date(ms).getTime()) ? ms : undefined;
+}
+
+/** Only top-level model metadata on Pi assistant messages identifies a response model. */
+export function readReportedAssistantModels(message: AuthoritativeMessage | Record<string, unknown>): ReportedAssistantModel[] | undefined {
+  if (message.role !== 'assistant' || typeof message.model !== 'string') return;
+  const model = message.model.trim();
+  if (!model) return;
+  const provider = typeof message.provider === 'string' ? message.provider.trim() : '';
+  return [{ provider, model }];
+}
+
 /**
  * Convert an authoritative Pi RPC message into a ChatMessage representation.
  * Extracts plain text from string or content blocks (filtering out thinking and tool calls for fallback text),
@@ -374,13 +390,18 @@ export function convertRpcMessageToChatMessage(
   const blocks = role === 'assistant' ? parseMessageBlocks(msg.content) : undefined;
   if (errorText && blocks) blocks.push({ type: 'text', text: errorText });
   const images = role === 'user' ? extractImagesFromMessage(msg) : undefined;
+  const sentAtMs = readMessageInstant(msg.timestamp);
+  const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
+  const reportedModels = readReportedAssistantModels(msg);
 
   return {
     id,
     role,
     content: visibleText,
     timestamp,
+    ...messageInstant,
     isStreaming: false,
+    ...(reportedModels ? { reportedModels } : {}),
     blocks: blocks && blocks.length > 0 ? blocks : undefined,
     images: images && images.length > 0 ? images : undefined,
   };

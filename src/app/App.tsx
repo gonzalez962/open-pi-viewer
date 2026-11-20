@@ -27,7 +27,7 @@ import {
   type AppearancePreferences,
 } from '@infra/preferences';
 import { ThinkingCard, ToolCard, ActivityBlocksScrollContainer } from '@features/chat/ActivityBlocks';
-import type { ThinkingBlock, ToolCallBlock } from '@core/types/messages';
+import type { ReportedAssistantModel, ThinkingBlock, ToolCallBlock } from '@core/types/messages';
 import { MessageSpeechButton } from '@features/chat/components/MessageSpeechButton';
 import { PromptMicButton } from '@features/chat/components/PromptMicButton';
 import { MessageImageThumbnails } from '@features/chat/components/MessageImageThumbnails';
@@ -37,7 +37,7 @@ import {
   MarkdownContent,
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
-import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import { groupMessagesByDay } from '@features/chat/message-days';
 import { PromptControls } from '@features/chat/PromptControls';
 import { TodoPanel } from '@features/chat/TodoPanel';
 import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
@@ -59,6 +59,7 @@ import { SessionSidebar } from '@features/sessions/SessionSidebar';
 import { FileTree } from '@features/workspace/FileTree';
 import {
   applyProfileRuntime,
+  qualifyProfileModelId,
   resolveProfileModel,
   PROFILE_ACTIVATED_EVENT,
   PROFILE_CLEARED_EVENT,
@@ -189,6 +190,16 @@ import {
   checkIsMobileViewport,
   resolveMobileBrandTitle,
 } from './mobile-navigation';
+
+function formatReportedModels(models: readonly ReportedAssistantModel[]): string {
+  const labels = models.map(({ provider, model }) => qualifyProfileModelId(provider, model));
+  const counts = new Map<string, number>();
+  for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+  // Quote the original components only when the ordinary slash label is ambiguous.
+  return models.map(({ provider, model }, index) => counts.get(labels[index]) === 1
+    ? labels[index]
+    : `${JSON.stringify(provider)}/${JSON.stringify(model)}`).join(', ');
+}
 
 export const App: React.FC = () => {
   const [multiProjectState, multiDispatch] = useReducer(
@@ -1671,6 +1682,7 @@ export const App: React.FC = () => {
           restoreFocusOnClose={!isFolderPickerOpen && !isGitHubCloneOpen && !isGitHubCreateOpen}
         >
           <ProjectDock
+            mobileDrawerOpen={isMobileNavOpen}
             projects={isWebShim() ? projectsRegistry.projects.filter(project => classify(project.path).kind !== 'missing') : projectsRegistry.projects}
             isSecondaryWorktree={isWebShim() ? isSecondary : undefined}
             getPrimaryPath={isWebShim() ? getPrimaryPath : undefined}
@@ -2072,11 +2084,18 @@ export const App: React.FC = () => {
                   </button>
                 </li>
               )}
-              {mergeConsecutiveAssistantMessages(
+              {groupMessagesByDay(
                 state.messages.filter((msg) => !isMessageEmpty(msg))
-              ).map((msg) => (
+              ).map(({ message: msg, divider }) => (
+                <React.Fragment key={msg.id}>
+                {divider && (
+                  <li className="message-date-divider">
+                    <time dateTime={divider.day}>
+                      {divider.date.toLocaleDateString(preferences.language, { dateStyle: 'long' })}
+                    </time>
+                  </li>
+                )}
                 <li
-                  key={msg.id}
                   className={`message-item message-${msg.role}${msg.isCancelled ? ' message-cancelled' : ''}`}
                 >
                   <div className="message-header">
@@ -2097,6 +2116,11 @@ export const App: React.FC = () => {
                         {t('message.status_queued')}
                       </span>
                     )}
+                    {msg.role === 'assistant' && msg.reportedModels?.length ? (
+                      <span style={{ minWidth: 0, overflowWrap: 'anywhere', marginInline: '0.5em' }}>
+                        {t('message.reported_models', { models: formatReportedModels(msg.reportedModels) })}
+                      </span>
+                    ) : null}
                     <span className="message-time">{msg.timestamp}</span>
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
@@ -2209,6 +2233,7 @@ export const App: React.FC = () => {
                     )}
                   </div>
                 </li>
+                </React.Fragment>
               ))}
               <li className="scroll-anchor" aria-hidden="true" />
             </ul>
