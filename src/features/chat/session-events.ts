@@ -330,6 +330,7 @@ export class SessionEventController {
       return;
     }
 
+    const eventSessionFile = typeof event.sessionFile === 'string' ? event.sessionFile : undefined;
     const owner = turnOwner(event.cwd, eventSessionId, eventSessionFile);
     const duration = owner && (!this.options.resolveTargetProjectId || targetProjectId)
       ? this.turnDurations.observe(event, owner) : undefined;
