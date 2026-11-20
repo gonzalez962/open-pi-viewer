@@ -4,7 +4,7 @@ import {
   parseMessageBlocks,
 } from '../protocol';
 import { isMessageEmpty } from '../prompt-controls-utils';
-import { readMessageInstant } from '../session';
+import { readMessageInstant, readReportedAssistantModels } from '../session';
 import type { AuthoritativeMessage } from '../types/events';
 import type { ChatMessage, ImageContent, ToolCallBlock } from '../types/messages';
 import type { ChatSessionState } from '../types/chat-state';
@@ -244,6 +244,7 @@ export function messagingReducer(
         msg.id || `asst-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const initialText = extractTextFromContent(msg.content);
       const initialBlocks = parseMessageBlocks(msg.content);
+      const reportedModels = readReportedAssistantModels(msg);
 
       const assistantMessage: ChatMessage = {
         id: assistantMsgId,
@@ -252,6 +253,7 @@ export function messagingReducer(
         timestamp: new Date().toLocaleTimeString(),
         isStreaming: true,
         ...messageInstant,
+        ...(reportedModels ? { reportedModels } : {}),
         blocks: initialBlocks.length > 0 ? initialBlocks : undefined,
       };
 
@@ -371,6 +373,7 @@ export function messagingReducer(
       const parsedBlocks = parseMessageBlocks(msg.content);
       const sentAtMs = readMessageInstant(msg.timestamp);
       const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
+      const reportedModels = readReportedAssistantModels(msg);
       if (errorText) parsedBlocks.push({ type: 'text', text: errorText });
 
       // Reconcile authoritative text and blocks without duplicate tokens
@@ -428,6 +431,7 @@ export function messagingReducer(
             content: authoritativeText, // authoritative replacement
             isStreaming: false,
             ...messageInstant,
+            ...(reportedModels ? { reportedModels } : {}),
             blocks: reconciledBlocks.length > 0 ? reconciledBlocks : undefined,
           };
         }
@@ -446,6 +450,7 @@ export function messagingReducer(
           timestamp: new Date().toLocaleTimeString(),
           isStreaming: false,
           ...messageInstant,
+          ...(reportedModels ? { reportedModels } : {}),
           blocks: parsedBlocks.length > 0 ? parsedBlocks : undefined,
         });
       }
