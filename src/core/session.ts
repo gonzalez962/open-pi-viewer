@@ -390,6 +390,8 @@ export function convertRpcMessageToChatMessage(
     timestamp,
     isStreaming: false,
     ...(reportedModels ? { reportedModels } : {}),
+    ...(role === 'assistant' && !errorText && typeof msg.timestamp === 'number' && Number.isFinite(msg.timestamp)
+      ? { responseTimestamp: msg.timestamp } : {}),
     blocks: blocks && blocks.length > 0 ? blocks : undefined,
     images: images && images.length > 0 ? images : undefined,
   };

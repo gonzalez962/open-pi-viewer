@@ -127,7 +127,7 @@ async function live(page: Page, message: ReturnType<typeof assistant>) {
 
 async function cardText(page: Page, answer: string) {
   const card = page.locator('.message-assistant').filter({ hasText: answer });
-  return card.innerText();
+  return card.textContent().then(text => text ?? '');
 }
 
 for (const [source, deliver] of [
@@ -146,7 +146,9 @@ for (const [source, deliver] of [
   test(`S2.1 does not inherit the active model on a ${source} card with no metadata`, async () => withViewer(async page => {
     const answer = `${source} legacy answer`;
     await deliver(page, assistant(answer));
-    assert.ok(!(await cardText(page, answer)).includes(active.id), 'card must not show the active session model');
+    const card = page.locator('.message-assistant').filter({ hasText: answer });
+    assert.ok(!(await card.innerText()).includes(active.id), 'card must not show the active session model');
+    assert.equal(await card.locator('.message-metadata-trigger').count(), 0, 'S4.2: no metadata trigger without model or duration');
   }));
 }
 
@@ -168,8 +170,8 @@ test('S2.2 visibly distinguishes slash-colliding model pairs in first-seen order
   const card = page.locator('.message-assistant').filter({ hasText: 'Repeated collision response' });
   await card.waitFor();
   assert.equal(await page.locator('.message-assistant').count(), 1);
-  const label = card.locator('.message-header').getByText(/^Model: /);
-  assert.equal(await label.innerText(), 'Model: "local"/"vendor/model", "local/vendor"/"model"');
+  const label = card.locator('[role="tooltip"]');
+  assert.equal(await label.textContent(), '"local"/"vendor/model", "local/vendor"/"model"');
 }));
 
 test('S2.2 one grouped card shows distinct assistant models, not the subagent model', async () => withViewer(async page => {

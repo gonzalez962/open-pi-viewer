@@ -334,6 +334,61 @@
   color: var(--fg-subtle);
 }
 
+.message-time:has(.message-metadata) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1;
+}
+
+.message-metadata {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.message-metadata-trigger {
+  display: flex;
+  align-items: center;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.message-metadata-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask: url("/icons/info.svg") center / contain no-repeat;
+}
+
+.message-metadata-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 100%;
+  inset-inline-end: 0;
+  width: max-content;
+  max-width: min(20rem, 65vw);
+  padding: 4px 8px;
+  gap: 2px 8px;
+  flex-wrap: wrap;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg-default);
+  overflow-wrap: anywhere;
+}
+
+.message-metadata:hover .message-metadata-tooltip,
+.message-metadata:focus-within .message-metadata-tooltip {
+  display: flex;
+}
+
 .message-role {
   font-weight: 600;
   text-transform: uppercase;

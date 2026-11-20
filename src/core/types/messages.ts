@@ -53,4 +53,9 @@ export interface ChatMessage {
   blocks?: MessageBlock[];
   /** Pi-reported assistant model pairs, in first-seen order for a grouped card. */
   reportedModels?: ReportedAssistantModel[];
+  /** Raw Pi timestamp for matching a final response; not an elapsed-time source. */
+  responseTimestamp?: number;
+  turnDurationMs?: number;
+  /** Owner captured at settlement; only this owner may persist the live measurement. */
+  turnDurationOwner?: string;
 }
