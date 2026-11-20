@@ -171,6 +171,53 @@ test('server/bridge: resolveSessionsDir isolates projects with same basename and
   assert.ok(!dirB.includes('alpha'), 'Project B session directory must not point to project A');
 });
 
+test('web session dates and order follow conversation, not file modification', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-session-dates-'));
+  setSessionsRootDirForTest(root);
+  t.after(() => {
+    setSessionsRootDirForTest(null);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const cwd = path.join(root, 'project');
+  const dir = resolveSessionsDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  const created = '2026-01-01T12:00:00.000Z';
+  const userDate = '2026-01-02T12:00:00.000Z';
+  const replyDate = '2026-01-03T12:00:00.000Z';
+  const newerDate = '2026-01-04T12:00:00.000Z';
+  const metadataDate = '2026-01-06T12:00:00.000Z';
+  const message = (role: string, content: string, timestamp: string) => ({
+    type: 'message', timestamp, message: { role, content },
+  });
+  function write(id: string, entries: object[]) {
+    const file = path.join(dir, `${id}.jsonl`);
+    fs.writeFileSync(file, [{ type: 'session', id, timestamp: created, cwd }, ...entries]
+      .map(entry => JSON.stringify(entry)).join('\n') + '\n');
+    fs.utimesSync(file, new Date(created), new Date(created));
+    return file;
+  }
+  const old = write('old', [
+    { type: 'message', message: { role: 'user', content: 'Question', timestamp: Date.parse(userDate) } },
+    message('assistant', 'Answer', replyDate),
+    message('assistant', '', metadataDate),
+    message('toolResult', 'Output', metadataDate),
+    { type: 'session_info', name: 'Renamed', timestamp: metadataDate },
+  ]);
+  write('newer', [message('user', 'Newer question', newerDate)]);
+  write('empty', [{ type: 'session_info', name: 'Empty', timestamp: metadataDate }]);
+  const list = async () => (await handleIpcCommand('list_sessions', { payload: { workingDirectory: cwd } }))
+    .map(({ id, modifiedAt }: { id: string; modifiedAt: string }) => [id, modifiedAt]);
+  const expected = [['newer', newerDate], ['old', replyDate], ['empty', created]];
+  const before = await list();
+  fs.utimesSync(old, new Date(metadataDate), new Date(metadataDate));
+  assert.deepEqual(await list(), before, 'a file timestamp change does not move an old session');
+  assert.deepEqual(before, expected);
+
+  const nextDate = '2026-01-05T12:00:00.000Z';
+  fs.appendFileSync(old, JSON.stringify(message('user', 'Follow-up', nextDate)) + '\n');
+  assert.deepEqual(await list(), [['old', nextDate], ['newer', newerDate], ['empty', created]]);
+});
+
 test('server/bridge: connect to empty project creates and persists a new session file', async (t) => {
   const tmpSessionsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-sessions-empty-'));
   const tmpEmptyProject = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-test-project-empty-'));
