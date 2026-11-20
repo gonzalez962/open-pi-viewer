@@ -38,6 +38,7 @@ import {
   shouldRenderAsMarkdown,
 } from '@features/chat/MarkdownContent';
 import { mergeConsecutiveAssistantMessages } from '@core/process-grouping';
+import { restoreTurnDurations, saveTurnDurations, turnOwner } from '@features/chat/turn-duration';
 import { PromptControls } from '@features/chat/PromptControls';
 import { TodoPanel } from '@features/chat/TodoPanel';
 import { SubagentActivityModal } from '@features/chat/SubagentActivityModal';
@@ -715,6 +716,9 @@ export const App: React.FC = () => {
   );
 
   const activeDialogCwd = projectsRegistry.projects.find(project => project.id === projectsRegistry.activeProjectId)?.path;
+  const durationOwner = turnOwner(activeDialogCwd ?? config.workingDirectory, state.sessionId, state.sessionFile);
+  const messagesWithDurations = useMemo(() => restoreTurnDurations(durationOwner, state.messages), [durationOwner, state.messages]);
+  useEffect(() => { saveTurnDurations(durationOwner, state.messages); }, [durationOwner, state.messages]);
   const {
     activeDialog,
     pendingCount: dialogPendingCount,
@@ -2082,7 +2086,7 @@ export const App: React.FC = () => {
                 </li>
               )}
               {mergeConsecutiveAssistantMessages(
-                state.messages.filter((msg) => !isMessageEmpty(msg))
+                messagesWithDurations.filter((msg) => !isMessageEmpty(msg))
               ).map((msg) => (
                 <li
                   key={msg.id}
@@ -2106,11 +2110,6 @@ export const App: React.FC = () => {
                         {t('message.status_queued')}
                       </span>
                     )}
-                    {msg.role === 'assistant' && msg.reportedModels?.length ? (
-                      <span style={{ minWidth: 0, overflowWrap: 'anywhere', marginInline: '0.5em' }}>
-                        {t('message.reported_models', { models: formatReportedModels(msg.reportedModels) })}
-                      </span>
-                    ) : null}
                     <span className="message-time">{msg.timestamp}</span>
                   </div>
                   <div className={`message-content message-content-${msg.role}`}>
@@ -2222,6 +2221,19 @@ export const App: React.FC = () => {
                       </div>
                     )}
                   </div>
+                  {msg.role === 'assistant' && (
+                    Boolean(msg.reportedModels?.length) ||
+                    (msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming)
+                  ) && (
+                    <div className="message-footer">
+                      {msg.reportedModels?.length ? (
+                        <span>{t('message.reported_models', { models: formatReportedModels(msg.reportedModels) })}</span>
+                      ) : null}
+                      {msg.turnDurationMs !== undefined && !msg.isCancelled && !msg.isStreaming ? (
+                        <span>{t('message.turn_duration', { seconds: Math.round(msg.turnDurationMs / 100) / 10 })}</span>
+                      ) : null}
+                    </div>
+                  )}
                 </li>
               ))}
               <li className="scroll-anchor" aria-hidden="true" />

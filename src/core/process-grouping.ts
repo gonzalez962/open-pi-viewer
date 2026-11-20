@@ -228,8 +228,13 @@ export function mergeConsecutiveAssistantMessages(
           reportedModels.set(JSON.stringify([model.provider, model.model]), model);
         }
       }
+      const measured = run.filter(message => message.turnDurationMs !== undefined);
       result.push({
         ...run[0],
+        ...(measured.length > 0 ? {
+          turnDurationMs: measured.length === 1 && !run.some(message => message.isCancelled || message.isStreaming)
+            ? measured[0].turnDurationMs : undefined,
+        } : {}),
         ...(reportedModels.size > 0 ? { reportedModels: [...reportedModels.values()] } : {}),
         content: run
           .map((m) => m.content)

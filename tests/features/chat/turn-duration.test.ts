@@ -166,9 +166,9 @@ async function lowLevelEnd(page: Page, messages: object[] = history, transport: 
   await emit(page, 11000, 'agent_settled', transport === 'desktop' ? end : { messages });
 }
 
-async function header(page: Page, response = answer) {
+async function metadata(page: Page, response = answer) {
   const card = page.locator('.message-assistant').filter({ has: page.getByText(response, { exact: true }) });
-  return card.locator('.message-header').evaluate(header => Array.from(header.children, child => child.textContent).join(' '));
+  return card.locator('.message-footer').evaluateAll(nodes => nodes.flatMap(node => Array.from(node.children, child => child.textContent ?? '')).join(' '));
 }
 
 const twelveSeconds = /\b(?:12(?:[.,]0+)?\s*(?:s\b|sec(?:ond)?s?\b)|00:12)(?!:\d)/i;
@@ -178,34 +178,70 @@ test('S3.1 measures the whole observed turn, including tools, only at Pi settlem
   await start(page);
   await throughTools(page);
   assert.equal(await page.locator('.message-assistant').count(), 1, 'tool call and answer share a card');
-  assert.doesNotMatch(await header(page), duration, 'a final assistant message is not a settled run');
+  assert.doesNotMatch(await metadata(page), duration, 'a final assistant message is not a settled run');
   await lowLevelEnd(page);
-  assert.doesNotMatch(await header(page), duration, 'a bridge-synthesized settle does not prove completion');
+  assert.doesNotMatch(await metadata(page), duration, 'a bridge-synthesized settle does not prove completion');
   await emit(page, 13000, 'agent_settled', { aborted: false });
-  assert.match(await header(page), twelveSeconds, 'expected 12 s from browser-observed start to Pi settle, not 7 s of tool execution or the message timestamps');
+  assert.match(await metadata(page), twelveSeconds, 'expected 12 s from browser-observed start to Pi settle, not 7 s of tool execution or the message timestamps');
+}));
+
+test('S4.1 places reported model and turn duration together in the bottom-right footer', () => withViewer(async page => {
+  await page.addStyleTag({ path: 'src/features/chat/chat.css' });
+  await start(page);
+  await throughTools(page);
+  await lowLevelEnd(page);
+  await emit(page, 13000, 'agent_settled', { aborted: false });
+  const card = page.locator('.message-assistant').filter({ has: page.getByText(answer, { exact: true }) });
+  const headerText = await card.locator('.message-header').innerText();
+  assert.doesNotMatch(headerText, duration, 'duration must not appear in .message-header');
+  assert.ok(!headerText.includes(model.id), 'reported model must not appear in .message-header');
+  const footer = card.locator('.message-footer');
+  const items = footer.locator(':scope > span');
+  assert.equal(await items.count(), 2, 'footer should group model and duration spans together');
+  const layout = await card.evaluate(el => {
+    const content = el.querySelector('.message-content')?.getBoundingClientRect();
+    const footerEl = el.querySelector('.message-footer') as HTMLElement | null;
+    const footerRect = footerEl?.getBoundingClientRect();
+    const spans = footerEl ? Array.from(footerEl.children).map(child => child.getBoundingClientRect()) : [];
+    const style = footerEl ? getComputedStyle(footerEl) : null;
+    return {
+      contentBottom: content?.bottom ?? 0,
+      contentRight: content?.right ?? 0,
+      footerTop: footerRect?.top ?? 0,
+      footerRight: footerRect?.right ?? 0,
+      justifyContent: style?.justifyContent ?? '',
+      spans: spans.map(r => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom })),
+    };
+  });
+  assert.equal(layout.justifyContent, 'flex-end', 'footer should align metadata to the right');
+  assert.ok(layout.footerTop >= layout.contentBottom - 1, `footer should sit below message content; got ${JSON.stringify(layout)}`);
+  assert.ok(Math.abs(layout.contentRight - layout.footerRight) <= 2, `footer should align with card right edge; got ${JSON.stringify(layout)}`);
+  assert.equal(layout.spans.length, 2);
+  const gap = layout.spans[1].left - layout.spans[0].right;
+  assert.ok(gap >= 0 && gap <= 16, `model and duration should sit closely together; got gap=${gap}px`);
 }));
 
 test('S3.2 restores the idless Pi response duration on page reload only for its owner', () => withViewer(async page => {
   await start(page);
   await throughTools(page);
   await lowLevelEnd(page, history, 'web');
-  assert.doesNotMatch(await header(page), duration, 'web-synthesized settle also lacks completion evidence');
+  assert.doesNotMatch(await metadata(page), duration, 'web-synthesized settle also lacks completion evidence');
   await emit(page, 13000, 'agent_settled', { aborted: false });
   await reopen(page, owner, history);
-  const sameOwner = await header(page);
+  const sameOwner = await metadata(page);
   // Cold web hydration adds JSONL entry IDs not present on the live RPC messages.
   const copiedHistory = history.map((entry, index) => ({ ...entry, id: `entry-${index}` }));
   await reopen(page, { ...owner, sessionFile: '/fixture/copy.jsonl' }, copiedHistory);
-  assert.doesNotMatch(await header(page), duration, 'copy with identical sessionId and payload is not the same file');
+  assert.doesNotMatch(await metadata(page), duration, 'copy with identical sessionId and payload is not the same file');
   await reopen(page, { ...owner, cwd: '/different-connection', sessionFile: '/different-connection/one.jsonl' }, copiedHistory);
-  assert.doesNotMatch(await header(page), duration, 'a different connection cannot claim the duration');
+  assert.doesNotMatch(await metadata(page), duration, 'a different connection cannot claim the duration');
   await reopen(page, owner, copiedHistory);
-  const diskHistory = await header(page);
+  const diskHistory = await metadata(page);
   // If two cards in the same owner have the same raw anchors, neither is a unique match.
   await reopen(page, owner, [...history, ...history]);
   const duplicateCards = page.locator('.message-assistant').filter({ has: page.getByText(answer, { exact: true }) });
   assert.equal(await duplicateCards.count(), 2);
-  for (const card of await duplicateCards.all()) assert.doesNotMatch(await card.locator('.message-header').innerText(), duration);
+  for (const card of await duplicateCards.all()) assert.doesNotMatch(await card.locator('.message-footer').evaluateAll(nodes => nodes.map(n => n.textContent ?? '').join(' ')), duration);
   assert.deepEqual([sameOwner, diskHistory].map(value => twelveSeconds.test(value)), [true, true],
     `expected the saved 12 s in raw RPC and disk-backed history; got ${JSON.stringify([sameOwner, diskHistory])}`);
 }));
@@ -216,9 +252,9 @@ for (const missing of ['start', 'finish'] as const) {
     await throughTools(page);
     await lowLevelEnd(page);
     if (missing !== 'finish') await emit(page, 13000, 'agent_settled', { aborted: false });
-    assert.doesNotMatch(await header(page), duration);
+    assert.doesNotMatch(await metadata(page), duration);
     await reopen(page, owner, history);
-    assert.doesNotMatch(await header(page), duration);
+    assert.doesNotMatch(await metadata(page), duration);
   }));
 }
 
@@ -227,9 +263,9 @@ test('S3.3 cancelled after the final response is not completed, even after reope
   await throughTools(page);
   await lowLevelEnd(page);
   await emit(page, 13000, 'agent_settled', { aborted: true });
-  assert.doesNotMatch(await header(page), duration);
+  assert.doesNotMatch(await metadata(page), duration);
   await reopen(page, owner, history);
-  assert.doesNotMatch(await header(page), duration);
+  assert.doesNotMatch(await metadata(page), duration);
 }));
 
 test('S3.3 one run draining a follow-up does not assign elapsed time to either response', () => withViewer(async page => {
@@ -249,7 +285,7 @@ test('S3.3 one run draining a follow-up does not assign elapsed time to either r
   const mixedHistory = [...history, followUpUser, followUpFinal];
   await lowLevelEnd(page, mixedHistory);
   await emit(page, 13000, 'agent_settled', { aborted: false });
-  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await header(page, response), duration);
+  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
   await reopen(page, owner, mixedHistory);
-  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await header(page, response), duration);
+  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
 }));

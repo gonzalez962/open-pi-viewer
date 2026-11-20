@@ -334,6 +334,22 @@
   color: var(--fg-subtle);
 }
 
+.message-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--fg-subtle);
+}
+
+.message-footer > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .message-role {
   font-weight: 600;
   text-transform: uppercase;

@@ -29,6 +29,7 @@ import {
 } from '@core/protocol';
 import type { ChatAction } from '@core/reducer';
 import { hydrateChatMessages, normalizeWorkingDirectory, updateSessionHasMessages } from '@core/session';
+import { TurnDurationTracker, turnOwner } from './turn-duration';
 import { parseQuestionStepInfo } from '@features/chat/hooks/useExtensionUiDialog';
 import type {
   AssistantMessageDelta,
@@ -109,6 +110,7 @@ export class SessionEventController {
   private readonly pendingDialogRequests = new Map<string, PendingDialogRequest>();
   private readonly questionTools: QuestionTool[] = [];
   private readonly outcomeTracker = new AgentOutcomeTracker();
+  private readonly turnDurations = new TurnDurationTracker();
   private readonly completions = new CompletionNotifications();
   private readonly attentionTurns = new Map<string, Set<string>>();
 
@@ -237,6 +239,7 @@ export class SessionEventController {
       this.options.dispatch({ type: 'JOB_CHANGE', payload: { sessionId: jobSessionId, change: jobChange }, targetProjectId });
     }
     if (eventType === 'runtime_snapshot') {
+      this.turnDurations.reset(turnOwner(event.cwd, event.sessionId, event.sessionFile));
       const selected = targetProjectId && this.options.getProjectSessionId
         ? this.options.getProjectSessionId(targetProjectId) : this.options.getCurrentSessionId();
       if (typeof event.sessionId === 'string' && Array.isArray(event.activeJobs)) {
@@ -326,6 +329,10 @@ export class SessionEventController {
       }
       return;
     }
+
+    const owner = turnOwner(event.cwd, eventSessionId, eventSessionFile);
+    const duration = owner && (!this.options.resolveTargetProjectId || targetProjectId)
+      ? this.turnDurations.observe(event, owner) : undefined;
 
     if (eventType === 'message_start') {
       const msg = event.message as AuthoritativeMessage;
@@ -420,7 +427,9 @@ export class SessionEventController {
         targetProjectId,
       });
     } else if (eventType === 'agent_settled') {
-      this.options.dispatch({ type: 'EVENT_AGENT_SETTLED', targetProjectId });
+      this.options.dispatch(duration && owner && eventSessionId && eventSessionFile
+        ? { type: 'EVENT_AGENT_SETTLED', payload: { duration: { ...duration, owner, sessionId: eventSessionId, sessionFile: eventSessionFile } }, targetProjectId }
+        : { type: 'EVENT_AGENT_SETTLED', targetProjectId });
       // When agent settled, run verification to ensure any completed turns are persisted and stats updated
       void this.verifyAndPersistCurrentSession();
       void this.refreshSessionStats(event.cwd as string | undefined, currentSessionId, event.sessionFile as string | undefined);
@@ -479,6 +488,7 @@ export class SessionEventController {
    * Handle incoming Pi bridge status changes.
    */
   public handleStatusChange(status: BridgeStatusPayload): void {
+    if (status.state !== 'connected') this.turnDurations.reset(turnOwner(status.cwd, status.sessionId, status.sessionFile));
     if (status.state === 'disconnected' || status.state === 'error') {
       const cwd = status.cwd ? normalizeWorkingDirectory(status.cwd) : undefined;
       for (let i = this.questionTools.length - 1; i >= 0; i--) {
@@ -538,6 +548,7 @@ export class SessionEventController {
    * Handle incoming bridge error.
    */
   public handleError(error: string): void {
+    this.turnDurations.reset();
     this.questionTools.length = 0;
     this.cancelPendingDialogRequests();
     const targetProjectId = this.resolveTargetProjectId(undefined);
