@@ -1,7 +1,7 @@
 import type { TodoSnapshot } from './todo';
-import type { SubagentTask } from './agent-activity';
+import type { SubagentReport, SubagentTask } from './agent-activity';
 import type { ConnectionState } from './connection';
-import type { AgentActivity, ChatMessage } from './messages';
+import type { AgentActivity, ChatTranscript } from './messages';
 import type { ModelInfo, SessionStats, ThinkingLevel } from './models';
 import type { SessionSummary } from './sessions';
 
@@ -18,7 +18,7 @@ export interface ChatSessionState {
   isChangingModel: boolean;
   sessionStats: SessionStats | null;
   modelStats: Record<string, SessionStats>;
-  messages: ChatMessage[];
+  messages: ChatTranscript;
   hasMoreMessages?: boolean;
   isLoadingOlderMessages?: boolean;
   activeAssistantMessageId: string | null;
@@ -35,6 +35,7 @@ export interface ChatSessionState {
   isSidebarOpen: boolean;
   pendingApprovals?: unknown[];
   subagents: SubagentTask[];
+  subagentReportsBySession?: ReadonlyMap<string, ReadonlyMap<string, SubagentReport>>;
   jobsBySession?: Record<string, string[]>;
   todo?: TodoSnapshot | null;
 }

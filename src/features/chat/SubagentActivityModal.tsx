@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { SubagentTask } from '@core/types/agent-activity';
+import type { SubagentDetail } from '@core/types/agent-activity';
 import type { TranslationKey } from '@shared/i18n';
 import { ThinkingCard, ToolCard } from './ActivityBlocks';
 
@@ -13,7 +13,7 @@ function toolArgs(args: string): Record<string, unknown> | string {
 }
 
 export function SubagentActivityModal({ tasks, selectedId, onSelect, onClose, t }: {
-  tasks: SubagentTask[];
+  tasks: SubagentDetail[];
   selectedId: string;
   onSelect: (id: string) => void;
   onClose: () => void;
@@ -42,6 +42,7 @@ export function SubagentActivityModal({ tasks, selectedId, onSelect, onClose, t 
         <nav aria-label={t('subagent.tasks')}>{tasks.map(task => <button className="subagent-selector" type="button" key={task.id} aria-pressed={task.id === selected.id} onClick={() => onSelect(task.id)}><span className="subagent-selector-name">{task.label || task.agent}</span><span className={`subagent-selector-status status-${task.status}`}>{task.status}</span></button>)}</nav>
         <div className="subagent-thread">
           <h3>{selected.label || selected.agent}</h3>
+          {selected.reportedModel && <p>{t('subagent.reported_model', { model: selected.reportedModel })}</p>}
           {selected.lastStep && <p>{selected.lastStep}</p>}
           <p>{t('subagent.bounded')}</p>
           {tasks.some(task => task.viewerTruncated || task.thread?.viewerTruncated) && <p>{t('subagent.viewer_truncated')}</p>}

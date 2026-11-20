@@ -12,7 +12,7 @@ import { AgentOutcomeTracker } from '@core/agent-outcome';
 import { CompletionNotifications } from '@core/completion-notifications';
 import { parseJobChange } from '@core/job-activity';
 import { parseTodo, todoFromHistory } from '@core/todo';
-import { parseSubagentSnapshot } from '@core/agent-activity';
+import { parseSubagentCompletion, parseSubagentReport, parseSubagentSnapshot } from '@core/agent-activity';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   type NotificationEventType,
@@ -269,8 +269,20 @@ export class SessionEventController {
     const currentSessionId = targetProjectId && this.options.getProjectSessionId
       ? this.options.getProjectSessionId(targetProjectId)
       : this.options.getCurrentSessionId();
-    const eventSessionId = (event as any).sessionId;
+    const eventSessionId = typeof event.sessionId === 'string' ? event.sessionId : undefined;
     const isCurrentSession = !eventSessionId || !currentSessionId || eventSessionId === currentSessionId;
+
+    // A sibling session can finish while another is selected. Only an explicit
+    // bridge owner can assign a report; never substitute the selected session.
+    const eventSessionFile = typeof event.sessionFile === 'string' ? event.sessionFile : undefined;
+    if (eventSessionId?.trim() && eventSessionFile?.trim() && (!this.options.resolveTargetProjectId || targetProjectId)) {
+      const report = eventType === 'tool_execution_end' && typeof event.toolCallId === 'string' && event.toolCallId
+        ? parseSubagentReport(event.toolName, event.result, event.isError)
+        : eventType === 'message_end'
+          ? parseSubagentCompletion(event.message)
+          : undefined;
+      if (report) this.options.dispatch({ type: 'REPORT_SUBAGENT_TASK', payload: { sessionId: eventSessionId, sessionFile: eventSessionFile, report }, targetProjectId });
+    }
 
     if (eventType === 'session_status_changed') {
       const payload = event as any;
@@ -441,7 +453,7 @@ export class SessionEventController {
               if (activeTasks !== null) {
                 this.options.dispatch({
                   type: 'UPDATE_SUBAGENT_ACTIVITY',
-                  payload: { tasks: activeTasks },
+                  payload: { tasks: activeTasks, sessionFile: eventSessionFile },
                   targetProjectId,
                 });
               }

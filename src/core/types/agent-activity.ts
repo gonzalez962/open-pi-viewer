@@ -22,6 +22,20 @@ export interface SubagentTask {
   viewerTruncated?: boolean;
 }
 
+/** Normalized metadata from a Pi tool result or completion, not a live reading. */
+export interface SubagentReport {
+  id: string;
+  agent: string;
+  label?: string;
+  completed: boolean;
+  model?: string;
+}
+
+export type SubagentDetail = Omit<SubagentTask, 'status'> & {
+  status: SubagentTask['status'] | 'completed';
+  reportedModel?: string;
+};
+
 /**
  * Structured RPC payload carried in setWidget for gentle-agents.activity/v1.
  */

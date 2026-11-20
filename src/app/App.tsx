@@ -53,6 +53,7 @@ import {
   createInitialMultiProjectState,
   getActiveProjectState,
 } from '@core/reducer';
+import { getSubagentDetails } from '@core/agent-activity';
 import { hydrateChatMessages } from '@core/session';
 import { SessionSidebar } from '@features/sessions/SessionSidebar';
 import { FileTree } from '@features/workspace/FileTree';
@@ -751,7 +752,8 @@ export const App: React.FC = () => {
 
   const [subagentOpen, setSubagentOpen] = useState(false);
   const [selectedSubagent, setSelectedSubagent] = useState('');
-  const subagentContext = useRef({ tasks: state.subagents, otherDialog: false });
+  const subagentDetails = useMemo(() => state.connectionStatus === 'connected' ? getSubagentDetails(state) : [], [state.connectionStatus, state.subagents, state.messages, state.sessionId, state.sessionFile, state.subagentReportsBySession]);
+  const subagentContext = useRef({ tasks: subagentDetails, otherDialog: false });
   const subagentController = useRef<ReturnType<typeof createSubagentActivityController> | null>(null);
   if (!subagentController.current) {
     subagentController.current = createSubagentActivityController({
@@ -769,10 +771,10 @@ export const App: React.FC = () => {
   useEffect(() => {
     subagentController.current?.close(false);
     setSelectedSubagent('');
-  }, [state.sessionId, projectsRegistry.activeProjectId, state.connectionStatus]);
+  }, [state.sessionId, state.sessionFile, projectsRegistry.activeProjectId, state.connectionStatus]);
   useEffect(() => {
-    if (!state.subagents.length) subagentController.current?.close(false);
-  }, [state.subagents]);
+    if (!subagentDetails.length) subagentController.current?.close(false);
+  }, [subagentDetails]);
 
   const handleDialogBack = useCallback(
     (
@@ -1301,7 +1303,7 @@ export const App: React.FC = () => {
   }, [isMobileNavOpen]);
 
   subagentContext.current = {
-    tasks: state.subagents,
+    tasks: subagentDetails,
     otherDialog: Boolean(activeDialog || showSettings || showKanban || viewingFile || profilesHook.isModalOpen || isFolderPickerOpen || isGitHubCloneOpen || isGitHubCreateOpen || isDefaultDirSetupOpen || commandPalette.isOpen || isMobileNavOpen),
   };
 
@@ -1999,7 +2001,7 @@ export const App: React.FC = () => {
             aria-label={t('empty.history_label')}
             tabIndex={0}
           >
-          <SubagentActivityEntry tasks={state.subagents} onClick={subagentController.current!.onClick} t={t} />
+          <SubagentActivityEntry tasks={subagentDetails} onClick={subagentController.current!.onClick} t={t} />
           {state.messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">
@@ -2437,8 +2439,8 @@ export const App: React.FC = () => {
         </main>
       </div>
 
-      {subagentOpen && state.subagents.length > 0 && !subagentContext.current.otherDialog && (
-        <SubagentActivityModal tasks={state.subagents} selectedId={selectedSubagent} onSelect={setSelectedSubagent} onClose={() => subagentController.current?.close()} t={t} />
+      {subagentOpen && subagentDetails.length > 0 && !subagentContext.current.otherDialog && (
+        <SubagentActivityModal tasks={subagentDetails} selectedId={selectedSubagent} onSelect={setSelectedSubagent} onClose={() => subagentController.current?.close()} t={t} />
       )}
 
       {showKanban && kanbanCwd && (
