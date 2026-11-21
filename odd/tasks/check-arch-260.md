@@ -31,7 +31,7 @@ Rollback: Revert the issue-specific commits in reverse order. Success: `npm run 
 | T2 | S1.1 | worker | done | `3320914`; affected tests 24/24, provider violation gone |
 | T3 | S1.1 | worker | done | `1bd43d5`; affected tests 72/72, Settings violation gone; independent security verification in T5 |
 | T4 | S1.1 | worker | done | `eda4578`; architecture 9/9, Docker SSR 63/63, typecheck passed |
-| T5 | S1 | independent verifier | in_progress | Verify the committed candidate; no full suite or dependency installs |
+| T5 | S1 | independent verifier | done | Isolated RED/GREEN matrix: S1.1 and S1.2 COMPLIANT; independent snapshot verification 7/9 → 9/9, no blocker |
 
 ## Log
 
@@ -40,5 +40,6 @@ Rollback: Revert the issue-specific commits in reverse order. Success: `npm run 
 - **E1** At `a59324f`, the existing command reproduced both reported failures (1 exit; 7/9). Use those existing tests as RED; label their test names for gate matching without changing the assertions, in a tests-only checkpoint before making either green. Do not add duplicate architecture checks. Test only the affected modules.
 - **D1** Choice: use existing layer aliases in tests, keeping Docker dynamic imports after the CSS stub. Alternative: new aliases or exceptions. Rationale: `tsconfig.app.json` and Vite already agree on aliases.
 - **D2** Choice: pure stats helper to core, PAT helpers verbatim to infra, with original feature exports re-exporting the same functions. Alternative: duplicate helpers or rewrite callers. Rationale: `session-actions.ts` helper uses only core types and an injected fetch; PAT helpers already depend on infra and Tauri. Preserve guard behavior, PAT data flow, storage key, return types and permissions.
+- **E3** Gate passed on `080caef`: both cases COMPLIANT; tests-only RED, skip-marker and regression checks passed. Independent verifier used snapshot `044dd163-9a55-4a05-be6a-e4c00611d284`: baseline exit 1, 7/9; candidate exit 0, 9/9. Credential helpers were unchanged and mocked before/after behavior and legacy export identity matched. Docker composition, CSS, modal and toast wiring matched by source comparison; no live/browser verification or full suite run. Focused TSX and app typecheck passed locally, not rerun in snapshots without dependencies.
 - **E2** Delivery slice boundary: `1bd43d5` closes the credential extraction (315 authored lines cumulative); `eda4578` is a separate 118-line Docker composition slice, for 419 cumulative lines excluding the task document. No remote delivery authorized.
 - **D3** Choice: app-owned Docker adapter supplies the existing confirmation and toast UI to the feature. Alternative: expand the narrowly scoped shared React exception. Rationale: `src/app/App.tsx` is the only production DockerView caller; keep its behavior including modal and toast fallback, and exercise the adapter for old standalone test uses. Do not introduce no-op defaults or duplicate toast contexts. Keep `UpdateLogModal` and `subscribeDockerToasts` exports and avoid changing the feature controller.
