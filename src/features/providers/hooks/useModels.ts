@@ -19,7 +19,7 @@ import {
   mergeProfileCatalog,
 } from '../providers';
 import { executeModelSelection } from '../lib/modelSelection';
-import { fetchSwitchedSessionStats } from '@features/sessions/session-actions';
+import { fetchSwitchedSessionStats } from '@core/session-stats';
 import type { ModelInfo, ModelThinkingLevelsMap, ThinkingLevel } from '@core/types/models';
 import type { ConnectionState } from '@core/types/connection';
 import type { ChatAction } from '@core/reducer';
