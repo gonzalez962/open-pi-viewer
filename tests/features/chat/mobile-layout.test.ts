@@ -224,6 +224,21 @@ test('mobile-layout: the inline context percentage is hidden only at the mobile 
   assert.equal(css.match(/\.stats-btn \.stats-percent\b/g)?.length, 1);
 });
 
+test('mobile-layout: tool headers hide the argument only at the mobile breakpoint', () => {
+  const css = readFileSync('src/features/chat/chat.css', 'utf8');
+  const mobileCss = css.match(/^@media \(max-width: 768px\) \{([\s\S]*?)^\}/m)?.[1] ?? '';
+  assert.match(mobileCss, /\.tool-arg-badge\s*\{[^}]*display:\s*none;/);
+  assert.match(css, /^\.tool-arg-badge\s*\{[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/m);
+});
+
+test('mobile-layout: tool headers keep the original status pill and one row', () => {
+  const css = readFileSync('src/features/chat/chat.css', 'utf8');
+  const mobileCss = css.match(/^@media \(max-width: 768px\) \{([\s\S]*?)^\}/m)?.[1] ?? '';
+  assert.match(css, /^\.tool-card-header\s*\{[^}]*display:\s*flex;/m);
+  assert.match(css, /^\.tool-status-badge\s*\{[^}]*padding:\s*2px 8px;[^}]*border-radius:\s*12px;/m);
+  assert.doesNotMatch(mobileCss, /\.tool-card-header\s*\{|\.tool-status-(?:badge|label|dot)\b/);
+});
+
 test('mobile-layout: expanded options expose secondary controls and retain desktop Stop/Queue order', () => {
   const mobileOptions = { open: true, onToggle: () => {}, relatedIds: [] };
   const html = renderToStaticMarkup(React.createElement(PromptControls, createDefaultProps({

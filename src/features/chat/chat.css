@@ -4323,6 +4323,10 @@
     box-sizing: border-box;
   }
 
+  .tool-arg-badge {
+    display: none;
+  }
+
   /* Composer & Footer */
   .app-footer {
     padding: 10px 12px;
