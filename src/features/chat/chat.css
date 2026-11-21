@@ -984,6 +984,17 @@
   padding-top: 2px;
 }
 
+/* Keep the desktop flex layout and mobile popover anchor unchanged. */
+.prompt-secondary-controls:not([hidden]),
+.prompt-secondary-slot:not([hidden]) {
+  display: contents;
+}
+
+.prompt-controls-bar > .btn-cancel[hidden],
+.prompt-attachments-list[hidden] {
+  display: none;
+}
+
 /* Unified Prompt Action Button (Send / Cancel) */
 .prompt-action-btn {
   display: inline-flex;
@@ -1089,7 +1100,8 @@
   box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
-.prompt-control-btn:disabled {
+.prompt-control-btn:disabled,
+.prompt-options-toggle[aria-disabled="true"] {
   opacity: 0.55;
   cursor: not-allowed;
 }
@@ -4331,6 +4343,14 @@
     gap: 4px;
   }
 
+  #prompt-status-hint {
+    display: none;
+  }
+
+  .stats-btn .stats-percent {
+    display: none;
+  }
+
   .prompt-hint {
     font-size: 10.5px;
   }
@@ -4360,6 +4380,14 @@
     padding-top: 4px;
     width: 100%;
     max-width: 100%;
+  }
+
+  .prompt-secondary-controls:not([hidden]) {
+    display: flex;
+    align-items: center;
+    flex: 0 0 100%;
+    flex-wrap: wrap;
+    gap: inherit;
   }
 
   .prompt-action-btn {

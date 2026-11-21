@@ -546,6 +546,8 @@
   "settings.file_tree_interval_60s": "1 minute",
 
   "prompt_controls.toolbar_aria": "Prompt controls and session context",
+  "prompt_controls.more_options": "More options",
+  "prompt_controls.attachment_count": "Attachments ({count})",
   "prompt_controls.default_model": "Select model",
   "prompt_controls.select_model_title": "Active Model — Click to switch model",
   "prompt_controls.available_models": "Available models",

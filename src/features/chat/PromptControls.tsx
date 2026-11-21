@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react';
 import type { ModelInfo, ThinkingLevel, SessionStats } from '@core/types/models';
 import type { ProfileSummary } from '@core/types/profiles';
 import type { McpServerConfig } from '@core/types/mcp';
@@ -74,6 +74,7 @@ export interface PromptControlsProps {
   onAttachFiles?: (files: AttachedFile[]) => void;
   supportsFiles?: boolean;
   defaultFileAttachOpen?: boolean;
+  mobileOptions?: { open: boolean; lockedOpen?: boolean; onToggle: () => void; relatedIds: string[] };
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -117,12 +118,13 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   defaultEnrollConfirmOpen = false,
   defaultExtPopoverOpen = false,
   defaultModelPopoverOpen = false,
-  attachedFiles: _attachedFiles,
+  attachedFiles,
   speechPreferences: _speechPreferences,
   onTranscription: _onTranscription,
   onAttachFiles,
   supportsFiles: supportsFilesProp,
   defaultFileAttachOpen = false,
+  mobileOptions,
   t,
 }) => {
   const [isModelOpen, setIsModelOpen] = useState(defaultModelPopoverOpen);
@@ -143,6 +145,10 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   const [togglingResourceId, setTogglingResourceId] = useState<string | null>(null);
   const [isConfirmingCancel, setIsConfirmingCancel] = useState(false);
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const secondaryControlsId = useId();
+  const stopId = useId();
+  const secondaryControlsHidden = mobileOptions?.open === false;
+  const pendingAttachmentCount = attachedFiles?.length ?? 0;
 
   const modelRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -205,6 +211,25 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
     };
   }, []);
 
+  const closePopovers = useCallback(() => {
+    setIsModelOpen(false);
+    setIsProfileOpen(false);
+    setIsFileAttachOpen(false);
+    setIsMcpOpen(false);
+    setIsExtOpen(false);
+    setIsThinkingOpen(false);
+    setIsStatsOpen(false);
+    setIsCloudPopoverOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (secondaryControlsHidden) {
+      closePopovers();
+      setShowEnrollConfirm(false);
+      setEnrollError(null);
+    }
+  }, [secondaryControlsHidden, closePopovers]);
+
   // Close menus on outside click or handle Escape cancellation
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -237,20 +262,15 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showEnrollConfirm) {
+        if (!secondaryControlsHidden && showEnrollConfirm) {
           setShowEnrollConfirm(false);
           setEnrollError(null);
           return;
         }
-        if (isModelOpen || isProfileOpen || isFileAttachOpen || isMcpOpen || isExtOpen || isThinkingOpen || isStatsOpen || isCloudPopoverOpen) {
-          setIsModelOpen(false);
-          setIsProfileOpen(false);
-          setIsFileAttachOpen(false);
-          setIsMcpOpen(false);
-          setIsExtOpen(false);
-          setIsThinkingOpen(false);
-          setIsStatsOpen(false);
-          setIsCloudPopoverOpen(false);
+        if (isStatsOpen || (!secondaryControlsHidden && (
+          isModelOpen || isProfileOpen || isFileAttachOpen || isMcpOpen || isExtOpen || isThinkingOpen || isCloudPopoverOpen
+        ))) {
+          closePopovers();
           return;
         }
       }
@@ -278,6 +298,8 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [
+    secondaryControlsHidden,
+    closePopovers,
     isModelOpen,
     isProfileOpen,
     isFileAttachOpen,
@@ -435,47 +457,106 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
     void attachFiles(files);
   };
 
-  return (
-    <div ref={toolbarRef} className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
-      {/* 0. Unified Action Button (Send / Cancel / Confirm). While busy, the abort button
-          stays available; a queue-send button joins it only when there is draft text ready
-          to queue as a followUp, so the idle layout is unaffected. */}
-      {isBusy ? (
-        <>
-          <button
-            type="button"
-            className={`prompt-action-btn btn-cancel${isConfirmingCancel ? ' btn-confirming' : ''}`}
-            onClick={handleCancelClick}
-            title={isConfirmingCancel ? t('prompt.confirm_cancel_title') : t('prompt.stop_title')}
-          >
-            {isConfirmingCancel ? t('prompt.confirm_cancel') : t('action.stop')}
-          </button>
-          {canSend && (
-            <button
-              type="submit"
-              className="prompt-action-btn btn-send"
-              title={t('prompt.queue_title')}
-              onClick={onSend ? (e) => { e.preventDefault(); onSend(); } : undefined}
-            >
-              {t('action.queue')}
-            </button>
+  const contextMeter = (
+    <div className="prompt-control-wrapper stats-control-wrapper" ref={statsRef}>
+      <button
+        type="button"
+        className={`prompt-control-btn stats-btn level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}
+        onClick={() => {
+          setIsStatsOpen(!isStatsOpen);
+          setIsModelOpen(false);
+          setIsProfileOpen(false);
+          setIsFileAttachOpen(false);
+          setIsMcpOpen(false);
+          setIsExtOpen(false);
+          setIsThinkingOpen(false);
+          setIsCloudPopoverOpen(false);
+        }}
+        disabled={!isConnected}
+        aria-expanded={isStatsOpen}
+        aria-haspopup="dialog"
+        title={t('prompt_controls.context_meter_title')}
+      >
+        {/* Mini progress ring or bar */}
+        <span className="context-mini-bar" aria-hidden="true">
+          <span
+            className="context-mini-fill"
+            style={{ width: `${Math.min(100, Math.max(0, usagePercent))}%` }}
+          />
+        </span>
+        <span className="control-text stats-text">
+          {contextWindow > 0 ? (
+            <>
+              <span className="stats-tokens">{formatTokens(contextTokens)}</span>
+              <span className="stats-separator">/</span>
+              <span className="stats-limit">{formatTokens(contextWindow)}</span>
+              <span className="stats-percent">({formatPercent(usagePercent)}%)</span>
+            </>
+          ) : (
+            <span>{formatTokens(contextTokens)} tokens</span>
           )}
-        </>
-      ) : (
-        <button
-          type="submit"
-          className="prompt-action-btn btn-send"
-          disabled={!canSend}
-          aria-disabled={!canSend}
-          title={t('prompt.send_title')}
-          onClick={onSend ? (e) => { e.preventDefault(); onSend(); } : undefined}
-        >
-          {t('action.send')}
-        </button>
+        </span>
+      </button>
+
+      {isStatsOpen && (
+        <div className="prompt-popover stats-popover" role="dialog" aria-label={t('prompt_controls.session_stats')}>
+          <div className="stats-header">
+            <span className="stats-title">{t('prompt_controls.context_details_title')}</span>
+            <span className={`stats-badge level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}>{formatPercent(usagePercent)}%</span>
+          </div>
+
+          <div className="stats-meter-large">
+            <div
+              className={`stats-meter-fill level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}
+              style={{ width: `${Math.min(100, Math.max(0, usagePercent))}%` }}
+            />
+          </div>
+
+          <div className="stats-metrics-grid">
+            <div className="metric-row">
+              <span className="metric-label">{t('prompt_controls.context_used')}</span>
+              <span className="metric-value">
+                {formatTokens(contextTokens)} / {formatTokens(contextWindow)} tokens
+              </span>
+            </div>
+            <div className="metric-row">
+              <span className="metric-label">{t('prompt_controls.input_tokens')}</span>
+              <span className="metric-value">{formatTokens(sessionStats?.tokens?.input ?? 0)}</span>
+            </div>
+            <div className="metric-row">
+              <span className="metric-label">{t('prompt_controls.output_tokens')}</span>
+              <span className="metric-value">{formatTokens(sessionStats?.tokens?.output ?? 0)}</span>
+            </div>
+            {(sessionStats?.tokens?.cacheRead != null && sessionStats.tokens.cacheRead > 0) && (
+              <div className="metric-row">
+                <span className="metric-label">{t('prompt_controls.cache_read_tokens')}</span>
+                <span className="metric-value">{formatTokens(sessionStats.tokens.cacheRead)}</span>
+              </div>
+            )}
+            {(sessionStats?.tokens?.cacheWrite != null && sessionStats.tokens.cacheWrite > 0) && (
+              <div className="metric-row">
+                <span className="metric-label">{t('prompt_controls.cache_write_tokens')}</span>
+                <span className="metric-value">{formatTokens(sessionStats.tokens.cacheWrite)}</span>
+              </div>
+            )}
+            <div className="metric-row total-row">
+              <span className="metric-label">{t('prompt_controls.total_session_tokens')}</span>
+              <span className="metric-value">{formatTokens(sessionStats?.tokens?.total ?? 0)}</span>
+            </div>
+            {sessionStats?.cost != null && sessionStats.cost > 0 && (
+              <div className="metric-row cost-row">
+                <span className="metric-label">{t('prompt_controls.estimated_cost')}</span>
+                <span className="metric-value">{formatCost(sessionStats.cost)}</span>
+              </div>
+            )}
+          </div>
+        </div>
       )}
+    </div>
+  );
 
-      {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}
-
+  const selectors = (
+    <div id={secondaryControlsId} className="prompt-secondary-controls" hidden={secondaryControlsHidden}>
       {/* File Attachment Selector */}
       {supportsFiles && (
         <div className="prompt-control-wrapper file-attach-wrapper" ref={fileAttachRef}>
@@ -915,102 +996,7 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
         </div>
       )}
 
-      {/* 3. Context & Token Usage Meter */}
-      <div className="prompt-control-wrapper stats-control-wrapper" ref={statsRef}>
-        <button
-          type="button"
-          className={`prompt-control-btn stats-btn level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}
-          onClick={() => {
-            setIsStatsOpen(!isStatsOpen);
-            setIsModelOpen(false);
-            setIsProfileOpen(false);
-            setIsFileAttachOpen(false);
-            setIsMcpOpen(false);
-            setIsExtOpen(false);
-            setIsThinkingOpen(false);
-            setIsCloudPopoverOpen(false);
-          }}
-          disabled={!isConnected}
-          aria-expanded={isStatsOpen}
-          aria-haspopup="dialog"
-          title={t('prompt_controls.context_meter_title')}
-        >
-          {/* Mini progress ring or bar */}
-          <span className="context-mini-bar" aria-hidden="true">
-            <span
-              className="context-mini-fill"
-              style={{ width: `${Math.min(100, Math.max(0, usagePercent))}%` }}
-            />
-          </span>
-          <span className="control-text stats-text">
-            {contextWindow > 0 ? (
-              <>
-                <span className="stats-tokens">{formatTokens(contextTokens)}</span>
-                <span className="stats-separator">/</span>
-                <span className="stats-limit">{formatTokens(contextWindow)}</span>
-                <span className="stats-percent">({formatPercent(usagePercent)}%)</span>
-              </>
-            ) : (
-              <span>{formatTokens(contextTokens)} tokens</span>
-            )}
-          </span>
-        </button>
-
-        {isStatsOpen && (
-          <div className="prompt-popover stats-popover" role="dialog" aria-label={t('prompt_controls.session_stats')}>
-            <div className="stats-header">
-              <span className="stats-title">{t('prompt_controls.context_details_title')}</span>
-              <span className={`stats-badge level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}>{formatPercent(usagePercent)}%</span>
-            </div>
-
-            <div className="stats-meter-large">
-              <div
-                className={`stats-meter-fill level-${usageLevel} ${isHighContext ? 'context-pulse-red' : ''}`}
-                style={{ width: `${Math.min(100, Math.max(0, usagePercent))}%` }}
-              />
-            </div>
-
-            <div className="stats-metrics-grid">
-              <div className="metric-row">
-                <span className="metric-label">{t('prompt_controls.context_used')}</span>
-                <span className="metric-value">
-                  {formatTokens(contextTokens)} / {formatTokens(contextWindow)} tokens
-                </span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">{t('prompt_controls.input_tokens')}</span>
-                <span className="metric-value">{formatTokens(sessionStats?.tokens?.input ?? 0)}</span>
-              </div>
-              <div className="metric-row">
-                <span className="metric-label">{t('prompt_controls.output_tokens')}</span>
-                <span className="metric-value">{formatTokens(sessionStats?.tokens?.output ?? 0)}</span>
-              </div>
-              {(sessionStats?.tokens?.cacheRead != null && sessionStats.tokens.cacheRead > 0) && (
-                <div className="metric-row">
-                  <span className="metric-label">{t('prompt_controls.cache_read_tokens')}</span>
-                  <span className="metric-value">{formatTokens(sessionStats.tokens.cacheRead)}</span>
-                </div>
-              )}
-              {(sessionStats?.tokens?.cacheWrite != null && sessionStats.tokens.cacheWrite > 0) && (
-                <div className="metric-row">
-                  <span className="metric-label">{t('prompt_controls.cache_write_tokens')}</span>
-                  <span className="metric-value">{formatTokens(sessionStats.tokens.cacheWrite)}</span>
-                </div>
-              )}
-              <div className="metric-row total-row">
-                <span className="metric-label">{t('prompt_controls.total_session_tokens')}</span>
-                <span className="metric-value">{formatTokens(sessionStats?.tokens?.total ?? 0)}</span>
-              </div>
-              {sessionStats?.cost != null && sessionStats.cost > 0 && (
-                <div className="metric-row cost-row">
-                  <span className="metric-label">{t('prompt_controls.estimated_cost')}</span>
-                  <span className="metric-value">{formatCost(sessionStats.cost)}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      {!mobileOptions && contextMeter}
 
       {/* 4. MCP Server Selector */}
       <div className="prompt-control-wrapper mcp-control-wrapper" ref={mcpRef}>
@@ -1546,6 +1532,55 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
           )}
         </div>
       )}
+    </div>
+  );
+
+  return (
+    <div ref={toolbarRef} className="prompt-controls-bar" role="toolbar" aria-label={t('prompt_controls.toolbar_aria')}>
+      {isBusy && (
+        <button
+          type="button"
+          id={stopId}
+          hidden={secondaryControlsHidden}
+          className={`prompt-action-btn btn-cancel${isConfirmingCancel ? ' btn-confirming' : ''}`}
+          onClick={handleCancelClick}
+          title={isConfirmingCancel ? t('prompt.confirm_cancel_title') : t('prompt.stop_title')}
+        >
+          {isConfirmingCancel ? t('prompt.confirm_cancel') : t('action.stop')}
+        </button>
+      )}
+      {(!isBusy || canSend) && (
+        <button
+          type="submit"
+          className="prompt-action-btn btn-send"
+          disabled={!canSend}
+          aria-disabled={isBusy ? undefined : !canSend}
+          title={t(isBusy ? 'prompt.queue_title' : 'prompt.send_title')}
+          onClick={onSend ? (e) => { e.preventDefault(); onSend(); } : undefined}
+        >
+          {t(isBusy ? 'action.queue' : 'action.send')}
+        </button>
+      )}
+      {mobileOptions && (
+        <button
+          type="button"
+          className="prompt-control-btn prompt-options-toggle"
+          aria-expanded={mobileOptions.open}
+          aria-disabled={mobileOptions.lockedOpen || undefined}
+          aria-controls={[secondaryControlsId, ...(isBusy ? [stopId] : []), ...mobileOptions.relatedIds].join(' ')}
+          onClick={mobileOptions.lockedOpen ? undefined : mobileOptions.onToggle}
+        >
+          {t('prompt_controls.more_options')}
+        </button>
+      )}
+      {mobileOptions && contextMeter}
+      {secondaryControlsHidden && pendingAttachmentCount > 0 && (
+        <span className="prompt-attachment-notice" role="status">
+          {t('prompt_controls.attachment_count', { count: pendingAttachmentCount })}
+        </span>
+      )}
+      {attachmentNotice && <span className="prompt-attachment-notice" role="status">{attachmentNotice}</span>}
+      {selectors}
     </div>
   );
 };

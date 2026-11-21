@@ -546,6 +546,8 @@
   "settings.file_tree_interval_60s": "1 minuto",
 
   "prompt_controls.toolbar_aria": "Controles de prompt y contexto de sesión",
+  "prompt_controls.more_options": "Más opciones",
+  "prompt_controls.attachment_count": "Adjuntos ({count})",
   "prompt_controls.default_model": "Seleccionar modelo",
   "prompt_controls.select_model_title": "Modelo activo — Clic para cambiar de modelo",
   "prompt_controls.available_models": "Modelos disponibles",

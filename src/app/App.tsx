@@ -510,15 +510,19 @@ export const App: React.FC = () => {
   const multiProjectStateRef = useRef(multiProjectState);
   multiProjectStateRef.current = multiProjectState;
   const [attentionQueue, setAttentionQueue] = useState<ProjectAttentionEvent[]>([]);
-  const [isAttentionMobile, setIsAttentionMobile] = useState(checkIsMobileViewport);
+  const [isMobile, setIsMobile] = useState(checkIsMobileViewport);
+  const [mobilePromptOptionsOpen, setMobilePromptOptionsOpen] = useState(false);
+  const [isPromptRecording, setIsPromptRecording] = useState(false);
+  const mobilePromptOptionsExpanded = mobilePromptOptionsOpen || isPromptRecording;
+  const secondaryPromptControlsHidden = isMobile && !mobilePromptOptionsExpanded;
   const dismissAttention = useCallback(() => setAttentionQueue(queue => queue.slice(1)), []);
-  useProjectAttentionTimeout(isAttentionMobile ? attentionQueue[0] ?? null : null, dismissAttention);
+  useProjectAttentionTimeout(isMobile ? attentionQueue[0] ?? null : null, dismissAttention);
 
   useEffect(() => {
     const onResize = () => {
-      const isMobile = checkIsMobileViewport();
-      setIsAttentionMobile(isMobile);
-      if (!isMobile) setAttentionQueue([]);
+      const mobile = checkIsMobileViewport();
+      setIsMobile(mobile);
+      if (!mobile) setAttentionQueue([]);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -528,9 +532,9 @@ export const App: React.FC = () => {
     setAttentionQueue(queue => pruneAttention(queue, {
       projects: projectsRegistry.projects,
       activeProjectId: projectsRegistry.activeProjectId,
-      isMobile: isAttentionMobile,
+      isMobile,
     }));
-  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isAttentionMobile]);
+  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isMobile]);
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
@@ -1517,7 +1521,7 @@ export const App: React.FC = () => {
         event={attentionQueue[0] ?? null}
         projects={projectsRegistry.projects}
         activeProjectId={projectsRegistry.activeProjectId}
-        isMobile={isAttentionMobile}
+        isMobile={isMobile}
         locale={preferences.language}
         onDismiss={dismissAttention}
       />
@@ -2358,7 +2362,7 @@ export const App: React.FC = () => {
               </span>
             </div>
 
-            <PendingAttachments key={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} draftKey={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} files={attachedFiles} onRemove={removeAttachedFile} t={t} />
+            <PendingAttachments key={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} draftKey={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} id="prompt-pending-attachments" hidden={secondaryPromptControlsHidden} files={attachedFiles} onRemove={removeAttachedFile} t={t} />
 
             <TodoPanel todo={state.todo} expanded={todoExpanded} onToggle={() => setTodoExpanded(value => !value)} t={t} />
             <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
@@ -2399,13 +2403,16 @@ export const App: React.FC = () => {
               />
 
               {preferences.speech?.sttEnabled && (
-                <PromptMicButton
-                  preferences={preferences.speech}
-                  onTranscription={(transcribedText) => {
-                    setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
-                  }}
-                  disabled={isBusy}
-                />
+                <span id="prompt-mic-options" className="prompt-secondary-slot" hidden={secondaryPromptControlsHidden}>
+                  <PromptMicButton
+                    preferences={preferences.speech}
+                    onRecordingChange={setIsPromptRecording}
+                    onTranscription={(transcribedText) => {
+                      setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+                    }}
+                    disabled={isBusy}
+                  />
+                </span>
               )}
             </div>
 
@@ -2421,6 +2428,15 @@ export const App: React.FC = () => {
             )}
 
             <PromptControls
+              mobileOptions={isMobile ? {
+                open: mobilePromptOptionsExpanded,
+                lockedOpen: isPromptRecording,
+                onToggle: () => setMobilePromptOptionsOpen(open => !open),
+                relatedIds: [
+                  ...(attachedFiles.length > 0 ? ['prompt-pending-attachments'] : []),
+                  ...(preferences.speech?.sttEnabled ? ['prompt-mic-options'] : []),
+                ],
+              } : undefined}
               modelInfo={effectiveModelInfo}
               speechPreferences={preferences.speech}
               onTranscription={(transcribedText) => {

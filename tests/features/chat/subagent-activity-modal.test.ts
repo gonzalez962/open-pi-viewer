@@ -169,13 +169,15 @@ test('the named subagent button selects its task and Escape restores the explici
   assert.equal(button.type, 'button');
   assert.equal(button.props.type, 'button');
   assert.equal(button.props['aria-haspopup'], 'dialog');
+  assert.ok('children' in button.props);
   assert.equal(button.props.children, 'Reviewer');
-  button.props.onClick({ currentTarget: trigger });
+  const clickEvent = { currentTarget: trigger } as unknown as Parameters<typeof button.props.onClick>[0];
+  button.props.onClick(clickEvent);
   controller.close();
   assert.deepEqual(actions, ['two', true, false, 'focus trigger']);
 
   actions.length = 0;
-  button.props.onClick({ currentTarget: trigger });
+  button.props.onClick(clickEvent);
   trigger.isConnected = false;
   controller.close();
   assert.deepEqual(actions, ['two', true, false]);
