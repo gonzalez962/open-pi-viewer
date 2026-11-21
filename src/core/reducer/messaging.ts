@@ -39,7 +39,7 @@ export type MessagingAction =
       payload: { message: AuthoritativeMessage };
     }
   | { type: 'EVENT_AGENT_END'; payload?: { willRetry?: boolean } }
-  | { type: 'EVENT_AGENT_SETTLED' }
+  | { type: 'EVENT_AGENT_SETTLED'; payload?: { duration?: { owner: string; sessionId: string; sessionFile: string; timestamp: number; text: string; elapsedMs: number } } }
   | { type: 'ABORT_CLICKED' }
   | { type: 'ABORT_COMPLETED'; payload?: { promptId?: string | null } }
   | { type: 'CLEAR_MESSAGES' }
@@ -374,6 +374,7 @@ export function messagingReducer(
       const sentAtMs = readMessageInstant(msg.timestamp);
       const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
       const reportedModels = readReportedAssistantModels(msg);
+      const responseTimestamp = typeof msg.timestamp === 'number' && Number.isFinite(msg.timestamp) ? msg.timestamp : undefined;
       if (errorText) parsedBlocks.push({ type: 'text', text: errorText });
 
       // Reconcile authoritative text and blocks without duplicate tokens
@@ -432,6 +433,7 @@ export function messagingReducer(
             isStreaming: false,
             ...messageInstant,
             ...(reportedModels ? { reportedModels } : {}),
+            ...(responseTimestamp !== undefined ? { responseTimestamp } : {}),
             blocks: reconciledBlocks.length > 0 ? reconciledBlocks : undefined,
           };
         }
@@ -451,6 +453,7 @@ export function messagingReducer(
           isStreaming: false,
           ...messageInstant,
           ...(reportedModels ? { reportedModels } : {}),
+          ...(responseTimestamp !== undefined ? { responseTimestamp } : {}),
           blocks: parsedBlocks.length > 0 ? parsedBlocks : undefined,
         });
       }
@@ -478,10 +481,17 @@ export function messagingReducer(
       // This is the authoritative moment when the full session-level run settles.
       // Pi drains its follow-up queue before settling, so no message is still queued.
       const hasQueued = state.messages.some((m) => m.isQueued);
+      const duration = action.payload?.duration;
+      const matches = duration && !hasQueued && state.connectionStatus === 'connected'
+        && state.sessionId === duration.sessionId && state.sessionFile === duration.sessionFile
+        ? state.messages.filter(m => m.role === 'assistant' && m.responseTimestamp === duration.timestamp && m.content === duration.text)
+        : [];
+      const measured = matches.length === 1 && !matches[0].isCancelled && !matches[0].isStreaming ? matches[0] : undefined;
       return {
         ...state,
-        messages: hasQueued
-          ? state.messages.map((m) => (m.isQueued ? { ...m, isQueued: false } : m))
+        messages: hasQueued || measured
+          ? state.messages.map(m => m === measured && duration ? { ...m, turnDurationMs: duration.elapsedMs, turnDurationOwner: duration.owner }
+            : m.isQueued ? { ...m, isQueued: false } : m)
           : state.messages,
         agentActivity: 'idle',
         pendingPromptId: null,
