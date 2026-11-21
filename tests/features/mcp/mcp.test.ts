@@ -313,7 +313,7 @@ test('mcp bridge: deleteMcpServerPi invokes delete_mcp_server with proper parame
   });
 });
 
-test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage roundtrips correctly when non-Tauri', async () => {
+test('mcp bridge: non-Tauri preview roundtrips unprotected entries and rejects protected writes', async () => {
   const originalLocalStorage = (globalThis as unknown as { localStorage: unknown }).localStorage;
   const storageMap = new Map<string, string>();
 
@@ -325,14 +325,10 @@ test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage
   };
 
   try {
-    // 1. Add new stdio server with project scope
+    // Save and read a project-scoped preview entry without protected values.
     const addStdioRes = await saveMcpServerPi({
       name: 'fs-server',
-      server: {
-        command: 'npx',
-        args: ['-y', '@modelcontextprotocol/server-filesystem', '/tmp'],
-        env: { FOO: 'bar' },
-      },
+      server: { command: 'npx' },
       cwd: '/mock/project',
       scope: 'project',
     });
@@ -345,42 +341,44 @@ test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage
     const fsServer = serversAfterAdd.servers.find((s) => s.name === 'fs-server');
     assert.ok(fsServer);
     assert.strictEqual(fsServer.command, 'npx');
-    assert.deepStrictEqual(fsServer.args, ['-y', '@modelcontextprotocol/server-filesystem', '/tmp']);
+    assert.strictEqual(fsServer.args, undefined);
     assert.strictEqual(fsServer.serverType, 'stdio');
-    assert.deepStrictEqual(fsServer.envKeys, ['FOO']);
-    assert.deepStrictEqual(fsServer.env, { FOO: 'bar' });
+    assert.deepStrictEqual(fsServer.envKeys, []);
     assert.strictEqual(fsServer.enabled, true);
     assert.strictEqual(fsServer.disabled, false);
     assert.strictEqual(fsServer.scope, 'project');
 
-    // 2. Add new remote SSE server with global scope
-    const addSseRes = await saveMcpServerPi({
+    const storedBeforeRejection = [...storageMap];
+    const rejectedProjectEdit = await saveMcpServerPi({
+      name: 'fs-server',
+      server: { command: 'node', args: ['filesystem.js'] },
+      cwd: '/mock/project',
+      scope: 'project',
+    });
+    assert.deepStrictEqual(rejectedProjectEdit, { success: false, name: 'fs-server', path: '' });
+    assert.deepStrictEqual([...storageMap], storedBeforeRejection);
+    assert.deepStrictEqual(await getMcpServersPi('/mock/project'), serversAfterAdd);
+
+    const rejectedGlobalAdd = await saveMcpServerPi({
       name: 'remote-sse',
-      server: {
-        url: 'https://mcp.example.com/sse',
-        headers: { Authorization: 'Bearer test-token' },
-      },
+      server: { url: 'https://mcp.example.com/sse', headers: { Authorization: 'Bearer fixture' } },
       scope: 'global',
     });
-    assert.strictEqual(addSseRes.success, true);
-    assert.strictEqual(addSseRes.path, '~/.pi/agent/mcp.json');
+    assert.deepStrictEqual(rejectedGlobalAdd, { success: false, name: 'remote-sse', path: '' });
+    assert.deepStrictEqual([...storageMap], storedBeforeRejection);
+    assert.deepStrictEqual(await getMcpServersPi('/mock/project'), serversAfterAdd);
 
-    const serversWithSse = await getMcpServersPi();
-    const sseServer = serversWithSse.servers.find((s) => s.name === 'remote-sse');
-    assert.ok(sseServer);
-    assert.strictEqual(sseServer.url, 'https://mcp.example.com/sse');
-    assert.strictEqual(sseServer.serverType, 'sse');
-    assert.deepStrictEqual(sseServer.headers, { Authorization: 'Bearer test-token' });
-    assert.strictEqual(sseServer.scope, 'global');
+    const addGlobalRes = await saveMcpServerPi({
+      name: 'global-tool',
+      server: { command: 'node' },
+      scope: 'global',
+    });
+    assert.deepStrictEqual(addGlobalRes, { success: true, name: 'global-tool', path: '~/.pi/agent/mcp.json' });
+    assert.strictEqual((await getMcpServersPi()).servers.find((s) => s.name === 'global-tool')?.scope, 'global');
 
-    // 3. Edit existing server (update args and env)
     const editRes = await saveMcpServerPi({
       name: 'fs-server',
-      server: {
-        command: 'node',
-        args: ['filesystem.js'],
-        env: { FOO: 'updated', BAR: 'added' },
-      },
+      server: { command: 'node' },
       cwd: '/mock/project',
       scope: 'project',
     });
@@ -390,18 +388,14 @@ test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage
     const updatedFs = serversAfterEdit.servers.find((s) => s.name === 'fs-server');
     assert.ok(updatedFs);
     assert.strictEqual(updatedFs.command, 'node');
-    assert.deepStrictEqual(updatedFs.args, ['filesystem.js']);
-    assert.deepStrictEqual(updatedFs.envKeys, ['BAR', 'FOO']);
-    assert.deepStrictEqual(updatedFs.env, { FOO: 'updated', BAR: 'added' });
+    assert.strictEqual(updatedFs.args, undefined);
+    assert.deepStrictEqual(updatedFs.envKeys, []);
 
-    // 4. Rename existing server using oldName
+    // Rename the allowed entry without losing its command.
     const renameRes = await saveMcpServerPi({
       name: 'fs-renamed',
       oldName: 'fs-server',
-      server: {
-        command: 'node',
-        args: ['renamed.js'],
-      },
+      server: { command: 'node' },
       cwd: '/mock/project',
       scope: 'project',
     });
@@ -413,9 +407,10 @@ test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage
     const renamed = serversAfterRename.servers.find((s) => s.name === 'fs-renamed');
     assert.ok(renamed);
     assert.strictEqual(renamed.name, 'fs-renamed');
-    assert.deepStrictEqual(renamed.args, ['renamed.js']);
+    assert.strictEqual(renamed.command, 'node');
+    assert.strictEqual(renamed.scope, 'project');
 
-    // 5. Delete server matching name and scope
+    // Delete the project entry without affecting the global one.
     const deleteRes = await deleteMcpServerPi({
       name: 'fs-renamed',
       cwd: '/mock/project',
@@ -427,14 +422,9 @@ test('mcp bridge: saveMcpServerPi and deleteMcpServerPi preview fallback storage
 
     const serversAfterDelete = await getMcpServersPi('/mock/project');
     assert.strictEqual(serversAfterDelete.servers.find((s) => s.name === 'fs-renamed'), undefined);
-    // remote-sse should still remain
-    assert.strictEqual(serversAfterDelete.servers.length, 1);
-    assert.ok(serversAfterDelete.servers.find((s) => s.name === 'remote-sse'));
+    assert.deepStrictEqual(serversAfterDelete.servers.map((s) => s.name), ['global-tool']);
 
-    // 6. Delete remaining global server
-    const deleteGlobalRes = await deleteMcpServerPi({
-      name: 'remote-sse',
-    });
+    const deleteGlobalRes = await deleteMcpServerPi({ name: 'global-tool' });
     assert.strictEqual(deleteGlobalRes.success, true);
     assert.strictEqual(deleteGlobalRes.path, '~/.pi/agent/mcp.json');
 
