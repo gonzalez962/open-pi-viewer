@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
@@ -7,12 +8,11 @@ import react from '@vitejs/plugin-react';
 import { chromium } from 'playwright';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const scratch = path.join(root, '.verification/browser-activity');
-fs.mkdirSync(scratch, { recursive: true });
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'viewer-browser-activity-'));
 process.env.TEMP = process.env.TMP = process.env.TMPDIR = scratch;
-const server = await createServer({ configFile: false, root, envDir: scratch, cacheDir: path.join(scratch, 'vite-cache'), plugins: [react()], resolve: { alias: Object.fromEntries(['core', 'shared', 'infra', 'features', 'app'].map(name => [`@${name}`, path.join(root, 'src', name)])) }, server: { host: '127.0.0.1', port: 0, strictPort: true } });
-let context;
+let context, server;
 try {
+  server = await createServer({ configFile: false, root, envDir: scratch, cacheDir: path.join(scratch, 'vite-cache'), plugins: [react()], resolve: { alias: Object.fromEntries(['core', 'shared', 'infra', 'features', 'app'].map(name => [`@${name}`, path.join(root, 'src', name)])) }, server: { host: '127.0.0.1', port: 0, strictPort: true } });
   await server.listen();
   const port = server.httpServer.address().port;
   context = await chromium.launchPersistentContext(path.join(scratch, 'profile'), { headless: true, viewport: { width: 1280, height: 900 }, env: { ...process.env, TEMP: scratch, TMP: scratch, TMPDIR: scratch } });
@@ -22,6 +22,7 @@ try {
   await page.addInitScript(() => {
     const callbacks = new Map(), listeners = new Map(); let next = 1;
     window.isTauri = true;
+    window.abortCount = 0;
     window.__TAURI_INTERNALS__ = {
       transformCallback(fn) { const id = next++; callbacks.set(id, fn); return id; },
       unregisterCallback(id) { callbacks.delete(id); },
@@ -32,6 +33,7 @@ try {
         if (cmd === 'get_custom_providers') return { providers: {} };
         if (cmd === 'get_mcp_servers') return { servers: [] };
         if (cmd === 'get_sdd_profiles') return { profiles: [] };
+        if (cmd === 'abort') { window.abortCount++; return null; }
         return [];
       },
     };
@@ -42,7 +44,7 @@ try {
   });
   await page.goto(`http://127.0.0.1:${port}`, { waitUntil: 'domcontentloaded' });
   await page.locator('#prompt-input').waitFor({ timeout: 15000 });
-  assert.equal(await page.locator('.todo-panel, .subagent-entry').count(), 0);
+  assert.equal(await page.locator('.todo-panel, .working-text button[aria-haspopup="dialog"], .subagent-entry').count(), 0);
   await page.keyboard.press('Alt+a');
   assert.equal(await page.locator('.subagent-modal').count(), 0);
   console.log('PASS S2.1/S2.3 absent hooks hidden; Alt+A no-op');
@@ -62,10 +64,21 @@ try {
   const placement = await page.evaluate(() => ({ todo: document.querySelector('.todo-panel').getBoundingClientRect().bottom, prompt: document.querySelector('#prompt-input').getBoundingClientRect().top }));
   assert.ok(placement.todo <= placement.prompt);
   console.log('PASS S1.1/S4.1 todo above composer');
-  const publish = async (text) => page.evaluate(text => window.emitFixture({ type: 'extension_ui_request', sessionId: 's1', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', label: 'Child task', status: 'running' }, thread: { version: 1, dropped: 0, items: [{ kind: 'text', text }] } }] })] }), text);
+  await page.evaluate(() => window.emitFixture({ type: 'runtime_snapshot', sessionId: 's1', sessionFile: '/fixture/s1', messages: [], activity: 'busy' }));
+  const cancel = page.locator('.btn-cancel');
+  await cancel.waitFor({ timeout: 5000 });
+  const aborts = () => page.evaluate(() => window.abortCount);
+  const publish = async (text) => page.evaluate(text => window.emitFixture({ type: 'extension_ui_request', sessionId: 's1', method: 'setWidget', widgetKey: 'gentle-agents', widgetLines: [JSON.stringify({ schema: 'gentle-agents.activity/v1', tasks: [{ summary: { id: 'child', agent: 'worker', label: 'Child task', status: 'running', lastStep: 'Reading a/b' }, thread: { version: 1, dropped: 0, items: [{ kind: 'text', text }] } }] })] }), text);
   await publish('Real child activity');
-  const entry = page.getByRole('button', { name: /Subagent process.*1/ });
+  const working = page.locator('.working-text');
+  const entry = working.getByRole('button', { name: /^worker$/i });
   await entry.waitFor({ timeout: 5000 });
+  assert.equal(await page.locator('.subagent-entry').count(), 0);
+  assert.equal(await page.getByRole('button', { name: /Subagent process.*1/ }).count(), 0);
+  assert.equal(await entry.getAttribute('type'), 'button');
+  assert.equal(await entry.getAttribute('aria-haspopup'), 'dialog');
+  assert.ok(await entry.evaluate(el => Number(getComputedStyle(el).fontWeight) >= 700));
+  assert.match(await working.textContent(), /^Working - Worker: Reading a\/b$/);
   await entry.click();
   const modal = page.getByRole('dialog', { name: 'Subagent process' });
   await modal.waitFor();
@@ -75,9 +88,15 @@ try {
   assert.equal(await modal.evaluate(el => el.contains(document.activeElement)), true);
   await page.keyboard.press('Tab');
   assert.equal(await modal.evaluate(el => el.contains(document.activeElement)), true);
-  await page.keyboard.press('Escape');
+  await cancel.focus();
+  assert.equal(await modal.evaluate(el => el.contains(document.activeElement)), false);
+  await page.keyboard.down('Escape');
   await modal.waitFor({ state: 'hidden' });
+  await page.keyboard.down('Escape'); // Repeat after the modal has gone.
+  await page.keyboard.up('Escape');
   assert.equal(await entry.evaluate(el => document.activeElement === el), true);
+  assert.equal(await page.locator('.btn-cancel.btn-confirming').count(), 0);
+  assert.equal(await aborts(), 0);
   await entry.focus(); await page.keyboard.press('Alt+a'); await modal.waitFor();
   await publish('Updated child activity');
   await modal.getByText('Updated child activity').waitFor();
@@ -99,8 +118,27 @@ try {
     assert.ok(geometry.width > viewport.width * 0.85 && geometry.height > viewport.height * 0.85);
     assert.ok(geometry.left >= 0 && geometry.right <= viewport.width && geometry.bottom <= viewport.height && geometry.scrollWidth <= geometry.clientWidth);
   }
+  await modal.getByRole('button', { name: /Child task/ }).click();
   await page.keyboard.press('Escape'); await modal.waitFor({ state: 'hidden' });
-  console.log('PASS S5/S3.1/S3.2 responsive geometry, card expansion, selection, live content, focus and Escape');
+  assert.equal(await page.locator('.btn-cancel.btn-confirming').count(), 0);
+  assert.equal(await aborts(), 0);
+  const reviewer = working.getByRole('button', { name: /^reviewer$/i });
+  await reviewer.click();
+  await modal.waitFor();
+  assert.equal(await modal.getByRole('heading', { name: 'Other task' }).count(), 1);
+  await page.keyboard.press('Escape'); await modal.waitFor({ state: 'hidden' });
+  assert.equal(await reviewer.evaluate(el => document.activeElement === el), true);
+  console.log('PASS Working triggers, responsive modal, live content, selection and focus');
+  await page.keyboard.press('Escape');
+  await page.locator('.btn-cancel.btn-confirming').waitFor();
+  assert.equal(await aborts(), 0);
+  await page.keyboard.press('Alt+a'); await modal.waitFor();
+  await page.keyboard.press('Escape'); await modal.waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.btn-cancel.btn-confirming').count(), 1);
+  assert.equal(await aborts(), 0);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.abortCount === 1);
+  console.log('PASS modal Escape (including outside focus and repeat) does not arm or abort; ordinary double Escape still aborts');
   await page.evaluate(() => { const other = document.createElement('div'); other.setAttribute('role', 'dialog'); other.id = 'fixture-other-dialog'; document.body.appendChild(other); });
   await page.keyboard.press('Alt+a');
   assert.equal(await modal.count(), 0);
@@ -108,6 +146,13 @@ try {
   console.log('PASS S3.2 existing dialog blocks shortcut (synthetic competing dialog)');
   assert.deepEqual(errors, []);
 } finally {
-  if (context) await context.close();
-  await server.close();
+  try {
+    await context?.close();
+  } finally {
+    try {
+      await server?.close();
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
+  }
 }

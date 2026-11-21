@@ -169,7 +169,7 @@ import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { useAutoSpeech } from '@features/chat/hooks/useAutoSpeech';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
-import { getAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
+import { deriveAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
 import { useMcpServers } from '@features/mcp/hooks/useMcpServers';
 import { usePiResources } from '@features/extensions/hooks/usePiResources';
@@ -413,11 +413,8 @@ export const App: React.FC = () => {
   } = usePreferences();
 
   const selectedSessionJobCount = getSelectedSessionJobCount(state);
-  const derivedWorkingStatus = getAgentWorkingStatus(state, preferences.language);
-  const workingStatusText = isBusy
-    ? (derivedWorkingStatus ?? t('agent_working_status.fallback'))
-    : derivedWorkingStatus;
-  const isIndicatorActive = Boolean(workingStatusText);
+  const workingStatus = deriveAgentWorkingStatus(state, preferences.language);
+  const isIndicatorActive = workingStatus.isWorking || isBusy;
 
   // Subscribes to effective appearance via central controller for live background & working animation
   const [effectiveAppearance, setEffectiveAppearance] = useState<AppearancePreferences>(() =>
@@ -765,12 +762,24 @@ export const App: React.FC = () => {
       getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element => !element.closest('.subagent-overlay'))),
       getActiveElement: () => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
       setOpen: setSubagentOpen,
+      selectTask: setSelectedSubagent,
     });
   }
   useEffect(() => {
     const controller = subagentController.current!;
-    window.addEventListener('keydown', controller.onKeyDown);
-    return () => window.removeEventListener('keydown', controller.onKeyDown);
+    // Claim Escape before the prompt's document listener; leave Alt+A in bubble.
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') controller.onKeyDown(event);
+    };
+    const onShortcut = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') controller.onKeyDown(event);
+    };
+    window.addEventListener('keydown', onEscape, true);
+    window.addEventListener('keydown', onShortcut);
+    return () => {
+      window.removeEventListener('keydown', onEscape, true);
+      window.removeEventListener('keydown', onShortcut);
+    };
   }, []);
   useEffect(() => {
     subagentController.current?.close(false);
@@ -2005,7 +2014,6 @@ export const App: React.FC = () => {
             aria-label={t('empty.history_label')}
             tabIndex={0}
           >
-          <SubagentActivityEntry tasks={subagentDetails} onClick={subagentController.current!.onClick} t={t} />
           {state.messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">
@@ -2304,9 +2312,8 @@ export const App: React.FC = () => {
                   <span
                     className={runtimeWorkStyles.className}
                     style={runtimeWorkStyles.style as React.CSSProperties}
-                    aria-hidden="true"
                   >
-                    <span className="loader">
+                    <span className="loader" aria-hidden="true">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
                           key={`wdot-1-${i}`}
@@ -2316,10 +2323,12 @@ export const App: React.FC = () => {
                       ))}
                     </span>
                     <span className="working-text">
-                      {workingStatusText}
-                      {selectedSessionJobCount > 0 && ` · ${t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}`}
+                      {workingStatus.parts?.map(part => part.taskId === undefined ? part.text : (
+                        <SubagentActivityEntry key={part.taskId} tasks={subagentDetails} taskId={part.taskId} onClick={subagentController.current!.onClick} />
+                      )) ?? t('agent_working_status.fallback')}
+                      {selectedSessionJobCount > 0 && <span aria-hidden="true">{` · ${t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}`}</span>}
                     </span>
-                    <span className="loader">
+                    <span className="loader" aria-hidden="true">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
                           key={`wdot-2-${i}`}

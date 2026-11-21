@@ -255,9 +255,12 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
         }
       }
 
+      // Holding the Escape that closed a dialog must not start or confirm cancellation.
+      if (e.key === 'Escape' && (e.repeat || e.defaultPrevented)) return;
+
       const hasOverlay =
         typeof document !== 'undefined' &&
-        Boolean(document.querySelector('.file-viewer-overlay, .settings-card'));
+        Boolean(document.querySelector('.file-viewer-overlay, .settings-card, .subagent-modal'));
 
       handleDoubleEscCancel(e, {
         isBusy,
