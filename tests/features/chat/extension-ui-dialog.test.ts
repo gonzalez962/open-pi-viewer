@@ -62,6 +62,20 @@ console.log('--verbose');
   });
 });
 
+test('execution permission displays the entire received command as literal code', () => {
+  const command = `printf  '%s' '<file_name>&'\n  printf '%s' '${'x'.repeat(220)}_end'`;
+  const escaped = command.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#x27;');
+  for (const title of [
+    'Allow recognized data-loss command?',
+    'Allow guarded command?',
+    'Allow guarded actions: action one; action two?',
+  ]) {
+    const markup = renderScenarioPrompt('confirm', title, command);
+    assert.ok(markup.includes(`>${title}</h3>`));
+    assert.strictEqual(markup.match(/<pre\b[^>]*><code>([\s\S]*?)<\/code><\/pre>/)?.[1], escaped);
+  }
+});
+
 test('S1.1: confirmation title preserves literal command text', () => {
   const markup = renderScenarioPrompt('confirm', '[sudo] run "echo" <archivo>', 'allow command?');
   assert.ok(markup.includes('>[sudo] run &quot;echo&quot; &lt;archivo&gt;</h3>'));

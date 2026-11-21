@@ -915,6 +915,10 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
     return cleaned;
   }, [method, request.message, displayTitle]);
   const headerTitle = isReviewingSummary ? REVIEW_SUMMARY_TITLE : displayTitle;
+  const isCommandConfirmation = method === 'confirm' && (
+    request.title === 'Allow recognized data-loss command?' ||
+    /^Allow guarded .+\?$/.test(request.title ?? '')
+  );
 
   const singlePrimaryButtonLabel = useMemo(() => {
     return isMultiStepFlow
@@ -990,9 +994,13 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
       </div>
 
       {!isReviewingSummary && message && (
-        <div id="extension-prompt-message" className="extension-prompt-message">
-          {message}
-        </div>
+        isCommandConfirmation ? (
+          <pre id="extension-prompt-message" className="extension-prompt-command"><code>{message}</code></pre>
+        ) : (
+          <div id="extension-prompt-message" className="extension-prompt-message">
+            {message}
+          </div>
+        )
       )}
 
       <div className="extension-prompt-body">

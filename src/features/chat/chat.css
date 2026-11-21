@@ -3319,6 +3319,24 @@
   padding: 2px 0;
 }
 
+.extension-prompt-command {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 10rem;
+  overflow: auto;
+  background-color: var(--tool-output-bg);
+  border: 1px solid var(--tool-output-border);
+  border-radius: var(--radius-sm);
+  color: var(--fg-default);
+  font: 12px/1.5 var(--font-mono, monospace);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.extension-prompt-command > code {
+  font: inherit;
+}
+
 .extension-prompt-body {
   display: flex;
   flex-direction: column;
