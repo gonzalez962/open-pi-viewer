@@ -15,7 +15,7 @@ Rollback: Revert the issue-specific commits in reverse order. Success: `npm run 
 
 ## Specs
 
-### S1 — Restore the reported architecture check
+### S1 — Restore the reported architecture check [behavior]
 
 > si dejemos de fuera de momento los otros 48 fallos, ataquemos ese fallo de check:arch
 
