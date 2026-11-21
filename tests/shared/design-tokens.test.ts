@@ -22,7 +22,35 @@ test('theme palettes define the elevated surface and hover aliases', () => {
   }
 });
 
-test('every var() without a fallback references a defined custom property', () => {
+function requiresInlineProperty(css: string, referenceIndex: number, property: string): boolean {
+  const blockStart = css.lastIndexOf('{', referenceIndex);
+  if (blockStart < 0) return false;
+  const selectorStart = Math.max(css.lastIndexOf('}', blockStart), css.lastIndexOf('{', blockStart - 1)) + 1;
+  const selector = css.slice(selectorStart, blockStart).trim();
+  // A single selector can require the property on the element (or its pseudo-element).
+  // Match the declaration, not just a substring of another custom property's name.
+  const guard = `[style*="${property}:"]`;
+  const guardIndex = selector.indexOf(guard);
+  return guardIndex >= 0
+    && /^(?:[.#][\w-]+)+$/.test(selector.slice(0, guardIndex))
+    && /^(?:::[\w-]+)?$/.test(selector.slice(guardIndex + guard.length));
+}
+
+test('inline properties must be required on the same element', () => {
+  const guard = '[style*="--dynamic:"]';
+  for (const [selector, expected] of [
+    [`.row${guard}::after`, true],
+    ['.row', false],
+    [`.row${guard}, .other`, false],
+    [`.row${guard} .child`, false],
+    ['.row[style*="--dynamic-other:"]', false],
+  ] as const) {
+    const css = `${selector} { color: var(--dynamic); }`;
+    assert.equal(requiresInlineProperty(css, css.indexOf('var('), '--dynamic'), expected, selector);
+  }
+});
+
+test('every var() without a fallback is declared in CSS or required by its selector', () => {
   const cssFiles = listCssFiles(SRC_DIR).map((path) => ({
     path,
     css: readFileSync(path, 'utf8'),
@@ -32,7 +60,7 @@ test('every var() without a fallback references a defined custom property', () =
   );
   const undefinedRefs = cssFiles.flatMap(({ path, css }) =>
     [...css.matchAll(/var\(\s*(--[\w-]+)\s*\)/g)]
-      .filter((m) => !defined.has(m[1]))
+      .filter((m) => !defined.has(m[1]) && !requiresInlineProperty(css, m.index!, m[1]))
       .map((m) => `${path.slice(SRC_DIR.length + 1)}: ${m[1]}`)
   );
   assert.deepEqual([...new Set(undefinedRefs)], []);

@@ -42,9 +42,11 @@ test('S9.1-S9.2: dock and modal share decorative repository marks without changi
   const token = getWorktreeRepositoryColor(repository);
   const dockTile = (name: string) => dock.match(new RegExp(`<button[^>]*aria-label="${name}"[^>]*>[\\s\\S]*?</button>`))?.[0] ?? '';
   const row = (branch: string) => modal.match(new RegExp(`<button[^>]*class="[^"]*project-worktree-row[^"]*"[^>]*><strong>${branch}</strong>[\\s\\S]*?</button>`))?.[0] ?? '';
-  // A shared class/token or CSS custom property on each entry links the surfaces.
-  for (const fragment of [dockTile('repo'), dockTile('feature one'), row('main'), row('feature/one')]) assert.ok(fragment.includes(token), fragment);
-  assert.ok(!dockTile('unknown').includes(token));
+  for (const fragment of [dockTile('repo'), dockTile('feature one'), row('main'), row('feature/one'), row('feature/two')]) {
+    assert.match(fragment, /\bstyle="--repository-color:/);
+    assert.ok(fragment.includes(`--repository-color:${token}"`), fragment);
+  }
+  assert.doesNotMatch(dockTile('unknown'), /--repository-color:/);
   assert.match(dockTile('repo'), /project-monogram[^>]*>RE</);
   assert.match(dockTile('feature one'), /<svg\b[^>]*stroke="currentColor"/);
   assert.match(dockTile('feature one'), /aria-current="true"/);
