@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fileReferenceDownloadSource } from '../../../src/features/chat/file-reference-download';
+import { fileReferenceDownloadSource } from '@features/chat/file-reference-download';
 
 test('routes only unambiguous project descendants on web, preserving native and fallback', () => {
   const source = 'C:/Projects/Demo/sub/File.md';

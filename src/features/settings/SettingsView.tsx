@@ -31,7 +31,7 @@ import {
   saveGitHubPat,
   clearSavedGitHubPat,
   probeGitHubPatUser,
-} from '@features/projects/github-clone';
+} from '@infra/github-credentials';
 import {
   SettingsToastContext,
   SettingsToastContainer,

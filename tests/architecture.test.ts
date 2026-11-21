@@ -202,7 +202,7 @@ test('architecture: infra/ layer does not import features, app, or React', () =>
   assert.deepEqual(violations, [], `Infra layer violations:\n${violations.join('\n')}`);
 });
 
-test('architecture: features/ layers never import other features or app', () => {
+test('architecture S1.1: features/ layers never import other features or app', () => {
   const featuresDir = path.join(SRC_DIR, 'features');
   const featureNames = fs
     .readdirSync(featuresDir, { withFileTypes: true })
@@ -251,7 +251,7 @@ test('architecture: features/ layers never import other features or app', () => 
   );
 });
 
-test('architecture: retired @/* alias and deep relative ../../ imports are absent', () => {
+test('architecture S1.2: retired @/* alias and deep relative ../../ imports are absent', () => {
   const allTsFiles = [
     ...collectFiles(SRC_DIR, CODE_EXTENSIONS),
     ...collectFiles(TESTS_DIR, CODE_EXTENSIONS),

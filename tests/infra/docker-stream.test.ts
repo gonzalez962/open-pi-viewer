@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dockerRequest } from '../../src/infra/bridge';
+import { dockerRequest } from '@infra/bridge';
 
 const payload = { action: 'updateImage', containerId: 'bbbbbbbbbbbb', confirmed: true };
 const event = (value: unknown) => JSON.stringify(value) + '\n';

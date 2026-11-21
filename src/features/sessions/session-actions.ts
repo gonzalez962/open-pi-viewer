@@ -1,5 +1,6 @@
-import type { SessionStats } from '@core/types/models';
 import type { DeleteSessionResult, NewSessionResult, SessionSummary } from '@core/types/sessions';
+
+export { fetchSwitchedSessionStats } from '@core/session-stats';
 
 /**
  * Real branching for App.tsx's former inline `handleSelectSession`, extracted so it can be
@@ -133,24 +134,4 @@ export function shouldReloadSessionsOnIdle(
   isConnected: boolean
 ): boolean {
   return wasBusy && !isBusy && isConnected;
-}
-
-/**
- * Stats refresh after a successful session switch. The reducer clears `sessionStats` on
- * SWITCH_SESSION_SUCCESS, and nothing else re-fetches them until the next assistant turn,
- * so the context meter would read 0 for historical sessions. Stats that name a different
- * session (a later switch won the race) are discarded; a failed fetch is non-critical.
- */
-export async function fetchSwitchedSessionStats(
-  fetchStats: () => Promise<SessionStats | null>,
-  expectedSessionId: string
-): Promise<SessionStats | null> {
-  try {
-    const stats = await fetchStats();
-    if (!stats) return null;
-    if (stats.sessionId && stats.sessionId !== expectedSessionId) return null;
-    return stats;
-  } catch {
-    return null;
-  }
 }
