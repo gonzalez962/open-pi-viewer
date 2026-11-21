@@ -313,17 +313,17 @@ test('mcp helpers: parseArgsText splits args by whitespace and preserves quotes'
   );
 });
 
-test('mcp helpers: formatArgsText quotes args with spaces and joins cleanly', () => {
+test('mcp helpers: formatArgsText quotes each argument for lossless editing', () => {
   assert.strictEqual(formatArgsText([]), '');
   assert.strictEqual(formatArgsText(undefined), '');
 
   const simple = ['-y', 'my-pkg'];
-  assert.strictEqual(formatArgsText(simple), '-y my-pkg');
+  assert.strictEqual(formatArgsText(simple), '"-y" "my-pkg"');
 
   const withSpaces = ['--path', '/path with spaces/file', '--quiet'];
   assert.strictEqual(
     formatArgsText(withSpaces),
-    '--path "/path with spaces/file" --quiet'
+    '"--path" "/path with spaces/file" "--quiet"'
   );
 
   // Roundtrip test
@@ -380,7 +380,8 @@ test('mcp helpers: serverConfigToFormData converts stdio and sse server configs 
   assert.strictEqual(stdioForm.name, 'custom-stdio');
   assert.strictEqual(stdioForm.serverType, 'stdio');
   assert.strictEqual(stdioForm.command, 'python');
-  assert.strictEqual(stdioForm.argsText, '-m mcp_server');
+  assert.strictEqual(stdioForm.argsText, '"-m" "mcp_server"');
+  assert.deepStrictEqual(formDataToSavePayload(stdioForm).server.args, stdioServer.args);
   assert.strictEqual(stdioForm.envEntries.length, 1);
   assert.strictEqual(stdioForm.envEntries[0].key, 'API_KEY');
   assert.strictEqual(stdioForm.envEntries[0].value, 'secret-token');
