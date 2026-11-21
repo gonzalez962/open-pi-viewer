@@ -7,7 +7,7 @@ import {
   deleteMcpServerPi,
 } from '@infra/bridge';
 import { ProjectDock } from '@features/projects/ProjectDock';
-import { DockerView } from '@features/docker/DockerView';
+import { DockerViewAdapter } from './components/DockerViewAdapter';
 import { ToolsMenu } from './components/ToolsMenu';
 import { WorktreesModal } from '@features/projects/WorktreesModal';
 import { useProjectWorktrees } from '@features/projects/hooks/useProjectWorktrees';
@@ -1783,7 +1783,7 @@ export const App: React.FC = () => {
               <span>{t('zen.exit_button')}</span>
             </button>
           )}
-          {showDocker && isWebShim() ? <DockerView locale={preferences.language} /> : showSettings ? (
+          {showDocker && isWebShim() ? <DockerViewAdapter locale={preferences.language} /> : showSettings ? (
             <React.Suspense fallback={<div className="settings-loading-pane">{t('settings.loading')}</div>}>
               <SettingsView
                 config={config}

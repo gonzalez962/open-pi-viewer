@@ -1,22 +1,38 @@
-import { useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ComponentType } from 'react';
 import { dockerRequest } from '@infra/bridge';
-import { ConfirmationModal } from '@app/components/ConfirmationModal';
 import { translate, type SupportedLocale } from '@shared/i18n';
-import { SettingsToastContext, SettingsToastContainer, useToastManager } from '@features/settings/toast';
-import type { SettingsToastContextValue } from '@features/settings/toast';
 import { createDockerController, type DockerFeedback } from './docker-controller';
-import '@features/settings/toast/settings-toast.css';
 import './docker.css';
 
 type DockerController = ReturnType<typeof createDockerController>;
 type UpdateConsole = NonNullable<ReturnType<DockerController['getState']>['updateConsole']>;
+
+type DockerToast = {
+  success: (message: string) => string;
+  error: (message: string) => string;
+};
+
+interface DockerViewProps {
+  locale: SupportedLocale;
+  controller?: DockerController;
+  toast: DockerToast;
+  ConfirmationModal: ComponentType<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    cancelLabel: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  }>;
+}
 
 function filePathParts(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return { name: path.slice(separator + 1), directory: separator < 0 ? '.' : separator === 0 || (separator === 2 && /^[a-z]:$/i.test(path.slice(0, 2))) ? path.slice(0, separator + 1) : path.slice(0, separator) };
 }
 
-export function subscribeDockerToasts(controller: DockerController, locale: SupportedLocale, toast: Pick<SettingsToastContextValue, 'success' | 'error'>) {
+export function subscribeDockerToasts(controller: DockerController, locale: SupportedLocale, toast: DockerToast) {
   return controller.subscribeFeedback((event: DockerFeedback) => {
     const params = { container: event.container, file: event.file ?? '', reason: event.type === 'error' ? event.error : '' };
     if (event.type === 'error') {
@@ -56,12 +72,8 @@ export function UpdateLogModal({ isOpen, console: output, locale, onClose }: { i
   </dialog>;
 }
 
-export function DockerView({ locale, controller: providedController }: { locale: SupportedLocale; controller?: DockerController }) {
+export function DockerView({ locale, controller: providedController, toast: { success, error }, ConfirmationModal }: DockerViewProps) {
   const controller = useMemo(() => providedController ?? createDockerController((payload, onEvent) => dockerRequest(payload, fetch, onEvent)), [providedController]);
-  const ambientToast = useContext(SettingsToastContext);
-  const localToast = useToastManager();
-  const toast = ambientToast ?? localToast;
-  const { success, error } = toast;
   const [state, setState] = useState(controller.getState());
   const [tab, setTab] = useState<'files' | 'logs'>('files');
   const [confirm, setConfirm] = useState(false);
@@ -75,7 +87,7 @@ export function DockerView({ locale, controller: providedController }: { locale:
   const run = async (fn: () => Promise<void>) => { setPending(true); try { await fn(); } finally { setPending(false); } };
   const selected = state.containers.find(c => c.id === state.selected);
   const stopped = selected && ['exited', 'created', 'dead'].includes(selected.state);
-  return <SettingsToastContext.Provider value={toast}><div className="docker-view">
+  return <div className="docker-view">
     <div className="docker-heading"><h1>{t('docker.title')}</h1><p>{t('docker.subtitle')}</p></div>
     <div className="docker-toolbar">
       <div className="docker-search"><label htmlFor="docker-search">{t('docker.search')}</label><input id="docker-search" value={query} onChange={e => setQuery(e.target.value)} /></div>
@@ -120,5 +132,5 @@ export function DockerView({ locale, controller: providedController }: { locale:
         <ConfirmationModal isOpen={confirm} title={`${t('docker.remove')} ${selected.name}?`} message={t('docker.confirm')} confirmLabel={t('docker.remove')} cancelLabel={t('docker.cancel')} onCancel={() => setConfirm(false)} onConfirm={() => { setConfirm(false); void run(() => controller.remove(true)); }} />
       </> : <p className="docker-content">{t('docker.select')}</p>}</section>
     </div>
-  </div><SettingsToastContainer /></SettingsToastContext.Provider>;
+  </div>;
 }

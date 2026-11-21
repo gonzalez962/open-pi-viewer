@@ -41,7 +41,7 @@ test('S7.2 closed output is hidden and retained output renders again without a s
 
 test('S8.1 retained update output offers no reopen control in the production view', async () => {
   const { createDockerController } = await import('@features/docker/docker-controller');
-  const { DockerView } = await import('@features/docker/DockerView');
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
   const controller = createDockerController((async (payload: any, onEvent: any) => {
     if (payload.action === 'list') return { containers: [{ id: 'aaaaaaaaaaaa', name: 'web', state: 'running', status: 'Up' }] };
     onEvent?.({ type: 'output', stream: 'stdout', text: 'retained output' });
@@ -52,7 +52,7 @@ test('S8.1 retained update output offers no reopen control in the production vie
   await controller.select('aaaaaaaaaaaa');
   await controller.updateImage(true);
   assert.match(controller.getState().updateConsole?.text ?? '', /retained output/);
-  const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller } as any));
+  const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
   // Confirm SSR actually consumed the populated controller before checking absence.
   assert.match(html, /web/);
   assert.doesNotMatch(html, /<button\b[^>]*>\s*View update log\s*<\/button>/i);
@@ -80,8 +80,8 @@ test('S11.1 production metadata and discovered paths are presented separately', 
   const container = { ...running, status: 'Up 3 hours' };
   const { controller } = await setup(p => p.action === 'list' ? { containers: [container] } : { files });
   await controller.refresh(); await controller.select(container.id); await controller.loadFiles();
-  const { DockerView } = await import('@features/docker/DockerView');
-  const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
   const list = html.match(/<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?<\/button>/)![0];
   assert.doesNotMatch(list, /Up 3 hours/);
   assert.match(list, />Running<\/span>/);
@@ -107,8 +107,8 @@ test('S11.2 reopening the selected file closes without saving and another file o
   assert.equal(calls.some(p => p.action === 'saveFile'), false);
   await controller.openFile(env);
   assert.deepEqual(controller.getState().file, env); assert.equal(controller.getState().content, 'env');
-  const { DockerView } = await import('@features/docker/DockerView');
-  assert.match(renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller })), /<textarea\b/);
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  assert.match(renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller })), /<textarea\b/);
 });
 
 test('S11.2 late reads and errors cannot replace a newer editor or emit stale feedback', async () => {
@@ -124,8 +124,8 @@ test('S11.2 late reads and errors cannot replace a newer editor or emit stale fe
   pending[2].reject(new Error('stale error')); await third;
   assert.equal(controller.getState().file, null); assert.equal(controller.getState().content, ''); assert.equal(controller.getState().version, '');
   assert.deepEqual(feedback, []); assert.equal(controller.getState().error, '');
-  const { DockerView } = await import('@features/docker/DockerView');
-  assert.doesNotMatch(renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller })), /<textarea\b/);
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  assert.doesNotMatch(renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller })), /<textarea\b/);
 });
 
 test('S11.2 completing a save after closing does not reopen its file', async () => {
@@ -145,8 +145,8 @@ test('S11.1 root directories retain their separators in rendered file context', 
   ];
   const { controller } = await setup(p => p.action === 'list' ? { containers: [running] } : { files });
   await controller.refresh(); await controller.select(running.id); await controller.loadFiles();
-  const { DockerView } = await import('@features/docker/DockerView');
-  const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
   assert.ok(html.includes('C:\\ · /</p>'));
   assert.match(html, />file\.yml<\/button>/);
   assert.match(html, />root\.yml<\/button>/);
@@ -196,16 +196,37 @@ test('S10.2 update failures notify once and selection changes suppress stale com
 });
 
 test('S10.1 result feedback is not rendered as an inline banner', async () => {
-  const { DockerView } = await import('@features/docker/DockerView');
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
   const { controller } = await setup(p => {
     if (p.action === 'list') return { containers: [running] };
     throw new Error('distinct operation failure');
   });
   await controller.refresh(); await controller.select(running.id); await controller.action('restart');
-  const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
+  const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
   assert.match(html, /web/);
   assert.doesNotMatch(html, /distinct operation failure/);
   assert.doesNotMatch(html, /class="docker-error"/);
+});
+
+test('Docker adapter renders ambient Settings notifications once and has no initial fallback notification', async () => {
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  const { SettingsToastContext } = await import('@features/settings/toast');
+  const { controller, calls } = await setup(() => ({ containers: [] }));
+  const view = React.createElement(DockerViewAdapter, { locale: 'en', controller });
+  const fallback = renderToStaticMarkup(view);
+  assert.match(fallback, /class="docker-view"/);
+  assert.doesNotMatch(fallback, /settings-toast-container/);
+
+  const value = {
+    toasts: [{ id: 'ambient', type: 'error' as const, message: 'Ambient failure', createdAt: 0, durationMs: 0 }],
+    dismissToast: () => {}, clearAll: () => {},
+    showToast: () => '', success: () => '', error: () => '', warning: () => '', info: () => '',
+  };
+  const ambient = renderToStaticMarkup(React.createElement(SettingsToastContext.Provider, { value }, view));
+  assert.equal((ambient.match(/class="settings-toast-container"/g) ?? []).length, 1);
+  assert.match(ambient, /class="settings-toast-container" aria-live="assertive" role="region" aria-label="Settings Notifications"/);
+  assert.equal((ambient.match(/Ambient failure/g) ?? []).length, 1);
+  assert.deepEqual(calls, []);
 });
 
 test('S10 production toast adapter localizes results, preserves update error context and unsubscribes', async () => {
@@ -252,8 +273,8 @@ for (const [state, expected] of [
     const { controller } = await setup(p => p.action === 'list' ? { containers: [container] } : {});
     await controller.refresh();
     await controller.select(container.id);
-    const { DockerView } = await import('@features/docker/DockerView');
-    const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
+    const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+    const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
     assert.match(html, /web/);
     const labels = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/g)].map(match => match[1].trim());
     assert.equal(labels.includes('Start'), expected === 'Start');
@@ -261,6 +282,9 @@ for (const [state, expected] of [
     for (const label of ['Restart', 'Update image', 'Remove', 'Configuration', 'Logs']) {
       assert.ok(labels.includes(label), `missing existing ${label} action`);
     }
+    const remove = html.match(/<button\b[^>]*>Remove<\/button>/)?.[0];
+    assert.equal(remove?.includes(' disabled=""'), expected !== 'Start');
+    assert.doesNotMatch(html, /role="alertdialog"/);
   });
 }
 
@@ -322,6 +346,10 @@ test('S5.3 pull exposes pending and success for the selected container', async (
   const pending = controller.updateImage(true);
   assert.deepEqual(calls[calls.length - 1], { action: 'updateImage', containerId: running.id, confirmed: true });
   assert.equal(controller.getState().updating, true);
+  const { DockerViewAdapter } = await import('@app/components/DockerViewAdapter');
+  const html = renderToStaticMarkup(React.createElement(DockerViewAdapter, { locale: 'en', controller }));
+  assert.match(html, /<button\b[^>]*disabled=""[^>]*>Update image<\/button>/);
+  assert.match(html, /role="status" class="docker-notice"/);
   finish({ ok: true }); await pending;
   assert.equal(controller.getState().updating, false);
   assert.equal(controller.getState().notice, 'updateImage');
