@@ -14,7 +14,7 @@ registerHooks({ load(url, context, nextLoad) {
 const updateConsole = { id: 'aaaaaaaaaaaa', phase: 'recreate', phases: ['pull', 'recreate'], text: 'live output\n' };
 
 test('S7.1 update output renders in a named native dialog with phase and live log', async () => {
-  const { UpdateLogModal } = await import('../../../src/features/docker/DockerView');
+  const { UpdateLogModal } = await import('@features/docker/DockerView');
   const html = renderToStaticMarkup(React.createElement(UpdateLogModal, {
     isOpen: true, console: updateConsole, locale: 'en', onClose: () => {},
   }));
@@ -30,7 +30,7 @@ test('S7.1 update output renders in a named native dialog with phase and live lo
 });
 
 test('S7.2 closed output is hidden and retained output renders again without a selected container', async () => {
-  const { UpdateLogModal } = await import('../../../src/features/docker/DockerView');
+  const { UpdateLogModal } = await import('@features/docker/DockerView');
   const props = { console: updateConsole, locale: 'en' as const, onClose: () => {} };
   assert.equal(renderToStaticMarkup(React.createElement(UpdateLogModal, { ...props, isOpen: false })), '');
   const reopened = renderToStaticMarkup(React.createElement(UpdateLogModal, { ...props, isOpen: true }));
@@ -40,8 +40,8 @@ test('S7.2 closed output is hidden and retained output renders again without a s
 });
 
 test('S8.1 retained update output offers no reopen control in the production view', async () => {
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { createDockerController } = await import('@features/docker/docker-controller');
+  const { DockerView } = await import('@features/docker/DockerView');
   const controller = createDockerController((async (payload: any, onEvent: any) => {
     if (payload.action === 'list') return { containers: [{ id: 'aaaaaaaaaaaa', name: 'web', state: 'running', status: 'Up' }] };
     onEvent?.({ type: 'output', stream: 'stdout', text: 'retained output' });
@@ -61,7 +61,7 @@ test('S8.1 retained update output offers no reopen control in the production vie
 // The controller is the production interaction boundary used by the Docker view.
 // The injected transport avoids Docker and real host configuration access.
 async function setup(respond: (payload: any) => unknown | Promise<unknown>) {
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const { createDockerController } = await import('@features/docker/docker-controller');
   const calls: any[] = [];
   const controller = createDockerController(async (payload: any) => {
     calls.push(payload);
@@ -80,7 +80,7 @@ test('S11.1 production metadata and discovered paths are presented separately', 
   const container = { ...running, status: 'Up 3 hours' };
   const { controller } = await setup(p => p.action === 'list' ? { containers: [container] } : { files });
   await controller.refresh(); await controller.select(container.id); await controller.loadFiles();
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { DockerView } = await import('@features/docker/DockerView');
   const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
   const list = html.match(/<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?<\/button>/)![0];
   assert.doesNotMatch(list, /Up 3 hours/);
@@ -107,7 +107,7 @@ test('S11.2 reopening the selected file closes without saving and another file o
   assert.equal(calls.some(p => p.action === 'saveFile'), false);
   await controller.openFile(env);
   assert.deepEqual(controller.getState().file, env); assert.equal(controller.getState().content, 'env');
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { DockerView } = await import('@features/docker/DockerView');
   assert.match(renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller })), /<textarea\b/);
 });
 
@@ -124,7 +124,7 @@ test('S11.2 late reads and errors cannot replace a newer editor or emit stale fe
   pending[2].reject(new Error('stale error')); await third;
   assert.equal(controller.getState().file, null); assert.equal(controller.getState().content, ''); assert.equal(controller.getState().version, '');
   assert.deepEqual(feedback, []); assert.equal(controller.getState().error, '');
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { DockerView } = await import('@features/docker/DockerView');
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller })), /<textarea\b/);
 });
 
@@ -145,7 +145,7 @@ test('S11.1 root directories retain their separators in rendered file context', 
   ];
   const { controller } = await setup(p => p.action === 'list' ? { containers: [running] } : { files });
   await controller.refresh(); await controller.select(running.id); await controller.loadFiles();
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { DockerView } = await import('@features/docker/DockerView');
   const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
   assert.ok(html.includes('C:\\ · /</p>'));
   assert.match(html, />file\.yml<\/button>/);
@@ -157,7 +157,7 @@ test('S11.1 root directories retain their separators in rendered file context', 
 test('S10.2 identical completed updates emit distinct feedback; stream updates emit none', async () => {
   let emit!: (event: any) => void;
   let finish!: (value: unknown) => void;
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const { createDockerController } = await import('@features/docker/docker-controller');
   const controller = createDockerController((async (payload: any, onEvent: any) => {
     if (payload.action === 'list') return { containers: [running] };
     emit = onEvent;
@@ -196,7 +196,7 @@ test('S10.2 update failures notify once and selection changes suppress stale com
 });
 
 test('S10.1 result feedback is not rendered as an inline banner', async () => {
-  const { DockerView } = await import('../../../src/features/docker/DockerView');
+  const { DockerView } = await import('@features/docker/DockerView');
   const { controller } = await setup(p => {
     if (p.action === 'list') return { containers: [running] };
     throw new Error('distinct operation failure');
@@ -209,8 +209,8 @@ test('S10.1 result feedback is not rendered as an inline banner', async () => {
 });
 
 test('S10 production toast adapter localizes results, preserves update error context and unsubscribes', async () => {
-  const { subscribeDockerToasts } = await import('../../../src/features/docker/DockerView');
-  const { translate } = await import('../../../src/shared/i18n');
+  const { subscribeDockerToasts } = await import('@features/docker/DockerView');
+  const { translate } = await import('@shared/i18n');
   let fail = false;
   const { controller } = await setup(p => {
     if (p.action === 'list') return { containers: [running] };
@@ -252,7 +252,7 @@ for (const [state, expected] of [
     const { controller } = await setup(p => p.action === 'list' ? { containers: [container] } : {});
     await controller.refresh();
     await controller.select(container.id);
-    const { DockerView } = await import('../../../src/features/docker/DockerView');
+    const { DockerView } = await import('@features/docker/DockerView');
     const html = renderToStaticMarkup(React.createElement(DockerView, { locale: 'en', controller }));
     assert.match(html, /web/);
     const labels = [...html.matchAll(/<button\b[^>]*>([^<]*)<\/button>/g)].map(match => match[1].trim());
@@ -269,7 +269,7 @@ test('S6.1 S6.3 controller retains bounded incremental console across selection 
   let finish!: (result: unknown) => void;
   let lists = 0;
   const replacement = { ...running, id: 'cccccccccccc' };
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const { createDockerController } = await import('@features/docker/docker-controller');
   const controller = createDockerController((async (payload: any, onEvent: any) => {
     if (payload.action === 'list') return { containers: ++lists === 1 ? [running, stopped] : [replacement, stopped] };
     emit = onEvent;
@@ -294,7 +294,7 @@ test('S6.1 S6.3 controller retains bounded incremental console across selection 
 test('S6.3 completed console remains after selected container is replaced', async () => {
   let lists = 0;
   const replacement = { ...running, id: 'cccccccccccc' };
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
+  const { createDockerController } = await import('@features/docker/docker-controller');
   const controller = createDockerController((async (payload: any, onEvent: any) => {
     if (payload.action === 'list') return { containers: ++lists === 1 ? [running] : [replacement] };
     if (onEvent) { onEvent({ type: 'phase', phase: 'pull' }); onEvent({ type: 'output', stream: 'stdout', text: 'original-container-output' }); onEvent({ type: 'result', ok: true }); }
@@ -484,7 +484,7 @@ test('S2.2 S3.2 S3.3: unavailable configuration and failed save remain explicit 
 });
 
 test('S4.3: Docker navigation is offered on web only, preserving other destinations', async () => {
-  const { dockerNavigation } = await import('../../../src/features/docker/docker-controller');
+  const { dockerNavigation } = await import('@features/docker/docker-controller');
   const existing = ['chat', 'settings'];
   assert.deepEqual(dockerNavigation(existing, false), existing);
   assert.deepEqual(dockerNavigation(existing, true), ['chat', 'settings', 'docker']);
@@ -503,7 +503,7 @@ for (const locale of ['en', 'es'] as const) {
     : { start: /inici/i, stop: /deten/i, restart: /reinici/i, remove: /elimin/i, updateImage: /actualiz/i, saveFile: /guard/i })) {
     for (const fails of [false, true]) {
       test(`S12 ${locale} ${action} ${fails ? 'error' : 'success'} toast includes original target and action`, async () => {
-        const { subscribeDockerToasts } = await import('../../../src/features/docker/DockerView');
+        const { subscribeDockerToasts } = await import('@features/docker/DockerView');
         const target = action === 'remove' ? stopped : running;
         const file = { path: locale === 'en' ? '/private/compose.yml' : 'C:\\private\\compose.yml', kind: 'yaml' as const, identity: 'config' };
         let lists = 0;
@@ -542,8 +542,8 @@ for (const locale of ['en', 'es'] as const) {
 }
 
 test('S12 repeated contextual completions notify once each; stream output does not notify', async () => {
-  const { createDockerController } = await import('../../../src/features/docker/docker-controller');
-  const { subscribeDockerToasts } = await import('../../../src/features/docker/DockerView');
+  const { createDockerController } = await import('@features/docker/docker-controller');
+  const { subscribeDockerToasts } = await import('@features/docker/DockerView');
   const controller = createDockerController(async (p, emit) => {
     if (p.action === 'list') return { containers: [running] };
     emit?.({ type: 'output', stream: 'stdout', text: 'private stream' });
@@ -561,7 +561,7 @@ test('S12 repeated contextual completions notify once each; stream output does n
 });
 
 test('S12 selection change suppresses old contextual success and failure toasts', async () => {
-  const { subscribeDockerToasts } = await import('../../../src/features/docker/DockerView');
+  const { subscribeDockerToasts } = await import('@features/docker/DockerView');
   let finish!: (value: unknown) => void; let reject!: (reason: Error) => void;
   const { controller } = await setup(p => p.action === 'list' ? { containers: [running, stopped] } : new Promise((resolve, fail) => { finish = resolve; reject = fail; }));
   const messages: string[] = [];
@@ -574,7 +574,7 @@ test('S12 selection change suppresses old contextual success and failure toasts'
 });
 
 test('S12 list, logs, file discovery and file read errors have localized contextual toasts', async () => {
-  const { subscribeDockerToasts } = await import('../../../src/features/docker/DockerView');
+  const { subscribeDockerToasts } = await import('@features/docker/DockerView');
   for (const locale of ['en', 'es'] as const) {
     for (const action of ['list', 'logs', 'files', 'readFile']) {
       let fail = false;

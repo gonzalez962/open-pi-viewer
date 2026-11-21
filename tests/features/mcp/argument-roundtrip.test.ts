@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { handleIpcCommand, setPiAgentDirForTest } from '@server/web-ipc-bridge';
-import { formDataToSavePayload, parseArgsText, serverConfigToFormData } from '../../../src/features/mcp/types';
+import { formDataToSavePayload, parseArgsText, serverConfigToFormData } from '@features/mcp/types';
 
 test('argument parser preserves ordinary quotes, newlines and Windows paths', () => {
   assert.deepEqual(parseArgsText(`plain "two words" 'single words'\nC:\\temp\\new "C:\\Program Files\\node"`), ['plain', 'two words', 'single words', 'C:\\temp\\new', 'C:\\Program Files\\node']);
