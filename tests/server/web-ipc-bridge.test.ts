@@ -232,10 +232,14 @@ test('server/bridge: connect to empty project creates and persists a new session
     fs.rmSync(tmpEmptyProject, { recursive: true, force: true });
   });
 
+  const statsWithoutSession = await handleIpcCommand('get_session_stats');
+  assert.deepEqual(statsWithoutSession.contextUsage, { tokens: 0, contextWindow: 1048576, percent: 0 });
+
   const res: any = await handleIpcCommand('connect', {
     payload: { workingDirectory: tmpEmptyProject },
   });
 
+  assert.strictEqual(res.model, null, 'Connect must not report an unconfirmed model');
   assert.strictEqual(res.connected, true);
   assert.ok(res.sessionId, 'Connect must return a non-empty sessionId');
   assert.ok(res.sessionFile, 'Connect must return a persisted sessionFile path for an empty project');
@@ -245,6 +249,10 @@ test('server/bridge: connect to empty project creates and persists a new session
   const header = JSON.parse(content.split('\n')[0]);
   assert.strictEqual(header.type, 'session');
   assert.strictEqual(header.id, res.sessionId);
+
+  const statsWithSession = await handleIpcCommand('get_session_stats');
+  assert.strictEqual(statsWithSession.sessionId, res.sessionId);
+  assert.strictEqual(statsWithSession.contextUsage.contextWindow, 1048576);
 
   // Subsequent list_sessions must discover this persisted session
   const list: any = await handleIpcCommand('list_sessions', {
