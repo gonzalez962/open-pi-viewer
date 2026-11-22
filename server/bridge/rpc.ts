@@ -515,7 +515,7 @@ export async function handleSendPrompt(args: any = {}) {
   const id = payload.id;
   const message = payload.message;
   const images = payload.images;
-  const streamingBehavior = payload.streamingBehavior || 'followUp';
+  const streamingBehavior = payload.streamingBehavior || 'steer';
   const targetSessionFile = payload.sessionFile || getActiveSessionFile();
   const targetCwd = resolveCrossPlatformCwd(payload.cwd || getActiveCwd());
 

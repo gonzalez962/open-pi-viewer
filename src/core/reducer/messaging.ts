@@ -47,8 +47,7 @@ export type MessagingAction =
 
 /**
  * Insert `newMessage` before any trailing run of queued user messages, so a newly started
- * assistant message never renders "after" a follow-up the user queued but Pi hasn't
- * started yet (queued messages must stay visually last until Pi begins that turn).
+ * assistant message never renders after a steering prompt that Pi hasn't echoed yet.
  */
 function insertBeforeTrailingQueued(
   messages: ChatMessage[],
@@ -136,10 +135,9 @@ export function messagingReducer(
     }
 
     case 'PROMPT_QUEUED': {
-      // Follow-up sent while the agent is busy (streamingBehavior: "followUp"). Pi buffers
-      // it and runs it as the next turn, so unlike PROMPT_SUBMIT this must not touch
-      // pendingPromptId/agentActivity/activeAssistantMessageId — the running prompt keeps
-      // owning those until it settles.
+      // Keep a steering prompt visible while waiting for Pi's user message echo. Unlike
+      // PROMPT_SUBMIT, this must not change pendingPromptId, agentActivity, or
+      // activeAssistantMessageId: those still belong to the running prompt.
       const queuedMessage: ChatMessage = {
         id: action.payload.id,
         role: 'user',
@@ -159,7 +157,7 @@ export function messagingReducer(
     }
 
     case 'QUEUED_PROMPT_REJECTED': {
-      // The backend rejected a queued follow-up (e.g. duplicate ID, bridge down). Drop the
+      // The backend rejected a steering prompt (e.g. duplicate ID, bridge down). Drop the
       // queued message and surface the error, but leave the in-flight prompt's
       // pendingPromptId/agentActivity untouched — it is still running.
       const stillQueued = state.messages.some(
@@ -186,11 +184,10 @@ export function messagingReducer(
       const messageInstant = sentAtMs === undefined ? {} : { sentAtMs };
 
       if (msg.role === 'user') {
-        // Pi emits a user-role message_start when it begins processing a queued
-        // follow-up turn. Clear the earliest queued message whose text or image identity
-        // unambiguously matches the echo. No unconstrained positional fallback: the echo
-        // of the running prompt must not clear an unrelated follow-up; unmatched leftovers
-        // are cleared on EVENT_AGENT_SETTLED.
+        // Pi echoes a steering prompt with a user-role message_start. Clear the earliest
+        // queued message whose text or image identity matches the echo. No positional
+        // fallback: the running prompt's echo must not clear an unrelated queued message.
+        // Unmatched leftovers are cleared on EVENT_AGENT_SETTLED.
         const content = extractTextFromContent(msg.content);
         const msgImages = extractImagesFromMessage(msg);
 
@@ -479,7 +476,7 @@ export function messagingReducer(
     case 'EVENT_AGENT_SETTLED': {
       // Settled uses agent_settled, NOT agent_end per docs/rpc.md and requirements!
       // This is the authoritative moment when the full session-level run settles.
-      // Pi drains its follow-up queue before settling, so no message is still queued.
+      // Pi has finished processing its queues by settlement; no row should remain queued.
       const hasQueued = state.messages.some((m) => m.isQueued);
       const duration = action.payload?.duration;
       const matches = duration && !hasQueued && state.connectionStatus === 'connected'
@@ -551,9 +548,8 @@ export function messagingReducer(
             return { ...m, isStreaming: false, blocks: updatedBlocks };
           }
 
-          // Pi clears its own follow-up queue on abort, so a still-queued follow-up never
-          // ran. Mark it cancelled (reusing the existing cancelled badge/notice) rather
-          // than leaving a stale "Queued" indicator on a message that will never execute.
+          // Pi clears its queues on abort, so a still-queued prompt never ran. Mark it
+          // cancelled rather than leaving a stale "Queued" indicator.
           if (m.role === 'user' && m.isQueued) {
             return { ...m, isQueued: false, isCancelled: true };
           }
