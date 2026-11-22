@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import type { SpeechPreferences } from '@core/types/speech';
 import { transcribeSpeechSttPi } from '@infra/bridge';
 import { convertBlobToWav16kMono } from '@infra/wav-recorder';
@@ -6,18 +6,26 @@ import { convertBlobToWav16kMono } from '@infra/wav-recorder';
 export interface PromptMicButtonProps {
   preferences?: SpeechPreferences;
   onTranscription: (text: string) => void;
+  onRecordingChange?: (recording: boolean) => void;
   disabled?: boolean;
 }
 
 export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
   preferences,
   onTranscription,
+  onRecordingChange,
   disabled,
 }) => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    onRecordingChange?.(true);
+    return () => onRecordingChange?.(false);
+  }, [isRecording, onRecordingChange]);
 
   if (!preferences?.sttEnabled) {
     return null;
@@ -37,6 +45,7 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
       };
 
       mediaRecorder.onstop = async () => {
+        setIsRecording(false);
         try {
           const rawBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
           const wavBlob = await convertBlobToWav16kMono(rawBlob);
@@ -94,18 +103,14 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-    }
-  };
-
+  // Busy only prevents starting a recording, never stopping an active one.
+  const isDisabled = !isRecording && (disabled || isTranscribing);
   const handleToggle = () => {
     if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== 'inactive') recorder.stop();
+    } else if (!isDisabled) {
+      void startRecording();
     }
   };
 
@@ -114,7 +119,7 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
       type="button"
       className={`prompt-action-btn prompt-mic-btn ${isRecording ? 'is-recording' : ''}`}
       onClick={handleToggle}
-      disabled={disabled || isTranscribing}
+      disabled={isDisabled}
       title={isRecording ? 'Detener grabación de voz' : 'Hablar (STT Local)'}
       style={{
         position: 'absolute',
@@ -134,7 +139,7 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
         backdropFilter: 'blur(6px)',
         WebkitBackdropFilter: 'blur(6px)',
         color: isRecording ? '#ef4444' : 'inherit',
-        cursor: disabled || isTranscribing ? 'not-allowed' : 'pointer',
+        cursor: isDisabled ? 'not-allowed' : 'pointer',
         boxShadow: isRecording
           ? '0 0 10px rgba(239, 68, 68, 0.6)'
           : '0 2px 5px rgba(0, 0, 0, 0.25)',
@@ -143,7 +148,7 @@ export const PromptMicButton: React.FC<PromptMicButtonProps> = ({
         opacity: isRecording ? 1 : 0.85,
       }}
     >
-      {isTranscribing ? '⏳' : isRecording ? '🛑' : '🎤'}
+      {isRecording ? '🛑' : isTranscribing ? '⏳' : '🎤'}
     </button>
   );
 };

@@ -22,6 +22,41 @@ function createBusyRunState(promptText = 'Investigate issue'): ChatSessionState 
   });
 }
 
+test('Working exposes only subagent names as targets, without changing the plain-text status contract', async () => {
+  const { getAgentWorkingStatus, deriveAgentWorkingStatus } = await loadStatusModule();
+  const worker = { id: 'child', agent: 'worker/one', status: 'running' as const, lastStep: 'Reading: a/b' };
+  const state = { ...createBusyRunState(), subagents: [worker] };
+  assert.equal(getAgentWorkingStatus(state, 'es'), 'Trabajando - Worker/one: Reading: a/b');
+  assert.deepEqual(deriveAgentWorkingStatus(state, 'es').parts, [
+    { text: 'Trabajando - ' }, { text: 'Worker/one', taskId: 'child' }, { text: ': Reading: a/b' },
+  ]);
+  const waiting = { ...state, subagents: [{ ...worker, status: 'waiting' as const }] };
+  assert.deepEqual(deriveAgentWorkingStatus(waiting).parts, [
+    { text: 'Worker/one', taskId: 'child' },
+    { text: ': waiting for response' },
+  ]);
+});
+
+test('Working reserves one of the three visible activity slots for a live subagent', async () => {
+  const { getAgentWorkingStatus, deriveAgentWorkingStatus } = await loadStatusModule();
+  let state = chatReducer(createBusyRunState(), {
+    type: 'EVENT_MESSAGE_START', payload: { message: { role: 'assistant', content: [] } },
+  });
+  for (const name of ['read', 'grep', 'find', 'edit']) {
+    state = chatReducer(state, {
+      type: 'EVENT_TOOL_EXECUTION_START', payload: { toolCallId: name, toolName: name },
+    });
+  }
+  state = { ...state, subagents: [
+    { id: 'one', agent: 'worker', status: 'running' },
+    { id: 'two', agent: 'reviewer', status: 'queued' },
+  ] };
+  assert.equal(getAgentWorkingStatus(state), 'Exploring - Read/Grep/Find/+3');
+  assert.deepEqual(deriveAgentWorkingStatus(state).parts, [
+    { text: 'Exploring - Read/Grep/' }, { text: 'Worker', taskId: 'one' }, { text: '/+3' },
+  ]);
+});
+
 test('S2.1 busy run with explicit phase tool call displays phase and excludes phase tool from work', async () => {
   const { getAgentWorkingStatus, deriveAgentWorkingStatus } = await loadStatusModule();
 

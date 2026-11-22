@@ -24,9 +24,15 @@ import { translate } from '@shared/i18n';
 
 export type ActivityKind = 'phase' | 'tool' | 'thinking' | 'generating' | 'fallback' | 'waiting';
 
+interface WorkingStatusPart {
+  text: string;
+  taskId?: string;
+}
+
 export interface AgentWorkingStatus {
   isWorking: boolean;
   text?: string;
+  parts?: WorkingStatusPart[];
   phase?: string;
   runningTools: string[];
   activityKind?: ActivityKind;
@@ -326,10 +332,12 @@ export function deriveAgentWorkingStatus(
 
   if (waitingSub) {
     const waitingLabel = translate(locale, 'agent_working_status.waiting_response');
-    const text = `${capitalize(waitingSub.agent)}: ${waitingLabel}`;
+    const name = capitalize(waitingSub.agent);
+    const detail = `: ${waitingLabel}`;
     return {
       isWorking: true,
-      text,
+      text: name + detail,
+      parts: [{ text: name, taskId: waitingSub.id }, { text: detail }],
       runningTools: [],
       activityKind: 'waiting',
     };
@@ -442,35 +450,41 @@ export function deriveAgentWorkingStatus(
     activityKind = 'fallback';
   }
 
-  // Combine running tools and active subagents (pi-notify herdr.ts convention)
-  const items: string[] = [];
-  for (const tool of runningTools) {
-    items.push(tool);
-  }
-  for (const sub of subagents) {
-    items.push(capitalize(sub.agent));
-  }
+  // Preserve the plain-text tool-first summary. The interactive bar reserves
+  // a slot for a subagent only when tools would otherwise hide every trigger.
+  const items: WorkingStatusPart[] = [
+    ...runningTools.map(text => ({ text })),
+    ...subagents.map(sub => ({ text: capitalize(sub.agent), taskId: sub.id })),
+  ];
+  const visibleLimit = 3;
+  const visible = items.slice(0, visibleLimit);
+  const overflow = items.length > visibleLimit ? `/+${items.length - visibleLimit}` : '';
+  const prefix = items.length ? `${baseLabel} - ` : baseLabel;
+  const step = items.length === 1 ? subagents[0]?.lastStep : undefined;
+  const detail = step && !['queued', 'starting', 'done'].includes(step.toLowerCase()) ? `: ${step}` : '';
+  const text = prefix + visible.map(item => item.text).join('/') + detail + overflow;
 
-  let suffixItems = items;
-  if (items.length === 1 && subagents.length === 1 && items[0] === capitalize(subagents[0]!.agent)) {
-    const step = subagents[0]!.lastStep;
-    if (step && !['queued', 'starting', 'done'].includes(step.toLowerCase())) {
-      suffixItems = [`${capitalize(subagents[0]!.agent)}: ${step}`];
-    }
+  if (subagents.length > 0 && runningTools.length >= visibleLimit) {
+    visible[visibleLimit - 1] = items[runningTools.length]!;
   }
-
-  if (suffixItems.length > 3) {
-    suffixItems = [...suffixItems.slice(0, 3), `+${suffixItems.length - 3}`];
-  }
-
-  let text = baseLabel;
-  if (suffixItems.length > 0) {
-    text = `${baseLabel} - ${suffixItems.join('/')}`;
-  }
+  const parts: WorkingStatusPart[] = [{ text: prefix }];
+  const appendText = (value: string) => {
+    if (!value) return;
+    const last = parts[parts.length - 1]!;
+    if (last.taskId === undefined) last.text += value;
+    else parts.push({ text: value });
+  };
+  visible.forEach((item, index) => {
+    if (index > 0) appendText('/');
+    if (item.taskId !== undefined) parts.push(item);
+    else appendText(item.text);
+  });
+  appendText(detail + overflow);
 
   return {
     isWorking: true,
     text,
+    parts,
     phase: activePhase,
     runningTools,
     activityKind,

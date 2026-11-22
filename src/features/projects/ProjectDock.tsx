@@ -4,12 +4,15 @@ import {
   type ProjectStatusInfo,
   getProjectDisplayName,
   getProjectMonogram,
-  isSameProjectPath,
 } from './projects';
 import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import { getWorktreeRepositoryColor } from './worktree-colors';
+import { getProjectDockSwipe, isProjectDockSwipeClick, type ProjectDockTouchPoint } from './project-dock-swipe';
+import { getProjectDockGroups, moveProjectDockGroup } from './project-dock-reorder';
+
+type DockMove = { projectId: string; index: number | null; input: 'pointer' | 'keyboard' };
 
 export interface ProjectDockProps {
   projects: ProjectItem[];
@@ -21,6 +24,7 @@ export interface ProjectDockProps {
   locale: SupportedLocale;
   projectStatusMap?: Record<string, ProjectStatusInfo & { hasPendingQuestion?: boolean }>;
   projectOrder?: string[];
+  onReorderProjects?: (visibleOrder: string[]) => void;
   isSecondaryWorktree?: (path: string) => boolean;
   getPrimaryPath?: (path: string) => string | undefined;
   onSelectProject: (project: ProjectItem) => void;
@@ -100,6 +104,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   locale,
   projectStatusMap,
   projectOrder = [],
+  onReorderProjects,
   isSecondaryWorktree,
   getPrimaryPath,
   onSelectProject,
@@ -113,13 +118,32 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 }) => {
   const isSettingsActive = Boolean(isSettingsOpen);
   const [isHovered, setIsHovered] = useState(false);
-  const [expandedByTap, setExpandedByTap] = useState(false);
+  const [expandedByTouch, setExpandedByTouch] = useState(false);
   const expandOnClick = useRef(false);
+  const swipeStart = useRef<ProjectDockTouchPoint | null>(null);
+  const swipeClick = useRef<ProjectDockTouchPoint | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ pointerId: number; projectId: string; startY: number } | null>(null);
+  const [move, setMove] = useState<DockMove | null>(null);
+  const restoreHandle = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const handle = restoreHandle.current;
+    restoreHandle.current = null;
+    if (handle?.isConnected) {
+      handle.focus({ preventScroll: true });
+      handle.scrollIntoView({ block: 'nearest' });
+    }
+  }, [projectOrder]);
 
   useEffect(() => {
     if (!mobileDrawerOpen) {
-      setExpandedByTap(false);
+      setExpandedByTouch(false);
       expandOnClick.current = false;
+      swipeStart.current = null;
+      swipeClick.current = null;
+      drag.current = null;
+      setMove(null);
     }
   }, [mobileDrawerOpen]);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -128,7 +152,11 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 
   const isEditing = editingProjectId !== null;
   const isConfirmingRemove = confirmingRemoveId !== null;
-  const isExpanded = isHovered || isEditing || isConfirmingRemove || (mobileDrawerOpen && expandedByTap);
+  const isExpanded = isHovered || isEditing || isConfirmingRemove || move !== null || (mobileDrawerOpen && expandedByTouch);
+
+  const cancelSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (swipeStart.current?.pointerId === event.pointerId) swipeStart.current = null;
+  };
 
   const handleRowClick = useCallback(
     (project: ProjectItem) => {
@@ -175,47 +203,80 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
     setConfirmingRemoveId(null);
   }, []);
 
-  // Derive flat display groups only when the web lookup is available. A child
-  // belongs to a group only if its confirmed primary is registered here.
-  const children = new Map<string, ProjectItem[]>();
-  if (getPrimaryPath) {
-    for (const project of projects) {
-      const primaryPath = getPrimaryPath(project.path);
-      if (!primaryPath || isSameProjectPath(primaryPath, project.path)) continue;
-      const parent = projects.find((candidate) => isSameProjectPath(candidate.path, primaryPath));
-      if (parent) children.set(parent.id, [...(children.get(parent.id) ?? []), project]);
+  const groups = getProjectDockGroups(projects, projectOrder, getPrimaryPath);
+  const canReorder = Boolean(onReorderProjects) && groups.length > 1;
+  const targetIndex = move?.index ?? -1;
+  const dropGroup = groups[targetIndex];
+  const sourceIndex = groups.findIndex(([project]) => project.id === move?.projectId);
+  const dropBefore = dropGroup && targetIndex < sourceIndex ? dropGroup[0].id : null;
+  const dropAfter = dropGroup && sourceIndex >= 0 && targetIndex > sourceIndex ? dropGroup[dropGroup.length - 1].id : null;
+
+  const commitMove = (projectId: string, index: number | null, handle?: HTMLButtonElement) => {
+    setMove(null);
+    if (!onReorderProjects || index === null) return;
+    const next = moveProjectDockGroup(groups, projectId, index);
+    if (!next) return;
+    if (handle) restoreHandle.current = handle;
+    onReorderProjects(next);
+  };
+
+  const getPointerIndex = (event: React.PointerEvent<HTMLButtonElement>, projectId: string, startY: number) => {
+    const list = listRef.current;
+    if (!list || Math.abs(event.clientY - startY) < 5) return null;
+    const { left, right, top, bottom } = list.getBoundingClientRect();
+    const { clientX, clientY } = event;
+    if (clientX < left || clientX > right || clientY < top || clientY > bottom) return null;
+
+    // Cross whole-group midpoints, ignoring the dragged group's own rows.
+    let index = 0;
+    let row = 0;
+    for (const group of groups) {
+      const first = list.children[row];
+      row += group.length;
+      if (group[0].id === projectId) continue;
+      const last = list.children[row - 1];
+      const middle = (first.getBoundingClientRect().top + last.getBoundingClientRect().bottom) / 2;
+      if (clientY < middle) break;
+      index++;
     }
-  }
-  const childIds = new Set([...children.values()].flat().map((project) => project.id));
-  const groups = projects.filter((project) => !childIds.has(project.id))
-    .map((project) => [project, ...(children.get(project.id) ?? [])]);
-  if (getPrimaryPath) {
-    const ranks = new Map(projectOrder.map((id, index) => [id, index]));
-    const rank = (group: ProjectItem[]) => Math.min(...group.map(project => ranks.get(project.id) ?? Infinity));
-    groups.sort((a, b) => rank(a) - rank(b) || 0);
-  }
-  const displayProjects = groups.flat();
+    return index;
+  };
+
+  const cancelDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    setMove(null);
+  };
 
   return (
     <div className="project-dock-container">
       <aside
-        className={`project-dock ${isExpanded ? 'is-expanded' : ''}`}
+        className={`project-dock${mobileDrawerOpen ? ' project-dock--mobile-drawer' : ''}${isExpanded ? ' is-expanded' : ''}`}
         onPointerDownCapture={(event) => {
-          // Read expansion before touch can synthesize hover or focus for this click.
-          expandOnClick.current = mobileDrawerOpen && event.pointerType === 'touch' && !isExpanded;
+          swipeClick.current = null;
+          // Read expansion before touch can synthesize focus for this click.
+          expandOnClick.current = mobileDrawerOpen && event.pointerType === 'touch' && event.isPrimary && !isExpanded;
         }}
         onPointerCancelCapture={() => { expandOnClick.current = false; }}
         onClickCapture={(event) => {
           const shouldExpand = expandOnClick.current;
           expandOnClick.current = false;
-          if (!shouldExpand || !mobileDrawerOpen || event.detail === 0) return;
+          if (!mobileDrawerOpen || event.detail === 0) return;
+          const wasSwipe = swipeClick.current && isProjectDockSwipeClick(swipeClick.current, event.nativeEvent);
+          swipeClick.current = null;
+          if (!wasSwipe && !shouldExpand) return;
           event.preventDefault();
           event.stopPropagation();
-          setExpandedByTap(true);
+          if (!wasSwipe) setExpandedByTouch(true);
         }}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onFocus={() => setIsHovered(true)}
+        onMouseEnter={() => { if (!mobileDrawerOpen) setIsHovered(true); }}
+        onMouseLeave={() => { if (!mobileDrawerOpen) setIsHovered(false); }}
+        onFocus={(event) => {
+          // Touch can focus a tile even when its click is consumed.
+          if (!mobileDrawerOpen || event.target.matches(':focus-visible')) {
+            setIsHovered(true);
+          }
+        }}
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setIsHovered(false);
@@ -223,7 +284,12 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') {
-            if (isEditing) {
+            if (move) {
+              drag.current = null;
+              setMove(null);
+              e.preventDefault();
+              e.stopPropagation();
+            } else if (isEditing) {
               handleCancelRename();
               e.stopPropagation();
             } else if (isConfirmingRemove) {
@@ -234,9 +300,43 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
         }}
         aria-label={translate(locale, 'projects.dock_label')}
       >
-        <div className="project-dock-list" role="list">
-          {displayProjects.map((project) => {
+        <div
+          className="project-dock-list"
+          ref={listRef}
+          role="list"
+          onPointerDown={(event) => {
+            if (mobileDrawerOpen && event.pointerType === 'touch' && event.isPrimary) {
+              // Touch pointers implicitly capture on the originating element.
+              const { pointerId, clientX, clientY } = event;
+              swipeStart.current = { pointerId, clientX, clientY };
+            }
+          }}
+          onPointerUp={(event) => {
+            const start = swipeStart.current;
+            if (!start || start.pointerId !== event.pointerId) return;
+            swipeStart.current = null;
+            if (!mobileDrawerOpen) return;
+            const { pointerId, clientX, clientY } = event;
+            const end = { pointerId, clientX, clientY };
+            const swipe = getProjectDockSwipe(start, end);
+            if (!swipe) return;
+            swipeClick.current = end;
+            expandOnClick.current = false;
+            if (swipe === 'expand') {
+              setExpandedByTouch(true);
+            } else if (!isEditing && !isConfirmingRemove) {
+              setExpandedByTouch(false);
+              setIsHovered(false);
+            }
+          }}
+          onPointerCancel={cancelSwipe}
+          onLostPointerCapture={cancelSwipe}
+        >
+          {groups.flatMap((group, groupIndex) => group.map((project, memberIndex) => {
             const isActive = project.id === activeProjectId;
+            const isWorktree = memberIndex > 0;
+            const keyboardMoving = move?.input === 'keyboard' && move.projectId === project.id;
+            const dropClass = dropBefore === project.id ? 'project-row--drop-before' : dropAfter === project.id ? 'project-row--drop-after' : '';
             const primaryPath = getPrimaryPath?.(project.path);
             const displayName = getProjectDisplayName(project);
             const monogram = getProjectMonogram(displayName);
@@ -262,7 +362,7 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
             return (
               <React.Fragment key={project.id}>
               <div
-                className={`project-row ${childIds.has(project.id) ? 'project-dock-row--worktree' : ''} ${isActive ? 'is-active' : ''}`}
+                className={`project-row ${isWorktree ? 'project-dock-row--worktree' : ''} ${isActive ? 'is-active' : ''} ${dropClass}`}
                 role="listitem"
                 onClick={() => handleRowClick(project)}
               >
@@ -475,10 +575,62 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
                     </>
                   )}
                 </div>
+                {canReorder && !isWorktree && !isRowEditing && !isRowConfirming && (
+                  <button
+                    type="button"
+                    className="project-reorder-handle"
+                    aria-label={translate(locale, 'projects.reorder_label', { name: displayName })}
+                    aria-description={translate(locale, 'projects.reorder_instructions')}
+                    title={translate(locale, 'projects.reorder_instructions')}
+                    aria-pressed={keyboardMoving}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                      expandOnClick.current = false;
+                      if (drag.current || !event.isPrimary || event.button !== 0) return;
+                      const { pointerId, clientY } = event;
+                      event.currentTarget.setPointerCapture(pointerId);
+                      drag.current = { pointerId, projectId: project.id, startY: clientY };
+                      setMove({ projectId: project.id, index: null, input: 'pointer' });
+                    }}
+                    onPointerMove={(event) => {
+                      const active = drag.current;
+                      if (!active || active.pointerId !== event.pointerId) return;
+                      const index = getPointerIndex(event, active.projectId, active.startY);
+                      setMove(current => current?.index === index ? current : { projectId: active.projectId, index, input: 'pointer' });
+                    }}
+                    onPointerUp={(event) => {
+                      event.stopPropagation();
+                      const active = drag.current;
+                      if (!active || active.pointerId !== event.pointerId) return;
+                      drag.current = null;
+                      commitMove(active.projectId, getPointerIndex(event, active.projectId, active.startY));
+                    }}
+                    onPointerCancel={cancelDrag}
+                    onLostPointerCapture={cancelDrag}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (event.detail !== 0 || drag.current) return;
+                      if (keyboardMoving) commitMove(project.id, move.index, event.currentTarget);
+                      else setMove({ projectId: project.id, index: groupIndex, input: 'keyboard' });
+                    }}
+                    onKeyDown={(event) => {
+                      if (!keyboardMoving || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      const index = (move.index ?? groupIndex) + (event.key === 'ArrowUp' ? -1 : 1);
+                      if (index >= 0 && index < groups.length) setMove({ ...move, index });
+                    }}
+                    onBlur={() => { if (keyboardMoving) setMove(null); }}
+                  >
+                    <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true">
+                      <path d="M4 3h2v2H4zm6 0h2v2h-2zM4 7h2v2H4zm6 0h2v2h-2zM4 11h2v2H4zm6 0h2v2h-2z" />
+                    </svg>
+                  </button>
+                )}
               </div>
               </React.Fragment>
             );
-          })}
+          }))}
         </div>
 
         <div className="project-dock-footer">

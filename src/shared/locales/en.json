@@ -546,6 +546,8 @@
   "settings.file_tree_interval_60s": "1 minute",
 
   "prompt_controls.toolbar_aria": "Prompt controls and session context",
+  "prompt_controls.more_options": "More options",
+  "prompt_controls.attachment_count": "Attachments ({count})",
   "prompt_controls.default_model": "Select model",
   "prompt_controls.select_model_title": "Active Model — Click to switch model",
   "prompt_controls.available_models": "Available models",
@@ -897,6 +899,8 @@
   "providers.oauth.unlock_unconfigured": "Remote OAuth access is disabled: PI_VIEWER_OAUTH_ACCESS_KEY is not configured on the server.",
 
   "projects.dock_label": "Projects",
+  "projects.reorder_label": "Reorder {name}",
+  "projects.reorder_instructions": "Drag to move this group. With a keyboard, press Enter or Space to pick up and drop, use the up and down arrows to move, or press Escape to cancel.",
   "projects.add_project": "Add project folder",
   "projects.add_project_title": "Add folder as project...",
   "projects.rename": "Rename",

@@ -739,6 +739,12 @@
     height: 100%;
   }
 
+  .mobile-nav-drawer-body .project-dock-list {
+    /* Keep native vertical scrolling and pinch; the dock handles horizontal swipes. */
+    touch-action: pan-y pinch-zoom;
+    overscroll-behavior-y: contain;
+  }
+
   .mobile-nav-drawer-body .session-sidebar {
     width: auto;
     flex: 1;

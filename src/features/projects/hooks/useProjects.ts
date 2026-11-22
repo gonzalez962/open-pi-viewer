@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pickDirectoryPi } from '@infra/bridge';
 import { isWebShim } from '@infra/web-oauth-access';
-import { loadProjectOrder, promoteProjectOrder, saveProjectOrder } from '@features/projects/project-order';
+import { appendProjectOrder, loadProjectOrder, mergeVisibleProjectOrder, saveProjectOrder } from '@features/projects/project-order';
+import { getProjectDockGroups, includeHiddenWorktreeRanks } from '@features/projects/project-dock-reorder';
 import {
   addProject,
   isSameProjectPath,
@@ -19,6 +20,7 @@ export interface UseProjectsOptions {
   /** config.workingDirectory, read to seed the initial registry and as pickDirectoryPi's default path. */
   workingDirectory: string;
   getPrimaryPath?: (path: string) => string | undefined;
+  isProjectVisible?: (path: string) => boolean;
   isBusy: boolean;
   /** Inversion point: the connection cluster owns StartupManager; this hook only calls it. */
   applyWorkingDirectory: (workingDirectory: string) => void;
@@ -29,6 +31,7 @@ export interface UseProjectsOptions {
 export interface UseProjectsResult {
   projectsRegistry: ProjectsRegistry;
   projectOrder: string[];
+  handleReorderProjects: (visibleOrder: string[]) => void;
   handleSelectProject: (project: ProjectItem, options?: { promote?: boolean }) => void;
   handleAddProject: (pickedPath?: string, customName?: string) => Promise<void>;
   handleRenameProject: (projectId: string, newName: string) => void;
@@ -57,6 +60,7 @@ export interface UseProjectsResult {
 export function useProjects({
   workingDirectory,
   getPrimaryPath,
+  isProjectVisible,
   isBusy,
   applyWorkingDirectory,
   onActivateProject,
@@ -65,25 +69,42 @@ export function useProjects({
     () => loadProjectsRegistry(undefined, workingDirectory).registry
   );
 
+  const projectsRegistryRef = useRef(projectsRegistry);
+  projectsRegistryRef.current = projectsRegistry;
+
   const [projectOrder, setProjectOrder] = useState<string[]>(() => isWebShim() ? loadProjectOrder() : []);
   const projectOrderRef = useRef(projectOrder);
-  const promote = useCallback((project: ProjectItem, projects: ProjectItem[]) => {
-    if (!isWebShim()) return;
-    const primary = getPrimaryPath?.(project.path);
-    if (primary && projects.some(member => {
-      if (!projectOrderRef.current.includes(member.id)) return false;
-      const memberPrimary = getPrimaryPath?.(member.path);
-      return isSameProjectPath(member.path, primary) || Boolean(memberPrimary && isSameProjectPath(memberPrimary, primary));
-    })) return;
-    const next = promoteProjectOrder(projectOrderRef.current, project.id);
+  const updateProjectOrder = useCallback((next: string[]) => {
     if (next === projectOrderRef.current) return;
     projectOrderRef.current = next;
     setProjectOrder(next);
     saveProjectOrder(next);
-  }, [getPrimaryPath]);
+  }, []);
+  const handleReorderProjects = useCallback((visibleOrder: string[]) => {
+    if (!isWebShim()) return;
+    const order = projectOrderRef.current;
+    const groupOrder = includeHiddenWorktreeRanks(visibleOrder, order, projectsRegistryRef.current.projects, getPrimaryPath);
+    updateProjectOrder(mergeVisibleProjectOrder(order, groupOrder));
+  }, [getPrimaryPath, updateProjectOrder]);
+  const rankProject = useCallback((project: ProjectItem, previousProjects: ProjectItem[]) => {
+    if (!isWebShim()) return;
+    const order = projectOrderRef.current;
+    const ranked = new Set(order);
+    if (ranked.has(project.id)) return;
+    const primary = getPrimaryPath?.(project.path);
+    if (primary && previousProjects.some(member => {
+      if (!ranked.has(member.id)) return false;
+      const memberPrimary = getPrimaryPath?.(member.path);
+      return isSameProjectPath(member.path, primary) || Boolean(memberPrimary && isSameProjectPath(memberPrimary, primary));
+    })) return;
 
-  const projectsRegistryRef = useRef(projectsRegistry);
-  projectsRegistryRef.current = projectsRegistry;
+    // Unranked groups already shown in the dock must not fall behind this visit.
+    const visible = isProjectVisible ? previousProjects.filter(member => isProjectVisible(member.path)) : previousProjects;
+    const anchors = getProjectDockGroups(visible, order, getPrimaryPath)
+      .filter(group => !group.some(member => member.id === project.id || ranked.has(member.id)))
+      .map(([root]) => root.id);
+    updateProjectOrder(appendProjectOrder([...order, ...anchors], project.id));
+  }, [getPrimaryPath, isProjectVisible, updateProjectOrder]);
 
   // Synchronize in-memory registry when storage updates from external or server sync
   useEffect(() => {
@@ -128,7 +149,7 @@ export function useProjects({
   const handleSelectProject = useCallback(
     (project: ProjectItem, options?: { promote?: boolean }) => {
       const currentRegistry = projectsRegistryRef.current;
-      if (options?.promote !== false && currentRegistry.projects.some(p => p.id === project.id)) promote(project, currentRegistry.projects);
+      if (options?.promote !== false && currentRegistry.projects.some(p => p.id === project.id)) rankProject(project, currentRegistry.projects);
       const decision = decideSelectProject(currentRegistry, project, isBusy);
       if (decision.action === 'noop') {
         return;
@@ -140,7 +161,7 @@ export function useProjects({
       onActivateProject?.(decision.registry.activeProjectId!);
       applyWorkingDirectory(decision.path!);
     },
-    [isBusy, applyWorkingDirectory, onActivateProject, promote]
+    [isBusy, applyWorkingDirectory, onActivateProject, rankProject]
   );
 
   const handleAddProject = useCallback(
@@ -167,11 +188,11 @@ export function useProjects({
       projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
 
-      promote(addedProj, nextRegistry.projects);
+      rankProject(addedProj, currentRegistry.projects);
       onActivateProject?.(addedProj.id);
       applyWorkingDirectory(addedProj.path);
     },
-    [workingDirectory, applyWorkingDirectory, onActivateProject, promote]
+    [workingDirectory, applyWorkingDirectory, onActivateProject, rankProject]
   );
 
   const handleRenameProject = useCallback(
@@ -213,15 +234,16 @@ export function useProjects({
       saveProjectsRegistry(nextRegistry);
       projectsRegistryRef.current = nextRegistry;
       setProjectsRegistry(nextRegistry);
-      if (options?.activate !== false && options?.promote) promote(addedProj, nextRegistry.projects);
+      if (options?.activate !== false && options?.promote) rankProject(addedProj, currentRegistry.projects);
       return addedProj;
     },
-    [promote]
+    [rankProject]
   );
 
   return {
     projectsRegistry,
     projectOrder,
+    handleReorderProjects,
     handleSelectProject,
     handleAddProject,
     handleRenameProject,

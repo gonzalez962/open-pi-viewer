@@ -116,7 +116,7 @@ test('S3.2 click and Alt+A open; Escape restores focus; another dialog takes pre
   });
   const key = (key: string, altKey = false) => {
     let prevented = false;
-    controller.onKeyDown({ key, altKey, preventDefault: () => { prevented = true; } } as any);
+    controller.onKeyDown({ key, altKey, preventDefault: () => { prevented = true; }, stopPropagation: () => {} });
     return prevented;
   };
   controller.onClick();
@@ -143,7 +143,7 @@ test('S3.2 click and Alt+A open; Escape restores focus; another dialog takes pre
 test('S2.3 missing or empty tasks hide the entry and Alt+A is a safe no-op', async () => {
   const { SubagentActivityEntry, createSubagentActivityController } = await import('@features/chat/subagent-activity-modal');
   for (const tasks of [undefined, null, []]) {
-    assert.equal(renderToStaticMarkup(React.createElement(SubagentActivityEntry, { tasks, onClick: () => assert.fail('must not open'), t } as any)), '');
+    assert.equal(renderToStaticMarkup(React.createElement(SubagentActivityEntry, { tasks, onClick: () => assert.fail('must not open') } as any)), '');
     let open = false;
     let prevented = false;
     const controller = createSubagentActivityController({ getTasks: () => tasks, getOtherDialogOpen: () => false, getActiveElement: () => null, setOpen: (value: boolean) => { open = value; } });
@@ -151,7 +151,52 @@ test('S2.3 missing or empty tasks hide the entry and Alt+A is a safe no-op', asy
     assert.equal(open, false);
     assert.equal(prevented, false);
   }
-  const markup = renderToStaticMarkup(React.createElement(SubagentActivityEntry, { tasks: tasks, onClick: () => {}, t } as any));
-  assert.match(markup, /Subagent process/i);
-  assert.match(markup, /2/);
+});
+
+test('the named subagent button selects its task and Escape restores the explicit click target', async () => {
+  const { SubagentActivityEntry, createSubagentActivityController } = await import('@features/chat/subagent-activity-modal');
+  const actions: unknown[] = [];
+  const trigger = { isConnected: true, focus: () => actions.push('focus trigger') };
+  const controller = createSubagentActivityController({
+    getTasks: () => tasks as any,
+    getOtherDialogOpen: () => false,
+    getActiveElement: () => ({ focus: () => actions.push('focus unrelated element') }),
+    setOpen: value => actions.push(value),
+    selectTask: (id: string) => actions.push(id),
+  });
+  const button = SubagentActivityEntry({ tasks: tasks as any, taskId: 'two', onClick: controller.onClick });
+  assert.ok(button);
+  assert.equal(button.type, 'button');
+  assert.equal(button.props.type, 'button');
+  assert.equal(button.props['aria-haspopup'], 'dialog');
+  assert.ok('children' in button.props);
+  assert.equal(button.props.children, 'Reviewer');
+  const clickEvent = { currentTarget: trigger } as unknown as Parameters<typeof button.props.onClick>[0];
+  button.props.onClick(clickEvent);
+  controller.close();
+  assert.deepEqual(actions, ['two', true, false, 'focus trigger']);
+
+  actions.length = 0;
+  button.props.onClick(clickEvent);
+  trigger.isConnected = false;
+  controller.close();
+  assert.deepEqual(actions, ['two', true, false]);
+});
+
+test('Escape is consumed before closing an open subagent dialog, and is untouched once closed', async () => {
+  const { createSubagentActivityController } = await import('@features/chat/subagent-activity-modal');
+  const actions: string[] = [];
+  const controller = createSubagentActivityController({
+    getTasks: () => tasks as any, getOtherDialogOpen: () => false, getActiveElement: () => null,
+    setOpen: value => actions.push(value ? 'open' : 'close'),
+  });
+  const escape = {
+    key: 'Escape', altKey: false,
+    preventDefault: () => actions.push('prevent default'),
+    stopPropagation: () => actions.push('stop propagation'),
+  };
+  controller.onClick();
+  controller.onKeyDown(escape);
+  controller.onKeyDown(escape);
+  assert.deepEqual(actions, ['open', 'prevent default', 'stop propagation', 'close']);
 });

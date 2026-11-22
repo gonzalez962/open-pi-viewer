@@ -29,7 +29,7 @@
   box-sizing: border-box;
 }
 
-.project-dock:hover,
+.project-dock:not(.project-dock--mobile-drawer):hover,
 .project-dock.is-expanded {
   width: 250px;
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
@@ -94,7 +94,7 @@
   padding-left: 8px;
 }
 
-.project-dock:hover .project-dock-row--worktree,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-dock-row--worktree,
 .project-dock.is-expanded .project-dock-row--worktree {
   padding-left: 14px;
 }
@@ -102,6 +102,49 @@
 .project-row:hover {
   background-color: var(--bg-subtle-hover, rgba(255, 255, 255, 0.04));
 }
+
+.project-reorder-handle {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--fg-muted, currentColor);
+  cursor: grab;
+  touch-action: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.project-dock.is-expanded .project-reorder-handle,
+.project-reorder-handle:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.project-reorder-handle:active { cursor: grabbing; }
+.project-reorder-handle:hover,
+.project-reorder-handle[aria-pressed='true'] {
+  background: var(--bg-subtle-hover, rgba(128, 128, 128, 0.2));
+  color: var(--fg-default, currentColor);
+}
+
+.project-row--drop-before::after,
+.project-row--drop-after::after {
+  content: '';
+  position: absolute;
+  inset-inline: 6px;
+  height: 2px;
+  background: var(--accent-primary, #3b82f6);
+  pointer-events: none;
+}
+
+.project-row--drop-before::after { top: 0; }
+.project-row--drop-after::after { bottom: 0; }
 
 .project-row.is-active::before {
   content: '';
@@ -266,7 +309,7 @@
   white-space: nowrap;
 }
 
-.project-dock:hover .project-details,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-details,
 .project-dock.is-expanded .project-details {
   opacity: 1;
   pointer-events: auto;
@@ -551,7 +594,7 @@
   box-sizing: border-box;
 }
 
-.project-dock:hover .project-footer-actions > .web-auth-logout-control,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-footer-actions > .web-auth-logout-control,
 .project-dock.is-expanded .project-footer-actions > .web-auth-logout-control {
   display: block;
 }
@@ -676,11 +719,11 @@
   transition: opacity 0.18s ease-in-out;
 }
 
-.project-dock:hover .project-add-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-add-label,
 .project-dock.is-expanded .project-add-label,
-.project-dock:hover .project-clone-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-clone-label,
 .project-dock.is-expanded .project-clone-label,
-.project-dock:hover .project-settings-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-settings-label,
 .project-dock.is-expanded .project-settings-label {
   opacity: 1;
   pointer-events: auto;
@@ -2002,7 +2045,7 @@
     padding-left: 6px;
   }
 
-  .project-dock:hover,
+  .project-dock:not(.project-dock--mobile-drawer):hover,
   .project-dock.is-expanded {
     width: 220px;
     max-width: calc(100vw - 60px);

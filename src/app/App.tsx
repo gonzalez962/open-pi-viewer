@@ -169,7 +169,7 @@ import { resolveExportTitle } from '@features/chat/conversation-export';
 import { useCommandPalette } from '@features/chat/hooks/useCommandPalette';
 import { useAutoSpeech } from '@features/chat/hooks/useAutoSpeech';
 import { CommandPalettePopover } from '@features/chat/components/CommandPalettePopover';
-import { getAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
+import { deriveAgentWorkingStatus, getSelectedSessionJobCount } from '@features/chat/agent-working-status';
 import { useModels } from '@features/providers/hooks/useModels';
 import { useMcpServers } from '@features/mcp/hooks/useMcpServers';
 import { usePiResources } from '@features/extensions/hooks/usePiResources';
@@ -191,6 +191,10 @@ import {
   checkIsMobileViewport,
   resolveMobileBrandTitle,
 } from './mobile-navigation';
+
+function isProjectVisibleForRanking(path: string): boolean {
+  return worktreeCache.classify(path).kind !== 'missing';
+}
 
 function formatReportedModels(models: readonly ReportedAssistantModel[]): string {
   const labels = models.map(({ provider, model }) => qualifyProfileModelId(provider, model));
@@ -413,11 +417,8 @@ export const App: React.FC = () => {
   } = usePreferences();
 
   const selectedSessionJobCount = getSelectedSessionJobCount(state);
-  const derivedWorkingStatus = getAgentWorkingStatus(state, preferences.language);
-  const workingStatusText = isBusy
-    ? (derivedWorkingStatus ?? t('agent_working_status.fallback'))
-    : derivedWorkingStatus;
-  const isIndicatorActive = Boolean(workingStatusText);
+  const workingStatus = deriveAgentWorkingStatus(state, preferences.language);
+  const isIndicatorActive = workingStatus.isWorking || isBusy;
 
   // Subscribes to effective appearance via central controller for live background & working animation
   const [effectiveAppearance, setEffectiveAppearance] = useState<AppearancePreferences>(() =>
@@ -470,6 +471,7 @@ export const App: React.FC = () => {
   const {
     projectsRegistry,
     projectOrder,
+    handleReorderProjects,
     handleSelectProject,
     handleAddProject,
     handleRenameProject,
@@ -478,6 +480,7 @@ export const App: React.FC = () => {
   } = useProjects({
     workingDirectory: config.workingDirectory,
     getPrimaryPath: worktreeCache.getPrimaryPath,
+    isProjectVisible: isProjectVisibleForRanking,
     isBusy,
     applyWorkingDirectory,
     onActivateProject: handleActivateProject,
@@ -513,15 +516,19 @@ export const App: React.FC = () => {
   const multiProjectStateRef = useRef(multiProjectState);
   multiProjectStateRef.current = multiProjectState;
   const [attentionQueue, setAttentionQueue] = useState<ProjectAttentionEvent[]>([]);
-  const [isAttentionMobile, setIsAttentionMobile] = useState(checkIsMobileViewport);
+  const [isMobile, setIsMobile] = useState(checkIsMobileViewport);
+  const [mobilePromptOptionsOpen, setMobilePromptOptionsOpen] = useState(false);
+  const [isPromptRecording, setIsPromptRecording] = useState(false);
+  const mobilePromptOptionsExpanded = mobilePromptOptionsOpen || isPromptRecording;
+  const secondaryPromptControlsHidden = isMobile && !mobilePromptOptionsExpanded;
   const dismissAttention = useCallback(() => setAttentionQueue(queue => queue.slice(1)), []);
-  useProjectAttentionTimeout(isAttentionMobile ? attentionQueue[0] ?? null : null, dismissAttention);
+  useProjectAttentionTimeout(isMobile ? attentionQueue[0] ?? null : null, dismissAttention);
 
   useEffect(() => {
     const onResize = () => {
-      const isMobile = checkIsMobileViewport();
-      setIsAttentionMobile(isMobile);
-      if (!isMobile) setAttentionQueue([]);
+      const mobile = checkIsMobileViewport();
+      setIsMobile(mobile);
+      if (!mobile) setAttentionQueue([]);
     };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
@@ -531,9 +538,9 @@ export const App: React.FC = () => {
     setAttentionQueue(queue => pruneAttention(queue, {
       projects: projectsRegistry.projects,
       activeProjectId: projectsRegistry.activeProjectId,
-      isMobile: isAttentionMobile,
+      isMobile,
     }));
-  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isAttentionMobile]);
+  }, [projectsRegistry.projects, projectsRegistry.activeProjectId, isMobile]);
 
   const handleSelectProjectAndSync = useCallback(
     (project: ProjectItem) => {
@@ -765,12 +772,24 @@ export const App: React.FC = () => {
       getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element => !element.closest('.subagent-overlay'))),
       getActiveElement: () => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
       setOpen: setSubagentOpen,
+      selectTask: setSelectedSubagent,
     });
   }
   useEffect(() => {
     const controller = subagentController.current!;
-    window.addEventListener('keydown', controller.onKeyDown);
-    return () => window.removeEventListener('keydown', controller.onKeyDown);
+    // Claim Escape before the prompt's document listener; leave Alt+A in bubble.
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') controller.onKeyDown(event);
+    };
+    const onShortcut = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') controller.onKeyDown(event);
+    };
+    window.addEventListener('keydown', onEscape, true);
+    window.addEventListener('keydown', onShortcut);
+    return () => {
+      window.removeEventListener('keydown', onEscape, true);
+      window.removeEventListener('keydown', onShortcut);
+    };
   }, []);
   useEffect(() => {
     subagentController.current?.close(false);
@@ -1508,7 +1527,7 @@ export const App: React.FC = () => {
         event={attentionQueue[0] ?? null}
         projects={projectsRegistry.projects}
         activeProjectId={projectsRegistry.activeProjectId}
-        isMobile={isAttentionMobile}
+        isMobile={isMobile}
         locale={preferences.language}
         onDismiss={dismissAttention}
       />
@@ -1701,6 +1720,7 @@ export const App: React.FC = () => {
             onRemoveProject={handleRemoveProjectAndSync}
             projectStatusMap={projectStatusMap}
             projectOrder={projectOrder}
+            onReorderProjects={isWebShim() ? handleReorderProjects : undefined}
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
             onOpenAddProject={handleOpenAddProject}
@@ -2005,7 +2025,6 @@ export const App: React.FC = () => {
             aria-label={t('empty.history_label')}
             tabIndex={0}
           >
-          <SubagentActivityEntry tasks={subagentDetails} onClick={subagentController.current!.onClick} t={t} />
           {state.messages.length === 0 ? (
             <div className="empty-state">
               <div className="empty-state-icon" aria-hidden="true">
@@ -2304,9 +2323,8 @@ export const App: React.FC = () => {
                   <span
                     className={runtimeWorkStyles.className}
                     style={runtimeWorkStyles.style as React.CSSProperties}
-                    aria-hidden="true"
                   >
-                    <span className="loader">
+                    <span className="loader" aria-hidden="true">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
                           key={`wdot-1-${i}`}
@@ -2316,10 +2334,12 @@ export const App: React.FC = () => {
                       ))}
                     </span>
                     <span className="working-text">
-                      {workingStatusText}
-                      {selectedSessionJobCount > 0 && ` · ${t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}`}
+                      {workingStatus.parts?.map(part => part.taskId === undefined ? part.text : (
+                        <SubagentActivityEntry key={part.taskId} tasks={subagentDetails} taskId={part.taskId} onClick={subagentController.current!.onClick} />
+                      )) ?? t('agent_working_status.fallback')}
+                      {selectedSessionJobCount > 0 && <span aria-hidden="true">{` · ${t(selectedSessionJobCount === 1 ? 'jobs.count_one' : 'jobs.count_many', { count: selectedSessionJobCount })}`}</span>}
                     </span>
-                    <span className="loader">
+                    <span className="loader" aria-hidden="true">
                       {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => (
                         <span
                           key={`wdot-2-${i}`}
@@ -2349,7 +2369,7 @@ export const App: React.FC = () => {
               </span>
             </div>
 
-            <PendingAttachments key={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} draftKey={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} files={attachedFiles} onRemove={removeAttachedFile} t={t} />
+            <PendingAttachments key={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} draftKey={JSON.stringify([projectsRegistry.activeProjectId, state.sessionId])} id="prompt-pending-attachments" hidden={secondaryPromptControlsHidden} files={attachedFiles} onRemove={removeAttachedFile} t={t} />
 
             <TodoPanel todo={state.todo} expanded={todoExpanded} onToggle={() => setTodoExpanded(value => !value)} t={t} />
             <div className="prompt-input-wrapper" style={{ position: 'relative', width: '100%' }}>
@@ -2390,13 +2410,16 @@ export const App: React.FC = () => {
               />
 
               {preferences.speech?.sttEnabled && (
-                <PromptMicButton
-                  preferences={preferences.speech}
-                  onTranscription={(transcribedText) => {
-                    setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
-                  }}
-                  disabled={isBusy}
-                />
+                <span id="prompt-mic-options" className="prompt-secondary-slot" hidden={secondaryPromptControlsHidden}>
+                  <PromptMicButton
+                    preferences={preferences.speech}
+                    onRecordingChange={setIsPromptRecording}
+                    onTranscription={(transcribedText) => {
+                      setPrompt((prev) => (prev ? `${prev} ${transcribedText}` : transcribedText));
+                    }}
+                    disabled={isBusy}
+                  />
+                </span>
               )}
             </div>
 
@@ -2412,6 +2435,15 @@ export const App: React.FC = () => {
             )}
 
             <PromptControls
+              mobileOptions={isMobile ? {
+                open: mobilePromptOptionsExpanded,
+                lockedOpen: isPromptRecording,
+                onToggle: () => setMobilePromptOptionsOpen(open => !open),
+                relatedIds: [
+                  ...(attachedFiles.length > 0 ? ['prompt-pending-attachments'] : []),
+                  ...(preferences.speech?.sttEnabled ? ['prompt-mic-options'] : []),
+                ],
+              } : undefined}
               modelInfo={effectiveModelInfo}
               speechPreferences={preferences.speech}
               onTranscription={(transcribedText) => {

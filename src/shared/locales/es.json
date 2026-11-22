@@ -546,6 +546,8 @@
   "settings.file_tree_interval_60s": "1 minuto",
 
   "prompt_controls.toolbar_aria": "Controles de prompt y contexto de sesión",
+  "prompt_controls.more_options": "Más opciones",
+  "prompt_controls.attachment_count": "Adjuntos ({count})",
   "prompt_controls.default_model": "Seleccionar modelo",
   "prompt_controls.select_model_title": "Modelo activo — Clic para cambiar de modelo",
   "prompt_controls.available_models": "Modelos disponibles",
@@ -897,6 +899,8 @@
   "providers.oauth.unlock_unconfigured": "El acceso a OAuth remoto está desactivado: PI_VIEWER_OAUTH_ACCESS_KEY no está configurado en el servidor.",
 
   "projects.dock_label": "Proyectos",
+  "projects.reorder_label": "Reordenar {name}",
+  "projects.reorder_instructions": "Arrastra para mover este grupo. Con el teclado, pulsa Intro o Espacio para tomarlo y soltarlo, usa las flechas arriba y abajo para moverlo o pulsa Escape para cancelar.",
   "projects.add_project": "Agregar carpeta de proyecto",
   "projects.add_project_title": "Agregar carpeta como proyecto...",
   "projects.rename": "Renombrar",
