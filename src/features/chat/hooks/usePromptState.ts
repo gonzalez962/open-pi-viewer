@@ -55,7 +55,7 @@ export interface UsePromptStateOptions {
   isReadyToSend: boolean;
   isBusy: boolean;
   /**
-   * True when a follow-up prompt can be queued while the agent is busy (connected,
+   * True when a steering prompt can be queued while the agent is busy (connected,
    * hydrated, not resetting). Distinct from `isReadyToSend`, which gates an ordinary
    * idle send; the two are mutually exclusive since `isReadyToSend` requires `!isBusy`.
    */
@@ -410,12 +410,12 @@ export function usePromptState({
         messageToSend,
         imageAttachments.length > 0 ? imageAttachments : undefined,
         undefined,
-        queuing ? 'followUp' : undefined
+        queuing ? 'steer' : undefined
       );
       if (!res?.id) {
         throw new Error('Backend response missing required request ID');
       }
-      // A queued follow-up's acceptance must not disturb the in-flight prompt's state
+      // Accepting a steering prompt must not disturb the in-flight prompt's state
       // (pendingPromptId keeps tracking the running turn), so only an idle send dispatches
       // PROMPT_ACCEPTED here.
       if (!queuing) {

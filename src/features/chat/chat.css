@@ -309,7 +309,7 @@
   margin-right: 8px;
 }
 
-/* Marks a user message queued via streamingBehavior: "followUp" while the agent is busy.
+/* Marks a steering prompt awaiting Pi's user message echo.
    Reuses --accent-primary (already used for .extension-prompt-queue-badge) rather than
    introducing a new token. */
 .message-badge-queued {

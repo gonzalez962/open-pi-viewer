@@ -107,10 +107,30 @@ test('S1.1 web prompt stays in selected project during background reattachment',
     assert.equal(promptsB.length, 1);
     assert.equal(promptsB[0].message, 'project B prompt');
     assert.equal(f.children[1].cwd, bCwd);
+    assert.equal(promptsB[0].streamingBehavior, 'steer', 'omitted behavior defaults to steering on the selected project');
   } finally {
     releaseB();
     Object.assign(globalThis, originals);
   }
+});
+
+test('web prompt preserves explicit streaming behavior without sending an abort', async (t) => {
+  const f = fixture(t);
+  const file = f.file('active');
+  await getOrCreatePiRpc(f.root, file);
+  const child = f.children[0];
+  child.busy = true;
+  child.event({ type: 'agent_start' });
+  const before = child.commands.length;
+  const prompts = ['steer', 'followUp'].map(streamingBehavior => ({
+    id: `request-${streamingBehavior}`, message: `prompt ${streamingBehavior}`, streamingBehavior,
+  }));
+  for (const prompt of prompts) {
+    const payload = { ...prompt, cwd: f.root, sessionFile: file };
+    assert.deepEqual(await handleIpcCommand('send_prompt', { payload }), { id: prompt.id });
+  }
+  assert.deepEqual(child.commands.slice(before), prompts.map(prompt => ({ type: 'prompt', ...prompt })));
+  assert.equal((await f.connect(file)).activity, 'busy');
 });
 
 test('S1.2 mismatched project and session reject without commands or activity changes', async (t) => {

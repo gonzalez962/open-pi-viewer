@@ -57,6 +57,7 @@ async function withViewer(run: (page: Page) => Promise<void>) {
       const listeners = new Map<string, Set<number>>();
       let next = 1;
       let elapsed = 0;
+      const promptCommands: { command: string; payload?: { id: string; message: string; streamingBehavior?: string } }[] = [];
       Date.now = () => 1704067200000 + elapsed;
       performance.now = () => elapsed;
       Object.assign(window, {
@@ -68,7 +69,7 @@ async function withViewer(run: (page: Page) => Promise<void>) {
             return id;
           },
           unregisterCallback(id: number) { callbacks.delete(id); },
-          async invoke(command: string, args: { event: string; handler: number; eventId: number; payload?: { id: string; streamingBehavior?: string } }) {
+          async invoke(command: string, args: { event: string; handler: number; eventId: number; payload?: { id: string; message: string; streamingBehavior?: string } }) {
             if (command === 'plugin:event|listen') {
               if (!listeners.has(args.event)) listeners.set(args.event, new Set());
               listeners.get(args.event)!.add(args.handler);
@@ -79,6 +80,9 @@ async function withViewer(run: (page: Page) => Promise<void>) {
               return null;
             }
             if (command === 'connect') return { ...owner, canonicalCwd: owner.cwd, connected: true, messages, activity: 'idle', model: defaults.model };
+            if (['send_prompt', 'abort', 'new_session', 'reset_session'].includes(command)) {
+              promptCommands.push({ command, payload: args?.payload });
+            }
             if (command === 'send_prompt') return { accepted: true, id: args.payload?.id };
             if (command === 'get_custom_providers') return { providers: {} };
             if (command === 'get_mcp_servers') return { servers: [] };
@@ -87,6 +91,7 @@ async function withViewer(run: (page: Page) => Promise<void>) {
           },
         },
         __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
+        fixturePromptCommands: () => promptCommands,
         fixtureEvent(at: number, payload: object) {
           elapsed = at;
           const event = 'pi://event';
@@ -277,24 +282,72 @@ test('S3.3 cancelled after the final response is not completed, even after reope
   assert.doesNotMatch(await metadata(page), duration);
 }));
 
-test('S3.3 one run draining a follow-up does not assign elapsed time to either response', () => withViewer(async page => {
-  const followUp = 'Inspect the second fixture';
-  const followUpUser = { ...user, content: text(followUp), timestamp: timestamp + 2500 };
-  const followUpAnswer = 'Second fixture inspected';
-  const followUpFinal = { ...final, content: text(followUpAnswer), timestamp: timestamp + 3000 };
+test('composer Enter steers an active run and keeps its message queued until the user echo', () => withViewer(async page => {
+  const input = page.locator('#prompt-input');
+  const readCommands = () => page.evaluate(() => {
+    if (!('fixturePromptCommands' in window) || typeof window.fixturePromptCommands !== 'function') throw new Error('missing fixture prompt recorder');
+    return window.fixturePromptCommands() as { command: string; payload: { id: string; message: string; streamingBehavior?: string } }[];
+  });
+  await input.fill(prompt);
+  await input.press('Enter');
+  const first = page.locator('.message-user').filter({ hasText: prompt });
+  await first.waitFor();
+  const [idle] = await readCommands();
+  assert.equal(idle.command, 'send_prompt');
+  assert.equal(idle.payload.message, prompt);
+  assert.equal(Object.hasOwn(idle.payload, 'streamingBehavior'), false);
+  assert.equal(await first.locator('.message-badge-queued').count(), 0);
+
+  await emit(page, 1000, 'agent_start');
+  await emit(page, 1100, 'turn_start');
+  await message(page, 1200, user);
+  const live = { ...final, content: text('Still working'), stopReason: 'pending' };
+  await emit(page, 1400, 'message_start', { message: live });
+  const active = page.locator('.message-assistant').filter({ hasText: 'Still working' });
+  await active.waitFor();
+
+  const steering = 'Use the other fixture';
+  await input.fill(steering);
+  await input.press('Enter');
+  const row = page.locator('.message-user').filter({ hasText: steering });
+  const pending = row.locator('.message-badge-queued');
+  await pending.waitFor();
+  const commands = await readCommands();
+  assert.deepEqual(commands.map(({ command }) => command), ['send_prompt', 'send_prompt']);
+  assert.equal(commands[1].payload.message, steering);
+  assert.notEqual(commands[1].payload.id, idle.payload.id);
+  assert.equal(await active.count(), 1, 'sending must not reset the active assistant');
+
+  await emit(page, 1500, 'queue_update', { steering: [steering], followUp: [] });
+  await emit(page, 1600, 'message_update', { message: live, assistantMessageEvent: { type: 'text_delta', delta: ' on the first fixture' } });
+  await active.getByText('Still working on the first fixture', { exact: true }).waitFor();
+  await emit(page, 1700, 'queue_update', { steering: [], followUp: [] });
+  assert.equal(await pending.count(), 1, 'queue telemetry must not clear the optimistic row');
+  await emit(page, 1800, 'message_start', { message: { ...user, content: text(steering), timestamp: timestamp + 1800 } });
+  await pending.waitFor({ state: 'detached' });
+  assert.equal(await row.count(), 1, 'the echo reconciles the existing message before settlement');
+  assert.ok(await page.locator('.prompt-action-btn.btn-cancel').isVisible(), 'the original run is still active');
+  assert.equal(commands[1].payload.streamingBehavior, 'steer');
+}));
+
+test('S3.3 one run with a steering prompt does not assign elapsed time to either response', () => withViewer(async page => {
+  const steering = 'Inspect the second fixture';
+  const steeredUser = { ...user, content: text(steering), timestamp: timestamp + 2500 };
+  const steeredAnswer = 'Second fixture inspected';
+  const steeredFinal = { ...final, content: text(steeredAnswer), timestamp: timestamp + 3000 };
   await start(page);
-  await send(page, followUp);
-  await emit(page, 1400, 'queue_update', { steering: [], followUp: [followUp] });
+  await send(page, steering);
+  await emit(page, 1400, 'queue_update', { steering: [steering], followUp: [] });
   await throughTools(page);
   await emit(page, 10300, 'turn_start');
   await emit(page, 10400, 'queue_update', { steering: [], followUp: [] });
-  await message(page, 10500, followUpUser);
-  await message(page, 10650, followUpFinal);
-  await emit(page, 10800, 'turn_end', { message: followUpFinal, toolResults: [] });
-  const mixedHistory = [...history, followUpUser, followUpFinal];
+  await message(page, 10500, steeredUser);
+  await message(page, 10650, steeredFinal);
+  await emit(page, 10800, 'turn_end', { message: steeredFinal, toolResults: [] });
+  const mixedHistory = [...history, steeredUser, steeredFinal];
   await lowLevelEnd(page, mixedHistory);
   await emit(page, 13000, 'agent_settled', { aborted: false });
-  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
+  for (const response of [answer, steeredAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
   await reopen(page, owner, mixedHistory);
-  for (const response of [answer, followUpAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
+  for (const response of [answer, steeredAnswer]) assert.doesNotMatch(await metadata(page, response), duration);
 }));
