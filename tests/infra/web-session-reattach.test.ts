@@ -115,7 +115,7 @@ test('foreground session changes remain pinned for ordinary prompts and reattach
       sessions.map(sessionFile => ({ type: 'runtime_snapshot', cwd: '/work', sessionFile })),
     );
     await ipc.invoke('send_prompt', { payload: { id: 'after-reconnect', message: 'still here' } });
-    assert.deepEqual(calls.at(-1), {
+    assert.deepEqual(calls[calls.length - 1], {
       cmd: 'send_prompt', args: { payload: { id: 'after-reconnect', message: 'still here', cwd: '/work', sessionFile: '/work/c.jsonl' } },
     });
   } finally { Object.assign(globalThis, originals); }
