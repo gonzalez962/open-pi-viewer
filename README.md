@@ -49,6 +49,17 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri dev
 ```
 
+#### Optional Wyoming speech integration
+
+`npm test` does not require Piper or Whisper: it reports the five live Wyoming cases as skipped. To exercise real synthesis and transcription, start the services and run the dedicated suite once both are ready:
+
+```bash
+docker compose -f docker-compose.speech.yml up -d
+npm run test:integration:wyoming
+```
+
+The dedicated suite requires Piper at `127.0.0.1:10200` and Whisper at `127.0.0.1:10300`. It fails if the services are unavailable; it does not silently skip them.
+
 > **Note on Portable Environment Discovery**: Pi Viewer discovers your Pi CLI entrypoint and project directory across platforms without assuming workstation-specific hardcoded paths. On initial launch, the application awaits host discovery before connecting; if configuration is unconfigured or ambiguous, actionable diagnostics prompt you to review settings. Valid saved settings are preserved in `localStorage`, and the **Settings** panel includes environment detection and directory browsing.
 
 ## Run the web service from a production build

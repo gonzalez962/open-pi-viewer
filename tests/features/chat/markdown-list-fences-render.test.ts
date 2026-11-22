@@ -13,9 +13,10 @@ const reported = 'Listo, el archivo fue creado:\n\n- **Archivo:** `test.md`\n- *
 test('S1.1 reported list renders its code card without empty inline code', () => {
   const html = render(reported);
   assert.match(html, /Listo, el archivo fue creado:/);
-  assert.match(html, /<strong>Archivo:<\/strong> <code class="markdown-inline-code">test\.md<\/code>/);
-  assert.match(html, /<strong>Ruta absoluta:<\/strong>.*C:\/projects\/example\/test\.md/);
-  assert.match(html, /markdown-file-download-btn/);
+  assert.match(html, /<strong>Archivo:<\/strong> <span class="markdown-file-reference"><code class="markdown-inline-code">test\.md<\/code><\/span>/);
+  assert.match(html, /<strong>Ruta absoluta:<\/strong> <span class="markdown-file-reference"><code class="markdown-inline-code">C:\/projects\/example\/test\.md<\/code><\/span>/);
+  // Web SSR renders candidates, but file downloads require client-side availability confirmation.
+  assert.doesNotMatch(html, /markdown-file-download-btn/);
   assert.match(html, /<li class="markdown-li"><strong>Contenido:<\/strong>[\s\S]*markdown-code-block[\s\S]*markdown-code-language">text<\/span>[\s\S]*hola[\s\S]*<\/li>/);
   assert.doesNotMatch(html, /<code class="markdown-inline-code"><\/code>/);
   assert.match(html, /markdown-code-copy-btn/);

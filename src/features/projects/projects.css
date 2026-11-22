@@ -49,7 +49,7 @@
 .project-worktree-row { position: relative; display: flex; flex-direction: column; gap: 3px; text-align: left; width: 100%; min-width: 0; padding: 9px 12px; border: 0; border-bottom: 1px solid var(--border-muted); background: transparent; color: var(--fg-default); cursor: pointer; }
 .project-worktree-row:hover, .project-worktree-row.is-current { background: var(--bg-subtle-hover); }
 .project-worktree-row.is-current { box-shadow: inset 3px 0 var(--accent-primary); }
-.project-worktree-row[style*="--repository-color"]::after { content: ''; position: absolute; left: 6px; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--repository-color); }
+.project-worktree-row[style*="--repository-color:"]::after { content: ''; position: absolute; left: 6px; top: 9px; bottom: 9px; width: 2px; border-radius: 2px; background: var(--repository-color); }
 .project-worktree-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .project-worktrees form, .project-worktrees label { display: flex; flex-direction: column; gap: 6px; }
 .project-worktrees form { border-top: 1px solid var(--border-muted); padding-top: 12px; gap: 10px; }
@@ -134,7 +134,7 @@
   flex-shrink: 0;
 }
 
-.project-tile[style*="--repository-color"]::before { content: ''; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--repository-color); }
+.project-tile[style*="--repository-color:"]::before { content: ''; position: absolute; left: 2px; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--repository-color); }
 
 .project-tile:hover {
   background-color: var(--bg-subtle-hover);

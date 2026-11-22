@@ -2,11 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { chromium } from 'playwright';
-import { createServer } from 'vite';
-import path from 'node:path';
-import os from 'node:os';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { build } from 'esbuild';
+import * as playwright from 'playwright';
 import { BranchManagerModal } from '@features/workspace/components/BranchManagerModal';
 
 test('branch manager offers a localized sync icon immediately after New Branch', () => {
@@ -25,20 +22,22 @@ test('branch manager offers a localized sync icon immediately after New Branch',
 });
 
 test('manual sync refreshes branches and bases, prevents duplicates, and permits retry after errors', { timeout: 45000 }, async () => {
-  const cache = await mkdtemp(path.join(os.tmpdir(), 'branch-sync-vite-'));
-  let server: Awaited<ReturnType<typeof createServer>> | undefined;
-  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-  try {
-    server = await createServer({
-      configFile: false, envFile: false, cacheDir: cache, esbuild: { jsx: 'automatic' },
-      plugins: [{
-        name: 'branch-sync-fixture',
-        resolveId(id) {
-          if (id === '@infra/bridge') return '\0fixture-bridge';
-          if (id === 'virtual:branch-fixture' || id === '\0branch-fixture') return '\0branch-fixture';
-        },
-        load(id) {
-          if (id === '\0fixture-bridge') return `
+  const bundle = await build({
+    stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { BranchManagerModal } from './src/features/workspace/components/BranchManagerModal';
+      createRoot(document.getElementById('root')).render(React.createElement(BranchManagerModal, {
+        isOpen: true, onClose: () => {}, workingDirectory: 'C:/project', currentBranch: 'main', locale: 'en',
+        onError: message => window.errors.push(message)
+      }));
+    ` },
+    bundle: true, write: false, platform: 'browser', format: 'iife', tsconfig: 'tsconfig.app.json',
+    plugins: [{
+      name: 'branch-sync-fixture',
+      setup(builder) {
+        builder.onResolve({ filter: /^@infra\/bridge$/ }, () => ({ path: 'bridge', namespace: 'fixture' }));
+        builder.onLoad({ filter: /^bridge$/, namespace: 'fixture' }, () => ({ loader: 'js', contents: `
             const initial = { current: 'main', defaultBranch: 'main', branches: [
               {name:'main', isCurrent:true}, {name:'local', isCurrent:false}
             ], allBases: ['main', 'local'] };
@@ -54,38 +53,22 @@ test('manual sync refreshes branches and bases, prevents duplicates, and permits
             export const deleteWorkspaceBranchPi = () => Promise.resolve();
             export const publishWorkspaceBranchPi = () => Promise.resolve();
             export const listWorkspaceBranchCommitsPi = () => Promise.resolve({commits:[]});
-          `;
-          if (id === '\0branch-fixture') return `
-            import React from 'react';
-            import { createRoot } from 'react-dom/client';
-            import { BranchManagerModal } from '/src/features/workspace/components/BranchManagerModal.tsx';
-            createRoot(document.getElementById('root')).render(React.createElement(BranchManagerModal, {
-              isOpen: true, onClose: () => {}, workingDirectory: 'C:/project', currentBranch: 'main', locale: 'en',
-              onError: message => window.errors.push(message)
-            }));
-          `;
-        },
-        configureServer(vite) {
-          vite.middlewares.use((req, res, next) => {
-            if (req.url !== '/') return next();
-            res.setHeader('Content-Type', 'text/html');
-            res.end('<div id="root"></div><script type="module" src="/@id/__x00__branch-fixture"></script>');
-          });
-        },
-      }],
-      resolve: { alias: { '@shared': path.resolve('src/shared'), '@core': path.resolve('src/core') } },
-      optimizeDeps: { noDiscovery: true, include: [] },
-      server: { host: '127.0.0.1', port: 0 },
-    });
-    await server.listen();
-    const address = server.httpServer!.address();
-    assert.ok(address && typeof address !== 'string');
-    browser = await chromium.launch({ headless: true });
+        ` }));
+      },
+    }],
+  });
+  const browser = await playwright.chromium.launch({ headless: true });
+  try {
     const page = await browser.newPage();
     page.setDefaultTimeout(5000);
-    page.on('pageerror', (error) => console.error('Fixture page error:', error));
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => {
+      pageErrors.push(error.message);
+      console.error('Fixture page error:', error);
+    });
     page.on('console', (message) => { if (message.type() === 'error') console.error('Fixture console error:', message.text()); });
-    await page.goto(`http://127.0.0.1:${address.port}/`, { waitUntil: 'domcontentloaded' });
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({ content: bundle.outputFiles[0].text });
     await page.locator('.branch-item-name', { hasText: 'local' }).waitFor();
     const initialCalls = await page.evaluate('window.calls') as unknown[][];
     assert.ok(initialCalls.length > 0);
@@ -123,9 +106,8 @@ test('manual sync refreshes branches and bases, prevents duplicates, and permits
     await page.evaluate(`window.resolveSync({current:'main', defaultBranch:'local', branches:[], allBases:[]})`);
     await page.getByRole('button', { name: 'Sync branches', exact: true }).waitFor();
     assert.equal(await page.getByRole('alert').count(), 0);
+    assert.deepEqual(pageErrors, []);
   } finally {
-    await browser?.close();
-    await server?.close();
-    await rm(cache, { recursive: true, force: true });
+    await browser.close();
   }
 });

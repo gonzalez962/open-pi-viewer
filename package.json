@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build && vite build --config vite.server.config.ts",
     "start": "node --env-file-if-exists=.env dist-server/start.js",
     "test": "tsx --tsconfig tsconfig.app.json --test \"tests/**/*.test.ts\"",
+    "test:integration:wyoming": "tsx --tsconfig tsconfig.app.json --test tests/server/wyoming-integration.test.ts",
     "check:arch": "tsx --tsconfig tsconfig.app.json --test tests/architecture.test.ts",
     "test:browser:terminal": "node tests/browser/terminal.mjs",
     "test:browser:create-folder": "node tests/browser/create-folder.mjs",

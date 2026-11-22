@@ -10,20 +10,25 @@ import {
 } from '@server/bridge/speech-runner';
 import { DEFAULT_SPEECH_PREFERENCES } from '@core/types/speech';
 
+// npm sets the lifecycle event for the selected script on every platform.
+const skip = process.env.npm_lifecycle_event === 'test:integration:wyoming'
+  ? false
+  : 'Optional live integration; run npm run test:integration:wyoming with Piper and Whisper running';
+
 describe('Wyoming Client & Speech Runner Integration', () => {
-  it('checkWyomingHealth detects wyoming-piper at 10200', async () => {
+  it('checkWyomingHealth detects wyoming-piper at 10200', { skip }, async () => {
     const res = await checkWyomingHealth('tcp://127.0.0.1:10200', 3000);
     assert.equal(res.ok, true, `Expected ok=true, got error: ${res.error}`);
     assert.ok(res.info?.name, 'Expected info.name to be present');
   });
 
-  it('checkWyomingHealth detects wyoming-whisper at 10300', async () => {
+  it('checkWyomingHealth detects wyoming-whisper at 10300', { skip }, async () => {
     const res = await checkWyomingHealth('tcp://127.0.0.1:10300', 3000);
     assert.equal(res.ok, true, `Expected ok=true, got error: ${res.error}`);
     assert.ok(res.info?.name, 'Expected info.name to be present');
   });
 
-  it('synthesizes text using Wyoming Piper and returns valid WAV', async () => {
+  it('synthesizes text using Wyoming Piper and returns valid WAV', { skip }, async () => {
     const res = await synthesizeTts({
       text: 'Prueba de integración en contenedor Docker.',
       preferences: {
@@ -39,14 +44,14 @@ describe('Wyoming Client & Speech Runner Integration', () => {
     assert.equal(wavHeader, 'RIFF');
   });
 
-  it('synthesizes multi-paragraph text with punctuation and code omission without dropping connection', async () => {
+  it('synthesizes multi-paragraph text with punctuation and code omission without dropping connection', { skip }, async () => {
     const text = 'Párrafo uno con puntos suspensivos... Y segundo párrafo con [bloque de código omitido]. ¿Todo bien?';
     const res = await synthesizeWyomingTts(text, 'tcp://127.0.0.1:10200');
     assert.ok(res.wavBuffer.length > 1000);
     assert.ok(res.durationSeconds && res.durationSeconds > 1);
   });
 
-  it('transcribes speech using Wyoming Whisper', async () => {
+  it('transcribes speech using Wyoming Whisper', { skip }, async () => {
     // 1. Generate audio
     const tts = await synthesizeWyomingTts('buenos días', 'tcp://127.0.0.1:10200');
     assert.ok(tts.wavBuffer.length > 44);

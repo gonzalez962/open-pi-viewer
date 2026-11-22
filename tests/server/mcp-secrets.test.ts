@@ -27,7 +27,8 @@ test('S1.1 reported context7 save retries Windows EPERM and preserves inventory'
     assert.deepEqual(result, { success: true, name: 'context7', path: file });
     assert.equal(attempts, 2);
     for (const source of sources) assert.match(path.basename(source), /^mcp\.json\.tmp\./);
-    const inventory = await handleIpcCommand('get_mcp_servers', {});
+    // Use the fixture directory as the workspace so the active project's policy cannot override the saved state.
+    const inventory = await handleIpcCommand('get_mcp_servers', { cwd: dir });
     assert.equal(inventory.servers.find((entry: any) => entry.name === 'context7').disabled, true);
     assert.ok(inventory.servers.some((entry: any) => entry.name === 'other'));
     assert.deepEqual(fs.readdirSync(dir), ['mcp.json']);
