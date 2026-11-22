@@ -9,7 +9,7 @@ import {
   setActiveModel,
   setActiveThinkingLevel,
 } from './state';
-import { piRpc } from './rpc';
+import { getActiveRpc, piRpc } from './rpc';
 import {
   loadResourceActivationPolicy,
   loadProjectResourceActivation,
@@ -684,8 +684,31 @@ export function getAvailableModelsImpl() {
   return list;
 }
 
+// Pi models can also carry provider connection data, such as custom headers.
+// Only expose metadata used by the viewer's model picker and capability checks.
+const publicModelFields = new Set([
+  'id', 'name', 'provider', 'contextWindow', 'maxTokens', 'reasoning',
+  'reasoningEfforts', 'thinkingLevelMap', 'thinkingLevel', 'defaultThinkingLevel',
+  'input', 'input_modalities',
+]);
+
 export function handleGetAvailableModels() {
-  return getAvailableModelsImpl();
+  const rpc = getActiveRpc();
+  if (!rpc) return getAvailableModelsImpl();
+
+  return rpc.sendCommand({ type: 'get_available_models' }).then((response) => {
+    if (response.success !== true) {
+      const error = typeof response.error === 'string' ? response.error : 'Pi returned success: false';
+      throw new Error(`Pi get_available_models failed: ${error}`);
+    }
+
+    const models = response.data.models as Record<string, unknown>[];
+    return {
+      models: models.map((model) => Object.fromEntries(
+        Object.entries(model).filter(([key]) => publicModelFields.has(key)),
+      )),
+    };
+  });
 }
 
 export async function handleSetModel(args: any = {}) {
