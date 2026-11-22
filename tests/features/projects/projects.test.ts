@@ -792,6 +792,27 @@ test('ProjectDock list hides scrollbars without disabling scrolling', () => {
   assert.match(css, /\.project-dock-list::-webkit-scrollbar\s*\{[^}]*display: none;/);
 });
 
+test('ProjectDock mobile drawer reserves horizontal touches for swipes but preserves native vertical pan and pinch', () => {
+  const css = readFileSync('src/app/app.css', 'utf8');
+  const rule = css.match(/\.mobile-nav-drawer-body \.project-dock-list\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(rule, /touch-action: pan-y pinch-zoom;/);
+  assert.match(rule, /overscroll-behavior-y: contain;/);
+});
+
+test('ProjectDock expansion hover styles apply outside the mobile drawer only', () => {
+  const markup = renderToStaticMarkup(React.createElement(ProjectDock, {
+    ...baseProjectDockProps,
+    mobileDrawerOpen: true,
+  }));
+  assert.match(markup, /class="project-dock project-dock--mobile-drawer"/);
+  const css = readFileSync('src/features/projects/projects.css', 'utf8');
+  const hoverSelectors = css.match(/^\s*\.project-dock[^\s,]*:hover.*$/gm) ?? [];
+  assert.ok(hoverSelectors.length > 0);
+  for (const selector of hoverSelectors) {
+    assert.match(selector, /\.project-dock:not\(\.project-dock--mobile-drawer\):hover/);
+  }
+});
+
 test('ProjectDock groups settings and logout at the end', () => {
   const markup = renderToStaticMarkup(React.createElement(ProjectDock, {
     ...baseProjectDockProps,
@@ -806,7 +827,7 @@ test('ProjectDock footer uses full-width settings and reveals matching logout on
   assert.match(css, /\.project-footer-actions\s*\{[^}]*padding: 0 6px;/);
   assert.match(css, /\.project-footer-actions > \.project-footer-settings\s*\{[^}]*width: 100%;/);
   assert.match(css, /\.project-footer-actions > \.web-auth-logout-control\s*\{[^}]*display: none;/);
-  assert.match(css, /\.project-dock:hover \.project-footer-actions > \.web-auth-logout-control,[\s\S]*?\.project-dock\.is-expanded \.project-footer-actions > \.web-auth-logout-control\s*\{[^}]*display: block;/);
+  assert.match(css, /\.project-dock:not\(\.project-dock--mobile-drawer\):hover \.project-footer-actions > \.web-auth-logout-control,[\s\S]*?\.project-dock\.is-expanded \.project-footer-actions > \.web-auth-logout-control\s*\{[^}]*display: block;/);
   assert.match(css, /\.project-footer-actions \.project-tile-settings\s*\{[^}]*width: 100%;[^}]*height: 38px;[^}]*min-height: 38px;[^}]*transform: none;/);
   assert.match(css, /\.project-footer-actions \.project-footer-row\s*\{[^}]*height: 38px;[^}]*padding: 0;/);
 });

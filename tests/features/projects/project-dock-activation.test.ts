@@ -18,7 +18,7 @@ before(async () => {
         return <>
           <button onClick={() => setOpen(true)}>Open navigation</button>
           <output>{active}</output>
-          <div hidden={!open}>
+          <div hidden={!open} style={{ height: '500px' }}>
             <ProjectDock mobileDrawerOpen={mobile && open} activeProjectId={active}
               projects={[{ id: 'alpha', path: '/alpha', customName: 'Alpha', createdAt: '', lastOpenedAt: '' }, { id: 'beta', path: '/beta', customName: 'Beta', createdAt: '', lastOpenedAt: '' }]}
               connectionState="disconnected" agentActivity="idle" isBusy={false} locale="en"
@@ -58,6 +58,26 @@ for (const mobile of [true, false]) {
         await page.getByRole('button', { name: 'Open navigation' }).tap();
         await dock.waitFor();
         assert.doesNotMatch(await dock.getAttribute('class') ?? '', /\bis-expanded\b/);
+
+        const alpha = dock.getByRole('button', { name: 'Alpha', exact: true });
+        const swipe = (dx: number) => alpha.evaluate((tile, distance) => {
+          const touch = { bubbles: true, cancelable: true, pointerType: 'touch', isPrimary: true, pointerId: 7 };
+          tile.dispatchEvent(new PointerEvent('pointerdown', { ...touch, clientX: 100 }));
+          tile.dispatchEvent(new PointerEvent('pointerup', { ...touch, clientX: 100 + distance }));
+          // Force the compatibility click so suppression is exercised even if the UA
+          // wouldn't normally produce a click after this much travel.
+          tile.dispatchEvent(new PointerEvent('click', { ...touch, clientX: 100 + distance, detail: 1 }));
+        }, dx);
+        await swipe(80);
+        await dock.and(page.locator('.is-expanded')).waitFor();
+        assert.equal(await active.innerText(), 'beta');
+        await swipe(-80);
+        await dock.and(page.locator(':not(.is-expanded)')).waitFor();
+        assert.equal(await active.innerText(), 'beta');
+        assert.equal(await dock.isVisible(), true);
+        await alpha.press('Enter');
+        assert.equal(await active.innerText(), 'alpha');
+        assert.equal(await dock.isVisible(), false);
       } else {
         await project.click();
         assert.equal(await active.innerText(), 'beta');

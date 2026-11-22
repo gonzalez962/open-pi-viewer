@@ -29,7 +29,7 @@
   box-sizing: border-box;
 }
 
-.project-dock:hover,
+.project-dock:not(.project-dock--mobile-drawer):hover,
 .project-dock.is-expanded {
   width: 250px;
   box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
@@ -94,7 +94,7 @@
   padding-left: 8px;
 }
 
-.project-dock:hover .project-dock-row--worktree,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-dock-row--worktree,
 .project-dock.is-expanded .project-dock-row--worktree {
   padding-left: 14px;
 }
@@ -266,7 +266,7 @@
   white-space: nowrap;
 }
 
-.project-dock:hover .project-details,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-details,
 .project-dock.is-expanded .project-details {
   opacity: 1;
   pointer-events: auto;
@@ -551,7 +551,7 @@
   box-sizing: border-box;
 }
 
-.project-dock:hover .project-footer-actions > .web-auth-logout-control,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-footer-actions > .web-auth-logout-control,
 .project-dock.is-expanded .project-footer-actions > .web-auth-logout-control {
   display: block;
 }
@@ -676,11 +676,11 @@
   transition: opacity 0.18s ease-in-out;
 }
 
-.project-dock:hover .project-add-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-add-label,
 .project-dock.is-expanded .project-add-label,
-.project-dock:hover .project-clone-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-clone-label,
 .project-dock.is-expanded .project-clone-label,
-.project-dock:hover .project-settings-label,
+.project-dock:not(.project-dock--mobile-drawer):hover .project-settings-label,
 .project-dock.is-expanded .project-settings-label {
   opacity: 1;
   pointer-events: auto;
@@ -2002,7 +2002,7 @@
     padding-left: 6px;
   }
 
-  .project-dock:hover,
+  .project-dock:not(.project-dock--mobile-drawer):hover,
   .project-dock.is-expanded {
     width: 220px;
     max-width: calc(100vw - 60px);

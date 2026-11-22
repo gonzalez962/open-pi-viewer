@@ -10,6 +10,7 @@ import type { ConnectionState } from '@core/types/connection';
 import type { AgentActivity } from '@core/types/messages';
 import { translate, type SupportedLocale } from '@shared/i18n';
 import { getWorktreeRepositoryColor } from './worktree-colors';
+import { getProjectDockSwipe, isProjectDockSwipeClick, type ProjectDockTouchPoint } from './project-dock-swipe';
 
 export interface ProjectDockProps {
   projects: ProjectItem[];
@@ -113,13 +114,17 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 }) => {
   const isSettingsActive = Boolean(isSettingsOpen);
   const [isHovered, setIsHovered] = useState(false);
-  const [expandedByTap, setExpandedByTap] = useState(false);
+  const [expandedByTouch, setExpandedByTouch] = useState(false);
   const expandOnClick = useRef(false);
+  const swipeStart = useRef<ProjectDockTouchPoint | null>(null);
+  const swipeClick = useRef<ProjectDockTouchPoint | null>(null);
 
   useEffect(() => {
     if (!mobileDrawerOpen) {
-      setExpandedByTap(false);
+      setExpandedByTouch(false);
       expandOnClick.current = false;
+      swipeStart.current = null;
+      swipeClick.current = null;
     }
   }, [mobileDrawerOpen]);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
@@ -128,7 +133,11 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
 
   const isEditing = editingProjectId !== null;
   const isConfirmingRemove = confirmingRemoveId !== null;
-  const isExpanded = isHovered || isEditing || isConfirmingRemove || (mobileDrawerOpen && expandedByTap);
+  const isExpanded = isHovered || isEditing || isConfirmingRemove || (mobileDrawerOpen && expandedByTouch);
+
+  const cancelSwipe = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (swipeStart.current?.pointerId === event.pointerId) swipeStart.current = null;
+  };
 
   const handleRowClick = useCallback(
     (project: ProjectItem) => {
@@ -199,23 +208,32 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
   return (
     <div className="project-dock-container">
       <aside
-        className={`project-dock ${isExpanded ? 'is-expanded' : ''}`}
+        className={`project-dock${mobileDrawerOpen ? ' project-dock--mobile-drawer' : ''}${isExpanded ? ' is-expanded' : ''}`}
         onPointerDownCapture={(event) => {
-          // Read expansion before touch can synthesize hover or focus for this click.
-          expandOnClick.current = mobileDrawerOpen && event.pointerType === 'touch' && !isExpanded;
+          swipeClick.current = null;
+          // Read expansion before touch can synthesize focus for this click.
+          expandOnClick.current = mobileDrawerOpen && event.pointerType === 'touch' && event.isPrimary && !isExpanded;
         }}
         onPointerCancelCapture={() => { expandOnClick.current = false; }}
         onClickCapture={(event) => {
           const shouldExpand = expandOnClick.current;
           expandOnClick.current = false;
-          if (!shouldExpand || !mobileDrawerOpen || event.detail === 0) return;
+          if (!mobileDrawerOpen || event.detail === 0) return;
+          const wasSwipe = swipeClick.current && isProjectDockSwipeClick(swipeClick.current, event.nativeEvent);
+          swipeClick.current = null;
+          if (!wasSwipe && !shouldExpand) return;
           event.preventDefault();
           event.stopPropagation();
-          setExpandedByTap(true);
+          if (!wasSwipe) setExpandedByTouch(true);
         }}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onFocus={() => setIsHovered(true)}
+        onMouseEnter={() => { if (!mobileDrawerOpen) setIsHovered(true); }}
+        onMouseLeave={() => { if (!mobileDrawerOpen) setIsHovered(false); }}
+        onFocus={(event) => {
+          // Touch can focus a tile even when its click is consumed.
+          if (!mobileDrawerOpen || event.target.matches(':focus-visible')) {
+            setIsHovered(true);
+          }
+        }}
         onBlur={(e) => {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) {
             setIsHovered(false);
@@ -234,7 +252,37 @@ export const ProjectDock: React.FC<ProjectDockProps> = ({
         }}
         aria-label={translate(locale, 'projects.dock_label')}
       >
-        <div className="project-dock-list" role="list">
+        <div
+          className="project-dock-list"
+          role="list"
+          onPointerDown={(event) => {
+            if (mobileDrawerOpen && event.pointerType === 'touch' && event.isPrimary) {
+              // Touch pointers implicitly capture on the originating element.
+              const { pointerId, clientX, clientY } = event;
+              swipeStart.current = { pointerId, clientX, clientY };
+            }
+          }}
+          onPointerUp={(event) => {
+            const start = swipeStart.current;
+            if (!start || start.pointerId !== event.pointerId) return;
+            swipeStart.current = null;
+            if (!mobileDrawerOpen) return;
+            const { pointerId, clientX, clientY } = event;
+            const end = { pointerId, clientX, clientY };
+            const swipe = getProjectDockSwipe(start, end);
+            if (!swipe) return;
+            swipeClick.current = end;
+            expandOnClick.current = false;
+            if (swipe === 'expand') {
+              setExpandedByTouch(true);
+            } else if (!isEditing && !isConfirmingRemove) {
+              setExpandedByTouch(false);
+              setIsHovered(false);
+            }
+          }}
+          onPointerCancel={cancelSwipe}
+          onLostPointerCapture={cancelSwipe}
+        >
           {displayProjects.map((project) => {
             const isActive = project.id === activeProjectId;
             const primaryPath = getPrimaryPath?.(project.path);
