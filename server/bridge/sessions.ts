@@ -774,7 +774,7 @@ export async function handleGetSessionStats(args: any = {}) {
         if (result?.data?.tokens && result.data.contextUsage && (!payload.sessionId || result.data.sessionId === payload.sessionId)) return result.data;
       } catch {}
     }
-    const stats = calculateSessionStats(requestedFile, (live?.modelInfo as any)?.contextWindow || (getActiveModel() as any)?.contextWindow || 1048576);
+    const stats = calculateSessionStats(requestedFile, (live?.modelInfo as any)?.contextWindow || getActiveModel()?.contextWindow || 1048576);
     return stats && (!payload.sessionId || stats.sessionId === payload.sessionId) ? stats : null;
   }
   // An identified request must never fall back to an unrelated active session.
@@ -790,7 +790,7 @@ export async function handleGetSessionStats(args: any = {}) {
 
   const currentFile = piRpc.sessionFile || (listSessions(getActiveCwd())[0]?.path);
   if (currentFile && fs.existsSync(currentFile)) {
-    const stats = calculateSessionStats(currentFile, (getActiveModel() as any).contextWindow || 1048576);
+    const stats = calculateSessionStats(currentFile, getActiveModel()?.contextWindow || 1048576);
     if (stats) return stats;
   }
 
@@ -799,7 +799,7 @@ export async function handleGetSessionStats(args: any = {}) {
     sessionFile: piRpc.sessionFile || undefined,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
     cost: 0,
-    contextUsage: { tokens: 0, contextWindow: (getActiveModel() as any).contextWindow || 1048576, percent: 0 },
+    contextUsage: { tokens: 0, contextWindow: getActiveModel()?.contextWindow || 1048576, percent: 0 },
   };
 }
 

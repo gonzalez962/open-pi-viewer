@@ -98,11 +98,8 @@ export function invalidateSessionParseCache(filePath: string): void {
 let activeSessionFile: string | null = null;
 let activeSessionId: string | null = null;
 let activeCwd: string = getBridgeConfig().baseWorkspace || process.cwd();
-let activeModel = {
-  provider: 'antigravity-cpa',
-  id: 'Gem/gemini-3.8-flash-high',
-  name: 'CPAMC Active · Gemini 3.8 Flash High',
-};
+type ActiveModel = { provider: string; id: string; name: string; contextWindow?: number };
+let activeModel: ActiveModel | null = null;
 let activeThinkingLevel: string = 'high';
 
 export function getActiveCwd(): string {
@@ -129,11 +126,11 @@ export function setActiveSessionId(id: string | null): void {
   activeSessionId = id;
 }
 
-export function getActiveModel(): any {
+export function getActiveModel(): ActiveModel | null {
   return activeModel;
 }
 
-export function setActiveModel(model: any): void {
+export function setActiveModel(model: ActiveModel): void {
   activeModel = model;
 }
 
