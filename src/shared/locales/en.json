@@ -899,6 +899,8 @@
   "providers.oauth.unlock_unconfigured": "Remote OAuth access is disabled: PI_VIEWER_OAUTH_ACCESS_KEY is not configured on the server.",
 
   "projects.dock_label": "Projects",
+  "projects.reorder_label": "Reorder {name}",
+  "projects.reorder_instructions": "Drag to move this group. With a keyboard, press Enter or Space to pick up and drop, use the up and down arrows to move, or press Escape to cancel.",
   "projects.add_project": "Add project folder",
   "projects.add_project_title": "Add folder as project...",
   "projects.rename": "Rename",

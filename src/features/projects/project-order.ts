@@ -16,6 +16,16 @@ export function saveProjectOrder(order: string[], storage: Storage | null = defa
   try { storage?.setItem(PROJECT_ORDER_STORAGE_KEY, JSON.stringify(cleanOrder(order))); } catch { /* Storage can be unavailable. */ }
 }
 
-export function promoteProjectOrder(order: string[], id: string): string[] {
-  return order.includes(id) ? order : cleanOrder([id, ...order]);
+export function appendProjectOrder(order: string[], id: string): string[] {
+  return !id || order.includes(id) ? order : [...order, id];
+}
+
+export function mergeVisibleProjectOrder(order: string[], visibleOrder: string[]): string[] {
+  const visible = cleanOrder(visibleOrder);
+  const visibleIds = new Set(visible);
+  // Fill existing visible slots first and leave every unrelated ID in place.
+  let index = 0;
+  const next = order.map(id => visibleIds.has(id) ? visible[index++] : id);
+  next.push(...visible.slice(index));
+  return next.length === order.length && next.every((id, i) => id === order[i]) ? order : next;
 }

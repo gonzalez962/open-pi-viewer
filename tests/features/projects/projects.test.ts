@@ -1508,11 +1508,11 @@ test('S12.1-S12.2: project hook persists explicit visits but not discovery or au
   }
   renderToStaticMarkup(React.createElement(Harness));
   hook.handleSelectProject(registry.projects[1]);
-  assert.deepEqual(loadProjectOrder(fakeStorage), ['two']);
-  hook.addProjectForPath('/background', { activate: false });
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
+  const background = hook.addProjectForPath('/background', { activate: false });
   hook.addProjectForPath('/automatic', { activate: true });
-  hook.handleSelectProject(registry.projects[0], { promote: false });
-  assert.deepEqual(loadProjectOrder(fakeStorage), ['two']);
+  hook.handleSelectProject(background, { promote: false });
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
   await hook.handleAddProject('/one');
   assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
   renderToStaticMarkup(React.createElement(Harness));
@@ -1550,7 +1550,7 @@ test('S12.3: ranked parent, existing child and newly opened child never change p
   assert.deepEqual(hook.projectOrder, ['other', 'child']);
 });
 
-test('S12.1: busy switching promotes the selected project and reselecting it remains a visit', async (t) => {
+test('S12.1: busy switching appends an unranked project and reselecting it does not reorder', async (t) => {
   const { loadProjectOrder, saveProjectOrder } = await import('@features/projects/project-order');
   const fakeStorage = createMockStorage();
   const registry: ProjectsRegistry = {
@@ -1575,11 +1575,102 @@ test('S12.1: busy switching promotes the selected project and reselecting it rem
   hook.handleSelectProject(registry.projects[1]);
   assert.deepEqual(applied, ['/two']);
   assert.deepEqual(activated, ['two']);
-  assert.deepEqual(loadProjectOrder(fakeStorage), ['two', 'one']);
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
   hook.handleSelectProject(registry.projects[1]);
   assert.deepEqual(applied, ['/two']);
   assert.deepEqual(activated, ['two']);
-  assert.deepEqual(loadProjectOrder(fakeStorage), ['two', 'one']);
+  assert.deepEqual(loadProjectOrder(fakeStorage), ['one', 'two']);
+});
+
+for (const open of ['select', 'add', 'settings'] as const) {
+  test(`S12.1: ${open} appends behind visible unranked rows and the saved group order`, async (t) => {
+    const { loadProjectOrder, saveProjectOrder } = await import('@features/projects/project-order');
+    const { getProjectDockGroups } = await import('@features/projects/project-dock-reorder');
+    const store = createMockStorage();
+    const projects = ['ordinary', 'parent', 'worktree', 'pinned', 'unranked', 'missing', ...(open === 'select' ? ['next', 'last'] : ['last'])]
+      .map(id => ({ id, path: `/${id}`, createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' }));
+    const getPrimaryPath = (path: string) => ({ '/worktree': '/parent', '/missing': '/absent-parent' })[path];
+    const isProjectVisible = (path: string) => path !== '/missing';
+    store.setItem(PROJECTS_STORAGE_KEY, JSON.stringify({ activeProjectId: 'ordinary', projects }));
+    saveProjectOrder(['stale', 'pinned', 'worktree', 'other-stale'], store);
+    (globalThis as any).window = { localStorage: store, __IS_WEB_IPC__: true };
+    (globalThis as any).localStorage = store;
+    t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+    let hook!: UseProjectsResult;
+    function Harness() {
+      hook = useProjects({ workingDirectory: '/ordinary', getPrimaryPath, isProjectVisible, isBusy: false, applyWorkingDirectory: () => {} });
+      return null;
+    }
+    renderToStaticMarkup(React.createElement(Harness));
+    if (open === 'select') hook.handleSelectProject(projects.find(project => project.id === 'next')!);
+    else if (open === 'add') await hook.handleAddProject('/next');
+    else hook.addProjectForPath('/next', { promote: true });
+    renderToStaticMarkup(React.createElement(Harness));
+    const nextId = hook.projectsRegistry.activeProjectId!;
+    const visible = hook.projectsRegistry.projects.filter(project => isProjectVisible(project.path));
+    assert.deepEqual(getProjectDockGroups(visible, hook.projectOrder, getPrimaryPath).flat().map(p => p.path), [
+      '/pinned', '/parent', '/worktree', '/ordinary', '/unranked', '/last', '/next',
+    ]);
+    assert.deepEqual(loadProjectOrder(store), ['stale', 'pinned', 'worktree', 'other-stale', 'ordinary', 'unranked', 'last', nextId]);
+  });
+}
+
+test('a manual move keeps its position when a hidden ranked worktree returns', async (t) => {
+  const { loadProjectOrder, saveProjectOrder } = await import('@features/projects/project-order');
+  const { getProjectDockGroups } = await import('@features/projects/project-dock-reorder');
+  const store = createMockStorage();
+  const projects = ['alpha', 'child', 'beta'].map(id => ({ id, path: `/${id}`, createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' }));
+  const getPrimaryPath = (path: string) => path === '/child' ? '/alpha' : undefined;
+  store.setItem(PROJECTS_STORAGE_KEY, JSON.stringify({ activeProjectId: 'alpha', projects }));
+  saveProjectOrder(['stale', 'child', 'alpha', 'beta'], store);
+  (globalThis as any).window = { localStorage: store, __IS_WEB_IPC__: true };
+  (globalThis as any).localStorage = store;
+  t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+  let hook!: UseProjectsResult;
+  function Harness() {
+    hook = useProjects({ workingDirectory: '/alpha', getPrimaryPath, isBusy: false, applyWorkingDirectory: () => {} });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  hook.handleReorderProjects(['beta', 'alpha']); // child is currently missing from the visible dock
+  const order = loadProjectOrder(store);
+  assert.deepEqual(getProjectDockGroups(projects, order, getPrimaryPath).flat().map(project => project.id), ['beta', 'alpha', 'child']);
+  assert.deepEqual(order, ['stale', 'beta', 'alpha', 'child']);
+});
+
+test('manual web ranking only writes the existing order key and survives reopening and adding projects', async (t) => {
+  const { loadProjectOrder, saveProjectOrder, PROJECT_ORDER_STORAGE_KEY } = await import('@features/projects/project-order');
+  const store = createMockStorage();
+  const registry: ProjectsRegistry = {
+    activeProjectId: 'alpha',
+    projects: ['alpha', 'beta'].map(id => ({ id, path: `/${id}`, createdAt: '2026-01-01', lastOpenedAt: '2026-01-01' })),
+  };
+  const registryJson = JSON.stringify(registry);
+  store.setItem(PROJECTS_STORAGE_KEY, registryJson);
+  saveProjectOrder(['alpha', 'hidden', 'beta'], store);
+  (globalThis as any).window = { localStorage: store, __IS_WEB_IPC__: true };
+  (globalThis as any).localStorage = store;
+  t.after(() => { delete (globalThis as any).window; delete (globalThis as any).localStorage; });
+  const applied: string[] = [], activated: string[] = [];
+  let hook!: UseProjectsResult;
+  function Harness() {
+    hook = useProjects({ workingDirectory: '/alpha', isBusy: false, applyWorkingDirectory: path => applied.push(path), onActivateProject: id => activated.push(id) });
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Harness));
+  hook.handleReorderProjects(['beta', 'alpha']);
+  assert.equal(store.getItem(PROJECT_ORDER_STORAGE_KEY), '["beta","hidden","alpha"]');
+  assert.equal(store.getItem(PROJECTS_STORAGE_KEY), registryJson);
+  assert.equal(store.length, 2);
+  assert.deepEqual(applied, []);
+  assert.deepEqual(activated, []);
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.deepEqual(hook.projectOrder, ['beta', 'hidden', 'alpha']);
+  hook.handleSelectProject(registry.projects[1]);
+  assert.deepEqual(loadProjectOrder(store), ['beta', 'hidden', 'alpha']);
+  await hook.handleAddProject('/new');
+  renderToStaticMarkup(React.createElement(Harness));
+  assert.deepEqual(hook.projectOrder, ['beta', 'hidden', 'alpha', hook.projectsRegistry.activeProjectId]);
 });
 
 test('useProjects: handleSelectProject calls onActivateProject and applyWorkingDirectory when switching project', (t) => {

@@ -192,6 +192,10 @@ import {
   resolveMobileBrandTitle,
 } from './mobile-navigation';
 
+function isProjectVisibleForRanking(path: string): boolean {
+  return worktreeCache.classify(path).kind !== 'missing';
+}
+
 function formatReportedModels(models: readonly ReportedAssistantModel[]): string {
   const labels = models.map(({ provider, model }) => qualifyProfileModelId(provider, model));
   const counts = new Map<string, number>();
@@ -467,6 +471,7 @@ export const App: React.FC = () => {
   const {
     projectsRegistry,
     projectOrder,
+    handleReorderProjects,
     handleSelectProject,
     handleAddProject,
     handleRenameProject,
@@ -475,6 +480,7 @@ export const App: React.FC = () => {
   } = useProjects({
     workingDirectory: config.workingDirectory,
     getPrimaryPath: worktreeCache.getPrimaryPath,
+    isProjectVisible: isProjectVisibleForRanking,
     isBusy,
     applyWorkingDirectory,
     onActivateProject: handleActivateProject,
@@ -1714,6 +1720,7 @@ export const App: React.FC = () => {
             onRemoveProject={handleRemoveProjectAndSync}
             projectStatusMap={projectStatusMap}
             projectOrder={projectOrder}
+            onReorderProjects={isWebShim() ? handleReorderProjects : undefined}
             isSettingsOpen={showSettings}
             onOpenSettings={handleToggleSettings}
             onOpenAddProject={handleOpenAddProject}

@@ -899,6 +899,8 @@
   "providers.oauth.unlock_unconfigured": "El acceso a OAuth remoto está desactivado: PI_VIEWER_OAUTH_ACCESS_KEY no está configurado en el servidor.",
 
   "projects.dock_label": "Proyectos",
+  "projects.reorder_label": "Reordenar {name}",
+  "projects.reorder_instructions": "Arrastra para mover este grupo. Con el teclado, pulsa Intro o Espacio para tomarlo y soltarlo, usa las flechas arriba y abajo para moverlo o pulsa Escape para cancelar.",
   "projects.add_project": "Agregar carpeta de proyecto",
   "projects.add_project_title": "Agregar carpeta como proyecto...",
   "projects.rename": "Renombrar",
