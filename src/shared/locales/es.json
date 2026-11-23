@@ -597,7 +597,6 @@
   "prompt_controls.global_model_default": "Modelo global por defecto",
   "prompt_controls.no_profiles_configured_hint": "No hay perfiles configurados. El sistema utiliza el modelo global para todo.",
   "prompt_controls.create_project_profile": "Crear perfil",
-  "prompt_controls.profile_scope_project_tag": "(Proyecto)",
   "prompt_controls.profile_scope_global_tag": "(Global)",
   "prompt_controls.profile_scope_default_tag": "(Predeterminado)",
   "prompt_controls.scope_project_badge": "Proyecto",

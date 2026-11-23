@@ -96,7 +96,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
   onSelectThinkingLevel,
   profiles,
   activeProfileName,
-  effectiveScope,
   isChangingProfile = false,
   onSelectProfile,
   onCreateProfile,
@@ -724,11 +723,6 @@ export const PromptControls: React.FC<PromptControlsProps> = ({
           <span className="control-text profile-name">
             {activeProfileName || t('prompt_controls.profiles_none_global')}
           </span>
-          {effectiveScope === 'project' && (
-            <span className="profile-scope-tag">
-              {t('prompt_controls.profile_scope_project_tag')}
-            </span>
-          )}
           <span className="chevron-icon" aria-hidden="true">▾</span>
         </button>
 
