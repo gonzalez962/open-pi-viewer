@@ -148,6 +148,8 @@
 .terminal-body {
   flex: 1;
   min-height: 0;
+  /* Keep the gutter outside the screen container measured by FitAddon. */
+  padding: 6px;
   background-color: #0d1117;
   position: relative;
   overflow: hidden;
@@ -157,7 +159,6 @@
 .terminal-screen-container {
   width: 100%;
   height: 100%;
-  padding: 6px;
   box-sizing: border-box;
   touch-action: none;
 }
@@ -240,7 +241,7 @@
     max-width: 130px;
   }
 
-  .terminal-overlay.is-mobile .terminal-screen-container {
+  .terminal-overlay.is-mobile .terminal-body {
     padding: 4px;
   }
 
