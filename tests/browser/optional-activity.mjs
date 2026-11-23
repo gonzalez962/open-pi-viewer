@@ -120,6 +120,94 @@ function registerTriggerTests() {
   }));
 }
 
+const threadSelector = '.subagent-modal .subagent-thread';
+const bottomTolerance = 1;
+
+function readThreadGeometry(thread) {
+  return thread.evaluate(async el => {
+    // Let layout, scroll events and render-scheduled scrolling settle.
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    return { scrollTop, bottomGap: scrollHeight - clientHeight - scrollTop, scrollRange: scrollHeight - clientHeight };
+  });
+}
+
+async function scrollThread(page, thread, atBottom) {
+  await thread.hover({ timeout: 5000 });
+  await page.mouse.wheel(0, atBottom ? 10000 : -400);
+  await page.waitForFunction(({ selector, atBottom, tolerance }) => {
+    const el = document.querySelector(selector);
+    if (!el) return false;
+    const gap = el.scrollHeight - el.clientHeight - el.scrollTop;
+    return atBottom ? gap <= tolerance : gap > 100 && el.scrollTop > 100;
+  }, { selector: threadSelector, atBottom, tolerance: bottomTolerance }, { timeout: 5000 });
+  return readThreadGeometry(thread);
+}
+
+async function prepareScrollThread(page) {
+  await waitForBridge(page);
+  await startBusyTurn(page);
+  const thread = page.locator(threadSelector);
+  const items = [];
+  let version = 0;
+  const append = async count => {
+    for (let i = 0; i < count; i++) items.push({ kind: 'text', text: `Scroll fixture action ${items.length + 1}` });
+    await publishTasks(page, [{ summary: { id: 'scroll', agent: 'worker', label: 'Scroll task', status: 'running' }, thread: { version: ++version, dropped: 0, items } }]);
+  };
+  const waitForLatest = () => thread.getByText(items.at(-1).text, { exact: true }).waitFor({ timeout: 5000 });
+  await append(24);
+  await page.locator('.working-subagent-trigger').and(page.getByRole('button', { name: 'Worker', exact: true })).click({ timeout: 5000 });
+  await waitForLatest();
+  assert.ok((await readThreadGeometry(thread)).scrollRange > 500, 'fixture needs enough overflow to scroll up without reaching the top');
+  await scrollThread(page, thread, true);
+
+  return {
+    scroll: atBottom => scrollThread(page, thread, atBottom),
+    async update(t, phase) {
+      const before = await readThreadGeometry(thread);
+      await append(4);
+      await waitForLatest();
+      const after = await readThreadGeometry(thread);
+      t.diagnostic(`${phase}: ${JSON.stringify({ before, after })}`);
+      assert.ok(after.scrollRange > before.scrollRange, 'rendered actions must increase scrollable height');
+      return { before, after };
+    },
+  };
+}
+
+function assertFollowed({ before, after }) {
+  assert.ok(before.bottomGap <= bottomTolerance, 'must start at the bottom');
+  assert.ok(after.scrollTop > before.scrollTop, 'scrollTop must advance as new actions render');
+  assert.ok(after.bottomGap <= bottomTolerance, 'must follow new actions to the bottom');
+}
+
+// Run just this spec with: node --test-reporter=junit tests/browser/optional-activity.mjs --subagent-scroll
+function registerScrollTests() {
+  test('S2.1 overflowing activity follows new actions at the bottom', t => withFixture({ port: 5195 }, async page => {
+    const activity = await prepareScrollThread(page);
+    assertFollowed(await activity.update(t, 'append at bottom'));
+  }));
+
+  test('S5.1 scrolling up preserves the paused position when new actions render', t => withFixture({ port: 5195 }, async page => {
+    const activity = await prepareScrollThread(page);
+    await activity.scroll(false);
+    const { before, after } = await activity.update(t, 'append while paused');
+    assert.ok(before.bottomGap > 100, 'must start away from the bottom');
+    assert.ok(Math.abs(after.scrollTop - before.scrollTop) <= bottomTolerance, 'new actions must preserve the paused scrollTop');
+    assert.ok(after.bottomGap > before.bottomGap, 'new actions must grow the gap while paused');
+  }));
+
+  test('S2.3 returning to the bottom resumes following new actions', t => withFixture({ port: 5195 }, async page => {
+    const activity = await prepareScrollThread(page);
+    await activity.scroll(false);
+    const paused = await activity.update(t, 'append while paused before returning');
+    assert.ok(paused.before.bottomGap > 100 && paused.after.bottomGap > bottomTolerance, 'must be away from the bottom before returning');
+    const returned = await activity.scroll(true);
+    assert.ok(returned.scrollTop > paused.after.scrollTop, 'returning must advance scrollTop');
+    assertFollowed(await activity.update(t, 'append after returning'));
+  }));
+}
+
 async function runLegacyChecks(page) {
   assert.equal(await page.locator('.todo-panel, .working-text button[aria-haspopup="dialog"], .subagent-entry').count(), 0);
   await page.keyboard.press('Alt+a');
@@ -224,4 +312,5 @@ async function runLegacyChecks(page) {
 }
 
 if (process.argv.includes('--subagent-trigger')) registerTriggerTests();
+else if (process.argv.includes('--subagent-scroll')) registerScrollTests();
 else await withFixture({}, runLegacyChecks);
