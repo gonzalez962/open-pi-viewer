@@ -119,11 +119,13 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
   const refreshEditor = () => renderEditor(n => n + 1);
   const state = editor?.snapshot();
 
-  // Reset media error and active tab state on file change
+  const canEditContent = isWebShim() && !!file && !file.isBinary && file.kind !== 'image' && file.kind !== 'video' && activeTab === 'content';
+
+  // Reset media error and active tab state when the displayed target changes.
   useEffect(() => {
     setMediaError(false);
     setActiveTab('content');
-  }, [file?.relativePath]);
+  }, [file?.relativePath, workingDirectory]);
 
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) =>
@@ -150,9 +152,20 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
     )) refreshEditor();
   }, [requestedFile, requestedDirectory]);
 
+  const handleSave = useCallback(() => {
+    if (!editor) return;
+    void editor.save().then(refreshEditor);
+    refreshEditor();
+  }, [editor]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') handleClose();
+      if (!canEditContent || !e.ctrlKey || e.altKey || e.metaKey || e.shiftKey || e.key.toLowerCase() !== 's') return;
+      const current = editor?.snapshot();
+      if (!current?.editing) return;
+      e.preventDefault();
+      if (!e.repeat && !current.saving) handleSave();
     };
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (editor?.snapshot().dirty || editor?.snapshot().saving) {
@@ -166,7 +179,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [editor, handleClose]);
+  }, [editor, handleClose, canEditContent, handleSave]);
 
   // Fetch git diff for this file
   useEffect(() => {
@@ -182,12 +195,6 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
       .then((res) => {
         if (isMounted) {
           setDiffData(res);
-          if (editor?.snapshot().editing) return;
-          if (res.hasDiff) {
-            setActiveTab('diff');
-          } else {
-            setActiveTab('content');
-          }
         }
       })
       .catch(() => {
@@ -204,7 +211,7 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [file, workingDirectory, editor]);
+  }, [file, workingDirectory]);
 
   const parsedDiff = useMemo(() => {
     if (!diffData?.diff) return [];
@@ -291,9 +298,9 @@ export const FileViewerModal: React.FC<FileViewerModalProps> = ({
           )}
 
           <div className="file-viewer-actions">
-            {isWebShim() && !file.isBinary && file.kind !== 'image' && file.kind !== 'video' && activeTab === 'content' && editor && state && (
+            {canEditContent && editor && state && (
               state.editing ? <>
-                <button type="button" className="btn-file-editor btn-file-editor-save" disabled={state.saving} onClick={() => { void editor.save().then(refreshEditor); refreshEditor(); }}>{t('file_viewer.save')}</button>
+                <button type="button" className="btn-file-editor btn-file-editor-save" disabled={state.saving} onClick={handleSave} title={`${t('file_viewer.save')} (Ctrl+S)`} aria-keyshortcuts="Control+S">{t('file_viewer.save')}</button>
                 <button type="button" className="btn-file-editor btn-file-editor-cancel" disabled={state.saving} onClick={() => { editor.cancel(confirmDiscard); refreshEditor(); }}>{t('file_viewer.cancel')}</button>
                 {state.dirty && <span>{t('file_viewer.unsaved')}</span>}
               </> : <button type="button" className="btn-file-editor btn-file-editor-edit" onClick={() => { editor.edit(); refreshEditor(); }}>{t('file_viewer.edit')}</button>

@@ -146,7 +146,9 @@ Pi Viewer follows a layered hexagonal architecture. Detailed design documentatio
 
 ## Workspace file editor
 
-In the web viewer, open an existing text file and choose **Edit** to change plain text. Editing is not available in the desktop app yet. **Save** writes explicitly and checks whether the file changed on disk; a failed save keeps your draft. Closing or cancelling a dirty draft asks for confirmation. Image, video, binary, and diff views remain read-only. Files with consistent CRLF line endings retain them; mixed line endings are normalized to LF when saved.
+Text files open on **Content**. When **Diff** shows a change indicator, select that tab to see the changes.
+
+In the web viewer, choose **Edit** to change an existing text file. While editing, click **Save** or press **Ctrl+S** to save the file instead of opening the browser’s Save Page dialog. The viewer checks whether the file changed on disk; a failed save keeps your draft. Closing or cancelling a dirty draft asks for confirmation. Editing is not available in the desktop app yet. Image, video, binary, and diff views remain read-only. Files with consistent CRLF line endings retain them; mixed line endings are normalized to LF when saved.
 
 ## Prompt file attachments
 
