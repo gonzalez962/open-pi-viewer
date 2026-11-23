@@ -30,7 +30,7 @@ Rollback: revert the affected work unit. Success: the scenarios below pass throu
 
 ## Tasks
 - T1 — S1, S4 — complete — RED `1ce0254`, fix `a799448`, GREEN `8a9c025`; SDD gate passed.
-- T2 — S2, S5 — bounded worker and browser verification — RED regression observed; preparing checkpoint.
+- T2 — S2, S5 — bounded worker and browser verification — RED `104982b`; GREEN candidate verified directly; isolated gate pending.
 - T3 — S3 — bound persistence and UI surfaces after validating active agent-home parity — commit pending (RED checkpoint first).
 
 ## Expected files
@@ -52,3 +52,4 @@ Rollback: revert the affected work unit. Success: the scenarios below pass throu
 - L11: User authorized separating the existing controls and asked to handle dependency installation. S1.1 remains `[behavior]`; former S1.2 and S1.3 are now S4.1 and S4.2 `[existing]`. The historical RED ref had the original names. Synchronized tests-only RED `1ce0254` in `.worktrees/subagent-trigger-sdd-red` failed S1.1 only and passed both controls. Direct GREEN passed all three with the new IDs. No isolated gate run at that checkpoint.
 - L12: Isolated T1 gate passed (exit 0) with `--base 306bbfa --red 1ce0254 --head 8a9c025 --scope T1 --only S1,S4 --setup-cmd "pnpm install --frozen-lockfile"` and the JUnit reporter destination. S1.1, S4.1 and S4.2 COMPLIANT; scope, tests-only RED, skip markers, regression and config lock all passed. Start the T2 slice from `8a9c025`.
 - L13: Browser baseline: S2.1 and S2.3 failed as expected, with a bottom gap of 298 px and 297 px after new actions. The paused position held at 701 px. User authorized classifying that passing control as existing (S5.1).
+- L14: T2 candidate reads the previous DOM before each same-task commit, keeps a paused scroll offset, and follows if previously at bottom. Direct GREEN: 3 scroll scenarios and 3 trigger scenarios passed in Chromium; 17 scoped subagent tests passed.
