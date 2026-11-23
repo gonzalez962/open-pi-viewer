@@ -97,13 +97,13 @@ function registerTriggerTests() {
     await assertTargetTask(modal, 'a normal tap with the mobile drawer closed (aria-hidden and inert)');
   }));
 
-  test('S1.2 desktop click opens the clicked task', () => withFixture({ port: 5195 }, async page => {
+  test('S4.1 desktop click opens the clicked task', () => withFixture({ port: 5195 }, async page => {
     const { entry, modal } = await prepareTrigger(page);
     await entry.click({ timeout: 5000 });
     await assertTargetTask(modal, 'a desktop click');
   }));
 
-  test('S1.3 subagent activity defers to a competing active dialog', () => withFixture({ port: 5195 }, async page => {
+  test('S4.2 subagent activity defers to a competing active dialog', () => withFixture({ port: 5195 }, async page => {
     const { modal } = await prepareTrigger(page);
     await page.getByRole('button', { name: 'Add project folder', exact: true }).click({ timeout: 5000 });
     const competing = page.getByRole('dialog', { name: /default.*directory/i });
