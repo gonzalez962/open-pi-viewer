@@ -295,7 +295,7 @@ test('composer Enter steers an active run and keeps its message queued until the
   const [idle] = await readCommands();
   assert.equal(idle.command, 'send_prompt');
   assert.equal(idle.payload.message, prompt);
-  assert.equal(Object.hasOwn(idle.payload, 'streamingBehavior'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(idle.payload, 'streamingBehavior'), false);
   assert.equal(await first.locator('.message-badge-queued').count(), 0);
 
   await emit(page, 1000, 'agent_start');
