@@ -87,6 +87,11 @@ test('server/bridge: regression: nonblocking connect warmup spawns deterministic
     '1',
     'Subprocess spawner must receive GENTLE_SHELL_INTERACTIVE_HOST=1'
   );
+  assert.strictEqual(
+    spawned.env.GENTLE_PI_PROFILE_FOLLOW,
+    '1',
+    'Web Pi RPC must start in Gentle profile follow mode'
+  );
 
   // 3. Subprocess arguments verification (preserve native shallow loading without blanket suppression)
   assert.ok(spawned.args.includes('--mode'), 'Args must include --mode');

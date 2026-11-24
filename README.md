@@ -99,6 +99,8 @@ MCP arguments are visible to web clients and editable in the viewer. Use environ
 
 While the active session's Pi process is running, the web model picker uses Pi's model catalog, including models registered by extensions. With no live active session, it lists saved custom models and built-in fallback entries without starting Pi. If the live catalog request fails, the web bridge returns the error instead of switching to the offline list.
 
+The web bridge starts new Pi RPC processes with `GENTLE_PI_PROFILE_FOLLOW=1`. When Gentle Pi is loaded and the session has no stored profile binding, each new subagent launch resolves the current profile defaults for its target repository. This does not rebind an existing session, change the orchestrator model, or affect desktop launches.
+
 ### Provider credentials in web mode
 
 Provider API keys and header values are stored on the server, not returned to web clients. The provider editor displays configured status and header names; blank fields preserve existing values, while replacement and deletion are explicit. Model discovery uses server-held credentials. Legacy browser provider copies are imported without replacing existing backend credentials and removed only after backend acknowledgement; failures retain the copy for retry. Protect the server configuration and use authenticated HTTPS: server storage is not an encrypted vault. Native Tauri credential handling is unchanged.
