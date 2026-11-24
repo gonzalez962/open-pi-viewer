@@ -571,16 +571,10 @@ export const ActivityBlocksScrollContainer: React.FC<ActivityBlocksScrollContain
     }
   }, []);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
-    if (isPinnedToBottomRef.current) {
-      if (typeof el.scrollTo === 'function') {
-        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
-      } else {
-        el.scrollTop = el.scrollHeight;
-      }
-    }
+    // Position the list before it paints; a smooth scroll exposes the previous position.
+    if (el && isPinnedToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [blocksCount, children]);
 
   return (
