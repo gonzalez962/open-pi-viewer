@@ -1,6 +1,7 @@
-import { useCallback } from 'react';
+import { Component, createRef, useCallback, type ReactNode } from 'react';
 import type { SubagentDetail } from '@core/types/agent-activity';
 import type { TranslationKey } from '@shared/i18n';
+import { isNearBottom, scrollToBottom } from '@shared/scroll';
 import { ThinkingCard, ToolCard } from './ActivityBlocks';
 
 function toolArgs(args: string): Record<string, unknown> | string {
@@ -9,6 +10,32 @@ function toolArgs(args: string): Record<string, unknown> | string {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : args;
   } catch {
     return args;
+  }
+}
+
+type ThreadProps = { taskId: string; children: ReactNode };
+type ThreadScrollSnapshot = { atBottom: boolean; scrollTop: number };
+
+class SubagentThread extends Component<ThreadProps> {
+  private readonly viewport = createRef<HTMLDivElement>();
+
+  getSnapshotBeforeUpdate(previous: ThreadProps): ThreadScrollSnapshot | null {
+    const el = this.viewport.current;
+    if (!el || previous.taskId !== this.props.taskId) return null;
+    // Read the old DOM at commit time: new snapshots can change any part of the history.
+    return { atBottom: isNearBottom(el, 1), scrollTop: el.scrollTop };
+  }
+
+  componentDidUpdate(_previous: ThreadProps, _state: unknown, snapshot: ThreadScrollSnapshot | null) {
+    const el = this.viewport.current;
+    if (!el || !snapshot) return;
+    if (snapshot.atBottom) scrollToBottom(el);
+    else if (el.scrollTop !== snapshot.scrollTop) el.scrollTop = snapshot.scrollTop;
+  }
+
+  render() {
+    // The browser's scroll anchoring must not move a paused viewport during a replacement.
+    return <div ref={this.viewport} className="subagent-thread" style={{ overflowAnchor: 'none' }}>{this.props.children}</div>;
   }
 }
 
@@ -40,7 +67,7 @@ export function SubagentActivityModal({ tasks, selectedId, onSelect, onClose, t 
       <header className="modal-header"><h2 className="modal-title">{t('subagent.title')}</h2><button type="button" className="modal-close-btn" onClick={onClose} aria-label={t('subagent.close')} title={t('subagent.close')}>✕</button></header>
       <div className="subagent-body">
         <nav aria-label={t('subagent.tasks')}>{tasks.map(task => <button className="subagent-selector" type="button" key={task.id} aria-pressed={task.id === selected.id} onClick={() => onSelect(task.id)}><span className="subagent-selector-name">{task.label || task.agent}</span><span className={`subagent-selector-status status-${task.status}`}>{task.status}</span></button>)}</nav>
-        <div className="subagent-thread">
+        <SubagentThread taskId={selected.id}>
           <h3>{selected.label || selected.agent}</h3>
           {selected.reportedModel && <p>{t('subagent.reported_model', { model: selected.reportedModel })}</p>}
           {selected.lastStep && <p>{selected.lastStep}</p>}
@@ -52,7 +79,7 @@ export function SubagentActivityModal({ tasks, selectedId, onSelect, onClose, t 
             if (item.kind === 'thinking') return <ThinkingCard key={index} t={t} block={{ type: 'thinking', thinking: item.text }} />;
             return <div className="subagent-message message-content message-literal" key={index}><strong>{item.kind}</strong><div>{item.text}</div></div>;
           })}</div>}
-        </div>
+        </SubagentThread>
       </div>
     </section>
   </div>;

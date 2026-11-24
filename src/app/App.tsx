@@ -769,7 +769,11 @@ export const App: React.FC = () => {
   if (!subagentController.current) {
     subagentController.current = createSubagentActivityController({
       getTasks: () => subagentContext.current.tasks,
-      getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element => !element.closest('.subagent-overlay'))),
+      getOtherDialogOpen: () => subagentContext.current.otherDialog || (typeof document !== 'undefined' && Array.from(document.querySelectorAll('[role="dialog"], .modal-overlay, .terminal-overlay, .prompt-popover, .command-palette-popover')).some(element =>
+        !element.closest('.subagent-overlay') &&
+        // The closed mobile drawer stays mounted with role="dialog".
+        !element.matches(`#${DRAWER_ID}[aria-hidden="true"][inert]`)
+      )),
       getActiveElement: () => typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
       setOpen: setSubagentOpen,
       selectTask: setSelectedSubagent,
