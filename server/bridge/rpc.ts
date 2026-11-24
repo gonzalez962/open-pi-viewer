@@ -127,6 +127,7 @@ export class PiRpcSession {
     const env = withGithubCredentials({
       ...getAgnosticExecEnv(),
       GENTLE_SHELL_INTERACTIVE_HOST: '1',
+      GENTLE_PI_PROFILE_FOLLOW: '1',
     });
     const customSpawner = getSubprocessSpawner();
 
