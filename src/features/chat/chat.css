@@ -1142,13 +1142,6 @@
   color: var(--fg-default);
 }
 
-.profile-scope-tag {
-  font-size: 10px;
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-  opacity: 0.85;
-}
-
 .mcp-label {
   font-weight: 500;
   color: var(--fg-default);
@@ -4417,11 +4410,6 @@
 
   .profile-name {
     max-width: 85px;
-  }
-
-  .profile-scope-tag {
-    font-size: 9.5px;
-    padding: 1px 4px;
   }
 
   /* Command Palette Popover on Mobile */
