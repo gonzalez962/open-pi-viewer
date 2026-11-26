@@ -383,6 +383,9 @@ function isWebFileReference(value: string): boolean {
   return name.includes('.') || name === 'Makefile';
 }
 
+// Paused to avoid availability probes for paths rendered in chat.
+const ENABLE_INLINE_FILE_DOWNLOADS = false;
+
 const WorkingDirectoryContext = React.createContext<string | undefined>(undefined);
 
 const InlineFileReference: React.FC<{
@@ -440,7 +443,8 @@ function renderInline(
       case 'text':
         return <React.Fragment key={key}>{node.value}</React.Fragment>;
       case 'code_inline':
-        if (!insideLink && (isDesktopTauriEnvironment() ? isAbsoluteFileReference(node.value) : isWebFileReference(node.value))) {
+        if (ENABLE_INLINE_FILE_DOWNLOADS && !insideLink &&
+          (isDesktopTauriEnvironment() ? isAbsoluteFileReference(node.value) : isWebFileReference(node.value))) {
           return <InlineFileReference key={key} path={node.value} t={t} />;
         }
         return (
