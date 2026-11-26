@@ -8,53 +8,36 @@ import es from '@shared/locales/es.json';
 
 const render = (content: string, locale = en) => renderToStaticMarkup(React.createElement(MarkdownContent, { content, t: (key: string) => (locale as Record<string, string>)[key] ?? key }));
 
-test('S3.1 native inline file references retain localized icon actions without a web request', () => {
+const assertPlainInlineCode = (html: string, values: string[]) => {
+  for (const value of values) assert.ok(html.includes('<code class="markdown-inline-code">' + value + '</code>'), value);
+  assert.doesNotMatch(html, /markdown-file-reference|markdown-file-download-btn|<button/);
+};
+
+test('desktop keeps absolute file references and ordinary inline code plain', () => {
   const previous = globalThis.window;
   const previousIsTauri = (globalThis as any).isTauri;
-  let requests = 0;
-  const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => { requests++; throw new Error('unexpected web request'); };
   (globalThis as any).isTauri = true;
   (globalThis as any).window = { isTauri: true, __TAURI_INTERNALS__: { ipc() {} } };
   try {
-  for (const locale of [en, es]) {
-    const html = render('`/home/a file` `C:\\Users\\name\\file` `/extensionless`', locale);
-    assert.equal((html.match(/markdown-file-download-btn/g) ?? []).length, 3);
-    assert.match(html, /\/home\/a file/);
-    assert.match(html, /C:\\Users\\name\\file/);
-    assert.match(html, new RegExp(`aria-label="${locale['markdown.download_file_aria']}"`));
-    const icons = [...html.matchAll(/<svg\b[^>]*aria-hidden="true"[^>]*stroke="currentColor"[^>]*>(.*?)<\/svg>/g)];
-    assert.equal(icons.length, 3);
-    for (const icon of icons) assert.equal((icon[1].match(/<path\b/g) ?? []).length, 3);
-    assert.doesNotMatch(html, /<button[^>]*>[^<]+/);
-  }
-  assert.equal(requests, 0);
+    for (const locale of [en, es]) {
+      const paths = ['/home/a file', 'C:\\Users\\name\\file', '/extensionless', 'inline'];
+      const html = render(paths.map(path => "`" + path + "`").join(' '), locale);
+      assertPlainInlineCode(html, paths);
+    }
   } finally {
     (globalThis as any).window = previous;
     if (previousIsTauri === undefined) delete (globalThis as any).isTauri;
     else (globalThis as any).isTauri = previousIsTauri;
-    globalThis.fetch = previousFetch;
   }
 });
 
-test('S2.1 web rejects route-like candidates and URIs while retaining text', () => {
-  const html = render('`/admin/settings` `https://example.com/file` `file:///tmp/a`');
-  assert.match(html, /\/admin\/settings/);
-  assert.match(html, /https:\/\/example.com\/file/);
-  assert.match(html, /file:\/\/\/tmp\/a/);
-  assert.doesNotMatch(html, /markdown-file-reference/);
-});
-
-test('S2.2 web recognizes project file candidates pending confirmation', () => {
-  const html = render('`/frontend/src/components/menu.ts` `frontend/src/components/menu.ts` `/frontend/.env` `/frontend/Makefile`');
-  assert.equal((html.match(/markdown-file-reference/g) ?? []).length, 4);
-  assert.doesNotMatch(html, /markdown-file-download-btn/);
-});
-
-test('S1.4 web references retain text without an action before availability confirmation', () => {
-  const html = render('`/tmp/pending-file`');
-  assert.match(html, /\/tmp\/pending-file/);
-  assert.doesNotMatch(html, /markdown-file-download-btn/);
+test('web keeps project file candidates, routes, URIs and ordinary inline code plain', () => {
+  const paths = [
+    '/frontend/src/components/menu.ts', 'frontend/src/components/menu.ts', '/frontend/.gitignore', '/frontend/Makefile',
+    '/admin/settings', 'https://example.com/file', 'file:///tmp/a', 'inline',
+  ];
+  const html = render(paths.map(path => "`" + path + "`").join(' '));
+  assertPlainInlineCode(html, paths);
 });
 
 test('non-paths, link labels and fenced code do not get file actions', () => {

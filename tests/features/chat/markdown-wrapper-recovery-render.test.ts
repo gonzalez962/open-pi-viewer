@@ -19,6 +19,6 @@ test('S4.1 renders one downloadable guide card followed by the assistant paragra
   assert.match(html, /```powershell/);
   assert.match(html, /```bash/);
   assert.match(html, /```go/);
-  assert.match(html, /<\/pre><\/div><p class="markdown-p">Si querés que te deje esto guardado directamente en un archivo <span class="markdown-file-reference"><code class="markdown-inline-code">\.md<\/code><\/span> en este directorio \(o en otra ruta\), avisame y lo creo de una\.<\/p>/);
+  assert.match(html, /<\/pre><\/div><p class="markdown-p">Si querés que te deje esto guardado directamente en un archivo <code class="markdown-inline-code">\.md<\/code> en este directorio \(o en otra ruta\), avisame y lo creo de una\.<\/p>/);
   assert.doesNotMatch(html, /markdown-file-download-btn/);
 });

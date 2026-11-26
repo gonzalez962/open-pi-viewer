@@ -36,10 +36,6 @@ try {
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ acceptDownloads: true });
   assert.equal((await context.request.post(`${base}/api/auth/login`, { headers: { origin: base }, data: { key: 'fixture-key' } })).status(), 200);
-  // Reproduce the old inline payload against the same backend before exercising the UI.
-  const oldRouting = await context.request.post(`${base}/api/download`, { headers: { origin: base }, data: { sourcePath: projectFile } });
-  assert.equal(oldRouting.status(), 400);
-  assert.deepEqual(await oldRouting.json(), { error: 'Access denied: outside download root' });
   const content = `File: \`${file}\`\n\n- Project: \`${projectFile}\`\n\n| File |\n| --- |\n| \`${projectFile}\` |\n\nOutside: \`${outside}\`\n\nMissing: \`${missing}\`\n\nDirectory: \`${directory}\`\n\n\`https://example.com/file\`\n\n\`\`\`text\n${file}\n\`\`\``;
   await context.addInitScript(({ project, project2, content }) => {
     const callbacks = new Map(), listeners = new Map(); let next = 1;
@@ -64,129 +60,42 @@ try {
     localStorage.setItem('pi_viewer_connect_config', JSON.stringify({ nodePath: '/node', piEntrypoint: '/pi.js', workingDirectory: project }));
   }, { project, project2, content });
   const page = await context.newPage();
+  const downloadRequests = [];
+  page.on('request', request => {
+    const { pathname } = new URL(request.url());
+    if (pathname === '/api/download/availability' || pathname === '/api/download') {
+      downloadRequests.push(request.method() + ' ' + pathname);
+    }
+  });
   await page.goto(base, { waitUntil: 'domcontentloaded' });
   await page.locator('#prompt-input').waitFor({ timeout: 15000 });
-  await page.waitForFunction(() => { try { window.emitFixture('ready'); return true; } catch { return false; } });
-  // S2.1: rejected route-like references and URIs remain visible without a probe.
-  const probes = [];
-  const collectProbe = request => { if (request.url().endsWith('/api/download/availability')) probes.push(request); };
-  page.on('request', collectProbe);
-  await page.evaluate(() => window.emitFixture('`/admin/settings` `https://example.com/file` `file:///tmp/a`'));
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(probes.length, 0, 'S2.1 rejected candidates must not request availability');
-  for (const text of ['/admin/settings', 'https://example.com/file', 'file:///tmp/a']) assert.match(await page.locator('.markdown-body').innerText(), new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  page.off('request', collectProbe);
+  await page.waitForFunction(() => { try { window.emitFixture(); return true; } catch { return false; } });
 
-  // S2.2: hold confirmation and verify that probe and click use identical project payloads.
-  let confirmProbe;
-  const pendingProbe = new Promise(resolve => { confirmProbe = resolve; });
-  await page.route('**/api/download/availability', route => confirmProbe(route), { times: 1 });
-  await page.evaluate(() => window.emitFixture('`/frontend/src/components/menu.ts`'));
-  const projectProbe = await pendingProbe;
-  const payload = { workingDirectory: project, relativePath: 'frontend/src/components/menu.ts' };
-  assert.deepEqual(projectProbe.request().postDataJSON(), payload);
-  assert.equal(await page.locator('.markdown-file-download-btn').count(), 0);
-  await projectProbe.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
-  await page.locator('.markdown-file-download-btn').waitFor({ state: 'visible' });
-  const projectRequest = page.waitForRequest(req => req.url().endsWith('/api/download') && req.method() === 'POST');
-  await page.locator('.markdown-file-download-btn').click();
-  assert.deepEqual((await projectRequest).postDataJSON(), payload);
-  await page.evaluate(() => window.emitFixture());
-  const actions = page.locator('.markdown-file-download-btn');
-  await page.waitForFunction(() => document.querySelectorAll('.markdown-file-download-btn').length === 3);
-  assert.equal(await actions.count(), 3);
-  for (const rejected of [outside, missing, directory]) {
-    const reference = page.locator('.markdown-file-reference').filter({ hasText: rejected });
-    assert.equal(await reference.locator('code').innerText(), rejected);
-    assert.equal(await reference.locator('.markdown-file-download-btn').count(), 0);
-  }
-  assert.equal(await actions.first().innerText(), '');
-  const icon = actions.first().locator('svg[aria-hidden=true][stroke=currentColor]');
-  assert.equal(await icon.count(), 1);
-  assert.equal(await icon.locator('path').count(), 3);
-  assert.equal(await icon.evaluate(el => getComputedStyle(el).stroke), await actions.first().evaluate(el => getComputedStyle(el).color));
-  assert.equal(await actions.first().locator('..').locator('code').innerText(), file);
-  const [download] = await Promise.all([page.waitForEvent('download'), actions.first().click()]);
-  assert.equal(download.suggestedFilename(), 'binary file.bin');
-  const chunks = []; for await (const chunk of await download.createReadStream()) chunks.push(chunk);
-  assert.deepEqual(Buffer.concat(chunks), bytes);
-  for (const index of [1, 2]) {
-    const [request, projectDownload] = await Promise.all([
-      page.waitForRequest(req => req.url().endsWith('/api/download') && req.method() === 'POST'),
-      page.waitForEvent('download'), actions.nth(index).click(),
-    ]);
-    assert.deepEqual(request.postDataJSON(), { workingDirectory: project, relativePath: 'project file.bin' });
-    assert.equal(projectDownload.suggestedFilename(), 'project file.bin');
-    const projectChunks = []; for await (const chunk of await projectDownload.createReadStream()) projectChunks.push(chunk);
-    assert.deepEqual(Buffer.concat(projectChunks), bytes);
-  }
-  // Availability is not an authorization grant: deletion after confirmation must fail on download.
-  fs.unlinkSync(file);
-  const [response] = await Promise.all([
-    page.waitForResponse(response => response.url().endsWith('/api/download') && response.request().method() === 'POST'),
-    actions.first().click(),
-  ]);
-  assert.equal(response.status(), 400);
-  await actions.first().locator('..').getByRole('status').waitFor({ state: 'visible' });
+  const inlineCode = page.locator('.markdown-body .markdown-inline-code');
+  const assertNoFileActionsOrRequests = async () => {
+    // Give client-side effects and their request events time to run after rendering.
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.locator('.markdown-file-reference, .markdown-file-download-btn').count(), 0);
+    assert.deepEqual(downloadRequests, [], 'chat file paths must not send availability or download requests');
+  };
   const block = page.locator('.markdown-code-block');
-  assert.equal(await block.locator('.markdown-file-download-btn').count(), 0);
+  await block.waitFor({ state: 'visible' });
+  assert.deepEqual(await inlineCode.allTextContents(), [file, projectFile, projectFile, outside, missing, directory, 'https://example.com/file']);
+  await assertNoFileActionsOrRequests();
   assert.equal(await block.locator('.markdown-code-copy-btn').count(), 1);
   assert.equal(await block.locator('.markdown-code-insert-btn').count(), 1);
   assert.equal(await block.locator('.markdown-code-download-btn').count(), 1);
-  // Hold both checks while the same reference changes path, then resolve the old one first.
-  let resolveCheck;
-  const nextCheck = () => new Promise(resolve => { resolveCheck = resolve; });
-  await page.route('**/api/download/availability', route => resolveCheck(route));
-  const oldPath = path.join(home, 'stale-old.bin');
-  const newPath = path.join(home, 'stale-new.bin');
-  let check = nextCheck();
-  await page.evaluate(text => window.emitFixture(text), `\`${oldPath}\``);
-  const oldRoute = await check;
-  assert.equal(await actions.count(), 0);
-  check = nextCheck();
-  await page.evaluate(text => window.emitFixture(text), `\`${newPath}\``);
-  const newRoute = await check;
-  assert.equal(await page.locator('.markdown-file-reference code').innerText(), newPath);
-  assert.equal(await actions.count(), 0);
-  const oldFinished = page.waitForEvent('requestfinished', request => request === oldRoute.request());
-  await oldRoute.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
-  await oldFinished;
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await actions.count(), 0);
-  const newFinished = page.waitForEvent('requestfinished', request => request === newRoute.request());
-  await newRoute.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) });
-  await newFinished;
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await actions.count(), 0);
-  assert.equal(await page.locator('.markdown-file-reference code').innerText(), newPath);
-  // Keep the same path while switching the actual active project and hold both checks.
-  check = nextCheck();
-  await page.evaluate(text => window.emitFixture(text), `\`${projectFile}\``);
-  const oldWorkspaceRoute = await check;
-  assert.deepEqual(oldWorkspaceRoute.request().postDataJSON(), { workingDirectory: project, relativePath: 'project file.bin' });
-  check = nextCheck();
+
   await page.getByRole('button', { name: 'Second Fixture', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('[aria-label="Second Fixture"][aria-current="true"]'));
-  await page.waitForFunction(text => { try { window.emitFixture(text); return true; } catch { return false; } }, `\`${projectFile}\``);
-  const newWorkspaceRoute = await check;
-  assert.deepEqual(newWorkspaceRoute.request().postDataJSON(), /^[a-zA-Z]:[\\/]/.test(projectFile)
-    ? { sourcePath: projectFile }
-    : { workingDirectory: project2, relativePath: projectFile.replace(/^\//, '') });
-  assert.equal(await page.locator('.markdown-file-reference code').innerText(), projectFile);
-  assert.equal(await actions.count(), 0);
-  const oldWorkspaceFinished = page.waitForEvent('requestfinished', request => request === oldWorkspaceRoute.request());
-  await oldWorkspaceRoute.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ available: true }) });
-  await oldWorkspaceFinished;
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await actions.count(), 0);
-  const newWorkspaceFinished = page.waitForEvent('requestfinished', request => request === newWorkspaceRoute.request());
-  await newWorkspaceRoute.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) });
-  await newWorkspaceFinished;
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await actions.count(), 0);
-  assert.equal(await page.locator('.markdown-file-reference code').innerText(), projectFile);
+  await page.locator('[aria-label="Second Fixture"][aria-current="true"]').waitFor();
+  await page.locator('#prompt-input').waitFor({ timeout: 15000 });
+  await page.waitForFunction(text => { try { window.emitFixture(text); return true; } catch { return false; } }, `After switching: \`${projectFile}\``);
+  await page.locator('.markdown-body').getByText('After switching:', { exact: false }).waitFor();
+  assert.deepEqual(await inlineCode.allTextContents(), [projectFile]);
+  await assertNoFileActionsOrRequests();
+
   await context.close();
-  console.log('PASS inline binary download, outside-home failure, fenced controls, stale path and workspace');
+  console.log('PASS plain inline file paths, zero download requests, fenced controls, and workspace switch');
 } finally {
   if (browser) await browser.close();
   if (server) { server.kill(); await new Promise(resolve => { if (server.exitCode !== null) resolve(); else server.once('exit', resolve); }); }
