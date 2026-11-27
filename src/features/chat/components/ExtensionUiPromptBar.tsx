@@ -260,12 +260,15 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
     setFocusedChoiceIndex(0);
   }
 
-  // Reset or restore local state when dialog itemKey, currentStep, or prefill changes
+  // The queue returns a fresh array on render; only the current step's saved
+  // answer should rehydrate the draft, not a new snapshot of the same answers.
+  const savedRecord = flowAnswers?.find((r) => r.step === currentStep);
+
+  // Reset or restore local state when the dialog or its prefill changes.
   useEffect(() => {
     setModifyingStep(null);
     setIsNavigatingBack(false);
     setIsSubmittingFinal(false);
-    const savedRecord = flowAnswers?.find((r) => r.step === currentStep);
 
     // Multi-select
     if (initialCheckedIndices !== undefined) {
@@ -320,7 +323,7 @@ export const ExtensionUiPromptBar: React.FC<ExtensionUiPromptBarProps> = ({
   }, [
     itemKey,
     currentStep,
-    flowAnswers,
+    savedRecord,
     request.prefill,
     initialSelectedIndex,
     initialCheckedIndices,
